@@ -744,6 +744,15 @@ class Embeddings {
 }
 
 // ============================================================================
+// Token estimate (for auto-recall cap)
+// ============================================================================
+
+/** Rough token count (OpenAI-style: ~4 chars per token for English). */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+// ============================================================================
 // Merge & Deduplicate
 // ============================================================================
 
@@ -1841,39 +1850,52 @@ const memoryHybridPlugin = {
     // Lifecycle Hooks
     // ========================================================================
 
-    if (cfg.autoRecall) {
+    if (cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event) => {
         if (!event.prompt || event.prompt.length < 5) return;
 
         try {
-          const ftsResults = factsDb.search(event.prompt, 3);
-
+          const ftsResults = factsDb.search(event.prompt, 5);
           let lanceResults: SearchResult[] = [];
           try {
             const vector = await embeddings.embed(event.prompt);
-            lanceResults = await vectorDb.search(vector, 3, 0.3);
+            lanceResults = await vectorDb.search(vector, 5, 0.3);
           } catch (err) {
             api.logger.warn(
               `memory-hybrid: vector recall failed: ${err}`,
             );
           }
 
-          const results = mergeResults(ftsResults, lanceResults, 5);
-          if (results.length === 0) return;
+          const candidates = mergeResults(ftsResults, lanceResults, 15);
+          if (candidates.length === 0) return;
 
-          const memoryContext = results
-            .map(
-              (r) =>
-                `- [${r.backend}/${r.entry.category}] ${r.entry.text}`,
-            )
-            .join("\n");
+          const { maxTokens, maxPerMemoryChars } = cfg.autoRecall;
+          const header = "<relevant-memories>\nThe following memories may be relevant:\n";
+          const footer = "\n</relevant-memories>";
+          let usedTokens = estimateTokens(header + footer);
 
+          const lines: string[] = [];
+          for (const r of candidates) {
+            let text = r.entry.text;
+            if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
+              text = text.slice(0, maxPerMemoryChars).trim() + "…";
+            }
+            const line = `- [${r.backend}/${r.entry.category}] ${text}`;
+            const lineTokens = estimateTokens(line + "\n");
+            if (usedTokens + lineTokens > maxTokens) break;
+            lines.push(line);
+            usedTokens += lineTokens;
+          }
+
+          if (lines.length === 0) return;
+
+          const memoryContext = lines.join("\n");
           api.logger.info?.(
-            `memory-hybrid: injecting ${results.length} memories (sqlite: ${ftsResults.length}, lance: ${lanceResults.length})`,
+            `memory-hybrid: injecting ${lines.length} memories (sqlite: ${ftsResults.length}, lance: ${lanceResults.length}, ~${usedTokens} tokens)`,
           );
 
           return {
-            prependContext: `<relevant-memories>\nThe following memories may be relevant:\n${memoryContext}\n</relevant-memories>`,
+            prependContext: `${header}${memoryContext}${footer}`,
           };
         } catch (err) {
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);

@@ -30,7 +30,15 @@
     },
     "autoRecall": {
       "label": "Auto-Recall",
-      "help": "Automatically inject relevant memories into context"
+      "help": "Inject relevant memories (true/false or object with enabled, maxTokens, maxPerMemoryChars)"
+    },
+    "autoRecall.maxTokens": {
+      "label": "Auto-Recall max tokens",
+      "help": "Cap on total tokens injected (default 800)"
+    },
+    "autoRecall.maxPerMemoryChars": {
+      "label": "Auto-Recall max chars per memory",
+      "help": "Truncate each memory to N chars; 0 = no truncation"
     },
     "categories": {
       "label": "Custom Categories",
@@ -65,7 +73,20 @@
       "lanceDbPath": { "type": "string" },
       "sqlitePath": { "type": "string" },
       "autoCapture": { "type": "boolean" },
-      "autoRecall": { "type": "boolean" },
+      "autoRecall": {
+        "oneOf": [
+          { "type": "boolean" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "maxTokens": { "type": "number" },
+              "maxPerMemoryChars": { "type": "number" }
+            }
+          }
+        ]
+      },
       "categories": {
         "type": "array",
         "items": { "type": "string" },
