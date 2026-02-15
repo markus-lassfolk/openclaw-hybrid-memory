@@ -950,7 +950,7 @@ const SENSITIVE_PATTERNS = [
 ];
 
 function shouldCapture(text: string): boolean {
-  if (text.length < 10 || text.length > 500) return false;
+  if (text.length < 10 || text.length > cfg.captureMaxChars) return false;
   if (text.includes("<relevant-memories>")) return false;
   if (text.startsWith("<") && text.includes("</")) return false;
   if (text.includes("**") && text.includes("\n-")) return false;
@@ -1255,7 +1255,12 @@ const memoryHybridPlugin = {
             decayClass?: DecayClass;
           };
 
-          if (factsDb.hasDuplicate(text)) {
+          let textToStore = text;
+          if (textToStore.length > cfg.captureMaxChars) {
+            textToStore = textToStore.slice(0, cfg.captureMaxChars).trim() + " [truncated]";
+          }
+
+          if (factsDb.hasDuplicate(textToStore)) {
             return {
               content: [
                 { type: "text", text: `Similar memory already exists.` },
@@ -1264,13 +1269,13 @@ const memoryHybridPlugin = {
             };
           }
 
-          const extracted = extractStructuredFields(text, category as MemoryCategory);
+          const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
           const entity = paramEntity || extracted.entity;
           const key = paramKey || extracted.key;
           const value = paramValue || extracted.value;
 
           const entry = factsDb.store({
-            text,
+            text: textToStore,
             category: category as MemoryCategory,
             importance,
             entity,
@@ -1281,10 +1286,10 @@ const memoryHybridPlugin = {
           });
 
           try {
-            const vector = await embeddings.embed(text);
+            const vector = await embeddings.embed(textToStore);
             if (!(await vectorDb.hasDuplicate(vector))) {
               await vectorDb.store({
-                text,
+                text: textToStore,
                 vector,
                 importance,
                 category,
@@ -1298,7 +1303,7 @@ const memoryHybridPlugin = {
             content: [
               {
                 type: "text",
-                text: `Stored: "${text.slice(0, 100)}${text.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]`,
+                text: `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]`,
               },
             ],
             details: { action: "created", id: entry.id, backend: "both", decayClass: entry.decayClass },
@@ -1945,15 +1950,20 @@ const memoryHybridPlugin = {
 
           let stored = 0;
           for (const text of toCapture.slice(0, 3)) {
+            let textToStore = text;
+            if (textToStore.length > cfg.captureMaxChars) {
+              textToStore = textToStore.slice(0, cfg.captureMaxChars).trim() + " [truncated]";
+            }
+
             // Heuristic classification only — "other" facts are reclassified
             // by the daily auto-classify timer (no LLM calls on the hot path)
-            const category: MemoryCategory = detectCategory(text);
-            const extracted = extractStructuredFields(text, category);
+            const category: MemoryCategory = detectCategory(textToStore);
+            const extracted = extractStructuredFields(textToStore, category);
 
-            if (factsDb.hasDuplicate(text)) continue;
+            if (factsDb.hasDuplicate(textToStore)) continue;
 
             factsDb.store({
-              text,
+              text: textToStore,
               category,
               importance: 0.7,
               entity: extracted.entity,
@@ -1963,9 +1973,9 @@ const memoryHybridPlugin = {
             });
 
             try {
-              const vector = await embeddings.embed(text);
+              const vector = await embeddings.embed(textToStore);
               if (!(await vectorDb.hasDuplicate(vector))) {
-                await vectorDb.store({ text, vector, importance: 0.7, category });
+                await vectorDb.store({ text: textToStore, vector, importance: 0.7, category });
               }
             } catch (err) {
               api.logger.warn(

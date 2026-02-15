@@ -40,6 +40,10 @@
       "label": "Auto-Recall max chars per memory",
       "help": "Truncate each memory to N chars; 0 = no truncation"
     },
+    "captureMaxChars": {
+      "label": "Capture max characters",
+      "help": "Max characters per fact: filter in auto-capture and truncate when storing (default 5000)"
+    },
     "categories": {
       "label": "Custom Categories",
       "help": "Additional memory categories beyond the defaults (preference, fact, decision, entity, other)"
@@ -87,6 +91,7 @@
           }
         ]
       },
+      "captureMaxChars": { "type": "number" },
       "categories": {
         "type": "array",
         "items": { "type": "string" },

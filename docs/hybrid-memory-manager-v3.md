@@ -178,7 +178,7 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **memory-hyb
 }
 ```
 
-`captureMaxChars` (e.g. `5000`) is optional; the plugin has a default if omitted.
+`captureMaxChars` (e.g. `5000`) is optional; default is 5000. The plugin uses it in the auto-capture filter (messages longer than this are not captured) and truncates stored text to this length with " [truncated]" when storing (tool or auto-capture).
 
 **Auto-recall token cap:** `autoRecall` can be `true` (default behaviour) or an object: `{ "enabled": true, "maxTokens": 800, "maxPerMemoryChars": 0 }`. `maxTokens` caps the total tokens injected (default 800); `maxPerMemoryChars` truncates each memory to N characters (0 = no truncation). This keeps injected memories within a token budget. See [MEMORY-ENHANCEMENT-IDEAS.md](MEMORY-ENHANCEMENT-IDEAS.md) §1.1.
 

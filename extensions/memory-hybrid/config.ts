@@ -42,6 +42,8 @@ export type HybridMemoryConfig = {
   sqlitePath: string;
   autoCapture: boolean;
   autoRecall: AutoRecallConfig;
+  /** Max characters per captured/stored fact (filter and truncation). Default 5000. */
+  captureMaxChars: number;
   categories: string[];
   autoClassify: AutoClassifyConfig;
 };
@@ -151,6 +153,11 @@ export const hybridConfigSchema = {
       };
     }
 
+    const captureMaxChars =
+      typeof cfg.captureMaxChars === "number" && cfg.captureMaxChars > 0
+        ? cfg.captureMaxChars
+        : 5000;
+
     return {
       embedding: {
         provider: "openai",
@@ -163,6 +170,7 @@ export const hybridConfigSchema = {
         typeof cfg.sqlitePath === "string" ? cfg.sqlitePath : DEFAULT_SQLITE_PATH,
       autoCapture: cfg.autoCapture !== false,
       autoRecall,
+      captureMaxChars,
       categories: [...getMemoryCategories()],
       autoClassify,
     };
