@@ -158,7 +158,7 @@
 | 3        | 1.2 Shorter injection format | Low    | Medium            | Neutral             | ✅ Implemented |
 | 4        | 2.1 Configurable recall limit/minScore | Low  | Config-driven     | Better relevance    | ✅ Implemented |
 | 5        | 2.2 Semantic dedupe (maintenance: find-duplicates CLI) | Medium | Medium (fewer dupes) | High — revised, not at store |
-| 6        | 3.1 Decay-class–aware recall | Low    | Slight            | Better long-term    |
+| 6        | 3.1 Decay-class–aware recall | Low    | Slight            | Better long-term    | ✅ Implemented |
 | 7        | 3.3 Importance/recency in score | Low | Slight            | Better ranking      |
 | 8        | 4.1 Entity-centric recall     | Medium | Slight            | Deeper context      |
 | 9        | 2.4 Consolidation job        | High   | High over time    | High                |

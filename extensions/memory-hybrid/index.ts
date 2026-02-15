@@ -1872,8 +1872,22 @@ const memoryHybridPlugin = {
             );
           }
 
-          const candidates = mergeResults(ftsResults, lanceResults, limit);
+          let candidates = mergeResults(ftsResults, lanceResults, limit);
           if (candidates.length === 0) return;
+
+          if (cfg.autoRecall.preferLongTerm) {
+            const boosted = candidates.map((r) => {
+              const factor =
+                r.entry.decayClass === "permanent"
+                  ? 1.2
+                  : r.entry.decayClass === "stable"
+                    ? 1.1
+                    : 1;
+              return { ...r, score: r.score * factor };
+            });
+            boosted.sort((a, b) => b.score - a.score);
+            candidates = boosted;
+          }
 
           const { maxTokens, maxPerMemoryChars, injectionFormat } = cfg.autoRecall;
           const header = "<relevant-memories>\nThe following memories may be relevant:\n";

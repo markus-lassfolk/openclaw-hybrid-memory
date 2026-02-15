@@ -28,7 +28,7 @@ export type AutoClassifyConfig = {
 /** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
 export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
 
-/** Auto-recall: enable/disable plus optional token cap, per-memory truncation, line format, limit, minScore */
+/** Auto-recall: enable/disable plus optional token cap, per-memory truncation, line format, limit, minScore, preferLongTerm */
 export type AutoRecallConfig = {
   enabled: boolean;
   maxTokens: number;           // cap on total tokens injected (default 800)
@@ -36,6 +36,7 @@ export type AutoRecallConfig = {
   injectionFormat: AutoRecallInjectionFormat;  // full | short | minimal (default full)
   limit: number;               // max memories to consider for injection (default 5)
   minScore: number;            // vector search minimum score 0–1 (default 0.3)
+  preferLongTerm: boolean;     // boost score for permanent/stable so lasting facts rank higher (default false)
 };
 
 export type HybridMemoryConfig = {
@@ -152,6 +153,7 @@ export const hybridConfigSchema = {
         : "full";
       const limit = typeof ar.limit === "number" && ar.limit > 0 ? Math.floor(ar.limit) : 5;
       const minScore = typeof ar.minScore === "number" && ar.minScore >= 0 && ar.minScore <= 1 ? ar.minScore : 0.3;
+      const preferLongTerm = ar.preferLongTerm === true;
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
@@ -159,6 +161,7 @@ export const hybridConfigSchema = {
         injectionFormat: format,
         limit,
         minScore,
+        preferLongTerm,
       };
     } else {
       autoRecall = {
@@ -168,6 +171,7 @@ export const hybridConfigSchema = {
         injectionFormat: "full",
         limit: 5,
         minScore: 0.3,
+        preferLongTerm: false,
       };
     }
 

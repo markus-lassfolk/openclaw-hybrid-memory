@@ -52,6 +52,10 @@
       "label": "Auto-Recall min score",
       "help": "Vector search minimum score 0–1 (default 0.3)"
     },
+    "autoRecall.preferLongTerm": {
+      "label": "Auto-Recall prefer long-term",
+      "help": "Boost score for permanent/stable facts so they rank higher when scores are close (default false)"
+    },
     "captureMaxChars": {
       "label": "Capture max characters",
       "help": "Max characters per fact: filter in auto-capture and truncate when storing (default 5000)"
@@ -104,7 +108,8 @@
                 "enum": ["full", "short", "minimal"]
               },
               "limit": { "type": "number" },
-              "minScore": { "type": "number" }
+              "minScore": { "type": "number" },
+              "preferLongTerm": { "type": "boolean" }
             }
           }
         ]
