@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Runtime config (contains real API keys)
+openclaw.json
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# LanceDB data
+lancedb/
+
+# OS files
+.DS_Store
+Thumbs.db

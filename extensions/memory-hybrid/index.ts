@@ -64,19 +64,13 @@ type SearchResult = {
 
 class FactsDB {
   private db: Database.Database;
+  private readonly dbPath: string;
 
   constructor(dbPath: string) {
+    this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
-
-    // Enable WAL mode for better concurrent read performance
-    this.db.pragma("journal_mode = WAL");
-    // Wait up to 5s for locks instead of failing immediately (prevents SQLITE_BUSY)
-    this.db.pragma("busy_timeout = 5000");
-    // Durable writes without the overhead of FULL fsync on every commit
-    this.db.pragma("synchronous = NORMAL");
-    // Auto-checkpoint WAL every 1000 pages (~4MB) to prevent unbounded growth
-    this.db.pragma("wal_autocheckpoint = 1000");
+    this.applyPragmas();
 
     // Create main table
     this.db.exec(`
@@ -139,6 +133,14 @@ class FactsDB {
 
     // ---- Fix ms/s unit mismatch from earlier versions ----
     this.migrateTimestampUnits();
+  }
+
+  /** Re-apply connection pragmas (used on initial open and auto-reopen). */
+  private applyPragmas(): void {
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+    this.db.pragma("synchronous = NORMAL");
+    this.db.pragma("wal_autocheckpoint = 1000");
   }
 
   private migrateDecayColumns(): void {
@@ -587,8 +589,17 @@ class FactsDB {
     return result.changes > 0;
   }
 
+  /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
+  private get liveDb(): Database.Database {
+    if (!this.db.open) {
+      this.db = new Database(this.dbPath);
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   close(): void {
-    this.db.close();
+    try { this.db.close(); } catch { /* already closed */ }
   }
 }
 
@@ -674,6 +685,10 @@ class VectorDB {
             createdAt: (row.createdAt as number) > 10_000_000_000
               ? Math.floor((row.createdAt as number) / 1000)
               : (row.createdAt as number),
+            decayClass: "stable" as DecayClass,
+            expiresAt: null,
+            lastConfirmedAt: 0,
+            confidence: 1.0,
           },
           score,
           backend: "lancedb" as const,
@@ -1054,6 +1069,22 @@ async function runAutoClassify(
 // Plugin Definition
 // ============================================================================
 
+// Mutable module-level state so that ALL closures (tools, event handlers,
+// timers) always see the *current* instances — even after a SIGUSR1 reload
+// where stop() closes the old DB and register() creates a new one.
+// Without this, old closures captured const locals from the first register()
+// call and kept using a closed database after restart.
+let cfg: HybridMemoryConfig;
+let resolvedLancePath: string;
+let resolvedSqlitePath: string;
+let factsDb: FactsDB;
+let vectorDb: VectorDB;
+let embeddings: Embeddings;
+let openaiClient: OpenAI;
+let pruneTimer: ReturnType<typeof setInterval> | null = null;
+let classifyTimer: ReturnType<typeof setInterval> | null = null;
+let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
+
 const memoryHybridPlugin = {
   id: "memory-hybrid",
   name: "Memory (Hybrid: SQLite + LanceDB)",
@@ -1063,19 +1094,15 @@ const memoryHybridPlugin = {
   configSchema: hybridConfigSchema,
 
   register(api: ClawdbotPluginApi) {
-    const cfg = hybridConfigSchema.parse(api.pluginConfig);
-    const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
-    const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
+    cfg = hybridConfigSchema.parse(api.pluginConfig);
+    resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
+    resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
     const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
-    const factsDb = new FactsDB(resolvedSqlitePath);
-    const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
-    const embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
-    const openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
-
-    let pruneTimer: ReturnType<typeof setInterval> | null = null;
-    let classifyTimer: ReturnType<typeof setInterval> | null = null;
-    let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
+    factsDb = new FactsDB(resolvedSqlitePath);
+    vectorDb = new VectorDB(resolvedLancePath, vectorDim);
+    embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
+    openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
     api.logger.info(
       `memory-hybrid: registered (sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath})`,
@@ -1512,7 +1539,7 @@ const memoryHybridPlugin = {
     // CLI Commands
     // ========================================================================
 
-    api.registerCli(
+    api.registerCLI(
       ({ program }) => {
         const mem = program
           .command("hybrid-mem")
@@ -1994,9 +2021,9 @@ const memoryHybridPlugin = {
         }
       },
       stop: () => {
-        if (pruneTimer) clearInterval(pruneTimer);
-        if (classifyStartupTimeout) clearTimeout(classifyStartupTimeout);
-        if (classifyTimer) clearInterval(classifyTimer);
+        if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
+        if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
+        if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
         factsDb.close();
         api.logger.info("memory-hybrid: stopped");
       },

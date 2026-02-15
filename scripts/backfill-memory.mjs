@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-/**
- * Dynamic backfill for memory-hybrid plugin: discover workspace, glob all
- * MEMORY.md and memory/**/*.md (no hardcoded dates or section names), parse
- * content, extract facts, write to plugin SQLite + LanceDB.
- *
- * Run with NODE_PATH set to the memory-hybrid extension's node_modules, or
- * from the extension directory. Example:
- *   EXT_DIR="$(npm root -g)/openclaw/extensions/memory-hybrid"
- *   NODE_PATH="$EXT_DIR/node_modules" OPENCLAW_WORKSPACE=~/.openclaw/workspace node scripts/backfill-memory.mjs
- *   node scripts/backfill-memory.mjs --dry-run
- */
+//
+// Dynamic backfill for memory-hybrid plugin: discover workspace, glob all
+// MEMORY.md and memory/**/*.md (no hardcoded dates or section names), parse
+// content, extract facts, write to plugin SQLite + LanceDB.
+//
+// Run with NODE_PATH set to the memory-hybrid extension's node_modules, or
+// from the extension directory. Example:
+//   EXT_DIR="$(npm root -g)/openclaw/extensions/memory-hybrid"
+//   NODE_PATH="$EXT_DIR/node_modules" OPENCLAW_WORKSPACE=~/.openclaw/workspace node scripts/backfill-memory.mjs
+//   node scripts/backfill-memory.mjs --dry-run
+//
 
 import { createRequire } from "node:module";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
