@@ -25,13 +25,13 @@ This project builds on the work of two authors from the OpenClaw community:
 
 **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (February 13, 2026)
 
-The memory-hybrid plugin in `extensions/memory-hybrid/` is based on the plugin architecture described in this article. The original design introduced: SQLite + FTS5 for structured fact storage, LanceDB for semantic vector search, decay tiers with TTL-based expiry, checkpoints, and the dual-backend approach. The full article text and original setup prompts are preserved in `docs/` for reference.
+The memory-hybrid plugin in `extensions/memory-hybrid/` is based on the plugin architecture described in this article. The original design introduced: SQLite + FTS5 for structured fact storage, LanceDB for semantic vector search, decay tiers with TTL-based expiry, checkpoints, and the dual-backend approach. The full article text and original setup prompts are preserved in **docs/archive/** for credit and historical reference only; do not use those prompts to install — they target an older version. Use the v3 guide or SETUP-AUTONOMOUS.md for installation.
 
 ### ucsandman
 
 **[OpenClaw-Hierarchical-Memory-System](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System)**
 
-The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down detail files under `memory/`) originates from ucsandman's system. The original concept introduced: the index-plus-detail-files pattern, token-budget math for bootstrap files, and the directory structure (`memory/people/`, `memory/projects/`, `memory/technical/`, etc.). The original prompt and implementation steps are preserved in [docs/ucsandman-hierarchical-memory-system.md](docs/ucsandman-hierarchical-memory-system.md).
+The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down detail files under `memory/`) originates from ucsandman's system. The original concept introduced: the index-plus-detail-files pattern, token-budget math for bootstrap files, and the directory structure (`memory/people/`, `memory/projects/`, `memory/technical/`, etc.). The original prompt and implementation steps are preserved in [docs/archive/ucsandman-hierarchical-memory-system.md](docs/archive/ucsandman-hierarchical-memory-system.md).
 
 ### What this repo adds
 
@@ -49,14 +49,16 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 - AI-friendly autonomous setup prompt ([SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md))
 - Comprehensive reference documentation ([v3 guide](docs/hybrid-memory-manager-v3.md))
 
-## Original source material
+## Original source material (archive)
+
+The following are in **docs/archive/** for credit and history. Do not use the setup prompts to install; they target an older plugin version. Use the v3 guide or SETUP-AUTONOMOUS.md instead.
 
 | Path | Description |
 |------|-------------|
-| **[docs/clawdboss-permanent-memory-article.md](docs/clawdboss-permanent-memory-article.md)** | Full text of "Give Your Clawdbot Permanent Memory" by Clawdboss.ai (Feb 13, 2026). |
-| **[docs/ucsandman-hierarchical-memory-system.md](docs/ucsandman-hierarchical-memory-system.md)** | ucsandman's hierarchical memory system prompt and implementation steps. |
-| **[docs/hybrid-hierarchical-memory-guide.md](docs/hybrid-hierarchical-memory-guide.md)** | Earlier v2.0 guide (pre-hybrid, memorySearch + hierarchical files only). |
-| **docs/SETUP-PROMPT-1..4** | Pasteable setup prompts from the Clawdboss.ai article. |
+| **[docs/archive/clawdboss-permanent-memory-article.md](docs/archive/clawdboss-permanent-memory-article.md)** | Full text of "Give Your Clawdbot Permanent Memory" by Clawdboss.ai (Feb 13, 2026). |
+| **[docs/archive/ucsandman-hierarchical-memory-system.md](docs/archive/ucsandman-hierarchical-memory-system.md)** | ucsandman's hierarchical memory system prompt and implementation steps. |
+| **[docs/archive/hybrid-hierarchical-memory-guide.md](docs/archive/hybrid-hierarchical-memory-guide.md)** | Earlier v2.0 guide (pre-hybrid, memorySearch + hierarchical files only). |
+| **docs/archive/SETUP-PROMPT-1..4** | Original pasteable setup prompts from the Clawdboss.ai article (historical only). |
 
 ## Quick start
 
