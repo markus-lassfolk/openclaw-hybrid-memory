@@ -31,6 +31,7 @@ import {
   hybridConfigSchema,
   vectorDimsForModel,
 } from "./config.js";
+import { versionInfo } from "./versionInfo.js";
 
 // ============================================================================
 // Types
@@ -1092,6 +1093,7 @@ const memoryHybridPlugin = {
     "Two-tier memory: SQLite+FTS5 for structured facts, LanceDB for semantic search",
   kind: "memory" as const,
   configSchema: hybridConfigSchema,
+  versionInfo,
 
   register(api: ClawdbotPluginApi) {
     cfg = hybridConfigSchema.parse(api.pluginConfig);
@@ -1105,7 +1107,7 @@ const memoryHybridPlugin = {
     openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
     api.logger.info(
-      `memory-hybrid: registered (sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath})`,
+      `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
     );
 
     // ========================================================================
@@ -1554,6 +1556,7 @@ const memoryHybridPlugin = {
             const breakdown = factsDb.statsBreakdown();
             const expired = factsDb.countExpired();
 
+            console.log(`memory-hybrid ${versionInfo.pluginVersion} (memory-manager ${versionInfo.memoryManagerVersion}, schema ${versionInfo.schemaVersion})`);
             console.log(`SQLite facts:    ${sqlCount}`);
             console.log(`LanceDB vectors: ${lanceCount}`);
             console.log(`Total: ${sqlCount + lanceCount} (with overlap)`);
@@ -1972,7 +1975,7 @@ const memoryHybridPlugin = {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
-          `memory-hybrid: initialized (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
+          `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
         );
 
         if (expired > 0) {
@@ -2031,4 +2034,5 @@ const memoryHybridPlugin = {
   },
 };
 
+export { versionInfo } from "./versionInfo.js";
 export default memoryHybridPlugin;

@@ -101,7 +101,7 @@ Copy the entire `extensions/memory-hybrid/` directory from this repo into your O
 - **Windows:** `%APPDATA%\npm\node_modules\openclaw\extensions\memory-hybrid\`
 - **Linux:** `/usr/lib/node_modules/openclaw/extensions/memory-hybrid/` (or `~/.npm-global/lib/node_modules/openclaw/extensions/memory-hybrid/` if you use a user install)
 
-Create the `memory-hybrid` directory if it doesn't exist. Copy: `package.json`, `openclaw.plugin.json`, `config.ts`, `index.ts`.
+Create the `memory-hybrid` directory if it doesn't exist. Copy: `package.json`, `openclaw.plugin.json`, `config.ts`, `versionInfo.ts`, `index.ts`.
 
 ### 3.2 Install dependencies
 
@@ -126,6 +126,20 @@ If `npm install` fails (e.g. due to `devDependencies` with `"openclaw": "workspa
 **Note:** Some older guides also run `npm install better-sqlite3` from `~/.openclaw`. That only works if you have a `package.json` in `~/.openclaw` (e.g. for a seed script). For the plugin itself, the extension-dir install is enough; you do not need to create a package.json in `~/.openclaw` unless you run separate tools from there that depend on better-sqlite3.
 
 Full details: [SETUP-PROMPT-1-CREATE-PLUGIN-FILES.md](SETUP-PROMPT-1-CREATE-PLUGIN-FILES.md), [SETUP-PROMPT-2-INSTALL-DEPENDENCIES.md](SETUP-PROMPT-2-INSTALL-DEPENDENCIES.md).
+
+### 3.3 Version metadata and upgrades
+
+The plugin exposes version info to simplify upgrades and support:
+
+| Source | Meaning |
+|--------|---------|
+| **pluginVersion** | Release version (from `package.json`). Bump on each release. |
+| **memoryManagerVersion** | Spec version aligned with this doc (e.g. `3.0`). |
+| **schemaVersion** | DB schema version; bump when adding migrations or breaking schema changes. |
+
+- **At runtime:** Gateway logs and `openclaw hybrid-mem stats` show plugin and memory-manager versions.
+- **Manifest:** `openclaw.plugin.json` includes `version` (keep in sync with `package.json`).
+- **Single source:** Plugin version is read from `package.json`; `memoryManagerVersion` and `schemaVersion` live in `extensions/memory-hybrid/versionInfo.ts`. When upgrading, copy the new extension files and run `npm install` in the extension directory (§14).
 
 ---
 
