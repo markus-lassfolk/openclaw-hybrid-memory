@@ -40,6 +40,10 @@
       "label": "Auto-Recall max chars per memory",
       "help": "Truncate each memory to N chars; 0 = no truncation"
     },
+    "autoRecall.injectionFormat": {
+      "label": "Auto-Recall injection format",
+      "help": "full = [backend/category] text, short = category: text, minimal = text only (saves tokens)"
+    },
     "captureMaxChars": {
       "label": "Capture max characters",
       "help": "Max characters per fact: filter in auto-capture and truncate when storing (default 5000)"
@@ -86,7 +90,11 @@
             "properties": {
               "enabled": { "type": "boolean" },
               "maxTokens": { "type": "number" },
-              "maxPerMemoryChars": { "type": "number" }
+              "maxPerMemoryChars": { "type": "number" },
+              "injectionFormat": {
+                "type": "string",
+                "enum": ["full", "short", "minimal"]
+              }
             }
           }
         ]

@@ -138,7 +138,7 @@
 |----------|------------------------------|--------|-------------------|---------------------|
 | 1        | 1.1 Token cap on auto-recall | Low    | High              | Neutral             | ✅ Implemented |
 | 2        | 1.3 Honor captureMaxChars    | Low    | Medium            | Prevents drop/long  | ✅ Implemented |
-| 3        | 1.2 Shorter injection format | Low    | Medium            | Neutral             |
+| 3        | 1.2 Shorter injection format | Low    | Medium            | Neutral             | ✅ Implemented |
 | 4        | 2.1 Configurable recall limit/minScore | Low  | Config-driven     | Better relevance    |
 | 5        | 2.2 Semantic dedupe at store| Medium | Medium (fewer dupes) | High             |
 | 6        | 3.1 Decay-class–aware recall | Low    | Slight            | Better long-term    |

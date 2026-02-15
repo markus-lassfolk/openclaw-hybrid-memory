@@ -25,11 +25,15 @@ export type AutoClassifyConfig = {
   batchSize: number;   // facts per LLM call (default 20)
 };
 
-/** Auto-recall: enable/disable plus optional token cap and per-memory truncation */
+/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
+export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
+
+/** Auto-recall: enable/disable plus optional token cap, per-memory truncation, and line format */
 export type AutoRecallConfig = {
   enabled: boolean;
   maxTokens: number;           // cap on total tokens injected (default 800)
   maxPerMemoryChars: number;   // truncate each memory to this many chars; 0 = no truncation
+  injectionFormat: AutoRecallInjectionFormat;  // full | short | minimal (default full)
 };
 
 export type HybridMemoryConfig = {
@@ -135,21 +139,27 @@ export const hybridConfigSchema = {
       batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
     };
 
-    // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars? }
+    // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars?, injectionFormat? }
     const arRaw = cfg.autoRecall;
+    const VALID_FORMATS = ["full", "short", "minimal"] as const;
     let autoRecall: AutoRecallConfig;
     if (typeof arRaw === "object" && arRaw !== null && !Array.isArray(arRaw)) {
       const ar = arRaw as Record<string, unknown>;
+      const format = typeof ar.injectionFormat === "string" && VALID_FORMATS.includes(ar.injectionFormat as typeof VALID_FORMATS[number])
+        ? (ar.injectionFormat as AutoRecallInjectionFormat)
+        : "full";
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
         maxPerMemoryChars: typeof ar.maxPerMemoryChars === "number" && ar.maxPerMemoryChars >= 0 ? ar.maxPerMemoryChars : 0,
+        injectionFormat: format,
       };
     } else {
       autoRecall = {
         enabled: arRaw !== false,
         maxTokens: 800,
         maxPerMemoryChars: 0,
+        injectionFormat: "full",
       };
     }
 

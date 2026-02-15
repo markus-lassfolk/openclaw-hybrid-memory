@@ -180,7 +180,7 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **memory-hyb
 
 `captureMaxChars` (e.g. `5000`) is optional; default is 5000. The plugin uses it in the auto-capture filter (messages longer than this are not captured) and truncates stored text to this length with " [truncated]" when storing (tool or auto-capture).
 
-**Auto-recall token cap:** `autoRecall` can be `true` (default behaviour) or an object: `{ "enabled": true, "maxTokens": 800, "maxPerMemoryChars": 0 }`. `maxTokens` caps the total tokens injected (default 800); `maxPerMemoryChars` truncates each memory to N characters (0 = no truncation). This keeps injected memories within a token budget. See [MEMORY-ENHANCEMENT-IDEAS.md](MEMORY-ENHANCEMENT-IDEAS.md) §1.1.
+**Auto-recall token cap and format:** `autoRecall` can be `true` (default behaviour) or an object: `{ "enabled": true, "maxTokens": 800, "maxPerMemoryChars": 0, "injectionFormat": "full" }`. `maxTokens` caps the total tokens injected (default 800); `maxPerMemoryChars` truncates each memory to N characters (0 = no truncation). `injectionFormat` controls the per-memory line in the injected block: `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only (saves tokens). See [MEMORY-ENHANCEMENT-IDEAS.md](MEMORY-ENHANCEMENT-IDEAS.md) §1.1 and §1.2.
 
 **memory-core** stays `enabled: true` alongside memory-hybrid: it provides the file-based tools (`memory_store`, `memory_recall`, `memory_forget`) independently of the slot. Only one plugin can own the slot; memory-core does not conflict with memory-hybrid.
 

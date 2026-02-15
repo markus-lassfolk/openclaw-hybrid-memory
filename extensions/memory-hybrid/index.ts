@@ -1874,7 +1874,7 @@ const memoryHybridPlugin = {
           const candidates = mergeResults(ftsResults, lanceResults, 15);
           if (candidates.length === 0) return;
 
-          const { maxTokens, maxPerMemoryChars } = cfg.autoRecall;
+          const { maxTokens, maxPerMemoryChars, injectionFormat } = cfg.autoRecall;
           const header = "<relevant-memories>\nThe following memories may be relevant:\n";
           const footer = "\n</relevant-memories>";
           let usedTokens = estimateTokens(header + footer);
@@ -1885,7 +1885,12 @@ const memoryHybridPlugin = {
             if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
               text = text.slice(0, maxPerMemoryChars).trim() + "…";
             }
-            const line = `- [${r.backend}/${r.entry.category}] ${text}`;
+            const line =
+              injectionFormat === "minimal"
+                ? `- ${text}`
+                : injectionFormat === "short"
+                  ? `- ${r.entry.category}: ${text}`
+                  : `- [${r.backend}/${r.entry.category}] ${text}`;
             const lineTokens = estimateTokens(line + "\n");
             if (usedTokens + lineTokens > maxTokens) break;
             lines.push(line);
