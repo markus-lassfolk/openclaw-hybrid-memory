@@ -76,6 +76,15 @@
       "label": "Use summary in injection",
       "help": "Inject summary instead of full text when present (default true)"
     },
+    "autoRecall.summarizeWhenOverBudget": {
+      "label": "Summarize when over budget",
+      "help": "When token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)"
+    },
+    "autoRecall.summarizeModel": {
+      "label": "Summarize model",
+      "placeholder": "gpt-4o-mini",
+      "help": "Model for summarize-when-over-budget (default gpt-4o-mini)"
+    },
     "captureMaxChars": {
       "label": "Capture max characters",
       "help": "Max characters per fact: filter in auto-capture and truncate when storing (default 5000)"
@@ -142,7 +151,9 @@
               },
               "summaryThreshold": { "type": "number" },
               "summaryMaxChars": { "type": "number" },
-              "useSummaryInInjection": { "type": "boolean" }
+              "useSummaryInInjection": { "type": "boolean" },
+              "summarizeWhenOverBudget": { "type": "boolean" },
+              "summarizeModel": { "type": "string" }
             }
           }
         ]

@@ -49,6 +49,8 @@ export type AutoRecallConfig = {
   summaryThreshold: number;      // facts longer than this get a summary stored; 0 = disabled (default 300)
   summaryMaxChars: number;       // summary length when generated (default 80)
   useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
+  summarizeWhenOverBudget: boolean;  // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
+  summarizeModel: string;        // model for summarize-when-over-budget (default gpt-4o-mini)
 };
 
 export type HybridMemoryConfig = {
@@ -183,6 +185,8 @@ export const hybridConfigSchema = {
       const summaryMaxChars =
         typeof ar.summaryMaxChars === "number" && ar.summaryMaxChars > 0 ? Math.min(ar.summaryMaxChars, 500) : 80;
       const useSummaryInInjection = ar.useSummaryInInjection !== false;
+      const summarizeWhenOverBudget = ar.summarizeWhenOverBudget === true;
+      const summarizeModel = typeof ar.summarizeModel === "string" ? ar.summarizeModel : "gpt-4o-mini";
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
@@ -196,6 +200,8 @@ export const hybridConfigSchema = {
         summaryThreshold,
         summaryMaxChars,
         useSummaryInInjection,
+        summarizeWhenOverBudget,
+        summarizeModel,
       };
     } else {
       autoRecall = {
@@ -211,6 +217,8 @@ export const hybridConfigSchema = {
         summaryThreshold: 300,
         summaryMaxChars: 80,
         useSummaryInInjection: true,
+        summarizeWhenOverBudget: false,
+        summarizeModel: "gpt-4o-mini",
       };
     }
 

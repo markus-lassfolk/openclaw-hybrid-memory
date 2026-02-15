@@ -46,6 +46,8 @@
 
 **Enhancement:** If after merging and sorting the top-N memories the total text still exceeds `autoRecall.maxTokens`, run an optional step: call a cheap LLM to summarize the list into 2–3 short sentences (e.g. "User prefers dark mode and Postgres. Key project: X. Recent decision: Y."). Use that as the single injected block. Only when `autoRecall.summarizeWhenOverBudget: true` and over cap.
 
+**Implemented.** Config: `autoRecall.summarizeWhenOverBudget` (default false), `autoRecall.summarizeModel` (default gpt-4o-mini). When the token cap forces dropping candidates (`lines.length < candidates.length`), the plugin sends all candidate bullets to the LLM, gets 2–3 sentences, and injects that as the single block; on LLM failure it falls back to the truncated list.
+
 ---
 
 ## 2. Better memory management
@@ -162,7 +164,7 @@
 | 7        | 3.3 Importance/recency in score | Low | Slight            | Better ranking      | ✅ Implemented |
 | 8        | 4.1 Entity-centric recall     | Medium | Slight            | Deeper context      | ✅ Implemented |
 | 9        | 2.4 Consolidation job        | High   | High over time    | High                | ✅ Implemented |
-| 10       | 1.4 Summarize over budget    | Medium | When over cap     | When over cap       |
+| 10       | 1.4 Summarize over budget    | Medium | When over cap     | When over cap       | ✅ Implemented |
 | —        | 4.3 Chunked long facts       | Medium | Token savings     | In-depth available  | ✅ Implemented |
 
 ---

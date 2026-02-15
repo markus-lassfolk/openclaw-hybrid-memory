@@ -2192,7 +2192,14 @@ const memoryHybridPlugin = {
             candidates = boosted;
           }
 
-          const { maxTokens, maxPerMemoryChars, injectionFormat, useSummaryInInjection } = cfg.autoRecall;
+          const {
+            maxTokens,
+            maxPerMemoryChars,
+            injectionFormat,
+            useSummaryInInjection,
+            summarizeWhenOverBudget,
+            summarizeModel,
+          } = cfg.autoRecall;
           const header = "<relevant-memories>\nThe following memories may be relevant:\n";
           const footer = "\n</relevant-memories>";
           let usedTokens = estimateTokens(header + footer);
@@ -2218,10 +2225,55 @@ const memoryHybridPlugin = {
 
           if (lines.length === 0) return;
 
-          const memoryContext = lines.join("\n");
-          api.logger.info?.(
-            `memory-hybrid: injecting ${lines.length} memories (sqlite: ${ftsResults.length}, lance: ${lanceResults.length}, ~${usedTokens} tokens)`,
-          );
+          let memoryContext = lines.join("\n");
+
+          if (summarizeWhenOverBudget && lines.length < candidates.length) {
+            const fullBullets = candidates
+              .map((r) => {
+                let text =
+                  useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
+                if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
+                  text = text.slice(0, maxPerMemoryChars).trim() + "…";
+                }
+                return injectionFormat === "minimal"
+                  ? `- ${text}`
+                  : injectionFormat === "short"
+                    ? `- ${r.entry.category}: ${text}`
+                    : `- [${r.backend}/${r.entry.category}] ${text}`;
+              })
+              .join("\n");
+            try {
+              const resp = await openaiClient.chat.completions.create({
+                model: summarizeModel,
+                messages: [
+                  {
+                    role: "user",
+                    content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
+                  },
+                ],
+                temperature: 0,
+                max_tokens: 200,
+              });
+              const summary = (resp.choices[0]?.message?.content ?? "").trim();
+              if (summary) {
+                memoryContext = summary;
+                usedTokens = estimateTokens(header + memoryContext + footer);
+                api.logger.info?.(
+                  `memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`,
+                );
+              }
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: summarize-when-over-budget failed: ${err}`);
+            }
+          }
+
+          if (!memoryContext) return;
+
+          if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
+            api.logger.info?.(
+              `memory-hybrid: injecting ${lines.length} memories (sqlite: ${ftsResults.length}, lance: ${lanceResults.length}, ~${usedTokens} tokens)`,
+            );
+          }
 
           return {
             prependContext: `${header}${memoryContext}${footer}`,
