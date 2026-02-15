@@ -160,9 +160,10 @@
 | 5        | 2.2 Semantic dedupe (maintenance: find-duplicates CLI) | Medium | Medium (fewer dupes) | High — revised, not at store |
 | 6        | 3.1 Decay-class–aware recall | Low    | Slight            | Better long-term    | ✅ Implemented |
 | 7        | 3.3 Importance/recency in score | Low | Slight            | Better ranking      | ✅ Implemented |
-| 8        | 4.1 Entity-centric recall     | Medium | Slight            | Deeper context      |
+| 8        | 4.1 Entity-centric recall     | Medium | Slight            | Deeper context      | ✅ Implemented |
 | 9        | 2.4 Consolidation job        | High   | High over time    | High                |
 | 10       | 1.4 Summarize over budget    | Medium | When over cap     | When over cap       |
+| —        | 4.3 Chunked long facts       | Medium | Token savings     | In-depth available  | ✅ Implemented |
 
 ---
 

@@ -51,6 +51,8 @@ type MemoryEntry = {
   expiresAt: number | null;
   lastConfirmedAt: number;
   confidence: number;
+  /** Short summary for long facts; used in injection when useSummaryInInjection (4.3) */
+  summary?: string | null;
 };
 
 type SearchResult = {
@@ -134,6 +136,17 @@ class FactsDB {
 
     // ---- Fix ms/s unit mismatch from earlier versions ----
     this.migrateTimestampUnits();
+
+    // ---- Summary column for chunked long facts (4.3) ----
+    this.migrateSummaryColumn();
+  }
+
+  private migrateSummaryColumn(): void {
+    const cols = this.db
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "summary")) return;
+    this.db.exec(`ALTER TABLE facts ADD COLUMN summary TEXT`);
   }
 
   /** Re-apply connection pragmas (used on initial open and auto-reopen). */
@@ -206,6 +219,7 @@ class FactsDB {
       decayClass?: DecayClass;
       expiresAt?: number | null;
       confidence?: number;
+      summary?: string | null;
     },
   ): MemoryEntry {
     const id = randomUUID();
@@ -219,11 +233,12 @@ class FactsDB {
         ? entry.expiresAt
         : calculateExpiry(decayClass, nowSec);
     const confidence = entry.confidence ?? 1.0;
+    const summary = entry.summary ?? null;
 
     this.db
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -239,6 +254,7 @@ class FactsDB {
         expiresAt,
         nowSec,
         confidence,
+        summary,
       );
 
     return {
@@ -249,6 +265,7 @@ class FactsDB {
       expiresAt,
       lastConfirmedAt: nowSec,
       confidence,
+      summary: summary ?? undefined,
     };
   }
 
@@ -351,6 +368,7 @@ class FactsDB {
           expiresAt: (row.expires_at as number) || null,
           lastConfirmedAt: (row.last_confirmed_at as number) || 0,
           confidence,
+          summary: (row.summary as string) || undefined,
         },
         score: composite,
         backend: "sqlite" as const,
@@ -391,6 +409,7 @@ class FactsDB {
         expiresAt: (row.expires_at as number) || null,
         lastConfirmedAt: (row.last_confirmed_at as number) || 0,
         confidence: (row.confidence as number) || 1.0,
+        summary: (row.summary as string) || undefined,
       },
       score: (row.confidence as number) || 1.0,
       backend: "sqlite" as const,
@@ -565,21 +584,22 @@ class FactsDB {
   getByCategory(category: string): MemoryEntry[] {
     const rows = this.db
       .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
-      .all(category);
-    return rows.map((row: any) => ({
-      id: row.id,
-      text: row.text,
-      category: row.category,
-      importance: row.importance,
-      entity: row.entity,
-      key: row.key,
-      value: row.value,
-      source: row.source,
-      createdAt: row.created_at,
-      decayClass: row.decay_class,
-      expiresAt: row.expires_at,
-      lastConfirmedAt: row.last_confirmed_at,
-      confidence: row.confidence,
+      .all(category) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      category: row.category as MemoryCategory,
+      importance: row.importance as number,
+      entity: (row.entity as string) || null,
+      key: (row.key as string) || null,
+      value: (row.value as string) || null,
+      source: row.source as string,
+      createdAt: row.created_at as number,
+      decayClass: (row.decay_class as DecayClass) || "stable",
+      expiresAt: (row.expires_at as number) || null,
+      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
+      confidence: (row.confidence as number) || 1.0,
+      summary: (row.summary as string) || undefined,
     }));
   }
 
@@ -1274,6 +1294,12 @@ const memoryHybridPlugin = {
           const key = paramKey || extracted.key;
           const value = paramValue || extracted.value;
 
+          const summaryThreshold = cfg.autoRecall.summaryThreshold;
+          const summary =
+            summaryThreshold > 0 && textToStore.length > summaryThreshold
+              ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
+              : undefined;
+
           const entry = factsDb.store({
             text: textToStore,
             category: category as MemoryCategory,
@@ -1283,6 +1309,7 @@ const memoryHybridPlugin = {
             value,
             source: "conversation",
             decayClass: paramDecayClass,
+            summary,
           });
 
           try {
@@ -1873,6 +1900,25 @@ const memoryHybridPlugin = {
           }
 
           let candidates = mergeResults(ftsResults, lanceResults, limit);
+
+          const { entityLookup } = cfg.autoRecall;
+          if (entityLookup.enabled && entityLookup.entities.length > 0) {
+            const promptLower = event.prompt.toLowerCase();
+            const seenIds = new Set(candidates.map((c) => c.entry.id));
+            for (const entity of entityLookup.entities) {
+              if (!promptLower.includes(entity.toLowerCase())) continue;
+              const entityResults = factsDb.lookup(entity).slice(0, entityLookup.maxFactsPerEntity);
+              for (const r of entityResults) {
+                if (!seenIds.has(r.entry.id)) {
+                  seenIds.add(r.entry.id);
+                  candidates.push(r);
+                }
+              }
+            }
+            candidates.sort((a, b) => b.score - a.score);
+            candidates = candidates.slice(0, limit);
+          }
+
           if (candidates.length === 0) return;
 
           if (cfg.autoRecall.preferLongTerm || cfg.autoRecall.useImportanceRecency) {
@@ -1907,14 +1953,15 @@ const memoryHybridPlugin = {
             candidates = boosted;
           }
 
-          const { maxTokens, maxPerMemoryChars, injectionFormat } = cfg.autoRecall;
+          const { maxTokens, maxPerMemoryChars, injectionFormat, useSummaryInInjection } = cfg.autoRecall;
           const header = "<relevant-memories>\nThe following memories may be relevant:\n";
           const footer = "\n</relevant-memories>";
           let usedTokens = estimateTokens(header + footer);
 
           const lines: string[] = [];
           for (const r of candidates) {
-            let text = r.entry.text;
+            let text =
+              useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
             if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
               text = text.slice(0, maxPerMemoryChars).trim() + "…";
             }
@@ -2000,6 +2047,12 @@ const memoryHybridPlugin = {
 
             if (factsDb.hasDuplicate(textToStore)) continue;
 
+            const summaryThreshold = cfg.autoRecall.summaryThreshold;
+            const summary =
+              summaryThreshold > 0 && textToStore.length > summaryThreshold
+                ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
+                : undefined;
+
             factsDb.store({
               text: textToStore,
               category,
@@ -2008,6 +2061,7 @@ const memoryHybridPlugin = {
               key: extracted.key,
               value: extracted.value,
               source: "auto-capture",
+              summary,
             });
 
             try {

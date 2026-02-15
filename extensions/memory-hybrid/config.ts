@@ -28,16 +28,27 @@ export type AutoClassifyConfig = {
 /** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
 export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
 
-/** Auto-recall: enable/disable plus optional token cap, per-memory truncation, line format, limit, minScore, preferLongTerm */
+/** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
+export type EntityLookupConfig = {
+  enabled: boolean;
+  entities: string[];           // e.g. ["user", "owner", "decision"]; prompt matched case-insensitively
+  maxFactsPerEntity: number;    // max facts to merge per matched entity (default 2)
+};
+
+/** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary */
 export type AutoRecallConfig = {
   enabled: boolean;
-  maxTokens: number;           // cap on total tokens injected (default 800)
-  maxPerMemoryChars: number;   // truncate each memory to this many chars; 0 = no truncation
-  injectionFormat: AutoRecallInjectionFormat;  // full | short | minimal (default full)
-  limit: number;               // max memories to consider for injection (default 5)
-  minScore: number;            // vector search minimum score 0–1 (default 0.3)
-  preferLongTerm: boolean;     // boost score for permanent/stable so lasting facts rank higher (default false)
-  useImportanceRecency: boolean;  // combine relevance with importance and lastConfirmedAt in ranking (default false)
+  maxTokens: number;
+  maxPerMemoryChars: number;
+  injectionFormat: AutoRecallInjectionFormat;
+  limit: number;
+  minScore: number;
+  preferLongTerm: boolean;
+  useImportanceRecency: boolean;
+  entityLookup: EntityLookupConfig;
+  summaryThreshold: number;      // facts longer than this get a summary stored; 0 = disabled (default 300)
+  summaryMaxChars: number;       // summary length when generated (default 80)
+  useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
 };
 
 export type HybridMemoryConfig = {
@@ -156,6 +167,22 @@ export const hybridConfigSchema = {
       const minScore = typeof ar.minScore === "number" && ar.minScore >= 0 && ar.minScore <= 1 ? ar.minScore : 0.3;
       const preferLongTerm = ar.preferLongTerm === true;
       const useImportanceRecency = ar.useImportanceRecency === true;
+      const entityLookupRaw = ar.entityLookup as Record<string, unknown> | undefined;
+      const entityLookup: EntityLookupConfig = {
+        enabled: entityLookupRaw?.enabled === true,
+        entities: Array.isArray(entityLookupRaw?.entities)
+          ? (entityLookupRaw.entities as string[]).filter((e) => typeof e === "string" && e.length > 0)
+          : [],
+        maxFactsPerEntity:
+          typeof entityLookupRaw?.maxFactsPerEntity === "number" && entityLookupRaw.maxFactsPerEntity > 0
+            ? Math.floor(entityLookupRaw.maxFactsPerEntity)
+            : 2,
+      };
+      const summaryThreshold =
+        typeof ar.summaryThreshold === "number" && ar.summaryThreshold >= 0 ? ar.summaryThreshold : 300;
+      const summaryMaxChars =
+        typeof ar.summaryMaxChars === "number" && ar.summaryMaxChars > 0 ? Math.min(ar.summaryMaxChars, 500) : 80;
+      const useSummaryInInjection = ar.useSummaryInInjection !== false;
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
@@ -165,6 +192,10 @@ export const hybridConfigSchema = {
         minScore,
         preferLongTerm,
         useImportanceRecency,
+        entityLookup,
+        summaryThreshold,
+        summaryMaxChars,
+        useSummaryInInjection,
       };
     } else {
       autoRecall = {
@@ -176,6 +207,10 @@ export const hybridConfigSchema = {
         minScore: 0.3,
         preferLongTerm: false,
         useImportanceRecency: false,
+        entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 2 },
+        summaryThreshold: 300,
+        summaryMaxChars: 80,
+        useSummaryInInjection: true,
       };
     }
 
