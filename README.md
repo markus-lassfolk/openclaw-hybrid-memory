@@ -37,17 +37,36 @@ The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down 
 
 This repo combines both approaches into a unified system (v3.0) and adds:
 
+**Deployment & operations**
 - Single deployment flow that works on new or existing systems
+- Dynamic backfill script (no hardcoded dates or section names; reads workspace and config)
+- Upgrade helpers for post–OpenClaw-upgrade LanceDB reinstall ([scripts/](scripts/))
+- **Verify CLI** (`openclaw hybrid-mem verify [--fix] [--log-file <path>]`) — checks config, SQLite, LanceDB, embedding API; optional fix suggestions and log scan
+- **Uninstall CLI** (`openclaw hybrid-mem uninstall`) — restores default memory manager in config; optional `--clean-all` to remove data
+- AI-friendly autonomous setup ([SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)) and full reference ([v3 guide](docs/hybrid-memory-manager-v3.md))
+
+**Capture & recall**
 - Auto-capture and auto-recall lifecycle hooks
-- LLM-based auto-classification of facts into categories
+- **Token control:** configurable auto-recall token cap (`maxTokens`), per-memory truncation (`maxPerMemoryChars`), shorter injection format (`full` / `short` / `minimal`)
+- **Summarize when over budget:** optional LLM summary of candidate memories when over token cap (2–3 sentences injected instead of a long list)
+- Configurable recall limit and vector min score
+- **Decay-class–aware recall** — boost permanent/stable facts when scores are close
+- **Importance and recency** in composite score (optional)
+- **Entity-centric recall** — when the prompt mentions an entity (e.g. user, owner), merge in lookup facts for that entity
+- **Chunked long facts** — store a short summary for long facts; inject summary at recall to save tokens (full text still in DB and tools)
+
+**Quality & deduplication**
+- LLM-based auto-classification of “other” facts into categories (on a schedule and via CLI)
 - Custom categories via config
-- Confidence decay and automatic pruning
+- **Fuzzy text deduplication** — optional normalized-text hash so near-identical facts are not stored twice (`store.fuzzyDedupe`)
+- **Find-duplicates CLI** — report pairs of facts with high embedding similarity (no merge; use before consolidate)
+- **Consolidation job** — cluster similar facts, LLM-merge each cluster into one fact, store and delete cluster (`openclaw hybrid-mem consolidate`)
+
+**Persistence & robustness**
+- Confidence decay and automatic pruning (periodic job; no external cron)
 - SQLite safeguards for concurrent access (`busy_timeout`, WAL checkpointing)
-- Dynamic backfill script (no hardcoded dates or section names)
-- Timestamp migration for database consistency
-- Upgrade helpers for post-`npm update` LanceDB reinstall
-- AI-friendly autonomous setup prompt ([SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md))
-- Comprehensive reference documentation ([v3 guide](docs/hybrid-memory-manager-v3.md))
+- Timestamp migration for database consistency across schema versions
+- Pre-compaction memory flush prompts so the model saves to **both** `memory_store` and daily files before context is truncated
 
 ## Original source material (archive)
 
