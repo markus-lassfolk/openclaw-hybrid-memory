@@ -101,6 +101,10 @@
       "label": "Classify Model",
       "placeholder": "gpt-4.1-nano",
       "help": "Cheap/fast model for classification (e.g. gpt-4.1-nano, gpt-4o-mini)"
+    },
+    "store.fuzzyDedupe": {
+      "label": "Store fuzzy dedupe",
+      "help": "Skip storing when normalized text (trim, collapse whitespace, lowercase) matches an existing fact (2.3)"
     }
   },
   "configSchema": {
@@ -171,6 +175,13 @@
           "enabled": { "type": "boolean" },
           "model": { "type": "string" },
           "batchSize": { "type": "number" }
+        }
+      },
+      "store": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fuzzyDedupe": { "type": "boolean" }
         }
       }
     },

@@ -95,6 +95,8 @@
 
 **Enhancement:** Add an optional check using FTS5: e.g. search for the new text and treat a very high FTS rank as duplicate (or use a simple heuristic: normalize whitespace/case and compare; or store a hash of normalized text). Lowers duplicate facts from small rephrasings.
 
+**Implemented.** Config: `store.fuzzyDedupe` (default false). When true, facts are normalized (trim, collapse whitespace, lowercase), hashed (SHA-256), and stored in a new `normalized_hash` column. Before insert, exact match is checked first; then if fuzzyDedupe, duplicate is detected by normalized hash — store is skipped and existing fact is returned. Migration adds column and backfills existing rows.
+
 ---
 
 ### 2.4 Background consolidation job (merge near-duplicates)
@@ -168,6 +170,7 @@
 | 9        | 2.4 Consolidation job        | High   | High over time    | High                | ✅ Implemented |
 | 10       | 1.4 Summarize over budget    | Medium | When over cap     | When over cap       | ✅ Implemented |
 | —        | 4.3 Chunked long facts       | Medium | Token savings     | In-depth available  | ✅ Implemented |
+| —        | 2.3 Fuzzy text dedupe (SQLite) | Low  | Fewer near-dup stores | Neutral         | ✅ Implemented |
 
 ---
 

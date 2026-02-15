@@ -53,6 +53,11 @@ export type AutoRecallConfig = {
   summarizeModel: string;        // model for summarize-when-over-budget (default gpt-4o-mini)
 };
 
+/** Store options: fuzzy dedupe (2.3) uses normalized-text hash to skip near-duplicate facts. */
+export type StoreConfig = {
+  fuzzyDedupe: boolean;
+};
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -67,6 +72,8 @@ export type HybridMemoryConfig = {
   captureMaxChars: number;
   categories: string[];
   autoClassify: AutoClassifyConfig;
+  /** Store options (2.3): fuzzyDedupe = skip store when normalized text matches existing. */
+  store: StoreConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -227,6 +234,11 @@ export const hybridConfigSchema = {
         ? cfg.captureMaxChars
         : 5000;
 
+    const storeRaw = cfg.store as Record<string, unknown> | undefined;
+    const store: StoreConfig = {
+      fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -242,6 +254,7 @@ export const hybridConfigSchema = {
       captureMaxChars,
       categories: [...getMemoryCategories()],
       autoClassify,
+      store,
     };
   },
 };

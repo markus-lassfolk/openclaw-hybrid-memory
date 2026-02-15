@@ -13,7 +13,7 @@ import { Type } from "@sinclair/typebox";
 import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -65,12 +65,23 @@ type SearchResult = {
 // SQLite + FTS5 Backend
 // ============================================================================
 
+/** Normalize text for fuzzy dedupe (2.3): trim, collapse whitespace, lowercase. */
+function normalizeTextForDedupe(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizedHash(text: string): string {
+  return createHash("sha256").update(normalizeTextForDedupe(text)).digest("hex");
+}
+
 class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
+  private readonly fuzzyDedupe: boolean;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     this.dbPath = dbPath;
+    this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.applyPragmas();
@@ -139,6 +150,27 @@ class FactsDB {
 
     // ---- Summary column for chunked long facts (4.3) ----
     this.migrateSummaryColumn();
+
+    // ---- Normalized hash for fuzzy dedupe (2.3) ----
+    this.migrateNormalizedHash();
+  }
+
+  private migrateNormalizedHash(): void {
+    const cols = this.db
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "normalized_hash")) {
+      this.db.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
+    }
+    const rows = this.db
+      .prepare(`SELECT id, text FROM facts WHERE normalized_hash IS NULL`)
+      .all() as Array<{ id: string; text: string }>;
+    if (rows.length === 0) return;
+    const stmt = this.db.prepare(`UPDATE facts SET normalized_hash = ? WHERE id = ?`);
+    for (const row of rows) {
+      stmt.run(normalizedHash(row.text), row.id);
+    }
   }
 
   private migrateSummaryColumn(): void {
@@ -222,6 +254,14 @@ class FactsDB {
       summary?: string | null;
     },
   ): MemoryEntry {
+    if (this.fuzzyDedupe) {
+      const existingId = this.getDuplicateIdByNormalizedHash(entry.text);
+      if (existingId) {
+        const existing = this.getById(existingId);
+        if (existing) return existing;
+      }
+    }
+
     const id = randomUUID();
     const nowSec = Math.floor(Date.now() / 1000);
 
@@ -234,11 +274,12 @@ class FactsDB {
         : calculateExpiry(decayClass, nowSec);
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
+    const normHash = normalizedHash(entry.text);
 
     this.db
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -255,6 +296,7 @@ class FactsDB {
         nowSec,
         confidence,
         summary,
+        normHash,
       );
 
     return {
@@ -425,11 +467,23 @@ class FactsDB {
     return result.changes > 0;
   }
 
+  /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
   hasDuplicate(text: string): boolean {
-    const row = this.db
+    const exact = this.db
       .prepare(`SELECT id FROM facts WHERE text = ? LIMIT 1`)
       .get(text);
-    return !!row;
+    if (exact) return true;
+    if (this.fuzzyDedupe && this.getDuplicateIdByNormalizedHash(text) !== null) return true;
+    return false;
+  }
+
+  /** Id of an existing fact with same normalized text, or null. Used when store.fuzzyDedupe is true. */
+  private getDuplicateIdByNormalizedHash(text: string): string | null {
+    const hash = normalizedHash(text);
+    const row = this.db
+      .prepare(`SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1`)
+      .get(hash) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
@@ -1409,7 +1463,7 @@ const memoryHybridPlugin = {
     resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
     const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
-    factsDb = new FactsDB(resolvedSqlitePath);
+    factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
     vectorDb = new VectorDB(resolvedLancePath, vectorDim);
     embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
     openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
