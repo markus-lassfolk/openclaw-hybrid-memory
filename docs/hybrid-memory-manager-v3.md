@@ -513,9 +513,10 @@ Add `autoClassify` to your memory-hybrid plugin config:
 | `openclaw hybrid-mem classify --limit N` | Classify at most N facts (default: 500). |
 | `openclaw hybrid-mem classify --model M` | Override the LLM model for this run. |
 | `openclaw hybrid-mem stats` | Show overall memory stats including category breakdown. |
+| `openclaw hybrid-mem find-duplicates` | Report pairs of facts with embedding similarity ≥ threshold (2.2). Options: `--threshold 0.92`, `--include-structured`, `--limit 300`. Report-only; no merge. By default skips identifier-like facts. |
 | `openclaw hybrid-mem consolidate` | Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster (2.4). Options: `--threshold 0.92`, `--include-structured`, `--dry-run`, `--limit 300`, `--model gpt-4o-mini`. |
 
-**Tip:** Run `classify --dry-run` first to preview what the LLM would do, then run without `--dry-run` to apply. Run `consolidate --dry-run` to see which clusters would be merged before applying.
+**Tip:** Run `classify --dry-run` first to preview what the LLM would do, then run without `--dry-run` to apply. Run `find-duplicates` to review candidate pairs, then `consolidate --dry-run` to see which clusters would be merged before applying.
 
 #### How to change TTLs or add decay classes
 
@@ -801,6 +802,8 @@ Use these from the shell for inspection and maintenance:
 | `openclaw hybrid-mem backfill-decay` | Backfill decay classes for existing rows. |
 | `openclaw hybrid-mem classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. `--dry-run` previews. |
 | `openclaw hybrid-mem categories` | List all configured categories with fact counts. |
+| `openclaw hybrid-mem find-duplicates [--threshold 0.92] [--include-structured] [--limit 300]` | Report pairs of facts with embedding similarity ≥ threshold (2.2); report-only. |
+| `openclaw hybrid-mem consolidate [--threshold 0.92] [--include-structured] [--dry-run] [--limit 300] [--model M]` | Merge near-duplicate clusters with LLM (2.4). |
 
 After implementation and re-indexing, use `stats` and `lookup`/`search` to confirm data is present.
 

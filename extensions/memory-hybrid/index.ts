@@ -1206,6 +1206,76 @@ async function runConsolidate(
 }
 
 /**
+ * Find-duplicates (2.2): report pairs of facts with embedding similarity ≥ threshold.
+ * Does not modify store. By default skips identifier-like facts; use includeStructured to include.
+ */
+async function runFindDuplicates(
+  factsDb: FactsDB,
+  embeddings: Embeddings,
+  opts: { threshold: number; includeStructured: boolean; limit: number },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{
+  pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }>;
+  candidatesCount: number;
+  skippedStructured: number;
+}> {
+  const facts = factsDb.getFactsForConsolidation(opts.limit);
+  const skippedStructured = opts.includeStructured ? 0 : facts.filter((f) => isStructuredForConsolidation(f.text, f.entity, f.key)).length;
+  const candidateFacts = opts.includeStructured
+    ? facts
+    : facts.filter((f) => !isStructuredForConsolidation(f.text, f.entity, f.key));
+  if (candidateFacts.length < 2) {
+    logger.info("memory-hybrid: find-duplicates — fewer than 2 candidate facts");
+    return { pairs: [], candidatesCount: candidateFacts.length, skippedStructured };
+  }
+
+  const idToFact = new Map(candidateFacts.map((f) => [f.id, f]));
+  const ids = candidateFacts.map((f) => f.id);
+
+  logger.info(`memory-hybrid: find-duplicates — embedding ${ids.length} facts...`);
+  const vectors: number[][] = [];
+  for (let i = 0; i < ids.length; i += 20) {
+    const batch = ids.slice(i, i + 20);
+    for (const id of batch) {
+      const f = idToFact.get(id)!;
+      try {
+        const vec = await embeddings.embed(f.text);
+        vectors.push(vec);
+      } catch (err) {
+        logger.warn(`memory-hybrid: find-duplicates embed failed for ${id}: ${err}`);
+        vectors.push([]);
+      }
+    }
+    if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
+  }
+
+  const pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }> = [];
+  for (let i = 0; i < ids.length; i++) {
+    const vi = vectors[i];
+    if (vi.length === 0) continue;
+    for (let j = i + 1; j < ids.length; j++) {
+      const vj = vectors[j];
+      if (vj.length === 0) continue;
+      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
+      const score = 1 / (1 + dist);
+      if (score >= opts.threshold) {
+        const idA = ids[i];
+        const idB = ids[j];
+        pairs.push({
+          idA,
+          idB,
+          score,
+          textA: idToFact.get(idA)!.text,
+          textB: idToFact.get(idB)!.text,
+        });
+      }
+    }
+  }
+  logger.info(`memory-hybrid: find-duplicates — ${pairs.length} pairs ≥ ${opts.threshold}`);
+  return { pairs, candidatesCount: candidateFacts.length, skippedStructured };
+}
+
+/**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
  * Returns a map of factId → newCategory.
  */
@@ -2085,6 +2155,31 @@ const memoryHybridPlugin = {
           });
 
         mem
+          .command("find-duplicates")
+          .description("Report pairs of facts with embedding similarity ≥ threshold (2.2); no merge")
+          .option("--threshold <n>", "Similarity threshold 0–1 (default 0.92)", "0.92")
+          .option("--include-structured", "Include identifier-like facts (IP, email, etc.); default is to skip")
+          .option("--limit <n>", "Max facts to consider (default 300)", "300")
+          .action(async (opts: { threshold?: string; includeStructured?: boolean; limit?: string }) => {
+            const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.92")));
+            const limit = Math.min(500, Math.max(10, parseInt(opts.limit || "300")));
+            const result = await runFindDuplicates(
+              factsDb,
+              embeddings,
+              { threshold, includeStructured: !!opts.includeStructured, limit },
+              api.logger,
+            );
+            console.log(`Candidates: ${result.candidatesCount} (skipped identifier-like: ${result.skippedStructured})`);
+            console.log(`Pairs with similarity ≥ ${threshold}: ${result.pairs.length}`);
+            const trim = (s: string, max: number) => (s.length <= max ? s : s.slice(0, max) + "…");
+            for (const p of result.pairs) {
+              console.log(`  ${p.idA} <-> ${p.idB} (${p.score.toFixed(3)})`);
+              console.log(`    A: ${trim(p.textA, 80)}`);
+              console.log(`    B: ${trim(p.textB, 80)}`);
+            }
+          });
+
+        mem
           .command("consolidate")
           .description("Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster (2.4)")
           .option("--threshold <n>", "Similarity threshold 0–1 (default 0.92)", "0.92")
@@ -2114,7 +2209,7 @@ const memoryHybridPlugin = {
             console.log(`Deleted: ${result.deleted}${opts.dryRun ? " (dry run)" : ""}`);
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem consolidate"] },
+      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate"] },
     );
 
     // ========================================================================

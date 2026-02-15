@@ -87,6 +87,8 @@
 
 **Concrete next step:** Add `openclaw hybrid-mem find-duplicates [--threshold 0.92] [--include-structured] [--dry-run]` that scans LanceDB for high-similarity pairs. **Default:** skip facts that look like identifiers (IP, email, phone, UUID, etc.) and numbers in general. Use **`--include-structured`** to opt in to processing those too. Prints candidate pairs for review; no change to the store path.
 
+**Implemented.** CLI: `openclaw hybrid-mem find-duplicates [--threshold 0.92] [--include-structured] [--limit 300]`. Uses SQLite as source (same as consolidate), re-embeds facts, computes pairwise similarity, prints pairs with similarity ≥ threshold. By default skips identifier-like facts (`isStructuredForConsolidation`); `--include-structured` includes them. Report-only; no merge or store changes.
+
 ### 2.3 Fuzzy text deduplication in SQLite
 
 **Current:** SQLite dedupe is `WHERE text = ?` only.
@@ -159,7 +161,7 @@
 | 2        | 1.3 Honor captureMaxChars    | Low    | Medium            | Prevents drop/long  | ✅ Implemented |
 | 3        | 1.2 Shorter injection format | Low    | Medium            | Neutral             | ✅ Implemented |
 | 4        | 2.1 Configurable recall limit/minScore | Low  | Config-driven     | Better relevance    | ✅ Implemented |
-| 5        | 2.2 Semantic dedupe (maintenance: find-duplicates CLI) | Medium | Medium (fewer dupes) | High — revised, not at store |
+| 5        | 2.2 Semantic dedupe (maintenance: find-duplicates CLI) | Medium | Medium (fewer dupes) | High — revised, not at store | ✅ Implemented |
 | 6        | 3.1 Decay-class–aware recall | Low    | Slight            | Better long-term    | ✅ Implemented |
 | 7        | 3.3 Importance/recency in score | Low | Slight            | Better ranking      | ✅ Implemented |
 | 8        | 4.1 Entity-centric recall     | Medium | Slight            | Deeper context      | ✅ Implemented |
