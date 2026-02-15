@@ -1875,15 +1875,33 @@ const memoryHybridPlugin = {
           let candidates = mergeResults(ftsResults, lanceResults, limit);
           if (candidates.length === 0) return;
 
-          if (cfg.autoRecall.preferLongTerm) {
+          if (cfg.autoRecall.preferLongTerm || cfg.autoRecall.useImportanceRecency) {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const NINETY_DAYS_SEC = 90 * 24 * 3600;
             const boosted = candidates.map((r) => {
-              const factor =
-                r.entry.decayClass === "permanent"
-                  ? 1.2
-                  : r.entry.decayClass === "stable"
-                    ? 1.1
-                    : 1;
-              return { ...r, score: r.score * factor };
+              let s = r.score;
+              if (cfg.autoRecall.preferLongTerm) {
+                s *=
+                  r.entry.decayClass === "permanent"
+                    ? 1.2
+                    : r.entry.decayClass === "stable"
+                      ? 1.1
+                      : 1;
+              }
+              if (cfg.autoRecall.useImportanceRecency) {
+                const importanceFactor = 0.7 + 0.3 * r.entry.importance;
+                const recencyFactor =
+                  r.entry.lastConfirmedAt === 0
+                    ? 1
+                    : 0.8 +
+                      0.2 *
+                        Math.max(
+                          0,
+                          1 - (nowSec - r.entry.lastConfirmedAt) / NINETY_DAYS_SEC,
+                        );
+                s *= importanceFactor * recencyFactor;
+              }
+              return { ...r, score: s };
             });
             boosted.sort((a, b) => b.score - a.score);
             candidates = boosted;

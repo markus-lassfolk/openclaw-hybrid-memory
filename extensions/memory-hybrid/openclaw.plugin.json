@@ -56,6 +56,10 @@
       "label": "Auto-Recall prefer long-term",
       "help": "Boost score for permanent/stable facts so they rank higher when scores are close (default false)"
     },
+    "autoRecall.useImportanceRecency": {
+      "label": "Auto-Recall use importance/recency",
+      "help": "Combine relevance with importance and lastConfirmedAt so more important or recently confirmed facts rank higher (default false)"
+    },
     "captureMaxChars": {
       "label": "Capture max characters",
       "help": "Max characters per fact: filter in auto-capture and truncate when storing (default 5000)"
@@ -109,7 +113,8 @@
               },
               "limit": { "type": "number" },
               "minScore": { "type": "number" },
-              "preferLongTerm": { "type": "boolean" }
+              "preferLongTerm": { "type": "boolean" },
+              "useImportanceRecency": { "type": "boolean" }
             }
           }
         ]

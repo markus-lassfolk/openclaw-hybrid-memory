@@ -37,6 +37,7 @@ export type AutoRecallConfig = {
   limit: number;               // max memories to consider for injection (default 5)
   minScore: number;            // vector search minimum score 0–1 (default 0.3)
   preferLongTerm: boolean;     // boost score for permanent/stable so lasting facts rank higher (default false)
+  useImportanceRecency: boolean;  // combine relevance with importance and lastConfirmedAt in ranking (default false)
 };
 
 export type HybridMemoryConfig = {
@@ -154,6 +155,7 @@ export const hybridConfigSchema = {
       const limit = typeof ar.limit === "number" && ar.limit > 0 ? Math.floor(ar.limit) : 5;
       const minScore = typeof ar.minScore === "number" && ar.minScore >= 0 && ar.minScore <= 1 ? ar.minScore : 0.3;
       const preferLongTerm = ar.preferLongTerm === true;
+      const useImportanceRecency = ar.useImportanceRecency === true;
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
@@ -162,6 +164,7 @@ export const hybridConfigSchema = {
         limit,
         minScore,
         preferLongTerm,
+        useImportanceRecency,
       };
     } else {
       autoRecall = {
@@ -172,6 +175,7 @@ export const hybridConfigSchema = {
         limit: 5,
         minScore: 0.3,
         preferLongTerm: false,
+        useImportanceRecency: false,
       };
     }
 
