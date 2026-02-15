@@ -97,10 +97,18 @@ For the API key: check if `OPENAI_API_KEY` is set in the environment. If yes, us
 
 **4c. Memory backend** — set `memory.backend` to `"builtin"`, `memory.citations` to `"auto"`.
 
-**4d. Compaction** — set `agents.defaults.compaction`:
+**4d. Compaction with hybrid memory flush** — set `agents.defaults.compaction`. The custom prompts ensure the model saves structured facts via `memory_store` (not just file-based notes) before context is compacted:
 
 ```json
-{ "mode": "default", "memoryFlush": { "enabled": true } }
+{
+  "mode": "default",
+  "memoryFlush": {
+    "enabled": true,
+    "softThresholdTokens": 4000,
+    "systemPrompt": "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
+    "prompt": "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving."
+  }
+}
 ```
 
 **4e. Bootstrap limits and context** — set under `agents.defaults`:

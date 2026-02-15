@@ -218,6 +218,8 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 
 ### 4.4 Compaction memory flush (recommended)
 
+When a session nears auto-compaction, OpenClaw triggers a **silent agentic turn** that gives the model a chance to save important information before the context is truncated. By default this only mentions file-based memory. The custom prompts below make the model use **both** memory systems — structured facts via `memory_store` and file-based notes via daily logs:
+
 ```json
 {
   "agents": {
@@ -225,13 +227,25 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
       "compaction": {
         "mode": "default",
         "memoryFlush": {
-          "enabled": true
+          "enabled": true,
+          "softThresholdTokens": 4000,
+          "systemPrompt": "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
+          "prompt": "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving."
         }
       }
     }
   }
 }
 ```
+
+**Why custom prompts matter:** The default flush prompt only tells the model to write to `memory/YYYY-MM-DD.md`. With the hybrid system, structured facts should also go through `memory_store` so they're indexed in SQLite+FTS5 and LanceDB for instant recall. Without this, facts from the compacted portion are only recoverable via file search, not structured lookup or vector recall.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Enable the pre-compaction memory flush turn. |
+| `softThresholdTokens` | `4000` | Flush triggers when tokens cross `contextWindow - reserveTokensFloor - softThresholdTokens`. |
+| `systemPrompt` | (generic) | System prompt appended to the flush turn. Customize to mention `memory_store`. |
+| `prompt` | (generic) | User prompt for the flush turn. Customize to list both memory systems. |
 
 ### 4.5 Bootstrap limits and context (recommended)
 
