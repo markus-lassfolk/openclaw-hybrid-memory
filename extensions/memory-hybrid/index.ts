@@ -1539,7 +1539,7 @@ const memoryHybridPlugin = {
     // CLI Commands
     // ========================================================================
 
-    api.registerCLI(
+    api.registerCli(
       ({ program }) => {
         const mem = program
           .command("hybrid-mem")
