@@ -14,8 +14,9 @@ import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { stringEnum } from "openclaw/plugin-sdk";
 
@@ -2262,8 +2263,182 @@ const memoryHybridPlugin = {
             console.log(`Merged: ${result.merged}`);
             console.log(`Deleted: ${result.deleted}${opts.dryRun ? " (dry run)" : ""}`);
           });
+
+        mem
+          .command("verify")
+          .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
+          .option("--fix", "Print or apply default config for missing items")
+          .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
+          .action(async (opts: { fix?: boolean; logFile?: string }) => {
+            const issues: string[] = [];
+            const fixes: string[] = [];
+            let configOk = true;
+            let sqliteOk = false;
+            let lanceOk = false;
+            let embeddingOk = false;
+
+            if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
+              issues.push("embedding.apiKey is missing, placeholder, or too short");
+              fixes.push('Add "embedding": { "apiKey": "<your-key>", "model": "text-embedding-3-small" } to plugin config');
+              configOk = false;
+            }
+            if (!cfg.embedding.model) {
+              issues.push("embedding.model is missing");
+              fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large"');
+              configOk = false;
+            }
+            const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+            const defaultConfigPath = join(openclawDir, "openclaw.json");
+            if (configOk) console.log("Config: embedding.apiKey and model present");
+            else console.log("Config: issues found");
+
+            try {
+              const n = factsDb.count();
+              sqliteOk = true;
+              console.log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
+            } catch (e) {
+              issues.push(`SQLite: ${String(e)}`);
+              console.log(`SQLite: FAIL — ${String(e)}`);
+            }
+
+            try {
+              const n = await vectorDb.count();
+              lanceOk = true;
+              console.log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
+            } catch (e) {
+              issues.push(`LanceDB: ${String(e)}`);
+              console.log(`LanceDB: FAIL — ${String(e)}`);
+            }
+
+            try {
+              await embeddings.embed("verify test");
+              embeddingOk = true;
+              console.log("Embedding API: OK");
+            } catch (e) {
+              issues.push(`Embedding API: ${String(e)}`);
+              console.log(`Embedding API: FAIL — ${String(e)}`);
+            }
+
+            console.log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
+            if (opts.logFile && existsSync(opts.logFile)) {
+              const content = readFileSync(opts.logFile, "utf-8");
+              const lines = content.split("\n").filter((l) => /memory-hybrid|prune|auto-classify|periodic|failed/.test(l));
+              const errLines = lines.filter((l) => /error|fail|warn/i.test(l));
+              if (errLines.length > 0) {
+                console.log(`\nRecent log lines mentioning memory-hybrid/errors (last ${errLines.length}):`);
+                errLines.slice(-10).forEach((l) => console.log(`  ${l.slice(0, 120)}`));
+              } else if (lines.length > 0) {
+                console.log(`\nLog file: ${lines.length} relevant lines (no errors in sample)`);
+              }
+            } else if (opts.logFile) {
+              console.log(`\nLog file not found: ${opts.logFile}`);
+            }
+
+            const allOk = configOk && sqliteOk && lanceOk && embeddingOk;
+            if (allOk) {
+              console.log("\nAll checks passed.");
+            } else {
+              console.log("\nIssues:");
+              issues.forEach((i) => console.log(`  - ${i}`));
+            }
+
+            if (opts.fix) {
+              console.log("\n--- Fix suggestions ---");
+              fixes.forEach((f) => console.log(`  ${f}`));
+              const snippet = {
+                embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },
+                autoCapture: true,
+                autoRecall: true,
+                captureMaxChars: 5000,
+                store: { fuzzyDedupe: false },
+              };
+              console.log("\nMinimal config snippet to merge into plugins.entries[\"memory-hybrid\"].config:");
+              console.log(JSON.stringify(snippet, null, 2));
+              if (existsSync(defaultConfigPath)) {
+                console.log(`\nConfig file found: ${defaultConfigPath}. Merge the snippet above into the memory-hybrid config entry if values are missing.`);
+              }
+            }
+          });
+
+        mem
+          .command("uninstall")
+          .description("Disable hybrid memory and restore default memory manager; optionally remove data.")
+          .option("--clean-all", "Remove SQLite and LanceDB data (irreversible)")
+          .option("--force-cleanup", "Same as --clean-all")
+          .option("--leave-config", "Do not modify openclaw.json; only print instructions")
+          .action(async (opts: { cleanAll?: boolean; forceCleanup?: boolean; leaveConfig?: boolean }) => {
+            const doClean = !!opts.cleanAll || !!opts.forceCleanup;
+            const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+            const configPath = join(openclawDir, "openclaw.json");
+
+            if (!opts.leaveConfig && existsSync(configPath)) {
+              try {
+                const raw = readFileSync(configPath, "utf-8");
+                const config = JSON.parse(raw) as Record<string, unknown>;
+                if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
+                const plugins = config.plugins as Record<string, unknown>;
+                if (!plugins.slots || typeof plugins.slots !== "object") plugins.slots = {};
+                (plugins.slots as Record<string, string>).memory = "memory-core";
+                if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
+                const entries = plugins.entries as Record<string, unknown>;
+                if (!entries["memory-hybrid"] || typeof entries["memory-hybrid"] !== "object") {
+                  entries["memory-hybrid"] = {};
+                }
+                (entries["memory-hybrid"] as Record<string, boolean>).enabled = false;
+                writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+                console.log("Config updated: plugins.slots.memory = \"memory-core\", memory-hybrid disabled.");
+                console.log("Restart the gateway to use the default OpenClaw memory manager.");
+              } catch (e) {
+                console.error(`Could not update config (${configPath}): ${e}`);
+                console.log("Apply these changes manually:");
+                console.log("  1. Set plugins.slots.memory to \"memory-core\"");
+                console.log("  2. Set plugins.entries[\"memory-hybrid\"].enabled to false");
+                console.log("  3. Restart the gateway.");
+              }
+            } else if (!opts.leaveConfig) {
+              console.log(`Config file not found at ${configPath}. Apply these changes manually:`);
+              console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
+              console.log("  2. Set plugins.slots.memory to \"memory-core\".");
+              console.log("  3. Set plugins.entries[\"memory-hybrid\"].enabled to false.");
+              console.log("  4. Restart the gateway.");
+            } else {
+              console.log("To use the default OpenClaw memory manager instead of hybrid:");
+              console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
+              console.log("  2. Set plugins.slots.memory to \"memory-core\".");
+              console.log("  3. Set plugins.entries[\"memory-hybrid\"].enabled to false.");
+              console.log("  4. Restart the gateway.");
+            }
+
+            if (!doClean) {
+              console.log("\nMemory data (SQLite and LanceDB) was left in place. To remove it, run: openclaw hybrid-mem uninstall --clean-all");
+              return;
+            }
+            console.log("\nRemoving hybrid-memory data...");
+            const toRemove: string[] = [];
+            if (existsSync(resolvedSqlitePath)) {
+              try {
+                rmSync(resolvedSqlitePath, { force: true });
+                toRemove.push(resolvedSqlitePath);
+              } catch (e) {
+                console.error(`Failed to remove SQLite file: ${e}`);
+              }
+            }
+            if (existsSync(resolvedLancePath)) {
+              try {
+                rmSync(resolvedLancePath, { recursive: true, force: true });
+                toRemove.push(resolvedLancePath);
+              } catch (e) {
+                console.error(`Failed to remove LanceDB dir: ${e}`);
+              }
+            }
+            if (toRemove.length > 0) {
+              console.log("Removed: " + toRemove.join(", "));
+            } else {
+              console.log("No hybrid data files found at configured paths.");
+            }
+          });
       },
-      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate"] },
+      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================

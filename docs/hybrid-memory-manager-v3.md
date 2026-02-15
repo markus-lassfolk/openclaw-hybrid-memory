@@ -515,8 +515,10 @@ Add `autoClassify` to your memory-hybrid plugin config:
 | `openclaw hybrid-mem stats` | Show overall memory stats including category breakdown. |
 | `openclaw hybrid-mem find-duplicates` | Report pairs of facts with embedding similarity ≥ threshold (2.2). Options: `--threshold 0.92`, `--include-structured`, `--limit 300`. Report-only; no merge. By default skips identifier-like facts. |
 | `openclaw hybrid-mem consolidate` | Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster (2.4). Options: `--threshold 0.92`, `--include-structured`, `--dry-run`, `--limit 300`, `--model gpt-4o-mini`. |
+| `openclaw hybrid-mem verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; optional fix suggestions and log scan. |
+| `openclaw hybrid-mem uninstall [--clean-all \| --force-cleanup] [--leave-config]` | Restore default memory manager (patch config); optionally remove data. `--leave-config` skips config change. |
 
-**Tip:** Run `classify --dry-run` first to preview what the LLM would do, then run without `--dry-run` to apply. Run `find-duplicates` to review candidate pairs, then `consolidate --dry-run` to see which clusters would be merged before applying.
+**Tip:** Run `classify --dry-run` first to preview what the LLM would do, then run without `--dry-run` to apply. Run `find-duplicates` to review candidate pairs, then `consolidate --dry-run` to see which clusters would be merged before applying. Run **`verify`** to confirm setup; use **`verify --fix`** to get config snippets for missing settings.
 
 #### How to change TTLs or add decay classes
 
@@ -804,8 +806,18 @@ Use these from the shell for inspection and maintenance:
 | `openclaw hybrid-mem categories` | List all configured categories with fact counts. |
 | `openclaw hybrid-mem find-duplicates [--threshold 0.92] [--include-structured] [--limit 300]` | Report pairs of facts with embedding similarity ≥ threshold (2.2); report-only. |
 | `openclaw hybrid-mem consolidate [--threshold 0.92] [--include-structured] [--dry-run] [--limit 300] [--model M]` | Merge near-duplicate clusters with LLM (2.4). |
+| `openclaw hybrid-mem verify [--fix] [--log-file <path>]` | Verify config, SQLite, LanceDB, and embedding API; optional fix suggestions and log check. Use as a health check or with `openclaw doctor` if the host supports it. |
+| `openclaw hybrid-mem uninstall [--clean-all \| --force-cleanup] [--leave-config]` | Restore default memory (patch config); optionally remove data. |
 
 After implementation and re-indexing, use `stats` and `lookup`/`search` to confirm data is present.
+
+### Verify and doctor
+
+Run **`openclaw hybrid-mem verify`** to check that settings are configured, the databases are working, and the embedding API is reachable. With **`--fix`** it prints missing config suggestions and a minimal snippet to merge into your plugin config. With **`--log-file <path>`** it scans that file for memory-hybrid or cron-related errors. When the gateway is running, prune runs every 60 minutes and auto-classify every 24 hours (if enabled); no external cron is required. If your OpenClaw host has an **`openclaw doctor`** command, you can run `hybrid-mem verify` as part of that flow.
+
+### Uninstall and default memory fallback
+
+Run **`openclaw hybrid-mem uninstall`** to disable hybrid memory and **restore the default OpenClaw memory manager**. By default it updates your config file (`~/.openclaw/openclaw.json` or `OPENCLAW_HOME/openclaw.json`): sets `plugins.slots.memory` to `"memory-core"` and `plugins.entries["memory-hybrid"].enabled` to `false`. Restart the gateway to take effect. Memory data (SQLite and LanceDB) is left in place unless you pass **`--clean-all`** or **`--force-cleanup`** (removes those files; irreversible). Use **`--leave-config`** to skip modifying the config and only print manual instructions.
 
 ---
 
