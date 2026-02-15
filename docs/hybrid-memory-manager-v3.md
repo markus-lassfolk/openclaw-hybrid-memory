@@ -243,7 +243,7 @@ When a session nears auto-compaction, OpenClaw triggers a **silent agentic turn*
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `false` | Enable the pre-compaction memory flush turn. |
-| `softThresholdTokens` | `4000` | Flush triggers when tokens cross `contextWindow - reserveTokensFloor - softThresholdTokens`. |
+| `softThresholdTokens` | `4000` | Flush triggers when tokens cross `contextWindow - reserveTokensFloor - softThresholdTokens`. (`contextWindow` comes from the model catalog, not from config.) |
 | `systemPrompt` | (generic) | System prompt appended to the flush turn. Customize to mention `memory_store`. |
 | `prompt` | (generic) | User prompt for the flush turn. Customize to list both memory systems. |
 
@@ -254,14 +254,13 @@ When a session nears auto-compaction, OpenClaw triggers a **silent agentic turn*
   "agents": {
     "defaults": {
       "bootstrapMaxChars": 15000,
-      "bootstrapTotalMaxChars": 50000,
-      "contextTokens": 180000
+      "bootstrapTotalMaxChars": 50000
     }
   }
 }
 ```
 
-**Recommended:** Set `contextTokens` to avoid prompt-overflow errors — use roughly 90% of your model’s context window (e.g. `180000` for Opus’s 200k). This was the main lever for fixing context overflow in production.
+**Context window:** OpenClaw auto-detects the model's context window from the provider catalog and uses it for compaction thresholds. You do not need to set `contextTokens` — the gateway uses each model's native limit (e.g. 200k for Opus, 1M for Gemini 1.5 Pro). Only set `contextTokens` manually if you hit prompt-overflow errors; then use roughly 90% of that model's window as a safety cap.
 
 ### 4.6 Pruning (optional — context overflow)
 
@@ -632,7 +631,7 @@ Use this sequence whether the system is brand new, a few days old, or has been r
 2. **memory/ layout:** Create subdirs: `people/`, `projects/`, `technical/`, `companies/`, `decisions/`, `archive/`.
 3. **Bootstrap files:** Create or update AGENTS.md (include §7 Memory Protocol), SOUL.md, USER.md, TOOLS.md, MEMORY.md (use §6 template), HEARTBEAT.md, IDENTITY.md.
 4. **Plugin:** Install memory-hybrid per §3 (copy `extensions/memory-hybrid/`, run `npm install` in the plugin dir only).
-5. **Config:** Merge §4 into `openclaw.json` (memory slot = `memory-hybrid`, memorySearch, memory backend, compaction, bootstrap limits, recommended `contextTokens`, optional pruning). Set OpenAI API key.
+5. **Config:** Merge §4 into `openclaw.json` (memory slot = `memory-hybrid`, memorySearch, memory backend, compaction, bootstrap limits, optional pruning). Set OpenAI API key.
 6. **Restart:** Full gateway restart (`openclaw gateway stop` then `openclaw gateway start`).
 7. **Optional — Backfill plugin DBs:** So existing MEMORY.md and `memory/**/*.md` content is in SQLite + LanceDB. Use a **dynamic** approach (no hardcoded dates or section names — discover files by glob, parse structure from content):
    - **Dynamic backfill script (recommended):** Use the repo’s [scripts/backfill-memory.mjs](../scripts/backfill-memory.mjs). It discovers the workspace from `OPENCLAW_WORKSPACE` (default `~/.openclaw/workspace`), globs `MEMORY.md` and `memory/**/*.md` (all .md files; no fixed date list), parses lines/sections from content, extracts facts, and writes to the plugin’s SQLite + LanceDB. Safe on a new system. See [§8 Backfill (dynamic)](#8-deployment-one-flow-for-any-system) below for how to run it.
@@ -763,7 +762,7 @@ After config merge and restart:
 | recall/capture failed after npm install | Stale module cache: SIGUSR1 reload keeps the same process, so Node’s dynamic-import cache does not load newly installed native modules (e.g. better-sqlite3, lancedb) | **Full stop then start** (`openclaw gateway stop` then `start`). A full restart is required so the process loads the new native modules. |
 | Bootstrap file truncation | Limits too low | Increase `bootstrapMaxChars` (e.g. 15000) and `bootstrapTotalMaxChars` (e.g. 50000) |
 | config.patch reverts API key to ${ENV_VAR} | Gateway tool substitutes secrets | Edit config file directly for API keys |
-| prompt too large for model | No context limit | Set `contextTokens` (e.g. 180000) |
+| prompt too large for model | Need lower cap than model default | Optional override: set `contextTokens` only if you hit overflow; use ~90% of your model's window (e.g. 180000 for 200k, 900000 for 1M) |
 | Memory files not found by search | File index not built or stale | Ensure `sync.onSessionStart: true` and `sync.watch: true`; restart and start a new session |
 | hybrid-mem stats still 0 after seed | Seed script used wrong paths or schema | Point seed at same DB paths as plugin; use plugin schema (see extensions/memory-hybrid or seed prompt) |
 | `npm install` fails in extension dir (e.g. "openclaw": "workspace:*", invalid protocol) | Plugin package.json has devDependencies that reference workspace or unsupported protocols | Remove devDependencies in place, then install. From the extension dir: `node -e "let p=require('./package.json'); delete p.devDependencies; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2))"` then `npm install`. Or fix package.json and re-copy from this repo. |

@@ -114,10 +114,10 @@ For the API key: check if `OPENAI_API_KEY` is set in the environment. If yes, us
 **4e. Bootstrap limits and context** — set under `agents.defaults`:
 
 ```json
-{ "bootstrapMaxChars": 15000, "bootstrapTotalMaxChars": 50000, "contextTokens": 180000 }
+{ "bootstrapMaxChars": 15000, "bootstrapTotalMaxChars": 50000 }
 ```
 
-Adjust `contextTokens` to ~90% of your model's context window if not Opus 200k.
+Context is taken from the model catalog automatically. Only add `contextTokens` as a troubleshooting override if you hit prompt-overflow errors (e.g. set to ~90% of your model's window).
 
 **4f. Pruning (optional)** — set `agents.defaults.pruning`:
 
