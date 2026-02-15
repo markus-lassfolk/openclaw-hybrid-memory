@@ -513,8 +513,9 @@ Add `autoClassify` to your memory-hybrid plugin config:
 | `openclaw hybrid-mem classify --limit N` | Classify at most N facts (default: 500). |
 | `openclaw hybrid-mem classify --model M` | Override the LLM model for this run. |
 | `openclaw hybrid-mem stats` | Show overall memory stats including category breakdown. |
+| `openclaw hybrid-mem consolidate` | Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster (2.4). Options: `--threshold 0.92`, `--include-structured`, `--dry-run`, `--limit 300`, `--model gpt-4o-mini`. |
 
-**Tip:** Run `classify --dry-run` first to preview what the LLM would do, then run without `--dry-run` to apply.
+**Tip:** Run `classify --dry-run` first to preview what the LLM would do, then run without `--dry-run` to apply. Run `consolidate --dry-run` to see which clusters would be merged before applying.
 
 #### How to change TTLs or add decay classes
 

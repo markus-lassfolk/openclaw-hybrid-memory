@@ -432,6 +432,46 @@ class FactsDB {
     return !!row;
   }
 
+  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
+  getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows = this.db
+      .prepare(
+        `SELECT id, text, category, entity, key FROM facts
+         WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(nowSec, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      category: row.category as string,
+      entity: (row.entity as string) || null,
+      key: (row.key as string) || null,
+    }));
+  }
+
+  /** Get one fact by id (for merge category). Returns null if not found. */
+  getById(id: string): MemoryEntry | null {
+    const row = this.db.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: row.id as string,
+      text: row.text as string,
+      category: row.category as MemoryCategory,
+      importance: row.importance as number,
+      entity: (row.entity as string) || null,
+      key: (row.key as string) || null,
+      value: (row.value as string) || null,
+      source: row.source as string,
+      createdAt: row.created_at as number,
+      decayClass: (row.decay_class as DecayClass) || "stable",
+      expiresAt: (row.expires_at as number) || null,
+      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
+      confidence: (row.confidence as number) || 1.0,
+      summary: (row.summary as string) || undefined,
+    };
+  }
+
   count(): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) as cnt FROM facts`)
@@ -969,6 +1009,23 @@ const SENSITIVE_PATTERNS = [
   /credit.?card/i,
 ];
 
+/** True if fact looks like identifier/number (IP, email, phone, UUID, etc.). Used by consolidate to skip by default (2.2/2.4). */
+function isStructuredForConsolidation(
+  text: string,
+  entity: string | null,
+  key: string | null,
+): boolean {
+  if (/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(text)) return true;
+  if (/[\w.-]+@[\w.-]+\.\w+/.test(text)) return true;
+  if (/\+\d{10,}/.test(text) || /\b\d{10,}\b/.test(text)) return true;
+  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)) return true;
+  const k = (key ?? "").toLowerCase();
+  const e = (entity ?? "").toLowerCase();
+  if (["email", "phone", "api_key", "ip", "uuid", "password"].some((x) => k.includes(x) || e.includes(x))) return true;
+  if (SENSITIVE_PATTERNS.some((r) => r.test(text))) return true;
+  return false;
+}
+
 function shouldCapture(text: string): boolean {
   if (text.length < 10 || text.length > cfg.captureMaxChars) return false;
   if (text.includes("<relevant-memories>")) return false;
@@ -995,6 +1052,158 @@ function detectCategory(text: string): MemoryCategory {
 // ============================================================================
 // LLM-based Auto-Classifier
 // ============================================================================
+
+/** Union-find for building clusters from edges. Returns parent map; use getRoot to resolve cluster root. */
+function unionFind(ids: string[], edges: Array<[string, string]>): Map<string, string> {
+  const parent = new Map<string, string>();
+  for (const id of ids) parent.set(id, id);
+  function find(x: string): string {
+    const p = parent.get(x)!;
+    if (p !== x) parent.set(x, find(p));
+    return parent.get(x)!;
+  }
+  function union(a: string, b: string): void {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+  for (const [a, b] of edges) union(a, b);
+  return parent;
+}
+
+function getRoot(parent: Map<string, string>, id: string): string {
+  let r = id;
+  while (parent.get(r) !== r) r = parent.get(r)!;
+  return r;
+}
+
+/**
+ * Consolidation (2.4): find clusters of similar facts (by embedding), merge each cluster with LLM, store one fact and delete cluster.
+ * Uses SQLite as source; re-embeds to compute similarity (no Lance scan). Merged fact is stored in both SQLite and Lance.
+ * Does not delete from Lance (ids differ); optional future: sync Lance.
+ */
+async function runConsolidate(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: Embeddings,
+  openai: OpenAI,
+  opts: {
+    threshold: number;
+    includeStructured: boolean;
+    dryRun: boolean;
+    limit: number;
+    model: string;
+  },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ clustersFound: number; merged: number; deleted: number }> {
+  const facts = factsDb.getFactsForConsolidation(opts.limit);
+  let candidateFacts = opts.includeStructured
+    ? facts
+    : facts.filter((f) => !isStructuredForConsolidation(f.text, f.entity, f.key));
+  if (candidateFacts.length < 2) {
+    logger.info("memory-hybrid: consolidate — fewer than 2 candidate facts");
+    return { clustersFound: 0, merged: 0, deleted: 0 };
+  }
+
+  const idToFact = new Map(candidateFacts.map((f) => [f.id, f]));
+  const ids = candidateFacts.map((f) => f.id);
+
+  logger.info(`memory-hybrid: consolidate — embedding ${ids.length} facts...`);
+  const vectors: number[][] = [];
+  for (let i = 0; i < ids.length; i += 20) {
+    const batch = ids.slice(i, i + 20);
+    for (const id of batch) {
+      const f = idToFact.get(id)!;
+      try {
+        const vec = await embeddings.embed(f.text);
+        vectors.push(vec);
+      } catch (err) {
+        logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
+        vectors.push([]);
+      }
+    }
+    if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
+  }
+
+  const idToIndex = new Map(ids.map((id, idx) => [id, idx]));
+  const edges: Array<[string, string]> = [];
+  for (let i = 0; i < ids.length; i++) {
+    const vi = vectors[i];
+    if (vi.length === 0) continue;
+    for (let j = i + 1; j < ids.length; j++) {
+      const vj = vectors[j];
+      if (vj.length === 0) continue;
+      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
+      const score = 1 / (1 + dist);
+      if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
+    }
+  }
+
+  const parent = unionFind(ids, edges);
+  const rootToCluster = new Map<string, string[]>();
+  for (const id of ids) {
+    const r = getRoot(parent, id);
+    if (!rootToCluster.has(r)) rootToCluster.set(r, []);
+    rootToCluster.get(r)!.push(id);
+  }
+  const clusters = [...rootToCluster.values()].filter((c) => c.length >= 2);
+  logger.info(`memory-hybrid: consolidate — ${clusters.length} clusters (≥2 facts)`);
+
+  if (clusters.length === 0) return { clustersFound: 0, merged: 0, deleted: 0 };
+
+  let merged = 0;
+  let deleted = 0;
+  for (const clusterIds of clusters) {
+    const texts = clusterIds.map((id) => idToFact.get(id)!.text);
+    const prompt = `You are a memory consolidator. Merge the following facts into one concise fact. Preserve key information. Output only the merged fact, no explanation.\n\n${texts.map((t, i) => `${i + 1}. ${t}`).join("\n")}`;
+    let mergedText: string;
+    try {
+      const resp = await openai.chat.completions.create({
+        model: opts.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: 300,
+      });
+      mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, 5000);
+    } catch (err) {
+      logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
+      continue;
+    }
+    if (!mergedText) continue;
+
+    const first = factsDb.getById(clusterIds[0]);
+    const category = (first?.category as MemoryCategory) ?? "other";
+
+    if (opts.dryRun) {
+      logger.info(`memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`);
+      merged++;
+      continue;
+    }
+
+    const entry = factsDb.store({
+      text: mergedText,
+      category,
+      importance: 0.8,
+      entity: first?.entity ?? null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    try {
+      const vector = await embeddings.embed(mergedText);
+      await vectorDb.store({ text: mergedText, vector, importance: 0.8, category });
+    } catch (err) {
+      logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
+    }
+    for (const id of clusterIds) {
+      factsDb.delete(id);
+      deleted++;
+    }
+    merged++;
+  }
+
+  return { clustersFound: clusters.length, merged, deleted };
+}
 
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
@@ -1874,8 +2083,38 @@ const memoryHybridPlugin = {
               console.log(`  ${cat}: ${count} facts`);
             }
           });
+
+        mem
+          .command("consolidate")
+          .description("Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster (2.4)")
+          .option("--threshold <n>", "Similarity threshold 0–1 (default 0.92)", "0.92")
+          .option("--include-structured", "Include identifier-like facts (IP, email, etc.); default is to skip")
+          .option("--dry-run", "Report clusters and would-merge only; do not store or delete")
+          .option("--limit <n>", "Max facts to consider (default 300)", "300")
+          .option("--model <model>", "LLM for merge (default gpt-4o-mini)", "gpt-4o-mini")
+          .action(async (opts: { threshold?: string; includeStructured?: boolean; dryRun?: boolean; limit?: string; model?: string }) => {
+            const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.92")));
+            const limit = Math.min(500, Math.max(10, parseInt(opts.limit || "300")));
+            const result = await runConsolidate(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openaiClient,
+              {
+                threshold,
+                includeStructured: !!opts.includeStructured,
+                dryRun: !!opts.dryRun,
+                limit,
+                model: opts.model || "gpt-4o-mini",
+              },
+              api.logger,
+            );
+            console.log(`Clusters found: ${result.clustersFound}`);
+            console.log(`Merged: ${result.merged}`);
+            console.log(`Deleted: ${result.deleted}${opts.dryRun ? " (dry run)" : ""}`);
+          });
       },
-      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories"] },
+      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem consolidate"] },
     );
 
     // ========================================================================
