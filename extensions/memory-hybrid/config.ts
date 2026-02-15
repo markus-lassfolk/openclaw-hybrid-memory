@@ -28,12 +28,14 @@ export type AutoClassifyConfig = {
 /** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
 export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
 
-/** Auto-recall: enable/disable plus optional token cap, per-memory truncation, and line format */
+/** Auto-recall: enable/disable plus optional token cap, per-memory truncation, line format, limit, minScore */
 export type AutoRecallConfig = {
   enabled: boolean;
   maxTokens: number;           // cap on total tokens injected (default 800)
   maxPerMemoryChars: number;   // truncate each memory to this many chars; 0 = no truncation
   injectionFormat: AutoRecallInjectionFormat;  // full | short | minimal (default full)
+  limit: number;               // max memories to consider for injection (default 5)
+  minScore: number;            // vector search minimum score 0–1 (default 0.3)
 };
 
 export type HybridMemoryConfig = {
@@ -148,11 +150,15 @@ export const hybridConfigSchema = {
       const format = typeof ar.injectionFormat === "string" && VALID_FORMATS.includes(ar.injectionFormat as typeof VALID_FORMATS[number])
         ? (ar.injectionFormat as AutoRecallInjectionFormat)
         : "full";
+      const limit = typeof ar.limit === "number" && ar.limit > 0 ? Math.floor(ar.limit) : 5;
+      const minScore = typeof ar.minScore === "number" && ar.minScore >= 0 && ar.minScore <= 1 ? ar.minScore : 0.3;
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
         maxPerMemoryChars: typeof ar.maxPerMemoryChars === "number" && ar.maxPerMemoryChars >= 0 ? ar.maxPerMemoryChars : 0,
         injectionFormat: format,
+        limit,
+        minScore,
       };
     } else {
       autoRecall = {
@@ -160,6 +166,8 @@ export const hybridConfigSchema = {
         maxTokens: 800,
         maxPerMemoryChars: 0,
         injectionFormat: "full",
+        limit: 5,
+        minScore: 0.3,
       };
     }
 

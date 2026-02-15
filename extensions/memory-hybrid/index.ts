@@ -1860,18 +1860,19 @@ const memoryHybridPlugin = {
         if (!event.prompt || event.prompt.length < 5) return;
 
         try {
-          const ftsResults = factsDb.search(event.prompt, 5);
+          const { limit, minScore } = cfg.autoRecall;
+          const ftsResults = factsDb.search(event.prompt, limit);
           let lanceResults: SearchResult[] = [];
           try {
             const vector = await embeddings.embed(event.prompt);
-            lanceResults = await vectorDb.search(vector, 5, 0.3);
+            lanceResults = await vectorDb.search(vector, limit, minScore);
           } catch (err) {
             api.logger.warn(
               `memory-hybrid: vector recall failed: ${err}`,
             );
           }
 
-          const candidates = mergeResults(ftsResults, lanceResults, 15);
+          const candidates = mergeResults(ftsResults, lanceResults, limit);
           if (candidates.length === 0) return;
 
           const { maxTokens, maxPerMemoryChars, injectionFormat } = cfg.autoRecall;
