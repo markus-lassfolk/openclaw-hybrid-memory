@@ -777,6 +777,8 @@ After config merge and restart:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | memory-hybrid disabled / "memory slot set to memory-core" | Slot not set | Set `plugins.slots.memory` to `"memory-hybrid"` |
+| Plugin fails to load / "embedding.apiKey is required" | No OpenAI key in config or key is empty | Add `embedding.apiKey` (and `embedding.model`) to plugin config. Use a valid [OpenAI API key](https://platform.openai.com/api-keys). The plugin does **not** support other embedding providers or automatic failover; embeddings and LLM calls (auto-classify, summarize, consolidate) use OpenAI only. |
+| Invalid or expired API key | Key wrong, revoked, or out of credits | Gateway may load; first embed (recall, store, search) or `openclaw hybrid-mem verify` will fail with 401/403. Fix the key in config and restart. Run `openclaw hybrid-mem verify` to confirm. |
 | Missing env var for API key | Env not loaded in non-interactive shell | Inline key in config or ensure env is set for the process |
 | `Cannot find module '@lancedb/lancedb'` or `better-sqlite3` | Extension deps not installed, or **OpenClaw was just upgraded** | Install in extension dir (§3.2); after any **openclaw upgrade** run post-upgrade (§14). Full gateway stop/start. |
 | recall/capture failed after npm install | Stale module cache: SIGUSR1 reload keeps the same process, so Node’s dynamic-import cache does not load newly installed native modules (e.g. better-sqlite3, lancedb) | **Full stop then start** (`openclaw gateway stop` then `start`). A full restart is required so the process loads the new native modules. |
@@ -786,6 +788,13 @@ After config merge and restart:
 | Memory files not found by search | File index not built or stale | Ensure `sync.onSessionStart: true` and `sync.watch: true`; restart and start a new session |
 | hybrid-mem stats still 0 after seed | Seed script used wrong paths or schema | Point seed at same DB paths as plugin; use plugin schema (see extensions/memory-hybrid or seed prompt) |
 | `npm install` fails in extension dir (e.g. "openclaw": "workspace:*", invalid protocol) | Plugin package.json has devDependencies that reference workspace or unsupported protocols | Remove devDependencies in place, then install. From the extension dir: `node -e "let p=require('./package.json'); delete p.devDependencies; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2))"` then `npm install`. Or fix package.json and re-copy from this repo. |
+
+### No OpenAI key / invalid key — detection and behaviour
+
+- **At config load:** If `embedding.apiKey` is missing or not a string, the plugin throws and does not register. You must supply a key (or a placeholder that you replace before first use).
+- **At runtime:** Embeddings are used for vector search, auto-recall, store (new facts), consolidate, and find-duplicates. If the key is invalid or the API fails (401, 403, network), those operations log a warning and skip or return empty (e.g. auto-recall falls back to FTS-only; store skips the vector write). SQLite-only paths (lookup, FTS search, prune, stats) still work without a key.
+- **Detection:** Run `openclaw hybrid-mem verify` — it checks for a non-placeholder key and calls the embedding API once. If the key is missing or invalid, verify reports "Embedding API: FAIL".
+- **Failover:** The plugin does **not** support automatic failover to another provider (e.g. another embedding API or local model). Embeddings and all LLM calls (auto-classify, summarize-when-over-budget, consolidate) use the configured OpenAI key only. Adding failover would require a multi-provider config and alternate embedding/chat implementations; this is not implemented.
 
 ---
 
