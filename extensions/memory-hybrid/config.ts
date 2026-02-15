@@ -19,6 +19,12 @@ export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
   checkpoint: 4 * 3600, // 4 hours
 };
 
+export type AutoClassifyConfig = {
+  enabled: boolean;
+  model: string;       // e.g. "gpt-4.1-nano"
+  batchSize: number;   // facts per LLM call (default 20)
+};
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -29,16 +35,37 @@ export type HybridMemoryConfig = {
   sqlitePath: string;
   autoCapture: boolean;
   autoRecall: boolean;
+  categories: string[];
+  autoClassify: AutoClassifyConfig;
 };
 
-export const MEMORY_CATEGORIES = [
+/** Default categories — can be extended via config.categories */
+export const DEFAULT_MEMORY_CATEGORIES = [
   "preference",
   "fact",
   "decision",
   "entity",
   "other",
 ] as const;
-export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
+
+/** Runtime categories: starts as defaults, extended by config */
+let _runtimeCategories: string[] = [...DEFAULT_MEMORY_CATEGORIES];
+
+export function getMemoryCategories(): readonly string[] {
+  return _runtimeCategories;
+}
+
+export function setMemoryCategories(categories: string[]): void {
+  // Always include defaults + any custom ones, deduplicated
+  const merged = new Set([...DEFAULT_MEMORY_CATEGORIES, ...categories]);
+  _runtimeCategories = [...merged];
+}
+
+export function isValidCategory(cat: string): boolean {
+  return _runtimeCategories.includes(cat);
+}
+
+export type MemoryCategory = string;
 
 const DEFAULT_MODEL = "text-embedding-3-small";
 const DEFAULT_LANCE_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
@@ -79,6 +106,24 @@ export const hybridConfigSchema = {
       typeof embedding.model === "string" ? embedding.model : DEFAULT_MODEL;
     vectorDimsForModel(model);
 
+    // Parse custom categories
+    const customCategories: string[] = Array.isArray(cfg.categories)
+      ? (cfg.categories as string[]).filter((c) => typeof c === "string" && c.length > 0)
+      : [];
+
+    // Merge into runtime categories
+    if (customCategories.length > 0) {
+      setMemoryCategories(customCategories);
+    }
+
+    // Parse autoClassify config
+    const acCfg = cfg.autoClassify as Record<string, unknown> | undefined;
+    const autoClassify: AutoClassifyConfig = {
+      enabled: acCfg?.enabled === true,
+      model: typeof acCfg?.model === "string" ? acCfg.model : "gpt-4.1-nano",
+      batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -91,6 +136,8 @@ export const hybridConfigSchema = {
         typeof cfg.sqlitePath === "string" ? cfg.sqlitePath : DEFAULT_SQLITE_PATH,
       autoCapture: cfg.autoCapture !== false,
       autoRecall: cfg.autoRecall !== false,
+      categories: [...getMemoryCategories()],
+      autoClassify,
     };
   },
 };

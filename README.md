@@ -1,31 +1,31 @@
 # OpenClaw Hybrid Memory
 
-This repo stores the **Clawdboss.ai** article and plugin for giving your OpenClaw Clawdbot permanent, hybrid memory (SQLite + FTS5 + LanceDB).
+This repo stores everything needed to run and **reproduce** the **full hybrid memory system** : **Hybrid Memory Manager v3.0** — memory-hybrid (vector/DB) combined with file-based memory (memorySearch + hierarchical files) for the most capable setup. One deployment flow applies to any system (new or existing).
+
+## Start here: Hybrid Memory Manager v3.0
+
+| Path | Description |
+|------|-------------|
+| **[docs/hybrid-memory-manager-v3.md](docs/hybrid-memory-manager-v3.md)** | **Full deployment reference:** four-part architecture, plugin install, config, MEMORY.md template, AGENTS.md Memory Protocol, **one deployment flow for any system** (§8) with optional backfill (seed + extract-daily; safe on new systems), verification, troubleshooting, CLI, upgrades. |
+| **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)** | **AI-friendly setup prompt:** point an OpenClaw agent at this file and it will autonomously install, configure, backfill, and verify the full hybrid memory system. Includes sub-agent re-index step. |
+| **[deploy/](deploy/)** | Merge-ready `openclaw.memory-snippet.json` (memory-hybrid + memorySearch, redacted) and deploy README. |
+| **extensions/memory-hybrid/** | memory-hybrid plugin source (required for v3): SQLite+FTS5+LanceDB ([README](extensions/memory-hybrid/README.md)). |
+| **[scripts/](scripts/)** | **Upgrade helpers:** after every OpenClaw upgrade, reinstall LanceDB in the extension dir and restart. Copy `post-upgrade.sh` and `upgrade.sh` to `~/.openclaw/scripts/`; use alias `openclaw-upgrade` for one-command upgrades (v3 §12, [scripts/README.md](scripts/README.md)). |
 
 ## What’s in this repo
 
 | Path | Description |
 |------|-------------|
-| **[docs/clawdboss-permanent-memory-article.md](docs/clawdboss-permanent-memory-article.md)** | Full text of the article “Give Your Clawdbot Permanent Memory” (narrative, problem, attempts, hybrid design, decay, checkpoints, TLDR, installation, setup prompts). |
-| **docs/SETUP-PROMPT-1-CREATE-PLUGIN-FILES.md** | Pasteable prompt to create the plugin files in your OpenClaw extensions directory. |
-| **docs/SETUP-PROMPT-2-INSTALL-DEPENDENCIES.md** | Pasteable prompt to install npm dependencies (Windows + Linux). |
-| **docs/SETUP-PROMPT-3-CONFIGURE-AND-START.md** | Pasteable prompt to configure `openclaw.json` and start the gateway. |
-| **docs/SETUP-PROMPT-4-SEED-FROM-MEMORY-FILES.md** | Optional prompt to seed from existing MEMORY.md / daily files. |
-| **extensions/memory-hybrid/** | Full plugin source: `package.json`, `openclaw.plugin.json`, `config.ts`, `index.ts`, and [README](extensions/memory-hybrid/README.md). |
-| **[docs/ucsandman-hierarchical-memory-system.md](docs/ucsandman-hierarchical-memory-system.md)** | Hierarchical memory system (index + drill-down): prompt and implementation steps by **ucsandman** ([GitHub](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System)). |
-| **hybrid-hierarchical-memory-guide.md** | Separate best-practice guide for OpenClaw’s built-in three-layer memory (memory-lancedb + memorySearch + hierarchical files). |
+| **hybrid-hierarchical-memory-guide.md** | Your v2.0 guide (built-in memory-lancedb + memorySearch + hierarchical files; pre–full-hybrid). |
+| **[docs/clawdboss-permanent-memory-article.md](docs/clawdboss-permanent-memory-article.md)** | Full text of “Give Your Clawdbot Permanent Memory” (hybrid plugin, decay, checkpoints, setup prompts). |
+| **docs/SETUP-PROMPT-1..4** | Pasteable prompts for memory-hybrid (create files, install deps, configure, seed). |
+| **[docs/ucsandman-hierarchical-memory-system.md](docs/ucsandman-hierarchical-memory-system.md)** | ucsandman’s hierarchical index + drill-down prompt and steps. |
 
 ## Sources & credits
 
 - **Clawdboss.ai** — [Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory): hybrid plugin (SQLite + FTS5 + LanceDB), decay tiers, checkpoints. Full article and setup prompts in `docs/`; plugin in `extensions/memory-hybrid/`.
 - **ucsandman** — [OpenClaw-Hierarchical-Memory-System](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System): hierarchical MEMORY.md (lightweight index + drill-down detail files), token math, implementation steps. Captured in [docs/ucsandman-hierarchical-memory-system.md](docs/ucsandman-hierarchical-memory-system.md).
 
-## Quick start (plugin from this repo)
+## Quick start
 
-1. Copy the four files from `extensions/memory-hybrid/` into your OpenClaw extensions directory (see [Prompt 1](docs/SETUP-PROMPT-1-CREATE-PLUGIN-FILES.md)).
-2. Run the install and configure steps using [Prompts 2–4](docs/SETUP-PROMPT-2-INSTALL-DEPENDENCIES.md) in `docs/`.
-
-## Relation to the other guide
-
-- **hybrid-hierarchical-memory-guide.md** — How to use OpenClaw’s **built-in** memory (memory-lancedb slot + memorySearch + hierarchical `memory/` files). No custom plugin.
-- **This repo’s plugin and article** — **Custom** memory-hybrid plugin (SQLite+FTS5+LanceDB) as described on Clawdboss.ai; use the article and setup prompts here to install it.
+Follow [v3 §8](docs/hybrid-memory-manager-v3.md): (1) workspace + memory dirs + bootstrap files, (2) install memory-hybrid plugin (§3 — copy `extensions/memory-hybrid/`, run `npm install` in the plugin dir only), (3) merge [deploy/openclaw.memory-snippet.json](deploy/openclaw.memory-snippet.json) into `~/.openclaw/openclaw.json`, (4) restart, (5) optional backfill (seed script + `openclaw hybrid-mem extract-daily`; safe on new systems), (6) verify (§9).

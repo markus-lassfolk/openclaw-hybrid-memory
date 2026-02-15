@@ -1,0 +1,62 @@
+{
+  "_comment": "Full hybrid: memory-hybrid plugin (SQLite+FTS5+LanceDB) + memorySearch. Merge into ~/.openclaw/openclaw.json. Replace YOUR_OPENAI_API_KEY. Do not commit real keys.",
+  "memory": {
+    "backend": "builtin",
+    "citations": "auto"
+  },
+  "plugins": {
+    "slots": {
+      "memory": "memory-hybrid"
+    },
+    "entries": {
+      "memory-core": {
+        "enabled": true
+      },
+      "memory-hybrid": {
+        "enabled": true,
+        "config": {
+          "embedding": {
+            "apiKey": "YOUR_OPENAI_API_KEY",
+            "model": "text-embedding-3-small"
+          },
+          "autoCapture": true,
+          "autoRecall": true
+        }
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "bootstrapMaxChars": 15000,
+      "bootstrapTotalMaxChars": 50000,
+      "memorySearch": {
+        "enabled": true,
+        "sources": ["memory"],
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "sync": {
+          "onSessionStart": true,
+          "onSearch": true,
+          "watch": true
+        },
+        "chunking": {
+          "tokens": 500,
+          "overlap": 50
+        },
+        "query": {
+          "maxResults": 8,
+          "minScore": 0.3,
+          "hybrid": {
+            "enabled": true
+          }
+        }
+      },
+      "compaction": {
+        "mode": "default",
+        "memoryFlush": {
+          "enabled": true
+        }
+      }
+    }
+  }
+}
