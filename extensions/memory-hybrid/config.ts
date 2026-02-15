@@ -21,7 +21,7 @@ export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
 
 export type AutoClassifyConfig = {
   enabled: boolean;
-  model: string;       // e.g. "gpt-4.1-nano"
+  model: string;       // e.g. "gpt-4.1-nano", "gpt-4o-mini", or any chat model
   batchSize: number;   // facts per LLM call (default 20)
 };
 
@@ -117,10 +117,12 @@ export const hybridConfigSchema = {
     }
 
     // Parse autoClassify config
+    // Model default: cheapest available chat model. Use "gpt-4o-mini" as a
+    // safe default; users can override with any model their API key supports.
     const acCfg = cfg.autoClassify as Record<string, unknown> | undefined;
     const autoClassify: AutoClassifyConfig = {
       enabled: acCfg?.enabled === true,
-      model: typeof acCfg?.model === "string" ? acCfg.model : "gpt-4.1-nano",
+      model: typeof acCfg?.model === "string" ? acCfg.model : "gpt-4o-mini",
       batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
     };
 

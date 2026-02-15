@@ -288,43 +288,206 @@ So **stable** and **active** facts that keep being recalled stay alive; unused o
 
 **Optional manual controls:** Run `openclaw hybrid-mem prune` to prune immediately (options: `--hard` only expired, `--soft` only confidence decay, `--dry-run` to see counts). Run `openclaw hybrid-mem backfill-decay` to re-classify existing facts with auto-detected decay classes. See §13 for the full CLI.
 
-### 4.8 Categories and default decay
+### 4.8 Categories
 
-The plugin uses two separate notions: **category** (what kind of fact) and **decay class** (how long it lives). Decay is **not** configured per category; it is derived from the fact’s **entity**, **key**, **value**, and **text** when the fact is stored.
+The plugin uses two separate notions: **category** (what kind of fact) and **decay class** (how long it lives). This section covers categories. See §4.4 for decay classes and TTLs.
 
-**Categories** (for labeling, search, and FTS):
+#### 4.8.1 Default categories
 
-| Category     | Typical use | Default decay (from content) |
-|-------------|-------------|------------------------------|
-| preference  | "I prefer X", "like/hate Y" | Usually **stable** (90d, refresh on access) |
-| fact        | "X's birthday is Y", "lives in Z" | **Stable** or **permanent** if key is name/email/birthday etc. |
-| decision    | "Decided to use X because Y", "always use Z" | Usually **permanent** (entity=decision/convention) |
-| entity      | Names, identifiers, "is called X" | **Stable** or **permanent** (e.g. name/email → permanent) |
-| other       | Everything that doesn’t match above | **Stable** (90d) |
+Five categories are built in and always available:
 
-**How decay is chosen:** When storing a fact, the plugin either uses an explicit `decayClass` (if you pass it) or runs **auto-classification** on (entity, key, value, text). So the “default” decay depends on what’s extracted, for example:
+| Category | Typical content | Examples |
+|----------|----------------|----------|
+| `preference` | Likes, dislikes, working-style choices | "I prefer dark mode", "I hate tabs" |
+| `fact` | Biographical or factual statements | "My birthday is Nov 13", "lives in Prague" |
+| `decision` | Architectural or process decisions with rationale | "Decided to use Postgres because ...", "always use pnpm" |
+| `entity` | Named things: people, projects, tools, identifiers | "John's email is john@example.com", phone numbers |
+| `other` | Anything the heuristics can't classify | Catch-all; reclassified later by auto-classify (§4.9) |
 
-- Keys like `name`, `email`, `decision`, `architecture` → **permanent**
-- Entity `decision` or `convention` → **permanent**
-- Keys like `task`, `todo`, `sprint`, `blocker` or text “working on”, “need to” → **active** (14d)
-- Keys like `current_file`, `temp`, `debug` or text “this session” → **session** (24h)
-- Key `checkpoint` / `preflight` → **checkpoint** (4h)
-- Otherwise → **stable** (90d, refresh on access)
+These defaults cannot be removed. Custom categories are merged alongside them (see §4.8.4).
 
-**How to change decay**
+#### 4.8.2 Classification pipeline
 
-- **When storing:** Use the `memory_store` tool and pass `decayClass` explicitly (e.g. `permanent`, `stable`, `active`, `session`, `checkpoint`). That overrides auto-classification for that fact.
-- **Existing facts:** Run `openclaw hybrid-mem backfill-decay`. It re-runs auto-classification for all facts and updates their decay class. There is no config file or CLI flag to map “category X → decay Y”; only code changes can change the classification rules or TTLs.
+Every fact passes through up to three classification stages. Each stage is progressively more expensive but more accurate:
 
-**How to add new categories**
+```text
+conversation text
+      |
+      v
+ 1. Auto-capture filter          shouldCapture() -- regex triggers
+    (hot path, no LLM)           + sensitive-content exclusion
+      |
+      | passes filter
+      v
+ 2. Heuristic classification     detectCategory() -- fast regex
+    (hot path, no LLM)           matching on the text (§4.8.3)
+      |
+      | assigned category (often "other")
+      v
+ 3. LLM auto-classify            Runs in background (§4.9):
+    (background, cheap LLM)      daily batch + 5 min after startup
+      |
+      | "other" -> proper category
+      v
+  stored fact
+```
 
-Categories are fixed in the plugin code. To add one:
+**Stage 1 -- Auto-capture filter.** When `autoCapture` is enabled (default: `true`), every assistant message is scanned. The `shouldCapture()` function checks regex triggers (e.g. "remember", "prefer", "decided", email/phone patterns) and rejects sensitive content (passwords, API keys, SSNs, credit cards) and messages that are too short (<10 chars), too long (>500 chars), or look like structured markup.
 
-1. In `extensions/memory-hybrid/config.ts`, add the new label to `MEMORY_CATEGORIES` (e.g. `"custom"`).
-2. In `extensions/memory-hybrid/index.ts`, extend `detectCategory(text)` if you want the new category to be auto-assigned from captured text; update any schema that references `MEMORY_CATEGORIES` (e.g. the `memory_store` tool parameter).
-3. Rebuild/reload the plugin.
+**Stage 2 -- Heuristic classification.** The `detectCategory()` function runs a fast regex pass on the text and returns the first matching category. This happens inline during capture -- no LLM call, no latency. Anything that doesn't match falls through to `"other"`.
 
-**How to change TTLs or add decay classes**
+**Stage 3 -- LLM auto-classify.** If enabled (§4.9), a background job periodically queries all `"other"` facts and sends them to a cheap LLM in batches to be reclassified into proper categories.
+
+**Manual override.** The `memory_store` tool accepts an explicit `category` parameter that bypasses heuristic detection entirely.
+
+#### 4.8.3 Heuristic detection patterns
+
+The `detectCategory()` function in `index.ts` matches the following patterns (checked in order -- first match wins):
+
+| Category | Patterns matched |
+|----------|-----------------|
+| `decision` | `decided`, `chose`, `went with`, `selected`, `always use`, `never use`, `over...because`, `instead of...since`, `will use` |
+| `preference` | `prefer`, `like`, `love`, `hate`, `want` |
+| `entity` | Phone numbers (`+` followed by 10+ digits), email addresses, `is called` |
+| `fact` | `born`, `birthday`, `lives`, `works`, `is`, `are`, `has`, `have` |
+| `other` | Everything else (fallback) |
+
+After category detection, `extractStructuredFields()` runs a second, more detailed regex pass to extract structured **entity / key / value** triples from the text. These are stored alongside the category for precise lookups:
+
+| Pattern | Extracted fields | Example |
+|---------|-----------------|---------|
+| `decided/chose/picked/went with X because Y` | entity=`decision`, key=`X`, value=`Y` | "Decided to use Postgres because of JSONB support" |
+| `use X over Y because Z` | entity=`decision`, key=`X over Y`, value=`Z` | "Chose pnpm over npm because of speed" |
+| `always/never X` | entity=`convention`, key=`X`, value=`always`/`never` | "Always use strict mode" |
+| `X's Y is Z` / `My Y is Z` | entity=`X`/`user`, key=`Y`, value=`Z` | "My birthday is Nov 13" |
+| `I prefer/like/hate X` | entity=`user`, key=`prefer`/`like`/`hate`, value=`X` | "I prefer dark mode" |
+| Email address found | key=`email`, value=address | "john@example.com" |
+| Phone number found | key=`phone`, value=number | "+1234567890" |
+
+These structured fields also determine the **decay class** -- e.g. entity=`decision` maps to permanent, key=`email` maps to permanent, key=`task` maps to active. See §4.4 for the full decay classification rules.
+
+#### 4.8.4 Adding custom categories
+
+Categories can be extended from config without editing code. Add a `categories` array to the memory-hybrid plugin config in `openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "memory-hybrid": {
+        "config": {
+          "categories": ["research", "health", "finance"]
+        }
+      }
+    }
+  }
+}
+```
+
+The five defaults (`preference`, `fact`, `decision`, `entity`, `other`) are always included; your custom categories are merged in and deduplicated. Restart the gateway to pick them up.
+
+Once registered, custom categories are available in:
+
+- The **`memory_store` tool** -- the `category` parameter enum includes them.
+- The **LLM auto-classifier** -- the prompt lists all categories so it can assign custom ones.
+- The **`hybrid-mem classify` CLI** -- same LLM-based classification.
+- The **`hybrid-mem categories` CLI** -- shows counts for all categories.
+
+**Heuristic detection for custom categories.** The built-in `detectCategory()` function only recognizes the five default categories. To make auto-capture assign a custom category heuristically, edit `detectCategory()` in `index.ts` and add a regex pattern before the `return "other"` fallback:
+
+```typescript
+// in detectCategory(), before the final return:
+if (/research|paper|study|journal|arxiv/i.test(lower)) return "research";
+return "other";
+```
+
+Without a heuristic pattern, custom categories are only assigned via explicit `memory_store` calls or the LLM auto-classifier.
+
+#### 4.8.5 Category-related configuration reference
+
+All category settings live in `openclaw.json` under `plugins.entries.memory-hybrid.config`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `categories` | `string[]` | `[]` | Custom categories to add alongside the five defaults. |
+| `autoCapture` | `boolean` | `true` | Enable automatic capture of facts from conversations (pipeline stages 1-2). |
+| `autoClassify.enabled` | `boolean` | `false` | Enable LLM background reclassification of `"other"` facts (pipeline stage 3). |
+| `autoClassify.model` | `string` | `"gpt-4o-mini"` | Chat model for classification. Use the cheapest that works. |
+| `autoClassify.batchSize` | `number` | `20` | Facts per LLM call. Higher = fewer API calls but longer prompts. |
+
+### 4.9 Auto-classify (LLM reclassification)
+
+Facts captured during conversations often get the `"other"` category because the heuristic `detectCategory()` only matches common patterns. The **auto-classify** feature uses a cheap LLM to reclassify these into proper categories in the background.
+
+#### How it works
+
+1. **No inline LLM calls.** During auto-capture, facts are classified by fast heuristics only -- no API latency on the hot path.
+2. **Background batch job.** If `autoClassify.enabled` is `true`, the plugin runs classification:
+   - Once on startup (5-minute delay to let things settle).
+   - Then every **24 hours** on a repeating timer.
+3. **Safe.** Only reclassifies facts currently categorized as `"other"`. Facts you've already assigned a category (manually or via heuristics) are never touched.
+4. **Batched.** Facts are sent to the LLM in batches of `batchSize` (default 20) with a 500ms pause between batches to avoid rate limits.
+
+#### LLM prompt
+
+The classifier sends this prompt for each batch:
+
+> You are a memory classifier. Categorize each fact into exactly one category.
+>
+> Available categories: preference, fact, decision, entity *(plus any custom categories, minus "other")*
+>
+> Use "other" ONLY if no category fits at all.
+>
+> Facts to classify:
+> 1. *fact text (truncated to 300 chars)*
+> 2. ...
+>
+> Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]
+
+The response is parsed as a JSON array. Each result is validated against the configured categories (`isValidCategory`); invalid or `null` values are silently dropped.
+
+#### Configuration
+
+Add `autoClassify` to your memory-hybrid plugin config:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "memory-hybrid": {
+        "config": {
+          "autoClassify": {
+            "enabled": true,
+            "model": "gpt-4o-mini",
+            "batchSize": 20
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Set to `true` to enable background auto-classify on startup + every 24h. |
+| `model` | `"gpt-4o-mini"` | Any chat model your API key supports. Use the cheapest that gives acceptable results. The OpenAI API resolves model aliases (e.g. `"gpt-4o-mini"` routes to the latest minor version), so this stays current without hardcoding a specific version. |
+| `batchSize` | `20` | Facts per LLM call. Higher = fewer API calls but longer prompts and higher per-call cost. |
+
+#### CLI commands for categories
+
+| Command | Description |
+|---------|-------------|
+| `openclaw hybrid-mem categories` | List all configured categories with per-category fact counts. |
+| `openclaw hybrid-mem classify` | Run LLM auto-classify immediately (uses `autoClassify` config). |
+| `openclaw hybrid-mem classify --dry-run` | Preview classifications without applying changes. |
+| `openclaw hybrid-mem classify --limit N` | Classify at most N facts (default: 500). |
+| `openclaw hybrid-mem classify --model M` | Override the LLM model for this run. |
+| `openclaw hybrid-mem stats` | Show overall memory stats including category breakdown. |
+
+**Tip:** Run `classify --dry-run` first to preview what the LLM would do, then run without `--dry-run` to apply.
+
+#### How to change TTLs or add decay classes
 
 TTLs and decay class names are defined in code (`config.ts`: `TTL_DEFAULTS`, `DECAY_CLASSES`). To change a TTL (e.g. stable from 90 to 60 days) or add a new decay class, edit those constants and the `classifyDecay` logic in `index.ts`, then redeploy the plugin. There is no `openclaw.json` setting for decay or TTL.
 
@@ -606,6 +769,8 @@ Use these from the shell for inspection and maintenance:
 | `openclaw hybrid-mem prune` | Remove expired facts (decay/TTL). |
 | `openclaw hybrid-mem checkpoint` | Create a checkpoint (pre-flight state). |
 | `openclaw hybrid-mem backfill-decay` | Backfill decay classes for existing rows. |
+| `openclaw hybrid-mem classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. `--dry-run` previews. |
+| `openclaw hybrid-mem categories` | List all configured categories with fact counts. |
 
 After implementation and re-indexing, use `stats` and `lookup`/`search` to confirm data is present.
 

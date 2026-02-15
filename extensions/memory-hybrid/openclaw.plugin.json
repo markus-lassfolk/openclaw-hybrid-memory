@@ -30,6 +30,19 @@
     "autoRecall": {
       "label": "Auto-Recall",
       "help": "Automatically inject relevant memories into context"
+    },
+    "categories": {
+      "label": "Custom Categories",
+      "help": "Additional memory categories beyond the defaults (preference, fact, decision, entity, other)"
+    },
+    "autoClassify.enabled": {
+      "label": "Auto-Classify",
+      "help": "Use a cheap LLM to classify 'other' facts into proper categories on capture and via CLI"
+    },
+    "autoClassify.model": {
+      "label": "Classify Model",
+      "placeholder": "gpt-4.1-nano",
+      "help": "Cheap/fast model for classification (e.g. gpt-4.1-nano, gpt-4o-mini)"
     }
   },
   "configSchema": {
@@ -51,7 +64,21 @@
       "lanceDbPath": { "type": "string" },
       "sqlitePath": { "type": "string" },
       "autoCapture": { "type": "boolean" },
-      "autoRecall": { "type": "boolean" }
+      "autoRecall": { "type": "boolean" },
+      "categories": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Custom categories to add alongside defaults"
+      },
+      "autoClassify": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "model": { "type": "string" },
+          "batchSize": { "type": "number" }
+        }
+      }
     },
     "required": ["embedding"]
   }

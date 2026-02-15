@@ -117,7 +117,26 @@ Adjust `contextTokens` to ~90% of your model's context window if not Opus 200k.
 { "ttl": "30m" }
 ```
 
-**Verify:** Read back `~/.openclaw/openclaw.json` and confirm all six blocks are present and correct. *(ref: v3 §4)*
+**4g. Auto-classify (recommended)** — enable LLM-based reclassification of `"other"` facts. Add `autoClassify` and optionally `categories` inside `plugins.entries.memory-hybrid.config`:
+
+```json
+{
+  "autoClassify": {
+    "enabled": true,
+    "model": "gpt-4o-mini",
+    "batchSize": 20
+  },
+  "categories": []
+}
+```
+
+This runs automatically: once on startup (5-minute delay) and then every 24 hours. It reclassifies facts that were assigned `"other"` by the fast heuristic into proper categories (`preference`, `fact`, `decision`, `entity`) using a cheap LLM. Only `"other"` facts are touched; manually categorized facts are never changed.
+
+- `model`: Use the cheapest chat model that gives acceptable results. `gpt-4o-mini` is a good default.
+- `batchSize`: Facts per LLM call (default 20). Higher = fewer API calls but longer prompts.
+- `categories`: Add custom category names (e.g. `["research", "health"]`) to extend the five defaults. Leave empty `[]` if you only need the defaults.
+
+**Verify:** Read back `~/.openclaw/openclaw.json` and confirm all seven blocks (4a-4g) are present and correct. *(ref: v3 §4, §4.8, §4.9)*
 
 ---
 
@@ -287,9 +306,11 @@ Run through this checklist:
 3. Gateway logs show `memory-hybrid: initialized` and `injecting N memories`.
 4. `MEMORY.md` exists and links to files under `memory/`.
 5. `AGENTS.md` contains the Memory Protocol section.
-6. Ask the agent a question that requires memory recall — confirm it finds the answer.
+6. `openclaw hybrid-mem categories` — lists all configured categories with counts.
+7. If facts exist: `openclaw hybrid-mem classify --dry-run --limit 5` — previews LLM classification (confirms auto-classify config and API access work).
+8. Ask the agent a question that requires memory recall — confirm it finds the answer.
 
-**If all pass:** Setup is complete. The hybrid memory system is operational. Decay and pruning run automatically (every 60 minutes, no cron needed). Report success to the user.
+**If all pass:** Setup is complete. The hybrid memory system is operational. Decay and pruning run automatically (every 60 minutes, no cron needed). Auto-classify runs on startup (5-min delay) and every 24 hours if enabled. Report success to the user.
 
 **If any fail:** Consult [hybrid-memory-manager-v3.md §12 Troubleshooting](hybrid-memory-manager-v3.md) for the specific symptom.
 
@@ -304,5 +325,6 @@ Run through this checklist:
 | Config snippet | `deploy/openclaw.memory-snippet.json` |
 | Backfill script | `scripts/backfill-memory.mjs` |
 | Upgrade scripts | `scripts/post-upgrade.sh`, `scripts/upgrade.sh` |
+| Categories & auto-classify | v3 §4.8, §4.9 |
 | Troubleshooting | v3 §12 |
 | CLI commands | v3 §13 |

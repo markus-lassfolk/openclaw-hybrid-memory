@@ -206,6 +206,9 @@ async function main() {
 
   const db = new Database(sqlitePath);
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
+  db.pragma("synchronous = NORMAL");
+  db.pragma("wal_autocheckpoint = 1000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY,
@@ -262,8 +265,7 @@ async function main() {
   }
   const hasDup = (text) => db.prepare("SELECT id FROM facts WHERE text = ? LIMIT 1").get(text);
 
-  const now = Date.now();
-  const nowSec = Math.floor(now / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
   const stableTtl = 90 * 24 * 3600;
   const insertFact = db.prepare(
     `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence)
@@ -306,7 +308,7 @@ async function main() {
       fact.key,
       fact.value,
       `backfill:${fact.source}`,
-      now,
+      nowSec,
       nowSec + stableTtl,
       nowSec
     );
@@ -315,7 +317,7 @@ async function main() {
       input: fact.text,
     });
     const vector = data[0].embedding;
-    await table.add([{ id, text: fact.text, vector, importance: 0.8, category: fact.category, createdAt: now }]);
+    await table.add([{ id, text: fact.text, vector, importance: 0.8, category: fact.category, createdAt: nowSec }]);
     stored++;
   }
   db.close();

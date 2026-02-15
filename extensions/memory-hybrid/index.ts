@@ -20,7 +20,9 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { stringEnum } from "openclaw/plugin-sdk";
 
 import {
-  MEMORY_CATEGORIES,
+  DEFAULT_MEMORY_CATEGORIES,
+  getMemoryCategories,
+  isValidCategory,
   type MemoryCategory,
   DECAY_CLASSES,
   type DecayClass,
@@ -69,6 +71,12 @@ class FactsDB {
 
     // Enable WAL mode for better concurrent read performance
     this.db.pragma("journal_mode = WAL");
+    // Wait up to 5s for locks instead of failing immediately (prevents SQLITE_BUSY)
+    this.db.pragma("busy_timeout = 5000");
+    // Durable writes without the overhead of FULL fsync on every commit
+    this.db.pragma("synchronous = NORMAL");
+    // Auto-checkpoint WAL every 1000 pages (~4MB) to prevent unbounded growth
+    this.db.pragma("wal_autocheckpoint = 1000");
 
     // Create main table
     this.db.exec(`
@@ -128,6 +136,9 @@ class FactsDB {
 
     // ---- TTL/Decay migration ----
     this.migrateDecayColumns();
+
+    // ---- Fix ms/s unit mismatch from earlier versions ----
+    this.migrateTimestampUnits();
   }
 
   private migrateDecayColumns(): void {
@@ -156,6 +167,37 @@ class FactsDB {
     `);
   }
 
+  /**
+   * Fix timestamp unit mismatch from earlier versions that stored created_at
+   * (and potentially last_confirmed_at via the decay migration) in milliseconds
+   * while expires_at used seconds.  Any value > 10 000 000 000 is certainly
+   * milliseconds — that threshold in seconds is the year 2286.
+   */
+  private migrateTimestampUnits(): void {
+    const MS_THRESHOLD = 10_000_000_000;
+
+    const { cnt } = this.db
+      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE created_at > ?`)
+      .get(MS_THRESHOLD) as { cnt: number };
+
+    if (cnt === 0) return;
+
+    this.db.exec(`
+      UPDATE facts
+      SET created_at = created_at / 1000
+      WHERE created_at > ${MS_THRESHOLD}
+    `);
+
+    // last_confirmed_at may have been seeded from ms-based created_at
+    // by the migrateDecayColumns migration (created_at → last_confirmed_at).
+    this.db.exec(`
+      UPDATE facts
+      SET last_confirmed_at = last_confirmed_at / 1000
+      WHERE last_confirmed_at IS NOT NULL
+        AND last_confirmed_at > ${MS_THRESHOLD}
+    `);
+  }
+
   store(
     entry: Omit<MemoryEntry, "id" | "createdAt" | "decayClass" | "expiresAt" | "lastConfirmedAt" | "confidence"> & {
       decayClass?: DecayClass;
@@ -164,8 +206,7 @@ class FactsDB {
     },
   ): MemoryEntry {
     const id = randomUUID();
-    const now = Date.now();
-    const nowSec = Math.floor(now / 1000);
+    const nowSec = Math.floor(Date.now() / 1000);
 
     const decayClass =
       entry.decayClass ||
@@ -190,7 +231,7 @@ class FactsDB {
         entry.key,
         entry.value,
         entry.source,
-        now,
+        nowSec,
         decayClass,
         expiresAt,
         nowSec,
@@ -200,7 +241,7 @@ class FactsDB {
     return {
       ...entry,
       id,
-      createdAt: now,
+      createdAt: nowSec,
       decayClass,
       expiresAt,
       lastConfirmedAt: nowSec,
@@ -518,6 +559,34 @@ class FactsDB {
     return counts;
   }
 
+  getByCategory(category: string): MemoryEntry[] {
+    const rows = this.db
+      .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
+      .all(category);
+    return rows.map((row: any) => ({
+      id: row.id,
+      text: row.text,
+      category: row.category,
+      importance: row.importance,
+      entity: row.entity,
+      key: row.key,
+      value: row.value,
+      source: row.source,
+      createdAt: row.created_at,
+      decayClass: row.decay_class,
+      expiresAt: row.expires_at,
+      lastConfirmedAt: row.last_confirmed_at,
+      confidence: row.confidence,
+    }));
+  }
+
+  updateCategory(id: string, category: string): boolean {
+    const result = this.db
+      .prepare("UPDATE facts SET category = ? WHERE id = ?")
+      .run(category, id);
+    return result.changes > 0;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -575,7 +644,7 @@ class VectorDB {
   }): Promise<string> {
     await this.ensureInitialized();
     const id = randomUUID();
-    await this.table!.add([{ ...entry, id, createdAt: Date.now() }]);
+    await this.table!.add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
     return id;
   }
 
@@ -602,7 +671,9 @@ class VectorDB {
             key: null,
             value: null,
             source: "conversation",
-            createdAt: row.createdAt as number,
+            createdAt: (row.createdAt as number) > 10_000_000_000
+              ? Math.floor((row.createdAt as number) / 1000)
+              : (row.createdAt as number),
           },
           score,
           backend: "lancedb" as const,
@@ -877,6 +948,109 @@ function detectCategory(text: string): MemoryCategory {
 }
 
 // ============================================================================
+// LLM-based Auto-Classifier
+// ============================================================================
+
+/**
+ * Classify a batch of "other" facts into proper categories using a cheap LLM.
+ * Returns a map of factId → newCategory.
+ */
+async function classifyBatch(
+  openai: OpenAI,
+  model: string,
+  facts: { id: string; text: string }[],
+  categories: readonly string[],
+): Promise<Map<string, string>> {
+  const catList = categories.filter((c) => c !== "other").join(", ");
+  const factLines = facts
+    .map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`)
+    .join("\n");
+
+  const prompt = `You are a memory classifier. Categorize each fact into exactly one category.
+
+Available categories: ${catList}
+Use "other" ONLY if no category fits at all.
+
+Facts to classify:
+${factLines}
+
+Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]`;
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+      max_tokens: facts.length * 20,
+    });
+
+    const content = resp.choices[0]?.message?.content?.trim() || "[]";
+    // Extract JSON array from response (handle markdown code blocks)
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return new Map();
+
+    const results: string[] = JSON.parse(jsonMatch[0]);
+    const map = new Map<string, string>();
+
+    for (let i = 0; i < Math.min(results.length, facts.length); i++) {
+      const cat = results[i]?.toLowerCase()?.trim();
+      if (cat && cat !== "other" && isValidCategory(cat)) {
+        map.set(facts[i].id, cat);
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Run auto-classification on all "other" facts. Called on schedule or manually.
+ * Also suggests new categories if clusters are found.
+ */
+async function runAutoClassify(
+  db: FactsDB,
+  openai: OpenAI,
+  config: { model: string; batchSize: number },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ reclassified: number; suggested: string[] }> {
+  const categories = getMemoryCategories();
+
+  // Get all "other" facts
+  const others = db.getByCategory("other");
+  if (others.length === 0) {
+    return { reclassified: 0, suggested: [] };
+  }
+
+  logger.info(`memory-hybrid: auto-classify starting on ${others.length} "other" facts`);
+
+  let totalReclassified = 0;
+
+  // Process in batches
+  for (let i = 0; i < others.length; i += config.batchSize) {
+    const batch = others.slice(i, i + config.batchSize).map((e) => ({
+      id: e.id,
+      text: e.text,
+    }));
+
+    const results = await classifyBatch(openai, config.model, batch, categories);
+
+    for (const [id, newCat] of results) {
+      db.updateCategory(id, newCat);
+      totalReclassified++;
+    }
+
+    // Small delay between batches to avoid rate limits
+    if (i + config.batchSize < others.length) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  logger.info(`memory-hybrid: auto-classify done — reclassified ${totalReclassified}/${others.length} facts`);
+  return { reclassified: totalReclassified, suggested: [] };
+}
+
+// ============================================================================
 // Plugin Definition
 // ============================================================================
 
@@ -897,8 +1071,11 @@ const memoryHybridPlugin = {
     const factsDb = new FactsDB(resolvedSqlitePath);
     const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
     const embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
+    const openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
     let pruneTimer: ReturnType<typeof setInterval> | null = null;
+    let classifyTimer: ReturnType<typeof setInterval> | null = null;
+    let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 
     api.logger.info(
       `memory-hybrid: registered (sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath})`,
@@ -999,7 +1176,9 @@ const memoryHybridPlugin = {
           importance: Type.Optional(
             Type.Number({ description: "Importance 0-1 (default: 0.7)" }),
           ),
-          category: Type.Optional(stringEnum(MEMORY_CATEGORIES)),
+          category: Type.Optional(
+            stringEnum(getMemoryCategories() as unknown as readonly string[]),
+          ),
           entity: Type.Optional(
             Type.String({
               description: "Entity name (person, project, tool, etc.)",
@@ -1546,8 +1725,86 @@ const memoryHybridPlugin = {
             }));
             console.log(JSON.stringify(output, null, 2));
           });
+
+        mem
+          .command("classify")
+          .description("Auto-classify 'other' facts using LLM (uses autoClassify config)")
+          .option("--dry-run", "Show classifications without applying")
+          .option("--limit <n>", "Max facts to classify", "500")
+          .option("--model <model>", "Override LLM model")
+          .action(async (opts: { dryRun?: boolean; limit?: string; model?: string }) => {
+            const classifyModel = opts.model || cfg.autoClassify.model;
+            const limit = parseInt(opts.limit || "500");
+
+            console.log(`Auto-classify config:`);
+            console.log(`  Model: ${classifyModel}`);
+            console.log(`  Batch size: ${cfg.autoClassify.batchSize}`);
+            console.log(`  Categories: ${getMemoryCategories().join(", ")}`);
+            console.log(`  Limit: ${limit}`);
+            console.log(`  Dry run: ${!!opts.dryRun}\n`);
+
+            const others = factsDb.getByCategory("other").slice(0, limit);
+            console.log(`Found ${others.length} "other" facts to classify\n`);
+
+            if (others.length === 0) return;
+
+            let totalReclassified = 0;
+
+            for (let i = 0; i < others.length; i += cfg.autoClassify.batchSize) {
+              const batch = others.slice(i, i + cfg.autoClassify.batchSize).map((e) => ({
+                id: e.id,
+                text: e.text,
+              }));
+
+              const results = await classifyBatch(
+                openaiClient,
+                classifyModel,
+                batch,
+                getMemoryCategories(),
+              );
+
+              for (const [id, newCat] of results) {
+                const fact = batch.find((f) => f.id === id);
+                if (opts.dryRun) {
+                  console.log(`  [${newCat}] ${fact?.text?.slice(0, 80)}...`);
+                } else {
+                  factsDb.updateCategory(id, newCat);
+                }
+                totalReclassified++;
+              }
+
+              process.stdout.write(`  Processed ${Math.min(i + cfg.autoClassify.batchSize, others.length)}/${others.length}\r`);
+
+              if (i + cfg.autoClassify.batchSize < others.length) {
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }
+
+            console.log(`\n\nResult: ${totalReclassified}/${others.length} reclassified${opts.dryRun ? " (dry run)" : ""}`);
+
+            // Show updated stats
+            if (!opts.dryRun) {
+              const breakdown = factsDb.statsBreakdown();
+              console.log("\nUpdated category breakdown:");
+              for (const [cat, count] of Object.entries(breakdown)) {
+                console.log(`  ${cat}: ${count}`);
+              }
+            }
+          });
+
+        mem
+          .command("categories")
+          .description("List all configured memory categories")
+          .action(() => {
+            const cats = getMemoryCategories();
+            console.log(`Memory categories (${cats.length}):`);
+            for (const cat of cats) {
+              const count = factsDb.getByCategory(cat).length;
+              console.log(`  ${cat}: ${count} facts`);
+            }
+          });
       },
-      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup"] },
+      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories"] },
     );
 
     // ========================================================================
@@ -1636,7 +1893,9 @@ const memoryHybridPlugin = {
 
           let stored = 0;
           for (const text of toCapture.slice(0, 3)) {
-            const category = detectCategory(text);
+            // Heuristic classification only — "other" facts are reclassified
+            // by the daily auto-classify timer (no LLM calls on the hot path)
+            const category: MemoryCategory = detectCategory(text);
             const extracted = extractStructuredFields(text, category);
 
             if (factsDb.hasDuplicate(text)) continue;
@@ -1706,10 +1965,38 @@ const memoryHybridPlugin = {
           } catch (err) {
             api.logger.warn(`memory-hybrid: periodic prune failed: ${err}`);
           }
-        }, 60 * 60_000);
+        }, 60 * 60_000); // every hour
+
+        // Daily auto-classify: reclassify "other" facts using LLM (if enabled)
+        if (cfg.autoClassify.enabled) {
+          const CLASSIFY_INTERVAL = 24 * 60 * 60_000; // 24 hours
+
+          // Run once shortly after startup (5 min delay to let things settle)
+          classifyStartupTimeout = setTimeout(async () => {
+            try {
+              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: startup auto-classify failed: ${err}`);
+            }
+          }, 5 * 60_000);
+
+          classifyTimer = setInterval(async () => {
+            try {
+              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: daily auto-classify failed: ${err}`);
+            }
+          }, CLASSIFY_INTERVAL);
+
+          api.logger.info(
+            `memory-hybrid: auto-classify enabled (model: ${cfg.autoClassify.model}, interval: 24h, batch: ${cfg.autoClassify.batchSize})`,
+          );
+        }
       },
       stop: () => {
         if (pruneTimer) clearInterval(pruneTimer);
+        if (classifyStartupTimeout) clearTimeout(classifyStartupTimeout);
+        if (classifyTimer) clearInterval(classifyTimer);
         factsDb.close();
         api.logger.info("memory-hybrid: stopped");
       },
