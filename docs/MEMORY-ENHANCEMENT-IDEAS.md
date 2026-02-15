@@ -62,11 +62,28 @@
 
 **Current:** `hasDuplicate` is exact text match in SQLite; vector DB uses embedding similarity (0.95). So two phrased-differently but semantically identical facts both get stored.
 
-**Enhancement:** Before storing a new fact, run a vector search with the new embedding and a high similarity threshold (e.g. 0.92). If a near-duplicate exists, either skip store or update the existing fact (e.g. refresh `last_confirmed_at`, optionally merge text). Reduces redundancy and token usage at recall.
+**Original enhancement idea:** Before storing, run vector search with a high similarity threshold (e.g. 0.92); if near-duplicate exists, skip store or update existing fact.
 
-**Files:** `index.ts` (in `memory_store` and in agent_end auto-capture): after embedding, call `vectorDb.hasDuplicate(vector)` (already exists); optionally add a "merge or skip" policy in config.
+**Design considerations (revised approach):**
+
+1. **Latency:** The store path already does one embedding call and one vector search (`hasDuplicate(vector, 0.95)`). Adding a *lower* threshold (0.92) doesn’t add extra round-trips. If we instead *merge* (fetch existing, update, delete new), we add DB and possibly sync work on every store, which can slow the hot path. So: *skip-if-duplicate* is low cost; *merge-at-store* is not recommended on the hot path.
+
+2. **Similar but distinct data:** Embeddings can make two nearly identical strings (e.g. IPs `192.168.1.1` vs `192.168.1.2`, or two different emails) very close. Treating high similarity as “duplicate” and skipping or merging would be dangerous for identifiers, credentials, and any structured key/value. We must either **exclude** such content from semantic dedupe (e.g. never skip/merge when text or entity/key match IP, email, phone, UUID, API key patterns) or **avoid** semantic dedupe at store for those facts entirely.
+
+3. **Defer to maintenance instead of at-store:** To avoid latency and catastrophic mix-ups:
+   - **Do not** add semantic skip/merge on the store path for anything that could be an identifier.
+   - **Do** keep the current strict vector `hasDuplicate(0.95)` as-is (or make threshold configurable for power users).
+   - **Do** add a **maintenance path**: a CLI (e.g. `hybrid-mem find-duplicates [--threshold 0.92] [--include-structured] [--dry-run]`) and/or a scheduled job that:
+     - Finds pairs/clusters of semantically similar facts (e.g. vector similarity ≥ threshold).
+     - **By default skips** facts that look like identifiers (IP, email, phone, UUID, API key, etc.) and numbers in general, so they are never auto-merged. Use **`--include-structured`** to opt in to processing those too (opt-in for risk).
+     - **Reports** candidate pairs for review, or merges only when a safe policy applies (e.g. same category + no structured content).
+   - Optionally: during **search/recall**, detect “these two results are very similar” and **flag** them for a later maintenance/verification job instead of merging at store.
+
+**Recommended implementation:** Skip semantic dedupe at store (or limit it to a configurable threshold with strict safeguards). Implement **2.2 as a maintenance feature**: `find-duplicates` CLI and/or daily job that outputs candidate pairs. By default skip identifier- and number-like facts; use `--include-structured` to process everything. Later optionally a “merge after verification” step. That aligns with **2.4** (background consolidation); 2.2 can be the “report/flag” step and 2.4 the “merge” step with LLM.
 
 ---
+
+**Concrete next step:** Add `openclaw hybrid-mem find-duplicates [--threshold 0.92] [--include-structured] [--dry-run]` that scans LanceDB for high-similarity pairs. **Default:** skip facts that look like identifiers (IP, email, phone, UUID, etc.) and numbers in general. Use **`--include-structured`** to opt in to processing those too. Prints candidate pairs for review; no change to the store path.
 
 ### 2.3 Fuzzy text deduplication in SQLite
 
@@ -140,7 +157,7 @@
 | 2        | 1.3 Honor captureMaxChars    | Low    | Medium            | Prevents drop/long  | ✅ Implemented |
 | 3        | 1.2 Shorter injection format | Low    | Medium            | Neutral             | ✅ Implemented |
 | 4        | 2.1 Configurable recall limit/minScore | Low  | Config-driven     | Better relevance    | ✅ Implemented |
-| 5        | 2.2 Semantic dedupe at store| Medium | Medium (fewer dupes) | High             |
+| 5        | 2.2 Semantic dedupe (maintenance: find-duplicates CLI) | Medium | Medium (fewer dupes) | High — revised, not at store |
 | 6        | 3.1 Decay-class–aware recall | Low    | Slight            | Better long-term    |
 | 7        | 3.3 Importance/recency in score | Low | Slight            | Better ranking      |
 | 8        | 4.1 Entity-centric recall     | Medium | Slight            | Deeper context      |
