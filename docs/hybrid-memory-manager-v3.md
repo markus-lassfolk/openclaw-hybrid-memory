@@ -6,7 +6,7 @@
 
 This document unifies:
 
-- **Maeves Current Steup** (hybrid-hierarchical memory from `hybrid-hierarchical-memory-guide.md` v2.0)
+- **Current setup** (hybrid-hierarchical memory from `hybrid-hierarchical-memory-guide.md` v2.0, see [archive](archive/))
 - **ucsandman** [OpenClaw-Hierarchical-Memory-System](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System): index + drill-down, token math, safeguards
 - **Clawdboss.ai** [Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory): **memory-hybrid** plugin (SQLite+FTS5+LanceDB), decay, checkpoints
 
@@ -125,7 +125,7 @@ If `npm install` fails (e.g. due to `devDependencies` with `"openclaw": "workspa
 
 **Note:** Some older guides also run `npm install better-sqlite3` from `~/.openclaw`. That only works if you have a `package.json` in `~/.openclaw` (e.g. for a seed script). For the plugin itself, the extension-dir install is enough; you do not need to create a package.json in `~/.openclaw` unless you run separate tools from there that depend on better-sqlite3.
 
-Full details: [SETUP-PROMPT-1-CREATE-PLUGIN-FILES.md](SETUP-PROMPT-1-CREATE-PLUGIN-FILES.md), [SETUP-PROMPT-2-INSTALL-DEPENDENCIES.md](SETUP-PROMPT-2-INSTALL-DEPENDENCIES.md).
+Original setup prompts are in [docs/archive/](archive/) (SETUP-PROMPT-1 and -2); they are **historical only** and target an older plugin version — use this section (§3) for installation.
 
 ### 3.3 Version metadata and upgrades
 
@@ -180,7 +180,7 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **memory-hyb
 
 `captureMaxChars` (e.g. `5000`) is optional; default is 5000. The plugin uses it in the auto-capture filter (messages longer than this are not captured) and truncates stored text to this length with " [truncated]" when storing (tool or auto-capture). **Store (2.3):** `store: { fuzzyDedupe: true }` enables fuzzy text deduplication: before storing, the plugin normalizes text (trim, collapse whitespace, lowercase), hashes it, and skips store if an existing fact has the same normalized hash (reduces near-duplicate facts from small rephrasings). Default false.
 
-**Auto-recall token cap, format, limit, minScore:** `autoRecall` can be `true` (default behaviour) or an object: `{ "enabled": true, "maxTokens": 800, "maxPerMemoryChars": 0, "injectionFormat": "full", "limit": 5, "minScore": 0.3 }`. `maxTokens` caps the total tokens injected (default 800); `maxPerMemoryChars` truncates each memory to N characters (0 = no truncation). `injectionFormat` controls the per-memory line: `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only. `limit` is the max memories considered for injection (default 5); `minScore` is the vector search minimum score 0–1 (default 0.3). `preferLongTerm` (default false) boosts score for permanent (×1.2) and stable (×1.1) so lasting facts rank higher when scores are close. `useImportanceRecency` (default false) combines relevance with importance and recency (lastConfirmedAt over 90 days). **Entity-centric (4.1):** `entityLookup: { enabled, entities: ["user", "owner"], maxFactsPerEntity: 2 }` merges lookup(entity) facts into candidates when the prompt mentions an entity. **Chunked long facts (4.3):** `summaryThreshold` (default 300), `summaryMaxChars` (80), `useSummaryInInjection` (true)—facts longer than the threshold get a stored summary; injection uses summary when present to save tokens. See [MEMORY-ENHANCEMENT-IDEAS.md](MEMORY-ENHANCEMENT-IDEAS.md) §1.1, §1.2, §2.1, §3.1, §3.3, §4.1, §4.3.
+**Auto-recall token cap, format, limit, minScore:** `autoRecall` can be `true` (default behaviour) or an object: `{ "enabled": true, "maxTokens": 800, "maxPerMemoryChars": 0, "injectionFormat": "full", "limit": 5, "minScore": 0.3 }`. `maxTokens` caps the total tokens injected (default 800); `maxPerMemoryChars` truncates each memory to N characters (0 = no truncation). `injectionFormat` controls the per-memory line: `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only. `limit` is the max memories considered for injection (default 5); `minScore` is the vector search minimum score 0–1 (default 0.3). `preferLongTerm` (default false) boosts score for permanent (×1.2) and stable (×1.1) so lasting facts rank higher when scores are close. `useImportanceRecency` (default false) combines relevance with importance and recency (lastConfirmedAt over 90 days). **Entity-centric (4.1):** `entityLookup: { enabled, entities: ["user", "owner"], maxFactsPerEntity: 2 }` merges lookup(entity) facts into candidates when the prompt mentions an entity. **Chunked long facts (4.3):** `summaryThreshold` (default 300), `summaryMaxChars` (80), `useSummaryInInjection` (true)—facts longer than the threshold get a stored summary; injection uses summary when present to save tokens. See this doc and CHANGELOG for the full set of options.
 
 **memory-core** stays `enabled: true` alongside memory-hybrid: it provides the file-based tools (`memory_store`, `memory_recall`, `memory_forget`) independently of the slot. Only one plugin can own the slot; memory-core does not conflict with memory-hybrid.
 
@@ -689,7 +689,7 @@ NODE_PATH="$EXT_DIR/node_modules" OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-$HOM
 node scripts/backfill-memory.mjs --dry-run
 ```
 
-**Alternative:** You can still use a custom seed script (e.g. from [SETUP-PROMPT-4-SEED-FROM-MEMORY-FILES.md](SETUP-PROMPT-4-SEED-FROM-MEMORY-FILES.md)); make it dynamic the same way (env for workspace, glob for files, parse structure from content, no hardcoded dates or section names).
+**Alternative:** You can still use a custom seed script (e.g. from [docs/archive/SETUP-PROMPT-4-SEED-FROM-MEMORY-FILES.md](archive/SETUP-PROMPT-4-SEED-FROM-MEMORY-FILES.md), historical); make it dynamic the same way (env for workspace, glob for files, parse structure from content, no hardcoded dates or section names).
 
 ### Backfill from session logs (existing system with history)
 

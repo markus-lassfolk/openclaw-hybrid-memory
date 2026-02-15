@@ -44,7 +44,7 @@ memory/archive/
 
 ## Phase 3: Install memory-hybrid plugin
 
-1. Check if `<extensions_dir>/memory-hybrid/` already exists with `package.json`, `index.ts`, `config.ts`, `openclaw.plugin.json`.
+1. Check if `<extensions_dir>/memory-hybrid/` already exists with `package.json`, `index.ts`, `config.ts`, `openclaw.plugin.json`, `versionInfo.ts`.
 2. If missing: copy the entire `extensions/memory-hybrid/` directory from this repo into `<extensions_dir>/memory-hybrid/`.
 3. In the extension directory, run `npm install`. If it fails with workspace protocol errors:
    ```bash
@@ -310,13 +310,14 @@ Suggest to the user: add `alias openclaw-upgrade='~/.openclaw/scripts/upgrade.sh
 Run through this checklist:
 
 1. `openclaw hybrid-mem stats` — returns fact and vector counts.
-2. `openclaw hybrid-mem search "test query"` — returns results (if content exists).
-3. Gateway logs show `memory-hybrid: initialized` and `injecting N memories`.
-4. `MEMORY.md` exists and links to files under `memory/`.
-5. `AGENTS.md` contains the Memory Protocol section.
-6. `openclaw hybrid-mem categories` — lists all configured categories with counts.
-7. If facts exist: `openclaw hybrid-mem classify --dry-run --limit 5` — previews LLM classification (confirms auto-classify config and API access work).
-8. Ask the agent a question that requires memory recall — confirm it finds the answer.
+2. `openclaw hybrid-mem verify` — checks config, SQLite, LanceDB, and embedding API (optional: `--fix` for config suggestions).
+3. `openclaw hybrid-mem search "test query"` — returns results (if content exists).
+4. Gateway logs show `memory-hybrid: initialized` and `injecting N memories`.
+5. `MEMORY.md` exists and links to files under `memory/`.
+6. `AGENTS.md` contains the Memory Protocol section.
+7. `openclaw hybrid-mem categories` — lists all configured categories with counts.
+8. If facts exist: `openclaw hybrid-mem classify --dry-run --limit 5` — previews LLM classification (confirms auto-classify config and API access work).
+9. Ask the agent a question that requires memory recall — confirm it finds the answer.
 
 **If all pass:** Setup is complete. The hybrid memory system is operational. Decay and pruning run automatically (every 60 minutes, no cron needed). Auto-classify runs on startup (5-min delay) and every 24 hours if enabled. Report success to the user.
 
