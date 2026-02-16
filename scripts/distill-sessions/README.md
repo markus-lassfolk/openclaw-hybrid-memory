@@ -35,14 +35,15 @@ Prompt template for fact extraction via Gemini sub-agent.
 
 **When parsing old memories:** Include `source_date` (YYYY-MM-DD) in the output if available — from SESSION marker filenames (e.g. `2026-01-15-session.jsonl`), from `[YYYY-MM-DD]` prefixes in fact text (strip the prefix and put the date in source_date), or from dates mentioned in the conversation.
 
-Categories extracted:
+Categories extracted (single run for all):
 - `preference` - User habits, preferences
-- `technical` - Configs, APIs, system specs
+- `technical` - Configs, APIs, system specs (and credentials; see gemini-prompt.md)
 - `decision` - Architectural choices
 - `person` - People info
 - `project` - Goals, status, requirements
 - `place` - Locations, addresses
 - `entity` - Companies, tools, services
+- Credentials use entity `"Credentials"` and key = service; the store layer routes them to the vault (if enabled) or memory automatically.
 
 ### 4. `store-facts.sh`
 Generates memory_store commands from extracted facts.

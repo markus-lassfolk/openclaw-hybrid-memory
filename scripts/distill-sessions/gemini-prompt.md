@@ -15,12 +15,13 @@ Extract **significant facts** from the conversations in these categories:
 
 ### Categories
 - **preference** - User preferences, likes/dislikes, habits, routines
-- **technical** - Technical configurations, API details, system specs, credentials (redact sensitive data)
+- **technical** - Technical configurations, API details, system specs (non-credential)
 - **decision** - Architectural decisions, choices made, approaches adopted
 - **person** - Information about people (names, relationships, roles, preferences)
 - **project** - Project goals, status, milestones, requirements
 - **place** - Location information, addresses, room names
 - **entity** - Companies, products, services, tools, systems
+- **Credentials** (special) - API keys, tokens, passwords; use entity `"Credentials"` and key = service (e.g. `home-assistant`, `unifi`, `github`); see [Credentials](#credentials) below.
 
 ## Output Format
 Output **one JSON object per line** (JSONL format):
@@ -75,11 +76,20 @@ Example:
 - **Be durable**: Only extract information that has lasting value
 - **Be accurate**: If unsure, skip it rather than guess
 
-## Redaction
-If you encounter API keys, passwords, or sensitive credentials:
-- **DO extract** the fact that the credential exists and its purpose
-- **DO NOT include** the actual value
-- Example: `{"category": "technical", "text": "OpenAI API key configured for embeddings", "entity": "OpenAI", "key": "api_key_purpose", "value": "embeddings"}`
+## Credentials
+Extract credentials in the **same run** as other facts. Use one JSONL line per credential with:
+- **entity**: `"Credentials"`
+- **key**: service identifier (snake_case), e.g. `home-assistant`, `unifi`, `github`, `openai`, `twilio`, `duckdns`
+- **value**: the actual secret (token, password, API key)
+- **text**: short description including service and type, e.g. "Home Assistant long-lived API token" or "UniFi login password"
+
+Example:
+```json
+{"category": "technical", "text": "Home Assistant long-lived API token", "entity": "Credentials", "key": "home-assistant", "value": "eyJhbGciOiJIUzI1NiIs..."}
+{"category": "technical", "text": "UniFi Network login (hass user)", "entity": "Credentials", "key": "unifi-network", "value": "password_here"}
+```
+
+The storage layer will **route automatically**: if the Secure Credential Vault is enabled, the value is stored only in the vault and a pointer is kept in memory; otherwise it is stored in memory (live behavior). No need to redact in your output.
 
 ## Output
 After reading all sessions in this batch, output only the JSONL facts. No preamble, no markdown formatting, no explanations. Just:

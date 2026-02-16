@@ -1394,6 +1394,169 @@ function detectCredentialPatterns(text: string): Array<{ type: string; hint: str
   return found;
 }
 
+/** First credential-like match in text; used to extract secret for vault. */
+function extractCredentialMatch(text: string): { type: string; secretValue: string } | null {
+  for (const { regex, type } of CREDENTIAL_PATTERNS) {
+    const match = regex.exec(text);
+    if (match) {
+      const secretValue = match[0].replace(/^Bearer\s+/i, "").trim();
+      if (secretValue.length >= 8) return { type, secretValue };
+    }
+  }
+  return null;
+}
+
+/** True if content should be treated as a credential (store in vault when enabled, else in memory). */
+function isCredentialLike(
+  text: string,
+  entity?: string | null,
+  key?: string | null,
+  value?: string | null,
+): boolean {
+  if ((entity ?? "").toLowerCase() === "credentials") return true;
+  const k = (key ?? "").toLowerCase();
+  const e = (entity ?? "").toLowerCase();
+  if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x)))
+    return true;
+  if (value && value.length >= 8 && /^(eyJ|sk-|ghp_|gho_|xox[baprs]-)/i.test(value)) return true;
+  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || SENSITIVE_PATTERNS.some((r) => r.test(text));
+}
+
+const VAULT_POINTER_PREFIX = "vault:";
+
+/** Parse into vault entry when vault is enabled. Returns null if not credential-like or cannot derive service/secret. */
+function tryParseCredentialForVault(
+  text: string,
+  entity?: string | null,
+  key?: string | null,
+  value?: string | null,
+): { service: string; type: "token" | "password" | "api_key" | "ssh" | "bearer" | "other"; secretValue: string; url?: string; notes?: string } | null {
+  if (!isCredentialLike(text, entity, key, value)) return null;
+  const match = extractCredentialMatch(text);
+  const secretValue = (value && value.length >= 8 ? value : match?.secretValue) ?? null;
+  if (!secretValue) return null;
+  const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
+  const service =
+    (entity?.toLowerCase() === "credentials" ? key : null) ||
+    key ||
+    (entity && entity.toLowerCase() !== "credentials" ? entity : null) ||
+    inferServiceFromText(text) ||
+    "imported";
+  const serviceSlug = service.replace(/\s+/g, "-").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "imported";
+  return {
+    service: serviceSlug,
+    type: typeFromPattern,
+    secretValue,
+    notes: text.length <= 500 ? text : text.slice(0, 497) + "...",
+  };
+}
+
+function inferServiceFromText(text: string): string {
+  const lower = text.toLowerCase();
+  if (/home\s*assistant|ha\s*token|hass/i.test(lower)) return "home-assistant";
+  if (/unifi|ubiquiti/i.test(lower)) return "unifi";
+  if (/github|ghp_|gho_/i.test(lower)) return "github";
+  if (/openai|sk-proj/i.test(lower)) return "openai";
+  if (/twilio/i.test(lower)) return "twilio";
+  if (/duckdns/i.test(lower)) return "duckdns";
+  if (/slack|xox[baprs]/i.test(lower)) return "slack";
+  return "imported";
+}
+
+const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrated";
+
+/**
+ * When vault is enabled: move existing credential facts from memory into the vault and replace them with pointers.
+ * Idempotent: facts that are already pointers (value starts with vault:) are skipped.
+ * Returns { migrated, skipped, errors }. If markDone is true, writes a flag file so init only runs once.
+ */
+async function migrateCredentialsToVault(opts: {
+  factsDb: FactsDB;
+  vectorDb: VectorDB;
+  embeddings: Embeddings;
+  credentialsDb: CredentialsDB;
+  migrationFlagPath: string;
+  markDone: boolean;
+}): Promise<{ migrated: number; skipped: number; errors: string[] }> {
+  const { factsDb, vectorDb, embeddings, credentialsDb, migrationFlagPath, markDone } = opts;
+  let migrated = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  const results = factsDb.lookup("Credentials");
+  const toMigrate = results.filter(
+    (r) =>
+      !r.entry.text.includes("stored in secure vault") &&
+      (r.entry.value == null || !String(r.entry.value).startsWith(VAULT_POINTER_PREFIX)),
+  );
+
+  for (const { entry } of toMigrate) {
+    const parsed = tryParseCredentialForVault(
+      entry.text,
+      entry.entity,
+      entry.key,
+      entry.value,
+    );
+    if (!parsed) {
+      skipped++;
+      continue;
+    }
+    try {
+      credentialsDb.store({
+        service: parsed.service,
+        type: parsed.type,
+        value: parsed.secretValue,
+        url: parsed.url,
+        notes: parsed.notes,
+      });
+      factsDb.delete(entry.id);
+      try {
+        await vectorDb.delete(entry.id);
+      } catch {
+        // LanceDB row might not exist
+      }
+      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+      const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+      factsDb.store({
+        text: pointerText,
+        category: "technical" as MemoryCategory,
+        importance: 0.8,
+        entity: "Credentials",
+        key: parsed.service,
+        value: pointerValue,
+        source: "conversation",
+        decayClass: "permanent",
+        tags: ["auth", ...extractTags(pointerText, "Credentials")],
+      });
+      try {
+        const vector = await embeddings.embed(pointerText);
+        if (!(await vectorDb.hasDuplicate(vector))) {
+          await vectorDb.store({
+            text: pointerText,
+            vector,
+            importance: 0.8,
+            category: "technical",
+          });
+        }
+      } catch (e) {
+        errors.push(`vector store for ${parsed.service}: ${String(e)}`);
+      }
+      migrated++;
+    } catch (e) {
+      errors.push(`${parsed.service}: ${String(e)}`);
+    }
+  }
+
+  if (markDone) {
+    try {
+      writeFileSync(migrationFlagPath, "1", "utf8");
+    } catch (e) {
+      errors.push(`write migration flag: ${String(e)}`);
+    }
+  }
+  return { migrated, skipped, errors };
+}
+
 /** True if fact looks like identifier/number (IP, email, phone, UUID, etc.). Used by consolidate to skip by default (2.2/2.4). */
 function isStructuredForConsolidation(
   text: string,
@@ -1845,6 +2008,28 @@ const memoryHybridPlugin = {
               "Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.",
           );
         }
+        // When vault is enabled: once per install, move existing credential facts into vault and redact from memory
+        const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
+        if (!existsSync(migrationFlagPath)) {
+          try {
+            const result = await migrateCredentialsToVault({
+              factsDb,
+              vectorDb,
+              embeddings,
+              credentialsDb,
+              migrationFlagPath,
+              markDone: true,
+            });
+            if (result.migrated > 0) {
+              api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
+            }
+            if (result.errors.length > 0) {
+              api.logger.warn(`memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`);
+            }
+          } catch (e) {
+            api.logger.warn(`memory-hybrid: credential migration failed: ${e}`);
+          }
+        }
       }
     })();
 
@@ -2021,6 +2206,50 @@ const memoryHybridPlugin = {
           const entity = paramEntity || extracted.entity;
           const key = paramKey || extracted.key;
           const value = paramValue || extracted.value;
+
+          // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
+          if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
+            const parsed = tryParseCredentialForVault(textToStore, entity, key, value);
+            if (parsed) {
+              credentialsDb.store({
+                service: parsed.service,
+                type: parsed.type,
+                value: parsed.secretValue,
+                url: parsed.url,
+                notes: parsed.notes,
+              });
+              const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+              const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+              const pointerEntry = factsDb.store({
+                text: pointerText,
+                category: "technical" as MemoryCategory,
+                importance,
+                entity: "Credentials",
+                key: parsed.service,
+                value: pointerValue,
+                source: "conversation",
+                decayClass: paramDecayClass ?? "permanent",
+                tags: ["auth", ...extractTags(pointerText, "Credentials")],
+              });
+              try {
+                const vector = await embeddings.embed(pointerText);
+                if (!(await vectorDb.hasDuplicate(vector))) {
+                  await vectorDb.store({
+                    text: pointerText,
+                    vector,
+                    importance,
+                    category: "technical",
+                  });
+                }
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+              }
+              return {
+                content: [{ type: "text", text: `Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer saved in memory.` }],
+                details: { action: "credential_vault", id: pointerEntry.id, service: parsed.service, type: parsed.type },
+              };
+            }
+          }
 
           const tags =
             paramTags && paramTags.length > 0
@@ -2584,10 +2813,53 @@ const memoryHybridPlugin = {
               for (const line of lines) {
                 const trimmed = line.replace(/^[-*#>\s]+/, "").trim();
                 if (trimmed.length < 15 || trimmed.length > 500) continue;
-                if (SENSITIVE_PATTERNS.some((r) => r.test(trimmed))) continue;
 
                 const category = detectCategory(trimmed);
                 const extracted = extractStructuredFields(trimmed, category);
+
+                // Dual-mode credentials: vault on → store in vault + pointer only; vault off → store in facts (live behavior).
+                if (isCredentialLike(trimmed, extracted.entity, extracted.key, extracted.value)) {
+                  if (cfg.credentials.enabled && credentialsDb) {
+                    const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value);
+                    if (parsed) {
+                      if (!opts.dryRun) {
+                        credentialsDb.store({
+                          service: parsed.service,
+                          type: parsed.type,
+                          value: parsed.secretValue,
+                          url: parsed.url,
+                          notes: parsed.notes,
+                        });
+                        const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+                        const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
+                        factsDb.store({
+                          text: pointerText,
+                          category: "technical",
+                          importance: 0.8,
+                          entity: "Credentials",
+                          key: parsed.service,
+                          value: VAULT_POINTER_PREFIX + parsed.service,
+                          source: `daily-scan:${dateStr}`,
+                          sourceDate: sourceDateSec,
+                          tags: ["auth", ...extractTags(pointerText, "Credentials")],
+                        });
+                        try {
+                          const vector = await embeddings.embed(pointerText);
+                          if (!(await vectorDb.hasDuplicate(vector))) {
+                            await vectorDb.store({ text: pointerText, vector, importance: 0.8, category: "technical" });
+                          }
+                        } catch (err) {
+                          api.logger.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+                        }
+                        totalStored++;
+                      } else {
+                        totalExtracted++;
+                      }
+                      continue;
+                    }
+                  }
+                  /* vault disabled or not parsed: fall through to store in facts */
+                }
 
                 if (!extracted.entity && !extracted.key && category !== "decision") continue;
 
@@ -2708,11 +2980,51 @@ const memoryHybridPlugin = {
               return;
             }
             const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
+            const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
+            const entity = opts.entity ?? extracted.entity ?? null;
+            const key = opts.key ?? extracted.key ?? null;
+            const value = opts.value ?? extracted.value ?? null;
+
+            // Dual-mode: vault enabled and credential-like → vault + pointer; else store in memory.
+            if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
+              const parsed = tryParseCredentialForVault(text, entity, key, value);
+              if (parsed) {
+                credentialsDb.store({
+                  service: parsed.service,
+                  type: parsed.type,
+                  value: parsed.secretValue,
+                  url: parsed.url,
+                  notes: parsed.notes,
+                });
+                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+                const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+                const pointerEntry = factsDb.store({
+                  text: pointerText,
+                  category: "technical" as MemoryCategory,
+                  importance: 0.7,
+                  entity: "Credentials",
+                  key: parsed.service,
+                  value: pointerValue,
+                  source: "cli",
+                  sourceDate,
+                  tags: ["auth", ...extractTags(pointerText, "Credentials")],
+                });
+                try {
+                  const vector = await embeddings.embed(pointerText);
+                  if (!(await vectorDb.hasDuplicate(vector))) {
+                    await vectorDb.store({ text: pointerText, vector, importance: 0.7, category: "technical" });
+                  }
+                } catch (err) {
+                  api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                }
+                console.log(`Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer [id: ${pointerEntry.id}].`);
+                return;
+              }
+            }
+
             const tags = opts.tags
               ? opts.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
               : undefined;
-            const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
-            const entity = opts.entity ?? extracted.entity ?? null;
             const entry = factsDb.store({
               text,
               category: (opts.category ?? "other") as MemoryCategory,
@@ -2951,7 +3263,7 @@ const memoryHybridPlugin = {
                     if (nightly) arr.push(nightly);
                   }
                   (target as Record<string, unknown>)[key] = arr;
-                } else if (!Array.isArray(srcVal)) {
+                } else if (tgtVal === undefined && !Array.isArray(srcVal)) {
                   (target as Record<string, unknown>)[key] = srcVal;
                 }
               }
@@ -3250,6 +3562,33 @@ const memoryHybridPlugin = {
             }
           });
 
+        const cred = mem
+          .command("credentials")
+          .description("Credentials vault commands");
+        cred
+          .command("migrate-to-vault")
+          .description("Move credential facts from memory into vault and redact originals (idempotent)")
+          .action(async () => {
+            if (!credentialsDb) {
+              console.error("Credentials vault is disabled. Enable it in plugin config (credentials.encryptionKey) and restart.");
+              return;
+            }
+            const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
+            const result = await migrateCredentialsToVault({
+              factsDb,
+              vectorDb,
+              embeddings,
+              credentialsDb,
+              migrationFlagPath,
+              markDone: true,
+            });
+            console.log(`Migrated: ${result.migrated}, skipped: ${result.skipped}`);
+            if (result.errors.length > 0) {
+              console.error("Errors:");
+              result.errors.forEach((e) => console.error(`  - ${e}`));
+            }
+          });
+
         mem
           .command("record-distill")
           .description("Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)")
@@ -3341,7 +3680,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
