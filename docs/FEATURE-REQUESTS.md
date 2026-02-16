@@ -56,6 +56,33 @@ Add a compaction hook that fires *before* OpenClaw truncates the context window:
 
 ---
 
+## FR-003: Source Date Column for Facts
+
+**Inspired by:** Session log distillation project — extracting historical facts from conversation logs.
+
+**Problem:**
+Our SQLite facts table has no `source_date` field. When we store a fact, the only timestamp is the insertion time. For facts mined from historical session logs, this means a fact from January 2026 would appear to be from February 2026 (when it was extracted). This breaks time-based conflict resolution and makes provenance tracking unreliable.
+
+**Current workaround:**
+Prefix fact text with a date tag: `[2026-01-15] Markus switched from X to Y`. This is fragile and not queryable.
+
+**Proposal:**
+1. Add a `source_date` column (ISO-8601 timestamp) to the SQLite facts table.
+2. Default to insertion time when not provided.
+3. Accept an optional `sourceDate` parameter in `memory_store`.
+4. On recall, expose `source_date` in results for conflict resolution.
+5. When two facts contradict, prefer the one with the newer `source_date`.
+
+**Expected benefit:**
+- Accurate provenance for all facts, whether captured live or mined from history
+- Enables time-aware deduplication ("this fact is newer, so it wins")
+- Critical for the session log distillation pipeline
+
+**Complexity:** Low (schema migration + one new parameter)
+**Priority:** High (blocks clean historical fact extraction)
+
+---
+
 ## Attribution
 
 Both feature requests are inspired by concepts from the [virtual-context](https://github.com/virtual-context/virtual-context) project. Their approach to automatic tagging and recursive summarisation is excellent — we're adapting the ideas to fit our hybrid (SQLite + LanceDB + Markdown) architecture rather than their conversation-segment model.
