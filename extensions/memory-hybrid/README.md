@@ -2,6 +2,8 @@
 
 Hybrid memory plugin: **SQLite + FTS5** for structured facts and **LanceDB** for semantic search. Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw-hybrid-memory) v3 deployment.
 
+**Repository:** [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory) · **Docs:** [v3 deployment guide](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/hybrid-memory-manager-v3.md) · [README / Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory#quick-start)
+
 ## Credits
 
 Based on the design in **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (Clawdboss.ai). The plugin has since been extended with auto-capture, auto-recall, decay/TTL, auto-classify, token caps, consolidation, verify/uninstall CLI, and more — see the repo root and [hybrid-memory-manager-v3.md](../../docs/hybrid-memory-manager-v3.md).

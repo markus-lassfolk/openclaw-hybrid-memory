@@ -7,6 +7,8 @@ A **complete, ready-to-deploy memory system** for [OpenClaw](https://openclaw.ai
 
 This repo packages both into a single deployment flow (the **Hybrid Memory Manager v3.0**) with additional features: auto-capture, auto-recall, TTL-based decay, LLM auto-classification of facts, a backfill script, upgrade helpers, and comprehensive documentation.
 
+**Repository:** [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory) · **Documentation:** [v3 deployment guide](docs/hybrid-memory-manager-v3.md) · [Quick Start](#quick-start) below
+
 ## Quick Start
 
 ```bash
