@@ -236,37 +236,37 @@ class FactsDB {
   }
 
   private migrateTagsColumn(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "tags")) return;
-    this.db.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
-    this.db.exec(
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
+    this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`,
     );
   }
 
   private migrateSourceDateColumn(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "source_date")) return;
-    this.db.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
-    this.db.exec(`UPDATE facts SET source_date = created_at WHERE source_date IS NULL`);
-    this.db.exec(
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
+    this.liveDb.exec(`UPDATE facts SET source_date = created_at WHERE source_date IS NULL`);
+    this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_source_date ON facts(source_date) WHERE source_date IS NOT NULL`,
     );
   }
 
   private migrateNormalizedHash(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "normalized_hash")) {
       this.liveDb.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
       this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
     }
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(`SELECT id, text FROM facts WHERE normalized_hash IS NULL`)
       .all() as Array<{ id: string; text: string }>;
     if (rows.length === 0) return;
@@ -277,7 +277,7 @@ class FactsDB {
   }
 
   private migrateSummaryColumn(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "summary")) return;
@@ -293,7 +293,7 @@ class FactsDB {
   }
 
   private migrateDecayColumns(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
@@ -327,7 +327,7 @@ class FactsDB {
   private migrateTimestampUnits(): void {
     const MS_THRESHOLD = 10_000_000_000;
 
-    const { cnt } = this.db
+    const { cnt } = this.liveDb
       .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE created_at > ?`)
       .get(MS_THRESHOLD) as { cnt: number };
 
@@ -384,7 +384,7 @@ class FactsDB {
     const tags = entry.tags ?? null;
     const tagsStr = tags ? serializeTags(tags) : null;
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -478,7 +478,7 @@ class FactsDB {
         : "";
     const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
 
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(
         `SELECT f.*, rank,
            CASE
@@ -610,7 +610,7 @@ class FactsDB {
 
   /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
   hasDuplicate(text: string): boolean {
-    const exact = this.db
+    const exact = this.liveDb
       .prepare(`SELECT id FROM facts WHERE text = ? LIMIT 1`)
       .get(text);
     if (exact) return true;
@@ -621,7 +621,7 @@ class FactsDB {
   /** Id of an existing fact with same normalized text, or null. Used when store.fuzzyDedupe is true. */
   private getDuplicateIdByNormalizedHash(text: string): string | null {
     const hash = normalizedHash(text);
-    const row = this.db
+    const row = this.liveDb
       .prepare(`SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1`)
       .get(hash) as { id: string } | undefined;
     return row?.id ?? null;
@@ -630,7 +630,7 @@ class FactsDB {
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
   getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
     const nowSec = Math.floor(Date.now() / 1000);
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(
         `SELECT id, text, category, entity, key FROM facts
          WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`,
@@ -670,7 +670,7 @@ class FactsDB {
   }
 
   count(): number {
-    const row = this.db
+    const row = this.liveDb
       .prepare(`SELECT COUNT(*) as cnt FROM facts`)
       .get() as Record<string, number>;
     return row.cnt;
@@ -678,7 +678,7 @@ class FactsDB {
 
   pruneExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
-    const result = this.db
+    const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
       .run(nowSec);
     return result.changes;
@@ -687,7 +687,7 @@ class FactsDB {
   decayConfidence(): number {
     const nowSec = Math.floor(Date.now() / 1000);
 
-    this.db
+    this.liveDb
       .prepare(
         `UPDATE facts
          SET confidence = confidence * 0.5
@@ -699,7 +699,7 @@ class FactsDB {
       )
       .run({ now: nowSec });
 
-    const result = this.db
+    const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
       .run();
     return result.changes;
@@ -707,13 +707,13 @@ class FactsDB {
 
   confirmFact(id: string): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.db
+    const row = this.liveDb
       .prepare(`SELECT decay_class FROM facts WHERE id = ?`)
       .get(id) as { decay_class: DecayClass } | undefined;
     if (!row) return false;
 
     const newExpiry = calculateExpiry(row.decay_class, nowSec);
-    this.db
+    this.liveDb
       .prepare(
         `UPDATE facts SET confidence = 1.0, last_confirmed_at = ?, expires_at = ? WHERE id = ?`,
       )
@@ -753,7 +753,7 @@ class FactsDB {
     savedAt: string;
   } | null {
     const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.db
+    const row = this.liveDb
       .prepare(
         `SELECT id, text FROM facts
          WHERE entity = 'system' AND key LIKE 'checkpoint:%'
@@ -771,7 +771,7 @@ class FactsDB {
   }
 
   statsBreakdown(): Record<string, number> {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(
         `SELECT decay_class, COUNT(*) as cnt FROM facts GROUP BY decay_class`,
       )
@@ -786,7 +786,7 @@ class FactsDB {
 
   countExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.db
+    const row = this.liveDb
       .prepare(
         `SELECT COUNT(*) as cnt FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`,
       )
@@ -795,7 +795,7 @@ class FactsDB {
   }
 
   backfillDecayClasses(): Record<string, number> {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(`SELECT rowid, entity, key, value, text FROM facts WHERE decay_class = 'stable'`)
       .all() as Array<{ rowid: number; entity: string; key: string; value: string; text: string }>;
 
@@ -819,7 +819,7 @@ class FactsDB {
   }
 
   getByCategory(category: string): MemoryEntry[] {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
       .all(category) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
