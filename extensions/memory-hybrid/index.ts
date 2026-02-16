@@ -2208,6 +2208,7 @@ const memoryHybridPlugin = {
           const value = paramValue || extracted.value;
 
           // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
+          // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
           if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
             const parsed = tryParseCredentialForVault(textToStore, entity, key, value);
             if (parsed) {
@@ -2249,6 +2250,15 @@ const memoryHybridPlugin = {
                 details: { action: "credential_vault", id: pointerEntry.id, service: parsed.service, type: parsed.type },
               };
             }
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Credential-like content detected but could not be parsed as a structured credential; not stored (vault is enabled).",
+                },
+              ],
+              details: { action: "credential_skipped" },
+            };
           }
 
           const tags =
@@ -2818,6 +2828,7 @@ const memoryHybridPlugin = {
                 const extracted = extractStructuredFields(trimmed, category);
 
                 // Dual-mode credentials: vault on → store in vault + pointer only; vault off → store in facts (live behavior).
+                // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
                 if (isCredentialLike(trimmed, extracted.entity, extracted.key, extracted.value)) {
                   if (cfg.credentials.enabled && credentialsDb) {
                     const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value);
@@ -2857,8 +2868,10 @@ const memoryHybridPlugin = {
                       }
                       continue;
                     }
+                    /* vault enabled but parse failed: skip this line (do not store credential-like text in facts) */
+                    continue;
                   }
-                  /* vault disabled or not parsed: fall through to store in facts */
+                  /* vault disabled: fall through to store in facts */
                 }
 
                 if (!extracted.entity && !extracted.key && category !== "decision") continue;
@@ -2986,6 +2999,7 @@ const memoryHybridPlugin = {
             const value = opts.value ?? extracted.value ?? null;
 
             // Dual-mode: vault enabled and credential-like → vault + pointer; else store in memory.
+            // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
             if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
               const parsed = tryParseCredentialForVault(text, entity, key, value);
               if (parsed) {
@@ -3020,6 +3034,11 @@ const memoryHybridPlugin = {
                 console.log(`Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer [id: ${pointerEntry.id}].`);
                 return;
               }
+              console.error(
+                "Credential-like content detected but could not be parsed as a structured credential; not stored (vault is enabled).",
+              );
+              process.exitCode = 1;
+              return;
             }
 
             const tags = opts.tags
