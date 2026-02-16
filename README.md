@@ -15,7 +15,7 @@ This repo packages both into a single deployment flow (the **Hybrid Memory Manag
 | **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)** | **AI-friendly setup prompt:** point an OpenClaw agent at this file and it will autonomously install, configure, backfill, and verify the full hybrid memory system. Includes sub-agent re-index step. |
 | **[deploy/](deploy/)** | Merge-ready `openclaw.memory-snippet.json` (memory-hybrid + memorySearch, redacted) and deploy README. |
 | **extensions/memory-hybrid/** | memory-hybrid plugin source (required for v3): SQLite+FTS5+LanceDB ([README](extensions/memory-hybrid/README.md)). |
-| **[scripts/](scripts/)** | **Upgrade helpers:** after every OpenClaw upgrade, reinstall LanceDB in the extension dir and restart. Copy `post-upgrade.sh` and `upgrade.sh` to `~/.openclaw/scripts/`; use alias `openclaw-upgrade` for one-command upgrades (v3 §14, [scripts/README.md](scripts/README.md)). |
+| **[scripts/](scripts/)** | **Upgrade helpers:** after every OpenClaw upgrade, reinstall LanceDB in the extension dir and restart. Copy `post-upgrade.sh` and `upgrade.sh` to `~/.openclaw/scripts/`; use alias `openclaw-upgrade` for one-command upgrades (v3 §14, [scripts/README.md](scripts/README.md)). **Session distillation:** [scripts/distill-sessions/](scripts/distill-sessions/) — batch fact extraction from conversation logs; see [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md). |
 
 ## Credits & attribution
 
@@ -39,6 +39,7 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 
 **Deployment & operations**
 - Single deployment flow that works on new or existing systems
+- **Session distillation pipeline** ([docs/SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md), [scripts/distill-sessions/](scripts/distill-sessions/)) — batch fact extraction from historical conversation logs; bulk one-time sweep + optional nightly incremental sweep to catch facts missed by auto-capture
 - Dynamic backfill script (no hardcoded dates or section names; reads workspace and config)
 - Upgrade helpers for post–OpenClaw-upgrade LanceDB reinstall ([scripts/](scripts/))
 - **Verify CLI** (`openclaw hybrid-mem verify [--fix] [--log-file <path>]`) — checks config, SQLite, LanceDB, embedding API; optional fix suggestions and log scan
