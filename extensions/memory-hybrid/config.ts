@@ -161,7 +161,11 @@ export const hybridConfigSchema = {
 
     const embedding = cfg.embedding as Record<string, unknown> | undefined;
     if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error("embedding.apiKey is required");
+      throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"memory-hybrid\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
+    }
+    const rawKey = (embedding.apiKey as string).trim();
+    if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
+      throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
 
     const model =
@@ -264,25 +268,23 @@ export const hybridConfigSchema = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
     };
 
-    // Parse credentials config (opt-in)
+    // Parse credentials config (opt-in). Enable automatically when a valid encryption key is set.
     const credRaw = cfg.credentials as Record<string, unknown> | undefined;
+    const explicitlyDisabled = credRaw?.enabled === false;
+    const encKeyRaw = typeof credRaw?.encryptionKey === "string" ? credRaw.encryptionKey : "";
+    let encryptionKey = "";
+    if (encKeyRaw.startsWith("env:")) {
+      const envVar = encKeyRaw.slice(4).trim();
+      const val = process.env[envVar];
+      if (val) encryptionKey = val;
+    } else if (encKeyRaw.length >= 16) {
+      encryptionKey = encKeyRaw;
+    }
+    const hasValidKey = encryptionKey.length >= 16;
+    const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
+
     let credentials: CredentialsConfig;
-    if (credRaw?.enabled === true) {
-      const encKeyRaw = typeof credRaw.encryptionKey === "string" ? credRaw.encryptionKey : "";
-      let encryptionKey: string;
-      if (encKeyRaw.startsWith("env:")) {
-        const envVar = encKeyRaw.slice(4).trim();
-        const val = process.env[envVar];
-        if (!val) {
-          throw new Error(`Credentials enabled but encryption key env var ${envVar} is not set`);
-        }
-        encryptionKey = val;
-      } else {
-        encryptionKey = encKeyRaw;
-      }
-      if (!encryptionKey || encryptionKey.length < 16) {
-        throw new Error("credentials.encryptionKey must be at least 16 characters (or use env:VAR)");
-      }
+    if (shouldEnable && hasValidKey) {
       credentials = {
         enabled: true,
         store: "sqlite",
@@ -292,6 +294,11 @@ export const hybridConfigSchema = {
           ? Math.floor(credRaw.expiryWarningDays)
           : 7,
       };
+    } else if (shouldEnable && !hasValidKey) {
+      if (encKeyRaw.startsWith("env:")) {
+        throw new Error(`Credentials encryption key env var ${encKeyRaw.slice(4).trim()} is not set. Run 'openclaw hybrid-mem verify --fix' for help.`);
+      }
+      throw new Error("credentials.encryptionKey must be at least 16 characters (or use env:VAR). Run 'openclaw hybrid-mem verify --fix' for help.");
     } else {
       credentials = {
         enabled: false,

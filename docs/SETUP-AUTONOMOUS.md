@@ -4,6 +4,8 @@
 **Reference:** [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) (full details, troubleshooting, explanations).
 **Repo root:** The directory containing this file's parent (`docs/`).
 
+**Prerequisites:** An **OpenAI API key** is required. The memory-hybrid plugin will not load without `embedding.apiKey` in config. You will need it in Phase 4; if the user has not provided one, stop and ask before writing config. A **Google (Gemini) API key** is optional but recommended for Phase 7b (session distillation); if missing, that phase will be skipped or run with another model (smaller batches).
+
 ---
 
 ## Instructions
@@ -257,6 +259,42 @@ If there are no memory files yet (new system), skip this phase.
 
 ---
 
+## Phase 7b: Session distillation (optional — old session logs)
+
+**Purpose:** Run the session distillation pipeline to extract facts from historical conversation logs and store them in the hybrid memory. This phase is optional; skip if there are no session files or no suitable model.
+
+**7b.1 — Check for session files.**  
+If `~/.openclaw/agents/main/sessions/` (or the instance’s session directory) does not exist or has no JSONL session files, **skip Phase 7b**. Tell the user: "No session logs found; skipping session distillation. You can run it later per [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) when logs exist."
+
+**7b.2 — Check for a model that can run distillation.**  
+Session distillation uses `openclaw sessions spawn --model <model>` with a large text attachment (prompt + extracted session text). Prefer **Gemini** (1M+ context); otherwise another long-context model is fine with smaller batches.
+
+- **Gemini available:** Check whether OpenClaw has Gemini/Google configured (e.g. in `~/.openclaw/openclaw.json`: look for a provider or model entry for `gemini` or `google`; or check for `GOOGLE_API_KEY` / `GEMINI_API_KEY` in the environment). If you are unsure, try: `openclaw sessions spawn --model gemini --message "test"` (or a one-line probe); if it succeeds, Gemini is available.
+- **If Gemini is available:** Use `--model gemini`. Run the pipeline as below (default batch size is fine; Gemini can handle large batches).
+- **If Gemini is not available but another model is** (e.g. `claude`, `gpt-4o`, or whatever the user has configured): Use that model and **reduce batch size** (e.g. 10–15 sessions per batch instead of ~50) to stay within the model’s context window. Tell the user: "Session distillation was run with \<model\> (Gemini was not configured). Batches were kept small to fit context; for larger batches, configure Gemini per [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md)."
+- **If no spawn-capable model is available:** Do **not** run distillation. Tell the user: "Session distillation was not run: no Gemini or other model available for `openclaw sessions spawn`. To process old session logs later, configure a Google (Gemini) API key in OpenClaw (recommended for 1M context) or another model, then follow [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md)."
+
+**7b.3 — Run the pipeline** (only if 7b.1 and 7b.2 allow).
+
+1. Locate the distill scripts: either `<repo_root>/scripts/distill-sessions/` or a copy in `<workspace_root>/scripts/distill-sessions/`. Ensure `batch-sessions.sh`, `extract-text.sh`, `gemini-prompt.md`, and `store-facts.sh` are present.
+2. Create batches: from `<distill_scripts_dir>`, run `./batch-sessions.sh` (it uses `~/.openclaw/agents/main/sessions/` by default; see [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) if your session path differs).
+3. For **initial setup**, running **one batch** is enough to verify the pipeline. Extract text for the first batch, then spawn:
+   ```bash
+   cd <distill_scripts_dir>
+   mkdir -p extracted facts
+   ./extract-text.sh $(cat batches/batch-001.txt) > extracted/batch-001.txt
+   openclaw sessions spawn --model <gemini_or_other> --label distill-setup \
+     --message "$(cat gemini-prompt.md)" --attach extracted/batch-001.txt \
+     > facts/batch-001.jsonl
+   ```
+4. If the output is valid JSONL (no markdown wrappers), generate and run store commands:  
+   `./store-facts.sh facts/batch-001.jsonl > commands.sh && chmod +x commands.sh` — then review and run `./commands.sh` if appropriate.
+5. Optionally run more batches (or all) for a full sweep; see [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md).
+
+**Verify:** If distillation ran: `openclaw hybrid-mem stats` shows increased counts; optionally `openclaw hybrid-mem search "preference"` (or similar) returns new facts. If distillation was skipped: user was informed why and given the doc link.
+
+---
+
 ## Phase 8: Re-index memory (sub-agent)
 
 **Launch a sub-agent** with the following task. This runs in a fresh context window so it can process large volumes without filling your current session.
@@ -334,6 +372,7 @@ Run through this checklist:
 | Config snippet | `deploy/openclaw.memory-snippet.json` |
 | Backfill script | `scripts/backfill-memory.mjs` |
 | Upgrade scripts | `scripts/post-upgrade.sh`, `scripts/upgrade.sh` |
+| Session distillation | `scripts/distill-sessions/`, [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) |
 | Categories & auto-classify | v3 §4.8, §4.9 |
 | Troubleshooting | v3 §12 |
 | CLI commands | v3 §13 |

@@ -1,7 +1,7 @@
 {
   "id": "memory-hybrid",
   "kind": "memory",
-  "version": "2026.2.15",
+  "version": "2026.2.16",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",

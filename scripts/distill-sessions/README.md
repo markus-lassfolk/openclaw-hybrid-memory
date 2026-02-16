@@ -4,7 +4,7 @@ Extract facts, preferences, and knowledge from OpenClaw conversation history.
 
 ## Overview
 
-This pipeline processes session JSONL files from `~/.openclaw/agents/main/sessions/` to extract durable knowledge that should be preserved in long-term memory. Run from this directory or copy the scripts to your workspace (e.g. `~/.openclaw/workspace/scripts/distill-sessions/`).
+This pipeline **indexes and processes old session logs and historical memories**: it reads session JSONL files from `~/.openclaw/agents/main/sessions/`, extracts durable knowledge, and stores it in the hybrid memory (SQLite + LanceDB). We use **Google (Gemini)** for the extraction step so we can leverage its **1M+ token context window** and process large batches of old sessions in one run. Run from this directory or copy the scripts to your workspace (e.g. `~/.openclaw/workspace/scripts/distill-sessions/`).
 
 ## Pipeline Components
 

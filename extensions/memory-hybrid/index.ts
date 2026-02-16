@@ -132,7 +132,7 @@ function tagsContains(tagsStr: string | null | undefined, tag: string): boolean 
   return parseTags(tagsStr).includes(tagLower);
 }
 
-/** Parse sourceDate from ISO-8601 (YYYY-MM-DD) or Unix timestamp (seconds). Returns null if invalid. */
+/** Parse sourceDate from ISO-8601 (YYYY-MM-DD) or Unix timestamp (seconds). Date strings are interpreted as UTC midnight for consistent ordering across timezones. Returns null if invalid. */
 function parseSourceDate(v: string | number | null | undefined): number | null {
   if (v == null) return null;
   if (typeof v === "number") return v > 0 ? v : null;
@@ -141,8 +141,8 @@ function parseSourceDate(v: string | number | null | undefined): number | null {
   const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}:\d{2})?/.exec(s);
   if (iso) {
     const [, y, m, d] = iso;
-    const date = new Date(parseInt(y!, 10), parseInt(m!, 10) - 1, parseInt(d!, 10));
-    return isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 1000);
+    const ms = Date.UTC(parseInt(y!, 10), parseInt(m!, 10) - 1, parseInt(d!, 10));
+    return isNaN(ms) ? null : Math.floor(ms / 1000);
   }
   const n = parseInt(s, 10);
   return !isNaN(n) && n > 0 ? n : null;
@@ -1820,6 +1820,34 @@ const memoryHybridPlugin = {
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
     );
 
+    // Prerequisite checks (async, non-blocking): verify keys and model access so user gets clear errors
+    void (async () => {
+      try {
+        await embeddings.embed("verify");
+        api.logger.info("memory-hybrid: embedding API check OK");
+      } catch (e) {
+        api.logger.error(
+          `memory-hybrid: Embedding API check failed — ${String(e)}. ` +
+            "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.",
+        );
+      }
+      if (cfg.credentials.enabled && credentialsDb) {
+        try {
+          const items = credentialsDb.list();
+          if (items.length > 0) {
+            const first = items[0];
+            credentialsDb.get(first.service, first.type as CredentialType);
+          }
+          api.logger.info("memory-hybrid: credentials vault check OK");
+        } catch (e) {
+          api.logger.error(
+            `memory-hybrid: Credentials vault check failed — ${String(e)}. ` +
+              "Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.",
+          );
+        }
+      }
+    })();
+
     // ========================================================================
     // Tools
     // ========================================================================
@@ -2841,6 +2869,133 @@ const memoryHybridPlugin = {
           });
 
         mem
+          .command("install")
+          .description("Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.")
+          .option("--dry-run", "Print what would be merged without writing")
+          .action(async (opts: { dryRun?: boolean }) => {
+            const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+            const configPath = join(openclawDir, "openclaw.json");
+            mkdirSync(openclawDir, { recursive: true });
+            const memoryDir = join(openclawDir, "memory");
+            mkdirSync(memoryDir, { recursive: true });
+
+            const fullDefaults = {
+              memory: { backend: "builtin" as const, citations: "auto" as const },
+              plugins: {
+                slots: { memory: "memory-hybrid" as const },
+                entries: {
+                  "memory-core": { enabled: true },
+                  "memory-hybrid": {
+                    enabled: true,
+                    config: {
+                      embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
+                      autoCapture: true,
+                      autoRecall: true,
+                      captureMaxChars: 5000,
+                      store: { fuzzyDedupe: false },
+                      autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
+                      categories: [] as string[],
+                      credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
+                    },
+                  },
+                },
+              },
+              agents: {
+                defaults: {
+                  bootstrapMaxChars: 15000,
+                  bootstrapTotalMaxChars: 50000,
+                  memorySearch: {
+                    enabled: true,
+                    sources: ["memory"],
+                    provider: "openai",
+                    model: "text-embedding-3-small",
+                    sync: { onSessionStart: true, onSearch: true, watch: true },
+                    chunking: { tokens: 500, overlap: 50 },
+                    query: { maxResults: 8, minScore: 0.3, hybrid: { enabled: true } },
+                  },
+                  compaction: {
+                    mode: "default",
+                    memoryFlush: {
+                      enabled: true,
+                      softThresholdTokens: 4000,
+                      systemPrompt: "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
+                      prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
+                    },
+                  },
+                  pruning: { ttl: "30m" },
+                },
+              },
+              jobs: [
+                {
+                  name: "nightly-memory-sweep",
+                  schedule: "0 2 * * *",
+                  channel: "system",
+                  message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
+                  isolated: true,
+                  model: "gemini",
+                },
+              ],
+            };
+
+            function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
+              for (const key of Object.keys(source)) {
+                const srcVal = source[key];
+                const tgtVal = target[key];
+                if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
+                  deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
+                } else if (key === "jobs" && Array.isArray(srcVal)) {
+                  const arr = (Array.isArray(tgtVal) ? [...tgtVal] : []) as unknown[];
+                  const hasNightly = arr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                  if (!hasNightly) {
+                    const nightly = (srcVal as unknown[]).find((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                    if (nightly) arr.push(nightly);
+                  }
+                  (target as Record<string, unknown>)[key] = arr;
+                } else if (!Array.isArray(srcVal)) {
+                  (target as Record<string, unknown>)[key] = srcVal;
+                }
+              }
+            }
+
+            let config: Record<string, unknown> = {};
+            if (existsSync(configPath)) {
+              try {
+                config = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+              } catch (e) {
+                console.error(`Could not read ${configPath}: ${e}`);
+                return;
+              }
+            }
+            const existingApiKey = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.["memory-hybrid"] && (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>)?.config && ((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>).config as Record<string, unknown>)?.embedding && (((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>).config as Record<string, unknown>).embedding as Record<string, unknown>)?.apiKey;
+            const isRealKey = typeof existingApiKey === "string" && existingApiKey.length >= 10 && existingApiKey !== "YOUR_OPENAI_API_KEY" && existingApiKey !== "<OPENAI_API_KEY>";
+
+            if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
+            if (!(config.agents && typeof config.agents === "object")) config.agents = { defaults: {} };
+            deepMerge(config, fullDefaults as unknown as Record<string, unknown>);
+            if (isRealKey) {
+              const entries = (config.plugins as Record<string, unknown>).entries as Record<string, unknown>;
+              const mh = entries["memory-hybrid"] as Record<string, unknown>;
+              const cfg = mh?.config as Record<string, unknown>;
+              const emb = cfg?.embedding as Record<string, unknown>;
+              if (emb) emb.apiKey = existingApiKey;
+            }
+            const after = JSON.stringify(config, null, 2);
+
+            if (opts.dryRun) {
+              console.log("Would merge into " + configPath + ":");
+              console.log(after);
+              return;
+            }
+            writeFileSync(configPath, after, "utf-8");
+            console.log("Config written: " + configPath);
+            console.log("Applied: plugins.slots.memory=memory-hybrid, memory-hybrid config (all features), memorySearch, compaction prompts, bootstrap limits, pruning, autoClassify, nightly-memory-sweep job.");
+            console.log("\nNext steps:");
+            console.log("  1. Set embedding.apiKey in plugins.entries[\"memory-hybrid\"].config (or use env:OPENAI_API_KEY in config).");
+            console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
+            console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
+          });
+
+        mem
           .command("verify")
           .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
           .option("--fix", "Print or apply default config for missing items")
@@ -2853,14 +3008,17 @@ const memoryHybridPlugin = {
             let lanceOk = false;
             let embeddingOk = false;
 
+            const loadBlocking: string[] = [];
             if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
               issues.push("embedding.apiKey is missing, placeholder, or too short");
-              fixes.push('Add "embedding": { "apiKey": "<your-key>", "model": "text-embedding-3-small" } to plugin config');
+              loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
+              fixes.push("LOAD-BLOCKING: Set plugins.entries[\"memory-hybrid\"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to \"text-embedding-3-small\"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.");
               configOk = false;
             }
             if (!cfg.embedding.model) {
               issues.push("embedding.model is missing");
-              fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large"');
+              loadBlocking.push("embedding.model is missing");
+              fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large" in plugin config');
               configOk = false;
             }
             const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
@@ -2874,6 +3032,7 @@ const memoryHybridPlugin = {
               console.log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
             } catch (e) {
               issues.push(`SQLite: ${String(e)}`);
+              fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
               console.log(`SQLite: FAIL — ${String(e)}`);
             }
 
@@ -2883,6 +3042,7 @@ const memoryHybridPlugin = {
               console.log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
             } catch (e) {
               issues.push(`LanceDB: ${String(e)}`);
+              fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
               console.log(`LanceDB: FAIL — ${String(e)}`);
             }
 
@@ -2892,7 +3052,94 @@ const memoryHybridPlugin = {
               console.log("Embedding API: OK");
             } catch (e) {
               issues.push(`Embedding API: ${String(e)}`);
+              fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries["memory-hybrid"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
               console.log(`Embedding API: FAIL — ${String(e)}`);
+            }
+
+            // Features summary
+            console.log("\nFeatures:");
+            console.log(`  autoCapture: ${cfg.autoCapture}`);
+            console.log(`  autoRecall: ${cfg.autoRecall.enabled}`);
+            console.log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "off"}`);
+            console.log(`  credentials: ${cfg.credentials.enabled ? "enabled" : "disabled"}`);
+            console.log(`  store.fuzzyDedupe: ${cfg.store.fuzzyDedupe}`);
+
+            // Credentials: enabled?, key defined?, vault accessible?
+            let credentialsOk = true;
+            if (cfg.credentials.enabled) {
+              const keyDefined = !!cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16;
+              if (!keyDefined) {
+                issues.push("credentials.enabled but encryption key missing or too short (min 16 chars or env:VAR)");
+                loadBlocking.push("credentials enabled but encryption key missing or too short");
+                fixes.push("LOAD-BLOCKING: Set credentials.encryptionKey to env:OPENCLAW_CRED_KEY and export OPENCLAW_CRED_KEY (min 16 chars), or set a 16+ character secret in plugin config. See docs/CREDENTIALS.md.");
+                credentialsOk = false;
+                console.log("\nCredentials: enabled — key missing or too short (set OPENCLAW_CRED_KEY or credentials.encryptionKey)");
+              } else if (credentialsDb) {
+                try {
+                  const items = credentialsDb.list();
+                  if (items.length > 0) {
+                    const first = items[0];
+                    credentialsDb.get(first.service, first.type as CredentialType);
+                  }
+                  console.log(`\nCredentials: enabled — key set, vault OK (${items.length} stored)`);
+                } catch (e) {
+                  issues.push(`Credentials vault: ${String(e)} (wrong key or corrupted DB)`);
+                  fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the same key used when credentials were stored, or disable credentials in config. See docs/CREDENTIALS.md.`);
+                  credentialsOk = false;
+                  console.log(`\nCredentials: enabled — vault FAIL — ${String(e)} (check OPENCLAW_CRED_KEY / encryptionKey)`);
+                }
+              } else {
+                console.log("\nCredentials: enabled — key set (vault not opened in this process)");
+              }
+            } else {
+              console.log("\nCredentials: disabled");
+            }
+
+            // Session distillation: last run (optional file)
+            const memoryDir = dirname(resolvedSqlitePath);
+            const distillLastRunPath = join(memoryDir, ".distill_last_run");
+            if (existsSync(distillLastRunPath)) {
+              try {
+                const line = readFileSync(distillLastRunPath, "utf-8").split("\n")[0]?.trim() || "";
+                console.log(`\nSession distillation: last run recorded ${line ? `— ${line}` : "(empty file)"}`);
+              } catch {
+                console.log("\nSession distillation: last run file present but unreadable");
+              }
+            } else {
+              console.log("\nSession distillation: last run not recorded (run scripts/distill-sessions/ then 'openclaw hybrid-mem record-distill' to record)");
+            }
+
+            // Optional / suggested jobs (e.g. nightly session distillation)
+            let nightlySweepDefined = false;
+            let nightlySweepEnabled = true;
+            if (existsSync(defaultConfigPath)) {
+              try {
+                const raw = readFileSync(defaultConfigPath, "utf-8");
+                const root = JSON.parse(raw) as Record<string, unknown>;
+                const jobs = root.jobs;
+                if (Array.isArray(jobs)) {
+                  const nightly = jobs.find((j: unknown) => typeof j === "object" && j !== null && (j as Record<string, unknown>).name === "nightly-memory-sweep") as Record<string, unknown> | undefined;
+                  if (nightly) {
+                    nightlySweepDefined = true;
+                    nightlySweepEnabled = nightly.enabled !== false;
+                  }
+                } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+                  const nightly = (jobs as Record<string, unknown>)["nightly-memory-sweep"];
+                  if (nightly && typeof nightly === "object") {
+                    nightlySweepDefined = true;
+                    nightlySweepEnabled = (nightly as Record<string, unknown>).enabled !== false;
+                  }
+                }
+              } catch {
+                // ignore parse or read errors
+              }
+            }
+            console.log("\nOptional / suggested jobs (openclaw.json):");
+            if (nightlySweepDefined) {
+              console.log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
+            } else {
+              console.log("  nightly-memory-sweep (session distillation): not defined");
+              fixes.push("Optional: Add nightly-memory-sweep to openclaw.json \"jobs\" array for incremental session distillation. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
             }
 
             console.log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
@@ -2910,35 +3157,115 @@ const memoryHybridPlugin = {
               console.log(`\nLog file not found: ${opts.logFile}`);
             }
 
-            const allOk = configOk && sqliteOk && lanceOk && embeddingOk;
+            const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
             if (allOk) {
               console.log("\nAll checks passed.");
+              if (!nightlySweepDefined) {
+                console.log("Optional: Add nightly-memory-sweep to openclaw.json \"jobs\" for incremental session distillation. See docs/SESSION-DISTILLATION.md.");
+              }
             } else {
-              console.log("\nIssues:");
-              issues.forEach((i) => console.log(`  - ${i}`));
+              console.log("\n--- Issues ---");
+              if (loadBlocking.length > 0) {
+                console.log("Load-blocking (prevent OpenClaw / plugin from loading):");
+                loadBlocking.forEach((i) => console.log(`  - ${i}`));
+              }
+              const other = issues.filter((i) => !loadBlocking.includes(i));
+              if (other.length > 0) {
+                console.log(other.length > 0 && loadBlocking.length > 0 ? "Other:" : "Issues:");
+                other.forEach((i) => console.log(`  - ${i}`));
+              }
+              console.log("\n--- Fixes for detected issues ---");
+              fixes.forEach((f) => console.log(`  • ${f}`));
+              console.log("\nEdit config: " + defaultConfigPath + " (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.");
             }
 
             if (opts.fix) {
-              console.log("\n--- Fix suggestions ---");
-              fixes.forEach((f) => console.log(`  ${f}`));
-              const snippet = {
-                embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },
-                autoCapture: true,
-                autoRecall: true,
-                captureMaxChars: 5000,
-                store: { fuzzyDedupe: false },
-              };
-              console.log("\nMinimal config snippet to merge into plugins.entries[\"memory-hybrid\"].config:");
-              console.log(JSON.stringify(snippet, null, 2));
+              const applied: string[] = [];
               if (existsSync(defaultConfigPath)) {
-                console.log(`\nConfig file found: ${defaultConfigPath}. Merge the snippet above into the memory-hybrid config entry if values are missing.`);
+                try {
+                  const raw = readFileSync(defaultConfigPath, "utf-8");
+                  const fixConfig = JSON.parse(raw) as Record<string, unknown>;
+                  let changed = false;
+                  if (!fixConfig.plugins || typeof fixConfig.plugins !== "object") fixConfig.plugins = {};
+                  const plugins = fixConfig.plugins as Record<string, unknown>;
+                  if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
+                  const entries = plugins.entries as Record<string, unknown>;
+                  if (!entries["memory-hybrid"] || typeof entries["memory-hybrid"] !== "object") entries["memory-hybrid"] = { enabled: true, config: {} };
+                  const mh = entries["memory-hybrid"] as Record<string, unknown>;
+                  if (!mh.config || typeof mh.config !== "object") mh.config = {};
+                  const cfg = mh.config as Record<string, unknown>;
+                  if (!cfg.embedding || typeof cfg.embedding !== "object") cfg.embedding = {};
+                  const emb = cfg.embedding as Record<string, unknown>;
+                  const curKey = emb.apiKey;
+                  const placeholder = typeof curKey !== "string" || curKey.length < 10 || curKey === "YOUR_OPENAI_API_KEY" || curKey === "<OPENAI_API_KEY>";
+                  if (placeholder) {
+                    emb.apiKey = process.env.OPENAI_API_KEY || "YOUR_OPENAI_API_KEY";
+                    emb.model = emb.model || "text-embedding-3-small";
+                    changed = true;
+                    applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
+                  }
+                  if (!fixConfig.jobs || !Array.isArray(fixConfig.jobs)) fixConfig.jobs = [];
+                  const jobsArr = fixConfig.jobs as unknown[];
+                  if (!jobsArr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep")) {
+                    jobsArr.push({
+                      name: "nightly-memory-sweep",
+                      schedule: "0 2 * * *",
+                      channel: "system",
+                      message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
+                      isolated: true,
+                      model: "gemini",
+                    });
+                    changed = true;
+                    applied.push("Added nightly-memory-sweep to jobs");
+                  }
+                  const memoryDirPath = dirname(resolvedSqlitePath);
+                  if (!existsSync(memoryDirPath)) {
+                    mkdirSync(memoryDirPath, { recursive: true });
+                    applied.push("Created memory directory: " + memoryDirPath);
+                  }
+                  if (changed) {
+                    writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
+                  }
+                  if (applied.length > 0) {
+                    console.log("\n--- Applied fixes ---");
+                    applied.forEach((a) => console.log("  • " + a));
+                    if (changed) console.log("Config written: " + defaultConfigPath + ". Restart the gateway and run verify again.");
+                  }
+                } catch (e) {
+                  console.log("\nCould not apply fixes to config: " + String(e));
+                  const snippet = {
+                    embedding: { apiKey: process.env.OPENAI_API_KEY || "<set your key>", model: "text-embedding-3-small" },
+                    autoCapture: true,
+                    autoRecall: true,
+                    captureMaxChars: 5000,
+                    store: { fuzzyDedupe: false },
+                  };
+                  console.log("Minimal config snippet to merge into plugins.entries[\"memory-hybrid\"].config:");
+                  console.log(JSON.stringify(snippet, null, 2));
+                }
+              } else {
+                console.log("\n--- Fix (--fix) ---");
+                console.log("Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.");
               }
             }
           });
 
         mem
+          .command("record-distill")
+          .description("Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)")
+          .action(async () => {
+            const memoryDir = dirname(resolvedSqlitePath);
+            mkdirSync(memoryDir, { recursive: true });
+            const path = join(memoryDir, ".distill_last_run");
+            const ts = new Date().toISOString();
+            writeFileSync(path, ts + "\n", "utf-8");
+            console.log(`Recorded distillation run: ${ts}`);
+            console.log(`Written to ${path}. Run 'openclaw hybrid-mem verify' to see it.`);
+          });
+
+        mem
           .command("uninstall")
-          .description("Disable hybrid memory and restore default memory manager; optionally remove data.")
+          .description("Revert to OpenClaw default memory (memory-core). Safe: OpenClaw works normally; your data is kept unless you use --clean-all.")
           .option("--clean-all", "Remove SQLite and LanceDB data (irreversible)")
           .option("--force-cleanup", "Same as --clean-all")
           .option("--leave-config", "Do not modify openclaw.json; only print instructions")
@@ -2963,7 +3290,7 @@ const memoryHybridPlugin = {
                 (entries["memory-hybrid"] as Record<string, boolean>).enabled = false;
                 writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
                 console.log("Config updated: plugins.slots.memory = \"memory-core\", memory-hybrid disabled.");
-                console.log("Restart the gateway to use the default OpenClaw memory manager.");
+                console.log("OpenClaw will use the default memory manager. Restart the gateway. Your hybrid data is kept unless you run with --clean-all.");
               } catch (e) {
                 console.error(`Could not update config (${configPath}): ${e}`);
                 console.log("Apply these changes manually:");
@@ -2986,7 +3313,7 @@ const memoryHybridPlugin = {
             }
 
             if (!doClean) {
-              console.log("\nMemory data (SQLite and LanceDB) was left in place. To remove it, run: openclaw hybrid-mem uninstall --clean-all");
+              console.log("\nMemory data (SQLite and LanceDB) was left in place. To remove it: openclaw hybrid-mem uninstall --clean-all");
               return;
             }
             console.log("\nRemoving hybrid-memory data...");
@@ -3014,7 +3341,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================

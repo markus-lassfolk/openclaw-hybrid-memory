@@ -29,6 +29,16 @@ Four components work together:
 
 ---
 
+## 1.5 Prerequisites (API keys and models)
+
+- **OpenAI API key (required).** The memory-hybrid plugin needs an OpenAI API key to work. Without it, the plugin throws at config load and does not register.
+  - **Embeddings:** Used for vector search (LanceDB), auto-recall, storing new facts, and CLI features (find-duplicates, consolidate). Default model: `text-embedding-3-small`. Set `embedding.apiKey` and `embedding.model` in the plugin config (§4.1).
+  - **Optional LLM features:** Auto-classify, summarize-when-over-budget, and consolidate use the same key with a **chat** model (default `gpt-4o-mini`). Configure per feature if needed (§4.1, §2.4).
+- **memorySearch** (semantic search over `memory/**/*.md`) also needs an OpenAI embedding provider/model if enabled; typically the same key and model as the plugin.
+- **No other embedding/LLM providers** are supported; there is no automatic failover. See §12 (troubleshooting) for invalid key, missing key, and env var behaviour.
+
+---
+
 ## 2. Directory Structure (Workspace)
 
 Create this under your OpenClaw workspace (e.g. `~/.openclaw/workspace/` or your project root):
@@ -844,18 +854,20 @@ Use these from the shell for inspection and maintenance:
 | `openclaw hybrid-mem categories` | List all configured categories with fact counts. |
 | `openclaw hybrid-mem find-duplicates [--threshold 0.92] [--include-structured] [--limit 300]` | Report pairs of facts with embedding similarity ≥ threshold (2.2); report-only. |
 | `openclaw hybrid-mem consolidate [--threshold 0.92] [--include-structured] [--dry-run] [--limit 300] [--model M]` | Merge near-duplicate clusters with LLM (2.4). |
-| `openclaw hybrid-mem verify [--fix] [--log-file <path>]` | Verify config, SQLite, LanceDB, and embedding API; optional fix suggestions and log check. Use as a health check or with `openclaw doctor` if the host supports it. |
-| `openclaw hybrid-mem uninstall [--clean-all \| --force-cleanup] [--leave-config]` | Restore default memory (patch config); optionally remove data. |
+| `openclaw hybrid-mem install [--dry-run]` | Apply full recommended config, compaction prompts, and optional jobs (e.g. nightly-memory-sweep) to openclaw.json. Idempotent; preserves existing API key. Use for first install or to add missing defaults. |
+| `openclaw hybrid-mem verify [--fix] [--log-file <path>]` | Verify config, SQLite, LanceDB, embedding API, credentials vault (if enabled), session-distillation last run, and optional jobs. Reports load-blocking vs other issues and fixes for each. **`--fix`** applies safe fixes (missing embedding block, nightly job, memory dir). Use as a health check or with `openclaw doctor` if the host supports it. |
+| `openclaw hybrid-mem record-distill` | Record that session distillation was run (writes timestamp to `~/.openclaw/memory/.distill_last_run` so `verify` can show "last run"). Run after completing a distillation batch. |
+| `openclaw hybrid-mem uninstall [--clean-all \| --force-cleanup] [--leave-config]` | **Revert to default OpenClaw memory** (memory-core). Safe: OpenClaw works normally; your data is kept unless you use `--clean-all`. Restart the gateway after uninstall. |
 
 After implementation and re-indexing, use `stats` and `lookup`/`search` to confirm data is present.
 
 ### Verify and doctor
 
-Run **`openclaw hybrid-mem verify`** to check that settings are configured, the databases are working, and the embedding API is reachable. With **`--fix`** it prints missing config suggestions and a minimal snippet to merge into your plugin config. With **`--log-file <path>`** it scans that file for memory-hybrid or cron-related errors. When the gateway is running, prune runs every 60 minutes and auto-classify every 24 hours (if enabled); no external cron is required. If your OpenClaw host has an **`openclaw doctor`** command, you can run `hybrid-mem verify` as part of that flow.
+Run **`openclaw hybrid-mem verify`** to check config (embedding API key and model), SQLite, LanceDB, embedding API reachability, **credentials** (if enabled: key set and vault accessible), **session distillation** last run (if recorded via `openclaw hybrid-mem record-distill`), **optional/suggested jobs** (e.g. whether `nightly-memory-sweep` is defined and enabled in `openclaw.json`), and feature flags (autoCapture, autoRecall, autoClassify, credentials, fuzzyDedupe). When issues are found, verify lists **load-blocking** problems (those that prevent OpenClaw or the plugin from loading) first, then other issues, and **fixes for each detected issue** so you can troubleshoot. With **`--fix`** it **applies safe fixes** where possible: adds missing embedding block (or uses OPENAI_API_KEY if set), adds nightly-memory-sweep to jobs if missing, creates the memory directory. With **`--log-file <path>`** it scans that file for memory-hybrid or cron-related errors. When the gateway is running, prune runs every 60 minutes and auto-classify every 24 hours (if enabled); no external cron is required. If your OpenClaw host has an **`openclaw doctor`** command, you can run `hybrid-mem verify` as part of that flow.
 
 ### Uninstall and default memory fallback
 
-Run **`openclaw hybrid-mem uninstall`** to disable hybrid memory and **restore the default OpenClaw memory manager**. By default it updates your config file (`~/.openclaw/openclaw.json` or `OPENCLAW_HOME/openclaw.json`): sets `plugins.slots.memory` to `"memory-core"` and `plugins.entries["memory-hybrid"].enabled` to `false`. Restart the gateway to take effect. Memory data (SQLite and LanceDB) is left in place unless you pass **`--clean-all`** or **`--force-cleanup`** (removes those files; irreversible). Use **`--leave-config`** to skip modifying the config and only print manual instructions.
+Run **`openclaw hybrid-mem uninstall`** to **revert to the default OpenClaw memory manager** (memory-core). This does not break OpenClaw: the app works normally with default memory; your hybrid data (SQLite and LanceDB) is left in place unless you pass **`--clean-all`** or **`--force-cleanup`** (removes those files; irreversible). By default, uninstall updates your config: sets `plugins.slots.memory` to `"memory-core"` and `plugins.entries["memory-hybrid"].enabled` to `false`. Restart the gateway to take effect. Use **`--leave-config`** to skip modifying the config and only print manual instructions.
 
 ---
 

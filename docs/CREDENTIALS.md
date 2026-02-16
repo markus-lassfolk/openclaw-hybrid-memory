@@ -4,12 +4,11 @@ The hybrid-memory plugin supports an **opt-in credential store** for structured,
 
 ## Enable
 
-Add to your memory-hybrid config:
+Set a valid **encryptionKey** in your memory-hybrid config; the credential store is **enabled automatically** when the key is set (or when the referenced env var is set). You can also set `"enabled": true` explicitly. To keep it off despite a key in config, set `"enabled": false`.
 
 ```json
 {
   "credentials": {
-    "enabled": true,
     "store": "sqlite",
     "encryptionKey": "env:OPENCLAW_CRED_KEY",
     "autoDetect": true,
@@ -18,7 +17,8 @@ Add to your memory-hybrid config:
 }
 ```
 
-- **encryptionKey** (required when enabled): `env:VAR_NAME` or a 16+ character secret
+- **encryptionKey**: `env:VAR_NAME` (e.g. `env:OPENCLAW_CRED_KEY`) or a 16+ character secret. When set and valid, the credential store is enabled automatically.
+- **enabled** (optional): Set to `false` to disable even if encryptionKey is present.
 - **autoDetect** (optional): When true, detects credential patterns (Bearer tokens, API keys, SSH) in conversation and prompts the agent to offer storing them
 - **expiryWarningDays** (optional): Days before expiry to warn (default: 7)
 

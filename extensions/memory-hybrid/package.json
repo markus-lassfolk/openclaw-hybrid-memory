@@ -1,19 +1,27 @@
 {
-  "name": "@openclaw/memory-hybrid",
-  "version": "2026.2.15",
+  "name": "openclaw-hybrid-memory",
+  "version": "2026.2.16",
   "type": "module",
-  "description": "Hybrid memory plugin: SQLite+FTS5 for structured facts, LanceDB for semantic search",
+  "description": "Hybrid memory plugin for OpenClaw: SQLite+FTS5 for structured facts, LanceDB for semantic search",
+  "files": [
+    "index.ts",
+    "config.ts",
+    "versionInfo.ts",
+    "openclaw.plugin.json",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory.git"
+  },
+  "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
   "dependencies": {
     "@lancedb/lancedb": "^0.23.0",
     "@sinclair/typebox": "0.34.47",
     "better-sqlite3": "^11.0.0",
     "openai": "^6.16.0"
   },
-  "openclaw": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
+  "openclaw": { "extensions": ["./index.ts"] },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",

@@ -4,7 +4,9 @@
 
 ## Overview
 
-Session distillation is a **batch fact-extraction pipeline** that processes historical OpenClaw session transcripts to find and store knowledge that wasn't captured during live conversations. It complements the hybrid memory system's real-time auto-capture by retrospectively analyzing chat history.
+Session distillation is a **batch fact-extraction pipeline** that **indexes and processes old session logs and historical memories**: it runs over historical OpenClaw session transcripts, extracts durable facts, and stores them in the hybrid memory (SQLite + LanceDB). It complements the hybrid memory system's real-time auto-capture by retrospectively analyzing chat history.
+
+**Model choice:** The pipeline is designed to use **Google (Gemini)** for fact extraction. Gemini’s **1M+ token context window** lets you process large batches of old sessions in a single sub-agent run (e.g. ~50 sessions / ~500k tokens per batch by default; you can increase batch size to leverage the full window). Configure Gemini in OpenClaw and use `--model gemini` when spawning the distillation sub-agent (see [Running the Pipeline](#running-the-pipeline-manually) and [Nightly Cron Setup](#nightly-cron-setup)).
 
 ### Why Session Distillation?
 
@@ -128,7 +130,7 @@ done
 
 ### Step 3: Extract Facts with Gemini
 
-Use a sub-agent spawn to process each batch with the Gemini model:
+Use a sub-agent spawn to process each batch with **Gemini** (recommended for its 1M+ context window when processing old logs):
 
 ```bash
 mkdir -p facts
@@ -172,6 +174,9 @@ less commands.sh
 # Execute if satisfied
 chmod +x commands.sh
 ./commands.sh
+
+# Record that distillation was run (so 'openclaw hybrid-mem verify' can show last run)
+openclaw hybrid-mem record-distill
 ```
 
 ### Step 6: Track Metrics

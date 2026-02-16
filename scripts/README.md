@@ -1,4 +1,19 @@
-# Upgrade scripts (LanceDB reinstall after OpenClaw upgrades)
+# Scripts
+
+## First install: config only (no gateway needed)
+
+**`install-hybrid-config.mjs`** — Writes full Hybrid Memory defaults (plugin slot, memorySearch, compaction prompts, nightly-memory-sweep job) into `~/.openclaw/openclaw.json` so you can get a complete config before the first gateway start.
+
+```bash
+# From repo root (set OPENCLAW_HOME if needed)
+node scripts/install-hybrid-config.mjs
+```
+
+Then set your OpenAI API key in the config, copy the plugin to the extensions dir, run `npm install` there, and start the gateway. See the repo [README](../README.md) § First install.
+
+---
+
+## Upgrade scripts (LanceDB reinstall after OpenClaw upgrades)
 
 After every **OpenClaw upgrade**, the active memory extension’s native deps (e.g. `@lancedb/lancedb`, and for memory-hybrid `better-sqlite3`) must be reinstalled in the extension directory and the gateway restarted. These scripts automate that.
 

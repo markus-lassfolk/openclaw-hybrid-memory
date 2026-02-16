@@ -287,7 +287,8 @@ async function main() {
     if (!s || typeof s !== "string") return null;
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
     if (!m) return null;
-    const sec = Math.floor(new Date(+m[1], +m[2] - 1, +m[3]).getTime() / 1000);
+    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+    const sec = Math.floor(ms / 1000);
     return isNaN(sec) ? null : sec;
   };
   const insertFact = db.prepare(
