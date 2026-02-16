@@ -369,6 +369,34 @@ conversation text
 
 **Manual override.** The `memory_store` tool accepts an explicit `category` parameter that bypasses heuristic detection entirely.
 
+#### 4.8.6 Source date (FR-003)
+
+Facts have an optional **`source_date`** (Unix seconds): when the fact *originated*, not when it was stored. For facts mined from historical session logs, this preserves the original session date instead of the insertion time.
+
+| Source | `source_date` | `created_at` |
+|--------|---------------|--------------|
+| Live capture | `null` (uses `created_at`) | Insertion time |
+| Distillation from Jan 15 session | `2026-01-15` (Unix) | Feb 16 (insertion) |
+| Backfill from `[2026-01-15]` prefix | Parsed from text | Insertion time |
+
+**Ordering:** Lookup, search, and recall use `COALESCE(source_date, created_at)` for temporal ordering. When scores tie, newer effective date wins. When parsing old memories, always include `source_date` when available (see [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md)).
+
+**memory_store tool:** Optional `sourceDate` (ISO-8601 string e.g. `2026-01-15`, or Unix seconds).
+
+**CLI:** `openclaw hybrid-mem store --text "..." --source-date 2026-01-15`
+
+#### 4.8.7 Auto-tagging (FR-001)
+
+Facts can have optional **tags** (comma-separated string) for topic filtering. Tags are inferred at write time via a lightweight regex classifier.
+
+**Auto-tagging:** When `memory_store` or `hybrid-mem store` omits `tags`, the plugin runs `extractTags(text, entity)` to infer topics from the fact text. Supported patterns include: `nibe`, `zigbee`, `z-wave`, `auth`, `homeassistant`, `openclaw`, `postgres`, `sqlite`, `lancedb`, `api`, `docker`, `kubernetes`, `ha` (and others). Tags are stored lowercase.
+
+**Tag-filtered queries:** Search and lookup accept `--tag <tag>`. Results are restricted to facts whose `tags` contain the given tag (substring match within comma-separated list). `memory_recall(tag="nibe")` skips LanceDB and uses only SQLite (search + lookup) with the tag filter.
+
+**memory_store tool:** Optional `tags` (array or comma-separated string). If omitted, tags are auto-extracted from text.
+
+**CLI:** `openclaw hybrid-mem store --text "..." --tags "nibe,homeassistant"` (or omit for auto-tagging). `openclaw hybrid-mem search "..." --tag nibe`, `openclaw hybrid-mem lookup user --tag auth`.
+
 #### 4.8.3 Heuristic detection patterns
 
 The `detectCategory()` function in `index.ts` matches the following patterns (checked in order -- first match wins):
@@ -805,8 +833,9 @@ Use these from the shell for inspection and maintenance:
 | Command | Purpose |
 |---------|---------|
 | `openclaw hybrid-mem stats` | Show fact count (SQLite) and vector count (LanceDB). |
-| `openclaw hybrid-mem lookup <entity> [--key <key>]` | Exact lookup in SQLite (e.g. `lookup user --key preference`). |
-| `openclaw hybrid-mem search <query>` | Semantic search over LanceDB. |
+| `openclaw hybrid-mem store --text <text> [--category <cat>] [--entity <e>] [--key <k>] [--value <v>] [--source-date YYYY-MM-DD] [--tags "a,b,c"]` | Store a fact (for scripts; agents use `memory_store`). Include `--source-date` when parsing old memories. Omit `--tags` for auto-tagging. |
+| `openclaw hybrid-mem lookup <entity> [--key <key>] [--tag <tag>]` | Exact lookup in SQLite (e.g. `lookup user --key preference`). Use `--tag` to filter by topic. Results ordered by confidence, then `source_date` or `created_at` (newer first). |
+| `openclaw hybrid-mem search <query> [--tag <tag>]` | Semantic search over LanceDB + FTS5. Use `--tag` to restrict to tagged facts. Results include `sourceDate` when present; ties broken by newer effective date. |
 | `openclaw hybrid-mem extract-daily [--dry-run] --days N` | Extract facts from daily logs (`memory/YYYY-MM-DD.md`); `--dry-run` only prints what would be stored. |
 | `openclaw hybrid-mem prune` | Remove expired facts (decay/TTL). |
 | `openclaw hybrid-mem checkpoint` | Create a checkpoint (pre-flight state). |

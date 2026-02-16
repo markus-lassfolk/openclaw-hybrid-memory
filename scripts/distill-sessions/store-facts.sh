@@ -45,6 +45,8 @@ while IFS= read -r line; do
     entity=$(echo "$line" | jq -r '.entity // ""')
     key=$(echo "$line" | jq -r '.key // ""')
     value=$(echo "$line" | jq -r '.value // ""')
+    source_date=$(echo "$line" | jq -r '.source_date // empty')
+    tags=$(echo "$line" | jq -r '.tags | if . == null or . == "" then empty elif type == "array" then (map(tostring) | join(",")) else . end')
     
     # Validate required fields
     if [ -z "$text" ]; then
@@ -56,15 +58,17 @@ while IFS= read -r line; do
     # Count by category
     category_counts[$category]=$((${category_counts[$category]:-0} + 1))
     
-    # Generate openclaw CLI command
-    # Format: openclaw memory store --text "..." --category "..." [--entity "..."] [--key "..."] [--value "..."]
-    cmd="openclaw memory store"
+    # Generate openclaw CLI command (hybrid-mem store supports --source-date for provenance)
+    # Format: openclaw hybrid-mem store --text "..." --category "..." [--entity "..."] [--key "..."] [--value "..."] [--source-date "YYYY-MM-DD"]
+    cmd="openclaw hybrid-mem store"
     cmd+=" --text $(printf '%q' "$text")"
     cmd+=" --category $(printf '%q' "$category")"
     
     [ -n "$entity" ] && cmd+=" --entity $(printf '%q' "$entity")"
     [ -n "$key" ] && cmd+=" --key $(printf '%q' "$key")"
     [ -n "$value" ] && cmd+=" --value $(printf '%q' "$value")"
+    [ -n "$source_date" ] && cmd+=" --source-date $(printf '%q' "$source_date")"
+    [ -n "$tags" ] && cmd+=" --tags $(printf '%q' "$tags")"
     
     echo "$cmd"
     

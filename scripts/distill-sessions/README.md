@@ -33,6 +33,8 @@ Splits sessions into manageable batches.
 ### 3. `gemini-prompt.md`
 Prompt template for fact extraction via Gemini sub-agent.
 
+**When parsing old memories:** Include `source_date` (YYYY-MM-DD) in the output if available — from SESSION marker filenames (e.g. `2026-01-15-session.jsonl`), from `[YYYY-MM-DD]` prefixes in fact text (strip the prefix and put the date in source_date), or from dates mentioned in the conversation.
+
 Categories extracted:
 - `preference` - User habits, preferences
 - `technical` - Configs, APIs, system specs

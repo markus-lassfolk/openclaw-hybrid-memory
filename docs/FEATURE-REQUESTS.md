@@ -6,7 +6,9 @@ See full comparison: [virtual-context-vs-hybrid-memory analysis](../../.openclaw
 
 ---
 
-## FR-001: Auto-Tagging on Fact Capture
+## FR-001: Auto-Tagging on Fact Capture ✅ IMPLEMENTED
+
+**Status:** Implemented (2026-02-16). Schema migration adds `tags` column; `extractTags()` infers tags from fact text; `memory_store` and `hybrid-mem store` auto-tag when `tags` omitted; search, lookup, and recall support `--tag` / `tag` filter; consolidate merges tags from clusters.
 
 **Inspired by:** virtual-context's automatic topic tagging system, which tags every conversation turn with topics (e.g., `#auth`, `#zigbee`, `#nibe`) using a lightweight classifier.
 
@@ -56,9 +58,11 @@ Add a compaction hook that fires *before* OpenClaw truncates the context window:
 
 ---
 
-## FR-003: Source Date Column for Facts
+## FR-003: Source Date Column for Facts ✅ IMPLEMENTED
 
 **Inspired by:** Session log distillation project — extracting historical facts from conversation logs.
+
+**Status:** Implemented (2026-02-16). Schema migration adds `source_date`; `memory_store` and `hybrid-mem store` accept `sourceDate`; `store-facts.sh` passes `source_date` from JSONL; recall and consolidate expose/preserve `source_date`.
 
 **Problem:**
 Our SQLite facts table has no `source_date` field. When we store a fact, the only timestamp is the insertion time. For facts mined from historical session logs, this means a fact from January 2026 would appear to be from February 2026 (when it was extracted). This breaks time-based conflict resolution and makes provenance tracking unreliable.

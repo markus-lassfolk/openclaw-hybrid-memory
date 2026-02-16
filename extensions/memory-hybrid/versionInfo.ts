@@ -16,7 +16,7 @@ export const pluginVersion: string = pkg.version;
 export const memoryManagerVersion = "3.0";
 
 /** Schema version for SQLite/LanceDB. Bump when adding migrations or breaking schema changes. */
-export const schemaVersion = 1;
+export const schemaVersion = 3;
 
 export const versionInfo = {
   pluginVersion,

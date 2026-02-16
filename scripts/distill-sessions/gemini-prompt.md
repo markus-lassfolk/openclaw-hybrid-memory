@@ -37,6 +37,8 @@ Output **one JSON object per line** (JSONL format):
 - **entity** - Primary subject/entity the fact is about (person name, system name, project name)
 - **key** - Short identifier for the fact type (snake_case, e.g., "api_key", "birthday", "location")
 - **value** - Structured value when applicable (dates, URLs, settings, etc.)
+- **source_date** - (Optional) When parsing old memories: include if available. Extract from SESSION marker filename (e.g. `2026-01-15-session.jsonl` → `"2026-01-15"`), from `[YYYY-MM-DD]` prefix in fact text (strip the prefix from text; put date in source_date), or from explicit dates in the conversation. ISO format: YYYY-MM-DD.
+- **tags** - (Optional) Topic tags for filtering (array or comma-separated). Examples: `["nibe","homeassistant"]`, `"zigbee,auth"`. Use lowercase. Include when the fact clearly relates to known topics: nibe, zigbee, z-wave, auth, homeassistant, openclaw, postgres, sqlite, lancedb, api, docker, kubernetes, ha.
 
 ## What to Extract
 ✅ **DO extract:**

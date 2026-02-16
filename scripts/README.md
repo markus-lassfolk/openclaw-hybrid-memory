@@ -41,6 +41,8 @@ See [../docs/hybrid-memory-manager-v3.md §12](../docs/hybrid-memory-manager-v3.
 
 The **dynamic backfill script** `backfill-memory.mjs` seeds the memory-hybrid plugin from `MEMORY.md` and `memory/**/*.md` under your workspace. It uses no hardcoded dates or section names: it discovers files by glob and parses content so it keeps working as you add files or change structure.
 
+**When parsing old memories:** Include `source_date` if available. Lines with a `[YYYY-MM-DD]` prefix are parsed: the date is stored as `source_date` and stripped from the fact text.
+
 **Requirements:** Plugin config in `~/.openclaw/openclaw.json` (including `embedding.apiKey`). The script loads `better-sqlite3`, `openai`, and `@lancedb/lancedb` from the memory-hybrid extension’s `node_modules`.
 
 **Run from repo root (or set `OPENCLAW_EXTENSION_DIR` to the extension path):**

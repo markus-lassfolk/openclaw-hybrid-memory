@@ -13,7 +13,7 @@ import { Type } from "@sinclair/typebox";
 import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -31,6 +31,8 @@ import {
   type HybridMemoryConfig,
   hybridConfigSchema,
   vectorDimsForModel,
+  CREDENTIAL_TYPES,
+  type CredentialType,
 } from "./config.js";
 import { versionInfo } from "./versionInfo.js";
 
@@ -48,12 +50,16 @@ type MemoryEntry = {
   value: string | null;
   source: string;
   createdAt: number;
+  /** When the fact originated (e.g. session date for distilled facts). Unix seconds. Null = use createdAt. */
+  sourceDate?: number | null;
   decayClass: DecayClass;
   expiresAt: number | null;
   lastConfirmedAt: number;
   confidence: number;
   /** Short summary for long facts; used in injection when useSummaryInInjection (4.3) */
   summary?: string | null;
+  /** Topic tags for sharper retrieval (FR-001); e.g. nibe, zigbee, auth */
+  tags?: string[] | null;
 };
 
 type SearchResult = {
@@ -75,6 +81,73 @@ function normalizedHash(text: string): string {
   return createHash("sha256").update(normalizeTextForDedupe(text)).digest("hex");
 }
 
+/** Tag patterns: [tag, regex]. Order matters; first match wins. */
+const TAG_PATTERNS: Array<[string, RegExp]> = [
+  ["nibe", /\bnibe\b/i],
+  ["zigbee", /\bzigbee\b/i],
+  ["z-wave", /\bz-?wave\b/i],
+  ["auth", /\bauth(entication|orization)?\b/i],
+  ["homeassistant", /\bhome[- ]?assistant\b/i],
+  ["openclaw", /\bopenclaw\b/i],
+  ["postgres", /\bpostgres(ql)?\b/i],
+  ["sqlite", /\bsqlite\b/i],
+  ["lancedb", /\blancedb\b/i],
+  ["api", /\bapi\s+(key|endpoint|url)\b/i],
+  ["docker", /\bdocker\b/i],
+  ["kubernetes", /\bkubernetes|k8s\b/i],
+  ["ha", /\bha\b/i],
+];
+
+/** Extract topic tags from text (FR-001). Returns lowercase, deduplicated tags. */
+function extractTags(text: string, entity?: string | null): string[] {
+  const combined = [text, entity].filter(Boolean).join(" ").toLowerCase();
+  const seen = new Set<string>();
+  for (const [tag, re] of TAG_PATTERNS) {
+    if (re.test(combined) && !seen.has(tag)) {
+      seen.add(tag);
+    }
+  }
+  return [...seen];
+}
+
+/** Serialize tags for SQLite storage (comma-separated). */
+function serializeTags(tags: string[]): string | null {
+  if (tags.length === 0) return null;
+  return tags.join(",");
+}
+
+/** Parse tags from SQLite (comma-separated). */
+function parseTags(s: string | null | undefined): string[] {
+  if (!s || typeof s !== "string") return [];
+  return s
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+}
+
+/** Check if tags string contains tag (comma-separated, exact match). */
+function tagsContains(tagsStr: string | null | undefined, tag: string): boolean {
+  if (!tagsStr) return false;
+  const tagLower = tag.toLowerCase().trim();
+  return parseTags(tagsStr).includes(tagLower);
+}
+
+/** Parse sourceDate from ISO-8601 (YYYY-MM-DD) or Unix timestamp (seconds). Returns null if invalid. */
+function parseSourceDate(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v > 0 ? v : null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}:\d{2})?/.exec(s);
+  if (iso) {
+    const [, y, m, d] = iso;
+    const date = new Date(parseInt(y!, 10), parseInt(m!, 10) - 1, parseInt(d!, 10));
+    return isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 1000);
+  }
+  const n = parseInt(s, 10);
+  return !isNaN(n) && n > 0 ? n : null;
+}
+
 class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
@@ -88,7 +161,7 @@ class FactsDB {
     this.applyPragmas();
 
     // Create main table
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS facts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
@@ -103,7 +176,7 @@ class FactsDB {
     `);
 
     // Create FTS5 virtual table for full-text search
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         text,
         category,
@@ -117,7 +190,7 @@ class FactsDB {
     `);
 
     // Triggers to keep FTS in sync
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
         INSERT INTO facts_fts(rowid, text, category, entity, key, value)
         VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
@@ -137,7 +210,7 @@ class FactsDB {
     `);
 
     // Index for common queries
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category);
       CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
       CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
@@ -154,6 +227,35 @@ class FactsDB {
 
     // ---- Normalized hash for fuzzy dedupe (2.3) ----
     this.migrateNormalizedHash();
+
+    // ---- Source date for provenance (FR-003) ----
+    this.migrateSourceDateColumn();
+
+    // ---- Tags for topic filtering (FR-001) ----
+    this.migrateTagsColumn();
+  }
+
+  private migrateTagsColumn(): void {
+    const cols = this.db
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "tags")) return;
+    this.db.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`,
+    );
+  }
+
+  private migrateSourceDateColumn(): void {
+    const cols = this.db
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "source_date")) return;
+    this.db.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
+    this.db.exec(`UPDATE facts SET source_date = created_at WHERE source_date IS NULL`);
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_source_date ON facts(source_date) WHERE source_date IS NOT NULL`,
+    );
   }
 
   private migrateNormalizedHash(): void {
@@ -161,14 +263,14 @@ class FactsDB {
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "normalized_hash")) {
-      this.db.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
-      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
+      this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
     }
     const rows = this.db
       .prepare(`SELECT id, text FROM facts WHERE normalized_hash IS NULL`)
       .all() as Array<{ id: string; text: string }>;
     if (rows.length === 0) return;
-    const stmt = this.db.prepare(`UPDATE facts SET normalized_hash = ? WHERE id = ?`);
+    const stmt = this.liveDb.prepare(`UPDATE facts SET normalized_hash = ? WHERE id = ?`);
     for (const row of rows) {
       stmt.run(normalizedHash(row.text), row.id);
     }
@@ -179,15 +281,15 @@ class FactsDB {
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "summary")) return;
-    this.db.exec(`ALTER TABLE facts ADD COLUMN summary TEXT`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN summary TEXT`);
   }
 
   /** Re-apply connection pragmas (used on initial open and auto-reopen). */
   private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("synchronous = NORMAL");
-    this.db.pragma("wal_autocheckpoint = 1000");
+    this.liveDb.pragma("journal_mode = WAL");
+    this.liveDb.pragma("busy_timeout = 5000");
+    this.liveDb.pragma("synchronous = NORMAL");
+    this.liveDb.pragma("wal_autocheckpoint = 1000");
   }
 
   private migrateDecayColumns(): void {
@@ -198,20 +300,20 @@ class FactsDB {
 
     if (colNames.has("decay_class")) return;
 
-    this.db.exec(`
+    this.liveDb.exec(`
       ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable';
       ALTER TABLE facts ADD COLUMN expires_at INTEGER;
       ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER;
       ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_facts_expires ON facts(expires_at)
         WHERE expires_at IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_facts_decay ON facts(decay_class);
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL;
     `);
   }
@@ -231,7 +333,7 @@ class FactsDB {
 
     if (cnt === 0) return;
 
-    this.db.exec(`
+    this.liveDb.exec(`
       UPDATE facts
       SET created_at = created_at / 1000
       WHERE created_at > ${MS_THRESHOLD}
@@ -239,7 +341,7 @@ class FactsDB {
 
     // last_confirmed_at may have been seeded from ms-based created_at
     // by the migrateDecayColumns migration (created_at → last_confirmed_at).
-    this.db.exec(`
+    this.liveDb.exec(`
       UPDATE facts
       SET last_confirmed_at = last_confirmed_at / 1000
       WHERE last_confirmed_at IS NOT NULL
@@ -253,6 +355,8 @@ class FactsDB {
       expiresAt?: number | null;
       confidence?: number;
       summary?: string | null;
+      sourceDate?: number | null;
+      tags?: string[] | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -276,11 +380,14 @@ class FactsDB {
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
     const normHash = normalizedHash(entry.text);
+    const sourceDate = entry.sourceDate ?? null;
+    const tags = entry.tags ?? null;
+    const tagsStr = tags ? serializeTags(tags) : null;
 
     this.db
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -298,6 +405,8 @@ class FactsDB {
         confidence,
         summary,
         normHash,
+        sourceDate,
+        tagsStr,
       );
 
     return {
@@ -309,6 +418,8 @@ class FactsDB {
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
+      sourceDate,
+      tags: tags ?? undefined,
     };
   }
 
@@ -316,7 +427,7 @@ class FactsDB {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const stmt = this.db.prepare(`
+    const stmt = this.liveDb.prepare(`
       UPDATE facts
       SET last_confirmed_at = @now,
           expires_at = CASE decay_class
@@ -328,7 +439,7 @@ class FactsDB {
         AND decay_class IN ('stable', 'active')
     `);
 
-    const tx = this.db.transaction(() => {
+    const tx = this.liveDb.transaction(() => {
       for (const id of ids) {
         stmt.run({
           now: nowSec,
@@ -344,9 +455,9 @@ class FactsDB {
   search(
     query: string,
     limit = 5,
-    options: { includeExpired?: boolean } = {},
+    options: { includeExpired?: boolean; tag?: string } = {},
   ): SearchResult[] {
-    const { includeExpired = false } = options;
+    const { includeExpired = false, tag } = options;
 
     const safeQuery = query
       .replace(/['"]/g, "")
@@ -361,6 +472,11 @@ class FactsDB {
     const expiryFilter = includeExpired
       ? ""
       : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
+    const tagFilter =
+      tag && tag.trim()
+        ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern"
+        : "";
+    const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
 
     const rows = this.db
       .prepare(
@@ -374,6 +490,7 @@ class FactsDB {
          JOIN facts_fts fts ON f.rowid = fts.rowid
          WHERE facts_fts MATCH @query
            ${expiryFilter}
+           ${tagFilter}
          ORDER BY rank
          LIMIT @limit`,
       )
@@ -382,6 +499,7 @@ class FactsDB {
         now: nowSec,
         limit: limit * 2,
         decay_window: 7 * 24 * 3600,
+        ...(tagPattern ? { tagPattern } : {}),
       }) as Array<Record<string, unknown>>;
 
     if (rows.length === 0) return [];
@@ -407,6 +525,8 @@ class FactsDB {
           value: (row.value as string) || null,
           source: row.source as string,
           createdAt: row.created_at as number,
+          sourceDate: (row.source_date as number) ?? undefined,
+          tags: parseTags(row.tags as string | null),
           decayClass: (row.decay_class as DecayClass) || "stable",
           expiresAt: (row.expires_at as number) || null,
           lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -418,7 +538,13 @@ class FactsDB {
       };
     });
 
-    results.sort((a, b) => b.score - a.score);
+    results.sort((a, b) => {
+      const s = b.score - a.score;
+      if (s !== 0) return s;
+      const da = a.entry.sourceDate ?? a.entry.createdAt;
+      const db = b.entry.sourceDate ?? b.entry.createdAt;
+      return db - da;
+    });
     const topResults = results.slice(0, limit);
 
     this.refreshAccessedFacts(topResults.map((r) => r.entry.id));
@@ -426,14 +552,26 @@ class FactsDB {
     return topResults;
   }
 
-  lookup(entity: string, key?: string): SearchResult[] {
+  lookup(entity: string, key?: string, tag?: string): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
-    const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?) ORDER BY confidence DESC, created_at DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?) ORDER BY confidence DESC, created_at DESC`;
+    const tagFilter =
+      tag && tag.trim()
+        ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?"
+        : "";
+    const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
 
-    const params = key ? [entity, key, nowSec] : [entity, nowSec];
-    const rows = this.db.prepare(base).all(...params) as Array<
+    const base = key
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+
+    const params = key
+      ? tagParam !== null
+        ? [entity, key, nowSec, tagParam]
+        : [entity, key, nowSec]
+      : tagParam !== null
+        ? [entity, nowSec, tagParam]
+        : [entity, nowSec];
+    const rows = this.liveDb.prepare(base).all(...params) as Array<
       Record<string, unknown>
     >;
 
@@ -448,6 +586,8 @@ class FactsDB {
         value: (row.value as string) || null,
         source: row.source as string,
         createdAt: row.created_at as number,
+        sourceDate: (row.source_date as number) ?? undefined,
+        tags: parseTags(row.tags as string | null),
         decayClass: (row.decay_class as DecayClass) || "stable",
         expiresAt: (row.expires_at as number) || null,
         lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -464,7 +604,7 @@ class FactsDB {
   }
 
   delete(id: string): boolean {
-    const result = this.db.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
+    const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
   }
 
@@ -507,7 +647,7 @@ class FactsDB {
 
   /** Get one fact by id (for merge category). Returns null if not found. */
   getById(id: string): MemoryEntry | null {
-    const row = this.db.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
     return {
       id: row.id as string,
@@ -519,6 +659,8 @@ class FactsDB {
       value: (row.value as string) || null,
       source: row.source as string,
       createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
       decayClass: (row.decay_class as DecayClass) || "stable",
       expiresAt: (row.expires_at as number) || null,
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -658,12 +800,12 @@ class FactsDB {
       .all() as Array<{ rowid: number; entity: string; key: string; value: string; text: string }>;
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const update = this.db.prepare(
+    const update = this.liveDb.prepare(
       `UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?`,
     );
 
     const counts: Record<string, number> = {};
-    const tx = this.db.transaction(() => {
+    const tx = this.liveDb.transaction(() => {
       for (const row of rows) {
         const dc = classifyDecay(row.entity, row.key, row.value, row.text);
         if (dc === "stable") continue;
@@ -690,6 +832,8 @@ class FactsDB {
       value: (row.value as string) || null,
       source: row.source as string,
       createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
       decayClass: (row.decay_class as DecayClass) || "stable",
       expiresAt: (row.expires_at as number) || null,
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -699,7 +843,7 @@ class FactsDB {
   }
 
   updateCategory(id: string, category: string): boolean {
-    const result = this.db
+    const result = this.liveDb
       .prepare("UPDATE facts SET category = ? WHERE id = ?")
       .run(category, id);
     return result.changes > 0;
@@ -712,6 +856,163 @@ class FactsDB {
       this.applyPragmas();
     }
     return this.db;
+  }
+
+  close(): void {
+    try { this.db.close(); } catch { /* already closed */ }
+  }
+}
+
+// ============================================================================
+// Credentials Store (opt-in, encrypted)
+// ============================================================================
+
+const CRED_IV_LEN = 12;
+const CRED_AUTH_TAG_LEN = 16;
+const CRED_ALGO = "aes-256-gcm";
+
+function deriveKey(password: string): Buffer {
+  return createHash("sha256").update(password, "utf8").digest();
+}
+
+function encryptValue(plaintext: string, key: Buffer): Buffer {
+  const iv = randomBytes(CRED_IV_LEN);
+  const cipher = createCipheriv(CRED_ALGO, key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, encrypted]);
+}
+
+function decryptValue(buffer: Buffer, key: Buffer): string {
+  const iv = buffer.subarray(0, CRED_IV_LEN);
+  const authTag = buffer.subarray(CRED_IV_LEN, CRED_IV_LEN + CRED_AUTH_TAG_LEN);
+  const encrypted = buffer.subarray(CRED_IV_LEN + CRED_AUTH_TAG_LEN);
+  const decipher = createDecipheriv(CRED_ALGO, key, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+}
+
+type CredentialEntry = {
+  service: string;
+  type: CredentialType;
+  value: string;
+  url: string | null;
+  notes: string | null;
+  created: number;
+  updated: number;
+  expires: number | null;
+};
+
+class CredentialsDB {
+  private db: Database.Database;
+  private readonly dbPath: string;
+  private readonly key: Buffer;
+
+  constructor(dbPath: string, encryptionKey: string) {
+    this.dbPath = dbPath;
+    this.key = deriveKey(encryptionKey);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS credentials (
+        service TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'other',
+        value BLOB NOT NULL,
+        url TEXT,
+        notes TEXT,
+        created INTEGER NOT NULL,
+        updated INTEGER NOT NULL,
+        expires INTEGER,
+        PRIMARY KEY (service, type)
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_credentials_service ON credentials(service)
+    `);
+  }
+
+  store(entry: {
+    service: string;
+    type: CredentialType;
+    value: string;
+    url?: string;
+    notes?: string;
+    expires?: number | null;
+  }): CredentialEntry {
+    const now = Math.floor(Date.now() / 1000);
+    const encrypted = encryptValue(entry.value, this.key);
+    this.db
+      .prepare(
+        `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(service, type) DO UPDATE SET
+           value = excluded.value,
+           url = excluded.url,
+           notes = excluded.notes,
+           updated = excluded.updated,
+           expires = excluded.expires`,
+      )
+      .run(
+        entry.service,
+        entry.type,
+        encrypted,
+        entry.url ?? null,
+        entry.notes ?? null,
+        now,
+        now,
+        entry.expires ?? null,
+      );
+    return {
+      service: entry.service,
+      type: entry.type,
+      value: "[redacted]",
+      url: entry.url ?? null,
+      notes: entry.notes ?? null,
+      created: now,
+      updated: now,
+      expires: entry.expires ?? null,
+    };
+  }
+
+  get(service: string, type?: CredentialType): CredentialEntry | null {
+    const row = type
+      ? (this.db.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as Record<string, unknown> | undefined)
+      : (this.db.prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1").get(service) as Record<string, unknown> | undefined);
+    if (!row) return null;
+    const buf = row.value as Buffer;
+    const value = decryptValue(buf, this.key);
+    return {
+      service: row.service as string,
+      type: (row.type as string) as CredentialType,
+      value,
+      url: (row.url as string) ?? null,
+      notes: (row.notes as string) ?? null,
+      created: row.created as number,
+      updated: row.updated as number,
+      expires: (row.expires as number) ?? null,
+    };
+  }
+
+  list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
+    const rows = this.db.prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type").all() as Array<{
+      service: string;
+      type: string;
+      url: string | null;
+      expires: number | null;
+    }>;
+    return rows;
+  }
+
+  delete(service: string, type?: CredentialType): boolean {
+    if (type) {
+      const r = this.db.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, type);
+      return r.changes > 0;
+    }
+    const r = this.db.prepare("DELETE FROM credentials WHERE service = ?").run(service);
+    return r.changes > 0;
   }
 
   close(): void {
@@ -897,7 +1198,13 @@ function mergeResults(
     }
   }
 
-  merged.sort((a, b) => b.score - a.score);
+  merged.sort((a, b) => {
+    const s = b.score - a.score;
+    if (s !== 0) return s;
+    const da = a.entry.sourceDate ?? a.entry.createdAt;
+    const db = b.entry.sourceDate ?? b.entry.createdAt;
+    return db - da;
+  });
   return merged.slice(0, limit);
 }
 
@@ -1064,6 +1371,29 @@ const SENSITIVE_PATTERNS = [
   /credit.?card/i,
 ];
 
+/** Patterns that suggest a credential value - for auto-detect prompt to store */
+const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
+  { regex: /Bearer\s+eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i, type: "bearer", hint: "Bearer/JWT token" },
+  { regex: /sk-[A-Za-z0-9]{20,}/, type: "api_key", hint: "OpenAI-style API key (sk-...)" },
+  { regex: /ghp_[A-Za-z0-9]{36}/, type: "api_key", hint: "GitHub personal access token" },
+  { regex: /gho_[A-Za-z0-9]{36}/, type: "api_key", hint: "GitHub OAuth token" },
+  { regex: /xox[baprs]-[A-Za-z0-9-]{10,}/, type: "token", hint: "Slack token" },
+  { regex: /ssh\s+[\w@.-]+\s+[\w@.-]+/i, type: "ssh", hint: "SSH connection string" },
+  { regex: /[\w.-]+@[\w.-]+\.\w+.*(?:password|passwd|token|key)\s*[:=]\s*\S+/i, type: "password", hint: "Credentials with host/email" },
+];
+
+function detectCredentialPatterns(text: string): Array<{ type: string; hint: string }> {
+  const found: Array<{ type: string; hint: string }> = [];
+  const seen = new Set<string>();
+  for (const { regex, type, hint } of CREDENTIAL_PATTERNS) {
+    if (regex.test(text) && !seen.has(hint)) {
+      seen.add(hint);
+      found.push({ type, hint });
+    }
+  }
+  return found;
+}
+
 /** True if fact looks like identifier/number (IP, email, phone, UUID, etc.). Used by consolidate to skip by default (2.2/2.4). */
 function isStructuredForConsolidation(
   text: string,
@@ -1226,8 +1556,14 @@ async function runConsolidate(
     }
     if (!mergedText) continue;
 
-    const first = factsDb.getById(clusterIds[0]);
+    const clusterFacts = clusterIds.map((id) => factsDb.getById(id)).filter(Boolean) as MemoryEntry[];
+    const first = clusterFacts[0];
     const category = (first?.category as MemoryCategory) ?? "other";
+    const maxSourceDate = clusterFacts.reduce(
+      (acc, f) => (f.sourceDate != null && (acc == null || f.sourceDate > acc) ? f.sourceDate : acc),
+      null as number | null,
+    );
+    const mergedTags = [...new Set(clusterFacts.flatMap((f) => f.tags ?? []))];
 
     if (opts.dryRun) {
       logger.info(`memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`);
@@ -1243,6 +1579,8 @@ async function runConsolidate(
       key: null,
       value: null,
       source: "conversation",
+      sourceDate: maxSourceDate,
+      tags: mergedTags.length > 0 ? mergedTags : undefined,
     });
     try {
       const vector = await embeddings.embed(mergedText);
@@ -1445,6 +1783,7 @@ let factsDb: FactsDB;
 let vectorDb: VectorDB;
 let embeddings: Embeddings;
 let openaiClient: OpenAI;
+let credentialsDb: CredentialsDB | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1468,6 +1807,14 @@ const memoryHybridPlugin = {
     vectorDb = new VectorDB(resolvedLancePath, vectorDim);
     embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
     openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
+
+    if (cfg.credentials.enabled) {
+      const credPath = join(dirname(resolvedSqlitePath), "credentials.db");
+      credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey);
+      api.logger.info(`memory-hybrid: credentials store enabled (${credPath})`);
+    } else {
+      credentialsDb = null;
+    }
 
     api.logger.info(
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
@@ -1493,28 +1840,36 @@ const memoryHybridPlugin = {
               description: "Optional: filter by entity name for exact lookup",
             }),
           ),
+          tag: Type.Optional(
+            Type.String({
+              description: "Optional: filter by topic tag (e.g. nibe, zigbee)",
+            }),
+          ),
         }),
         async execute(_toolCallId, params) {
           const {
             query,
             limit = 5,
             entity,
-          } = params as { query: string; limit?: number; entity?: string };
+            tag,
+          } = params as { query: string; limit?: number; entity?: string; tag?: string };
 
           let sqliteResults: SearchResult[] = [];
           if (entity) {
-            sqliteResults = factsDb.lookup(entity);
+            sqliteResults = factsDb.lookup(entity, undefined, tag);
           }
 
-          const ftsResults = factsDb.search(query, limit);
+          const ftsResults = factsDb.search(query, limit, { tag });
           sqliteResults = [...sqliteResults, ...ftsResults];
 
           let lanceResults: SearchResult[] = [];
-          try {
-            const vector = await embeddings.embed(query);
-            lanceResults = await vectorDb.search(vector, limit, 0.3);
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
+          if (!tag) {
+            try {
+              const vector = await embeddings.embed(query);
+              lanceResults = await vectorDb.search(vector, limit, 0.3);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
+            }
           }
 
           const results = mergeResults(sqliteResults, lanceResults, limit);
@@ -1541,6 +1896,10 @@ const memoryHybridPlugin = {
             importance: r.entry.importance,
             score: r.score,
             backend: r.backend,
+            tags: r.entry.tags?.length ? r.entry.tags : undefined,
+            sourceDate: r.entry.sourceDate
+              ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+              : undefined,
           }));
 
           return {
@@ -1589,6 +1948,11 @@ const memoryHybridPlugin = {
           decayClass: Type.Optional(
             stringEnum(DECAY_CLASSES as unknown as readonly string[]),
           ),
+          tags: Type.Optional(
+            Type.Array(Type.String(), {
+              description: "Topic tags for sharper retrieval (e.g. nibe, zigbee). Auto-inferred if omitted.",
+            }),
+          ),
         }),
         async execute(_toolCallId, params) {
           const {
@@ -1599,6 +1963,7 @@ const memoryHybridPlugin = {
             key: paramKey,
             value: paramValue,
             decayClass: paramDecayClass,
+            tags: paramTags,
           } = params as {
             text: string;
             importance?: number;
@@ -1607,6 +1972,7 @@ const memoryHybridPlugin = {
             key?: string;
             value?: string;
             decayClass?: DecayClass;
+            tags?: string[];
           };
 
           let textToStore = text;
@@ -1628,6 +1994,11 @@ const memoryHybridPlugin = {
           const key = paramKey || extracted.key;
           const value = paramValue || extracted.value;
 
+          const tags =
+            paramTags && paramTags.length > 0
+              ? paramTags.map((t) => t.trim().toLowerCase()).filter(Boolean)
+              : extractTags(textToStore, entity);
+
           const summaryThreshold = cfg.autoRecall.summaryThreshold;
           const summary =
             summaryThreshold > 0 && textToStore.length > summaryThreshold
@@ -1644,6 +2015,7 @@ const memoryHybridPlugin = {
             source: "conversation",
             decayClass: paramDecayClass,
             summary,
+            tags,
           });
 
           try {
@@ -1781,6 +2153,145 @@ const memoryHybridPlugin = {
       },
       { name: "memory_forget" },
     );
+
+    // Credential tools (opt-in)
+    if (cfg.credentials.enabled && credentialsDb) {
+      api.registerTool(
+        {
+          name: "credential_store",
+          label: "Store Credential",
+          description:
+            "Store a credential (API key, token, password, SSH key, etc.) in encrypted storage. Use exact service names for reliable retrieval.",
+          parameters: Type.Object({
+            service: Type.String({ description: "Service name (e.g. 'home-assistant', 'github', 'openai')" }),
+            type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
+            value: Type.String({ description: "The secret value (token, password, API key)" }),
+            url: Type.Optional(Type.String({ description: "Optional URL or endpoint" })),
+            notes: Type.Optional(Type.String({ description: "Optional notes" })),
+            expires: Type.Optional(Type.Number({ description: "Optional Unix timestamp when credential expires" })),
+          }),
+          async execute(_toolCallId, params) {
+            const { service, type, value, url, notes, expires } = params as {
+              service: string;
+              type: CredentialType;
+              value: string;
+              url?: string;
+              notes?: string;
+              expires?: number | null;
+            };
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            credentialsDb.store({ service, type, value, url, notes, expires });
+            return {
+              content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
+              details: { service, type },
+            };
+          },
+        },
+        { name: "credential_store" },
+      );
+
+      api.registerTool(
+        {
+          name: "credential_get",
+          label: "Get Credential",
+          description:
+            "Retrieve a credential by service name. Exact lookup — no fuzzy search. Specify type to disambiguate when multiple credential types exist for a service.",
+          parameters: Type.Object({
+            service: Type.String({ description: "Service name (e.g. 'home-assistant', 'github')" }),
+            type: Type.Optional(stringEnum(CREDENTIAL_TYPES as unknown as readonly string[])),
+          }),
+          async execute(_toolCallId, params) {
+            const { service, type } = params as { service: string; type?: CredentialType };
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            const entry = credentialsDb.get(service, type);
+            if (!entry) {
+              return {
+                content: [{ type: "text", text: `No credential found for service "${service}"${type ? ` (type: ${type})` : ""}.` }],
+                details: { found: false },
+              };
+            }
+            const warnDays = cfg.credentials.expiryWarningDays ?? 7;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const expiresSoon = entry.expires != null && entry.expires - nowSec < warnDays * 24 * 3600;
+            const expiryWarning = expiresSoon
+              ? ` [WARNING: Expires in ${Math.ceil((entry.expires! - nowSec) / 86400)} days — consider rotating]`
+              : "";
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Credential for ${entry.service} (${entry.type}) retrieved. Value available in tool result (details.value).${expiryWarning}`,
+                },
+              ],
+              details: {
+                service: entry.service,
+                type: entry.type,
+                url: entry.url,
+                expires: entry.expires,
+                value: entry.value,
+                sensitiveFields: ["value"],
+              },
+            };
+          },
+        },
+        { name: "credential_get" },
+      );
+
+      api.registerTool(
+        {
+          name: "credential_list",
+          label: "List Credentials",
+          description: "List stored credentials (service/type/url only — no values). Use credential_get to retrieve a specific credential.",
+          parameters: Type.Object({}),
+          async execute() {
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            const items = credentialsDb.list();
+            if (items.length === 0) {
+              return {
+                content: [{ type: "text", text: "No credentials stored." }],
+                details: { count: 0, items: [] },
+              };
+            }
+            const lines = items.map(
+              (i) => `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${new Date(i.expires * 1000).toISOString()}]` : ""}`,
+            );
+            return {
+              content: [{ type: "text", text: `Stored credentials:\n${lines.join("\n")}` }],
+              details: { count: items.length, items },
+            };
+          },
+        },
+        { name: "credential_list" },
+      );
+
+      api.registerTool(
+        {
+          name: "credential_delete",
+          label: "Delete Credential",
+          description: "Delete a stored credential by service name. Optionally specify type to delete only that credential type.",
+          parameters: Type.Object({
+            service: Type.String({ description: "Service name" }),
+            type: Type.Optional(stringEnum(CREDENTIAL_TYPES as unknown as readonly string[])),
+          }),
+          async execute(_toolCallId, params) {
+            const { service, type } = params as { service: string; type?: CredentialType };
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            const deleted = credentialsDb.delete(service, type);
+            if (!deleted) {
+              return {
+                content: [{ type: "text", text: `No credential found for "${service}"${type ? ` (type: ${type})` : ""}.` }],
+                details: { deleted: false },
+              };
+            }
+            return {
+              content: [{ type: "text", text: `Deleted credential for ${service}${type ? ` (${type})` : ""}.` }],
+              details: { deleted: true, service, type },
+            };
+          },
+        },
+        { name: "credential_delete" },
+      );
+    }
 
     api.registerTool(
       {
@@ -2073,6 +2584,8 @@ const memoryHybridPlugin = {
                   key: extracted.key,
                   value: extracted.value,
                   source: `daily-scan:${dateStr}`,
+                  sourceDate: Math.floor(new Date(dateStr).getTime() / 1000),
+                  tags: extractTags(trimmed, extracted.entity),
                 });
                 totalStored++;
               }
@@ -2096,11 +2609,16 @@ const memoryHybridPlugin = {
           .description("Search memories across both backends")
           .argument("<query>", "Search query")
           .option("--limit <n>", "Max results", "5")
-          .action(async (query, opts) => {
-            const limit = parseInt(opts.limit);
-            const sqlResults = factsDb.search(query, limit);
-            const vector = await embeddings.embed(query);
-            const lanceResults = await vectorDb.search(vector, limit, 0.3);
+          .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
+          .action(async (query, opts: { limit?: string; tag?: string }) => {
+            const limit = parseInt(opts.limit || "5");
+            const tag = opts.tag?.trim();
+            const sqlResults = factsDb.search(query, limit, { tag });
+            let lanceResults: SearchResult[] = [];
+            if (!tag) {
+              const vector = await embeddings.embed(query);
+              lanceResults = await vectorDb.search(vector, limit, 0.3);
+            }
             const merged = mergeResults(sqlResults, lanceResults, limit);
 
             const output = merged.map((r) => ({
@@ -2110,6 +2628,10 @@ const memoryHybridPlugin = {
               entity: r.entry.entity,
               score: r.score,
               backend: r.backend,
+              tags: r.entry.tags?.length ? r.entry.tags : undefined,
+              sourceDate: r.entry.sourceDate
+                ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+                : undefined,
             }));
             console.log(JSON.stringify(output, null, 2));
           });
@@ -2119,16 +2641,70 @@ const memoryHybridPlugin = {
           .description("Exact entity lookup in SQLite")
           .argument("<entity>", "Entity name")
           .option("--key <key>", "Optional key filter")
-          .action(async (entity, opts) => {
-            const results = factsDb.lookup(entity, opts.key);
+          .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
+          .action(async (entity, opts: { key?: string; tag?: string }) => {
+            const results = factsDb.lookup(entity, opts.key, opts.tag?.trim());
             const output = results.map((r) => ({
               id: r.entry.id,
               text: r.entry.text,
               entity: r.entry.entity,
               key: r.entry.key,
               value: r.entry.value,
+              tags: r.entry.tags?.length ? r.entry.tags : undefined,
+              sourceDate: r.entry.sourceDate
+                ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+                : undefined,
             }));
             console.log(JSON.stringify(output, null, 2));
+          });
+
+        mem
+          .command("store")
+          .description("Store a fact (for scripts; agents use memory_store tool)")
+          .requiredOption("--text <text>", "Fact text")
+          .option("--category <cat>", "Category", "other")
+          .option("--entity <entity>", "Entity name")
+          .option("--key <key>", "Structured key")
+          .option("--value <value>", "Structured value")
+          .option("--source-date <date>", "When fact originated (ISO-8601, e.g. 2026-01-15)")
+          .option("--tags <tags>", "Comma-separated topic tags (e.g. nibe,zigbee); auto-inferred if omitted")
+          .action(async (opts: { text: string; category?: string; entity?: string; key?: string; value?: string; sourceDate?: string; tags?: string }) => {
+            const text = opts.text;
+            if (!text || text.length < 2) {
+              console.error("--text is required and must be at least 2 characters");
+              process.exitCode = 1;
+              return;
+            }
+            if (factsDb.hasDuplicate(text)) {
+              console.log("Similar memory already exists.");
+              return;
+            }
+            const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
+            const tags = opts.tags
+              ? opts.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
+              : undefined;
+            const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
+            const entity = opts.entity ?? extracted.entity ?? null;
+            const entry = factsDb.store({
+              text,
+              category: (opts.category ?? "other") as MemoryCategory,
+              importance: 0.7,
+              entity,
+              key: opts.key ?? extracted.key ?? null,
+              value: opts.value ?? extracted.value ?? null,
+              source: "cli",
+              sourceDate,
+              tags: tags ?? extractTags(text, entity),
+            });
+            try {
+              const vector = await embeddings.embed(text);
+              if (!(await vectorDb.hasDuplicate(vector))) {
+                await vectorDb.store({ text, vector, importance: 0.7, category: opts.category ?? "other" });
+              }
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+            }
+            console.log(`Stored: "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}" [id: ${entry.id}]`);
           });
 
         mem
@@ -2438,7 +3014,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -2478,7 +3054,13 @@ const memoryHybridPlugin = {
                 }
               }
             }
-            candidates.sort((a, b) => b.score - a.score);
+            candidates.sort((a, b) => {
+              const s = b.score - a.score;
+              if (s !== 0) return s;
+              const da = a.entry.sourceDate ?? a.entry.createdAt;
+              const db = b.entry.sourceDate ?? b.entry.createdAt;
+              return db - da;
+            });
             candidates = candidates.slice(0, limit);
           }
 
@@ -2704,6 +3286,73 @@ const memoryHybridPlugin = {
       });
     }
 
+    // Credential auto-detect: when patterns found in conversation, persist hint for next turn
+    if (cfg.credentials.enabled && cfg.credentials.autoDetect) {
+      const pendingPath = join(dirname(resolvedSqlitePath), "credentials-pending.json");
+      const PENDING_TTL_MS = 5 * 60 * 1000; // 5 min
+
+      api.on("agent_end", async (event) => {
+        if (!event.messages || event.messages.length === 0) return;
+        try {
+          const texts: string[] = [];
+          for (const msg of event.messages) {
+            if (!msg || typeof msg !== "object") continue;
+            const msgObj = msg as Record<string, unknown>;
+            const content = msgObj.content;
+            if (typeof content === "string") texts.push(content);
+            else if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block && typeof block === "object" && "type" in block && (block as Record<string, unknown>).type === "text" && "text" in block) {
+                  const t = (block as Record<string, unknown>).text;
+                  if (typeof t === "string") texts.push(t);
+                }
+              }
+            }
+          }
+          const allText = texts.join("\n");
+          const detected = detectCredentialPatterns(allText);
+          if (detected.length === 0) return;
+          mkdirSync(dirname(pendingPath), { recursive: true });
+          writeFileSync(
+            pendingPath,
+            JSON.stringify({
+              hints: detected.map((d) => d.hint),
+              at: Date.now(),
+            }),
+            "utf-8",
+          );
+          api.logger.info(`memory-hybrid: credential patterns detected (${detected.map((d) => d.hint).join(", ")}) — will prompt next turn`);
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: credential auto-detect failed: ${err}`);
+        }
+      });
+
+      api.on("before_agent_start", async () => {
+        try {
+          if (!existsSync(pendingPath)) return;
+          const raw = readFileSync(pendingPath, "utf-8");
+          const data = JSON.parse(raw) as { hints?: string[]; at?: number };
+          const at = typeof data.at === "number" ? data.at : 0;
+          if (Date.now() - at > PENDING_TTL_MS) {
+            rmSync(pendingPath, { force: true });
+            return;
+          }
+          const hints = Array.isArray(data.hints) ? data.hints : [];
+          if (hints.length === 0) {
+            rmSync(pendingPath, { force: true });
+            return;
+          }
+          rmSync(pendingPath, { force: true });
+          const hintText = hints.join(", ");
+          return {
+            prependContext: `\n<credential-hint>\nA credential may have been shared in the previous exchange (${hintText}). Consider asking the user if they want to store it securely with credential_store.\n</credential-hint>\n`,
+          };
+        } catch {
+          try { rmSync(pendingPath, { force: true }); } catch { /* ignore */ }
+        }
+      });
+    }
+
     // ========================================================================
     // Service
     // ========================================================================
@@ -2767,6 +3416,7 @@ const memoryHybridPlugin = {
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
         factsDb.close();
+        if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }
         api.logger.info("memory-hybrid: stopped");
       },
     });
