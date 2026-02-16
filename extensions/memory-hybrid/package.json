@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.2.17.1",
+  "version": "2026.2.171",
   "type": "module",
   "description": "Hybrid memory plugin for OpenClaw: SQLite+FTS5 for structured facts, LanceDB for semantic search",
   "files": [
