@@ -2,7 +2,7 @@
 
 All notable changes to the OpenClaw Hybrid Memory project (memory-hybrid plugin, v3 deployment guide, and related tooling) are documented here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses a **date-based version** (YYYY.M.D, e.g. 2026.2.15) for the plugin and repo releases.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses a **date-based version** (YYYY.M.D.R, e.g. 2026.2.15.0; .0, .1, … for same-day revisions) for the plugin and repo releases.
 
 ---
 
@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.2.17b] - 2026-02-17
+## [2026.2.17.1] - 2026-02-17
 
 ### Fixed
 
@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.2.17] - 2026-02-17
+## [2026.2.17.0] - 2026-02-17
 
 ### Added
 
@@ -100,8 +100,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.17b...HEAD
-[2026.2.17b]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.17b
-[2026.2.17]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.17
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.17.1...HEAD
+[2026.2.17.1]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.17.1
+[2026.2.17.0]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.17.0
 [2026.2.16]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.16
 [2026.2.15]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.15

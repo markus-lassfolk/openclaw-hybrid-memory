@@ -7,6 +7,16 @@ A **complete, ready-to-deploy memory system** for [OpenClaw](https://openclaw.ai
 
 This repo packages both into a single deployment flow (the **Hybrid Memory Manager v3.0**) with additional features: auto-capture, auto-recall, TTL-based decay, LLM auto-classification of facts, a backfill script, upgrade helpers, and comprehensive documentation.
 
+## Quick Start
+
+```bash
+openclaw plugins install openclaw-hybrid-memory
+```
+
+Then set your [embedding API key](#prerequisites), run `openclaw hybrid-mem install` for full defaults, restart the gateway, and run `openclaw hybrid-mem verify [--fix]`.
+
+**Need more detail?** Step-by-step options (including from-source install): [First install (best experience)](#first-install-best-experience). Full reference: [v3 deployment guide](docs/hybrid-memory-manager-v3.md).
+
 ## Prerequisites
 
 - **OpenAI API key** — Required for the memory-hybrid plugin. It is used for:
@@ -16,16 +26,6 @@ This repo packages both into a single deployment flow (the **Hybrid Memory Manag
 - **Google (Gemini) API** — Optional, for the **session distillation** pipeline. Processing and indexing **old session logs and historical memories** uses Gemini (recommended for its **1M+ token context window**). You need Gemini configured in OpenClaw and use `--model gemini` when running [scripts/distill-sessions/](scripts/distill-sessions/) (bulk sweep and nightly incremental). See [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md).
 
 See [v3 §4 and §12](docs/hybrid-memory-manager-v3.md) for config and troubleshooting (invalid key, missing key, env vars).
-
-## Install from npm (when published)
-
-When the package is published to npm, you will be able to install with:
-
-```bash
-openclaw plugins install openclaw-hybrid-memory
-```
-
-Then set your API key, run `openclaw hybrid-mem install` for full defaults and jobs, restart the gateway, and run `openclaw hybrid-mem verify [--fix]`.
 
 ## First install (best experience)
 
@@ -116,8 +116,6 @@ The following are in **docs/archive/** for credit and history. Do not use the se
 | **[docs/archive/hybrid-hierarchical-memory-guide.md](docs/archive/hybrid-hierarchical-memory-guide.md)** | Earlier v2.0 guide (pre-hybrid, memorySearch + hierarchical files only). |
 | **docs/archive/SETUP-PROMPT-1..4** | Original pasteable setup prompts from the Clawdboss.ai article (historical only). |
 
-## Quick start
+**Quick path:** [Quick Start](#quick-start) — install from npm, then configure and verify.
 
-**Easiest:** See [First install](#first-install-best-experience) above (use `openclaw hybrid-mem install` for full defaults).
-
-**Manual:** Follow [v3 §8](docs/hybrid-memory-manager-v3.md): (1) workspace + memory dirs + bootstrap files, (2) install memory-hybrid plugin (§3), (3) merge [deploy/openclaw.memory-snippet.json](deploy/openclaw.memory-snippet.json) into `~/.openclaw/openclaw.json`, (4) set API key, (5) restart, (6) `openclaw hybrid-mem verify [--fix]`. Optional backfill: seed script + `openclaw hybrid-mem extract-daily`.
+**Manual / from source:** Follow [v3 §8](docs/hybrid-memory-manager-v3.md): (1) workspace + memory dirs + bootstrap files, (2) install memory-hybrid plugin (§3), (3) merge [deploy/openclaw.memory-snippet.json](deploy/openclaw.memory-snippet.json) into `~/.openclaw/openclaw.json`, (4) set API key, (5) restart, (6) `openclaw hybrid-mem verify [--fix]`. Optional backfill: seed script + `openclaw hybrid-mem extract-daily`.

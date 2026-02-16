@@ -1,4 +1,4 @@
-## 2026.2.17 (2026-02-17)
+## 2026.2.17.0 (2026-02-17)
 
 ### Credential migration when vault is enabled
 
@@ -11,7 +11,7 @@ See [docs/CREDENTIALS.md](docs/CREDENTIALS.md) § Migration.
 
 ### Model-agnostic analysis (documentation)
 
-- [docs/MODEL-AGNOSTIC-ANALYSIS.md](docs/MODEL-AGNOSTIC-ANALYSIS.md) now documents the **Option B** exploration: the OpenClaw plugin SDK does not expose chat or embedding APIs, so “use OpenClaw for chat/embeddings” is not possible with the current SDK. The doc recommends Option C (multi-provider in the plugin) or requesting plugin-callable model/embed APIs from OpenClaw for a future Option B.
+- [docs/MODEL-AGNOSTIC-ANALYSIS.md](docs/MODEL-AGNOSTIC-ANALYSIS.md) now documents the **Option B** exploration: the OpenClaw plugin SDK does not expose chat or embedding APIs, so "use OpenClaw for chat/embeddings" is not possible with the current SDK. The doc recommends Option C (multi-provider in the plugin) or requesting plugin-callable model/embed APIs from OpenClaw for a future Option B.
 - **Decision:** We are not implementing model-agnostic setup for now; the plugin keeps hardcoded models (OpenAI for embeddings and chat, Gemini in docs/scripts for distillation). The analysis and options remain for future reference.
 
 ### Summary
