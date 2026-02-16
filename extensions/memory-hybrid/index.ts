@@ -13,7 +13,7 @@ import { Type } from "@sinclair/typebox";
 import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -31,6 +31,8 @@ import {
   type HybridMemoryConfig,
   hybridConfigSchema,
   vectorDimsForModel,
+  CREDENTIAL_TYPES,
+  type CredentialType,
 } from "./config.js";
 import { versionInfo } from "./versionInfo.js";
 
@@ -48,12 +50,16 @@ type MemoryEntry = {
   value: string | null;
   source: string;
   createdAt: number;
+  /** When the fact originated (e.g. session date for distilled facts). Unix seconds. Null = use createdAt. */
+  sourceDate?: number | null;
   decayClass: DecayClass;
   expiresAt: number | null;
   lastConfirmedAt: number;
   confidence: number;
   /** Short summary for long facts; used in injection when useSummaryInInjection (4.3) */
   summary?: string | null;
+  /** Topic tags for sharper retrieval (FR-001); e.g. nibe, zigbee, auth */
+  tags?: string[] | null;
 };
 
 type SearchResult = {
@@ -75,6 +81,73 @@ function normalizedHash(text: string): string {
   return createHash("sha256").update(normalizeTextForDedupe(text)).digest("hex");
 }
 
+/** Tag patterns: [tag, regex]. Order matters; first match wins. */
+const TAG_PATTERNS: Array<[string, RegExp]> = [
+  ["nibe", /\bnibe\b/i],
+  ["zigbee", /\bzigbee\b/i],
+  ["z-wave", /\bz-?wave\b/i],
+  ["auth", /\bauth(entication|orization)?\b/i],
+  ["homeassistant", /\bhome[- ]?assistant\b/i],
+  ["openclaw", /\bopenclaw\b/i],
+  ["postgres", /\bpostgres(ql)?\b/i],
+  ["sqlite", /\bsqlite\b/i],
+  ["lancedb", /\blancedb\b/i],
+  ["api", /\bapi\s+(key|endpoint|url)\b/i],
+  ["docker", /\bdocker\b/i],
+  ["kubernetes", /\bkubernetes|k8s\b/i],
+  ["ha", /\bha\b/i],
+];
+
+/** Extract topic tags from text (FR-001). Returns lowercase, deduplicated tags. */
+function extractTags(text: string, entity?: string | null): string[] {
+  const combined = [text, entity].filter(Boolean).join(" ").toLowerCase();
+  const seen = new Set<string>();
+  for (const [tag, re] of TAG_PATTERNS) {
+    if (re.test(combined) && !seen.has(tag)) {
+      seen.add(tag);
+    }
+  }
+  return [...seen];
+}
+
+/** Serialize tags for SQLite storage (comma-separated). */
+function serializeTags(tags: string[]): string | null {
+  if (tags.length === 0) return null;
+  return tags.join(",");
+}
+
+/** Parse tags from SQLite (comma-separated). */
+function parseTags(s: string | null | undefined): string[] {
+  if (!s || typeof s !== "string") return [];
+  return s
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+}
+
+/** Check if tags string contains tag (comma-separated, exact match). */
+function tagsContains(tagsStr: string | null | undefined, tag: string): boolean {
+  if (!tagsStr) return false;
+  const tagLower = tag.toLowerCase().trim();
+  return parseTags(tagsStr).includes(tagLower);
+}
+
+/** Parse sourceDate from ISO-8601 (YYYY-MM-DD) or Unix timestamp (seconds). Date strings are interpreted as UTC midnight for consistent ordering across timezones. Returns null if invalid. */
+function parseSourceDate(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v > 0 ? v : null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}:\d{2})?/.exec(s);
+  if (iso) {
+    const [, y, m, d] = iso;
+    const ms = Date.UTC(parseInt(y!, 10), parseInt(m!, 10) - 1, parseInt(d!, 10));
+    return isNaN(ms) ? null : Math.floor(ms / 1000);
+  }
+  const n = parseInt(s, 10);
+  return !isNaN(n) && n > 0 ? n : null;
+}
+
 class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
@@ -88,7 +161,7 @@ class FactsDB {
     this.applyPragmas();
 
     // Create main table
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS facts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
@@ -103,7 +176,7 @@ class FactsDB {
     `);
 
     // Create FTS5 virtual table for full-text search
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         text,
         category,
@@ -117,7 +190,7 @@ class FactsDB {
     `);
 
     // Triggers to keep FTS in sync
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
         INSERT INTO facts_fts(rowid, text, category, entity, key, value)
         VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
@@ -137,7 +210,7 @@ class FactsDB {
     `);
 
     // Index for common queries
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category);
       CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
       CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
@@ -154,64 +227,93 @@ class FactsDB {
 
     // ---- Normalized hash for fuzzy dedupe (2.3) ----
     this.migrateNormalizedHash();
+
+    // ---- Source date for provenance (FR-003) ----
+    this.migrateSourceDateColumn();
+
+    // ---- Tags for topic filtering (FR-001) ----
+    this.migrateTagsColumn();
+  }
+
+  private migrateTagsColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "tags")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`,
+    );
+  }
+
+  private migrateSourceDateColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "source_date")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
+    this.liveDb.exec(`UPDATE facts SET source_date = created_at WHERE source_date IS NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_source_date ON facts(source_date) WHERE source_date IS NOT NULL`,
+    );
   }
 
   private migrateNormalizedHash(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "normalized_hash")) {
-      this.db.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
-      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
+      this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
     }
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(`SELECT id, text FROM facts WHERE normalized_hash IS NULL`)
       .all() as Array<{ id: string; text: string }>;
     if (rows.length === 0) return;
-    const stmt = this.db.prepare(`UPDATE facts SET normalized_hash = ? WHERE id = ?`);
+    const stmt = this.liveDb.prepare(`UPDATE facts SET normalized_hash = ? WHERE id = ?`);
     for (const row of rows) {
       stmt.run(normalizedHash(row.text), row.id);
     }
   }
 
   private migrateSummaryColumn(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "summary")) return;
-    this.db.exec(`ALTER TABLE facts ADD COLUMN summary TEXT`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN summary TEXT`);
   }
 
   /** Re-apply connection pragmas (used on initial open and auto-reopen). */
   private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("synchronous = NORMAL");
-    this.db.pragma("wal_autocheckpoint = 1000");
+    this.liveDb.pragma("journal_mode = WAL");
+    this.liveDb.pragma("busy_timeout = 5000");
+    this.liveDb.pragma("synchronous = NORMAL");
+    this.liveDb.pragma("wal_autocheckpoint = 1000");
   }
 
   private migrateDecayColumns(): void {
-    const cols = this.db
+    const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
 
     if (colNames.has("decay_class")) return;
 
-    this.db.exec(`
+    this.liveDb.exec(`
       ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable';
       ALTER TABLE facts ADD COLUMN expires_at INTEGER;
       ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER;
       ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_facts_expires ON facts(expires_at)
         WHERE expires_at IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_facts_decay ON facts(decay_class);
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL;
     `);
   }
@@ -225,13 +327,13 @@ class FactsDB {
   private migrateTimestampUnits(): void {
     const MS_THRESHOLD = 10_000_000_000;
 
-    const { cnt } = this.db
+    const { cnt } = this.liveDb
       .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE created_at > ?`)
       .get(MS_THRESHOLD) as { cnt: number };
 
     if (cnt === 0) return;
 
-    this.db.exec(`
+    this.liveDb.exec(`
       UPDATE facts
       SET created_at = created_at / 1000
       WHERE created_at > ${MS_THRESHOLD}
@@ -239,7 +341,7 @@ class FactsDB {
 
     // last_confirmed_at may have been seeded from ms-based created_at
     // by the migrateDecayColumns migration (created_at → last_confirmed_at).
-    this.db.exec(`
+    this.liveDb.exec(`
       UPDATE facts
       SET last_confirmed_at = last_confirmed_at / 1000
       WHERE last_confirmed_at IS NOT NULL
@@ -253,6 +355,8 @@ class FactsDB {
       expiresAt?: number | null;
       confidence?: number;
       summary?: string | null;
+      sourceDate?: number | null;
+      tags?: string[] | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -276,11 +380,14 @@ class FactsDB {
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
     const normHash = normalizedHash(entry.text);
+    const sourceDate = entry.sourceDate ?? null;
+    const tags = entry.tags ?? null;
+    const tagsStr = tags ? serializeTags(tags) : null;
 
-    this.db
+    this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -298,6 +405,8 @@ class FactsDB {
         confidence,
         summary,
         normHash,
+        sourceDate,
+        tagsStr,
       );
 
     return {
@@ -309,6 +418,8 @@ class FactsDB {
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
+      sourceDate,
+      tags: tags ?? undefined,
     };
   }
 
@@ -316,7 +427,7 @@ class FactsDB {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const stmt = this.db.prepare(`
+    const stmt = this.liveDb.prepare(`
       UPDATE facts
       SET last_confirmed_at = @now,
           expires_at = CASE decay_class
@@ -328,7 +439,7 @@ class FactsDB {
         AND decay_class IN ('stable', 'active')
     `);
 
-    const tx = this.db.transaction(() => {
+    const tx = this.liveDb.transaction(() => {
       for (const id of ids) {
         stmt.run({
           now: nowSec,
@@ -344,9 +455,9 @@ class FactsDB {
   search(
     query: string,
     limit = 5,
-    options: { includeExpired?: boolean } = {},
+    options: { includeExpired?: boolean; tag?: string } = {},
   ): SearchResult[] {
-    const { includeExpired = false } = options;
+    const { includeExpired = false, tag } = options;
 
     const safeQuery = query
       .replace(/['"]/g, "")
@@ -361,8 +472,13 @@ class FactsDB {
     const expiryFilter = includeExpired
       ? ""
       : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
+    const tagFilter =
+      tag && tag.trim()
+        ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern"
+        : "";
+    const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
 
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(
         `SELECT f.*, rank,
            CASE
@@ -374,6 +490,7 @@ class FactsDB {
          JOIN facts_fts fts ON f.rowid = fts.rowid
          WHERE facts_fts MATCH @query
            ${expiryFilter}
+           ${tagFilter}
          ORDER BY rank
          LIMIT @limit`,
       )
@@ -382,6 +499,7 @@ class FactsDB {
         now: nowSec,
         limit: limit * 2,
         decay_window: 7 * 24 * 3600,
+        ...(tagPattern ? { tagPattern } : {}),
       }) as Array<Record<string, unknown>>;
 
     if (rows.length === 0) return [];
@@ -407,6 +525,8 @@ class FactsDB {
           value: (row.value as string) || null,
           source: row.source as string,
           createdAt: row.created_at as number,
+          sourceDate: (row.source_date as number) ?? undefined,
+          tags: parseTags(row.tags as string | null),
           decayClass: (row.decay_class as DecayClass) || "stable",
           expiresAt: (row.expires_at as number) || null,
           lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -418,7 +538,13 @@ class FactsDB {
       };
     });
 
-    results.sort((a, b) => b.score - a.score);
+    results.sort((a, b) => {
+      const s = b.score - a.score;
+      if (s !== 0) return s;
+      const da = a.entry.sourceDate ?? a.entry.createdAt;
+      const db = b.entry.sourceDate ?? b.entry.createdAt;
+      return db - da;
+    });
     const topResults = results.slice(0, limit);
 
     this.refreshAccessedFacts(topResults.map((r) => r.entry.id));
@@ -426,14 +552,26 @@ class FactsDB {
     return topResults;
   }
 
-  lookup(entity: string, key?: string): SearchResult[] {
+  lookup(entity: string, key?: string, tag?: string): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
-    const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?) ORDER BY confidence DESC, created_at DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?) ORDER BY confidence DESC, created_at DESC`;
+    const tagFilter =
+      tag && tag.trim()
+        ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?"
+        : "";
+    const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
 
-    const params = key ? [entity, key, nowSec] : [entity, nowSec];
-    const rows = this.db.prepare(base).all(...params) as Array<
+    const base = key
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+
+    const params = key
+      ? tagParam !== null
+        ? [entity, key, nowSec, tagParam]
+        : [entity, key, nowSec]
+      : tagParam !== null
+        ? [entity, nowSec, tagParam]
+        : [entity, nowSec];
+    const rows = this.liveDb.prepare(base).all(...params) as Array<
       Record<string, unknown>
     >;
 
@@ -448,6 +586,8 @@ class FactsDB {
         value: (row.value as string) || null,
         source: row.source as string,
         createdAt: row.created_at as number,
+        sourceDate: (row.source_date as number) ?? undefined,
+        tags: parseTags(row.tags as string | null),
         decayClass: (row.decay_class as DecayClass) || "stable",
         expiresAt: (row.expires_at as number) || null,
         lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -464,13 +604,13 @@ class FactsDB {
   }
 
   delete(id: string): boolean {
-    const result = this.db.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
+    const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
   }
 
   /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
   hasDuplicate(text: string): boolean {
-    const exact = this.db
+    const exact = this.liveDb
       .prepare(`SELECT id FROM facts WHERE text = ? LIMIT 1`)
       .get(text);
     if (exact) return true;
@@ -481,7 +621,7 @@ class FactsDB {
   /** Id of an existing fact with same normalized text, or null. Used when store.fuzzyDedupe is true. */
   private getDuplicateIdByNormalizedHash(text: string): string | null {
     const hash = normalizedHash(text);
-    const row = this.db
+    const row = this.liveDb
       .prepare(`SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1`)
       .get(hash) as { id: string } | undefined;
     return row?.id ?? null;
@@ -490,7 +630,7 @@ class FactsDB {
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
   getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
     const nowSec = Math.floor(Date.now() / 1000);
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(
         `SELECT id, text, category, entity, key FROM facts
          WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`,
@@ -507,7 +647,7 @@ class FactsDB {
 
   /** Get one fact by id (for merge category). Returns null if not found. */
   getById(id: string): MemoryEntry | null {
-    const row = this.db.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
     return {
       id: row.id as string,
@@ -519,6 +659,8 @@ class FactsDB {
       value: (row.value as string) || null,
       source: row.source as string,
       createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
       decayClass: (row.decay_class as DecayClass) || "stable",
       expiresAt: (row.expires_at as number) || null,
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -528,7 +670,7 @@ class FactsDB {
   }
 
   count(): number {
-    const row = this.db
+    const row = this.liveDb
       .prepare(`SELECT COUNT(*) as cnt FROM facts`)
       .get() as Record<string, number>;
     return row.cnt;
@@ -536,7 +678,7 @@ class FactsDB {
 
   pruneExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
-    const result = this.db
+    const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
       .run(nowSec);
     return result.changes;
@@ -545,7 +687,7 @@ class FactsDB {
   decayConfidence(): number {
     const nowSec = Math.floor(Date.now() / 1000);
 
-    this.db
+    this.liveDb
       .prepare(
         `UPDATE facts
          SET confidence = confidence * 0.5
@@ -557,7 +699,7 @@ class FactsDB {
       )
       .run({ now: nowSec });
 
-    const result = this.db
+    const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
       .run();
     return result.changes;
@@ -565,13 +707,13 @@ class FactsDB {
 
   confirmFact(id: string): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.db
+    const row = this.liveDb
       .prepare(`SELECT decay_class FROM facts WHERE id = ?`)
       .get(id) as { decay_class: DecayClass } | undefined;
     if (!row) return false;
 
     const newExpiry = calculateExpiry(row.decay_class, nowSec);
-    this.db
+    this.liveDb
       .prepare(
         `UPDATE facts SET confidence = 1.0, last_confirmed_at = ?, expires_at = ? WHERE id = ?`,
       )
@@ -611,7 +753,7 @@ class FactsDB {
     savedAt: string;
   } | null {
     const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.db
+    const row = this.liveDb
       .prepare(
         `SELECT id, text FROM facts
          WHERE entity = 'system' AND key LIKE 'checkpoint:%'
@@ -629,7 +771,7 @@ class FactsDB {
   }
 
   statsBreakdown(): Record<string, number> {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(
         `SELECT decay_class, COUNT(*) as cnt FROM facts GROUP BY decay_class`,
       )
@@ -644,7 +786,7 @@ class FactsDB {
 
   countExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.db
+    const row = this.liveDb
       .prepare(
         `SELECT COUNT(*) as cnt FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`,
       )
@@ -653,17 +795,17 @@ class FactsDB {
   }
 
   backfillDecayClasses(): Record<string, number> {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(`SELECT rowid, entity, key, value, text FROM facts WHERE decay_class = 'stable'`)
       .all() as Array<{ rowid: number; entity: string; key: string; value: string; text: string }>;
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const update = this.db.prepare(
+    const update = this.liveDb.prepare(
       `UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?`,
     );
 
     const counts: Record<string, number> = {};
-    const tx = this.db.transaction(() => {
+    const tx = this.liveDb.transaction(() => {
       for (const row of rows) {
         const dc = classifyDecay(row.entity, row.key, row.value, row.text);
         if (dc === "stable") continue;
@@ -677,7 +819,7 @@ class FactsDB {
   }
 
   getByCategory(category: string): MemoryEntry[] {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
       .all(category) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
@@ -690,6 +832,8 @@ class FactsDB {
       value: (row.value as string) || null,
       source: row.source as string,
       createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
       decayClass: (row.decay_class as DecayClass) || "stable",
       expiresAt: (row.expires_at as number) || null,
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
@@ -699,7 +843,7 @@ class FactsDB {
   }
 
   updateCategory(id: string, category: string): boolean {
-    const result = this.db
+    const result = this.liveDb
       .prepare("UPDATE facts SET category = ? WHERE id = ?")
       .run(category, id);
     return result.changes > 0;
@@ -712,6 +856,163 @@ class FactsDB {
       this.applyPragmas();
     }
     return this.db;
+  }
+
+  close(): void {
+    try { this.db.close(); } catch { /* already closed */ }
+  }
+}
+
+// ============================================================================
+// Credentials Store (opt-in, encrypted)
+// ============================================================================
+
+const CRED_IV_LEN = 12;
+const CRED_AUTH_TAG_LEN = 16;
+const CRED_ALGO = "aes-256-gcm";
+
+function deriveKey(password: string): Buffer {
+  return createHash("sha256").update(password, "utf8").digest();
+}
+
+function encryptValue(plaintext: string, key: Buffer): Buffer {
+  const iv = randomBytes(CRED_IV_LEN);
+  const cipher = createCipheriv(CRED_ALGO, key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, encrypted]);
+}
+
+function decryptValue(buffer: Buffer, key: Buffer): string {
+  const iv = buffer.subarray(0, CRED_IV_LEN);
+  const authTag = buffer.subarray(CRED_IV_LEN, CRED_IV_LEN + CRED_AUTH_TAG_LEN);
+  const encrypted = buffer.subarray(CRED_IV_LEN + CRED_AUTH_TAG_LEN);
+  const decipher = createDecipheriv(CRED_ALGO, key, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+}
+
+type CredentialEntry = {
+  service: string;
+  type: CredentialType;
+  value: string;
+  url: string | null;
+  notes: string | null;
+  created: number;
+  updated: number;
+  expires: number | null;
+};
+
+class CredentialsDB {
+  private db: Database.Database;
+  private readonly dbPath: string;
+  private readonly key: Buffer;
+
+  constructor(dbPath: string, encryptionKey: string) {
+    this.dbPath = dbPath;
+    this.key = deriveKey(encryptionKey);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS credentials (
+        service TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'other',
+        value BLOB NOT NULL,
+        url TEXT,
+        notes TEXT,
+        created INTEGER NOT NULL,
+        updated INTEGER NOT NULL,
+        expires INTEGER,
+        PRIMARY KEY (service, type)
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_credentials_service ON credentials(service)
+    `);
+  }
+
+  store(entry: {
+    service: string;
+    type: CredentialType;
+    value: string;
+    url?: string;
+    notes?: string;
+    expires?: number | null;
+  }): CredentialEntry {
+    const now = Math.floor(Date.now() / 1000);
+    const encrypted = encryptValue(entry.value, this.key);
+    this.db
+      .prepare(
+        `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(service, type) DO UPDATE SET
+           value = excluded.value,
+           url = excluded.url,
+           notes = excluded.notes,
+           updated = excluded.updated,
+           expires = excluded.expires`,
+      )
+      .run(
+        entry.service,
+        entry.type,
+        encrypted,
+        entry.url ?? null,
+        entry.notes ?? null,
+        now,
+        now,
+        entry.expires ?? null,
+      );
+    return {
+      service: entry.service,
+      type: entry.type,
+      value: "[redacted]",
+      url: entry.url ?? null,
+      notes: entry.notes ?? null,
+      created: now,
+      updated: now,
+      expires: entry.expires ?? null,
+    };
+  }
+
+  get(service: string, type?: CredentialType): CredentialEntry | null {
+    const row = type
+      ? (this.db.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as Record<string, unknown> | undefined)
+      : (this.db.prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1").get(service) as Record<string, unknown> | undefined);
+    if (!row) return null;
+    const buf = row.value as Buffer;
+    const value = decryptValue(buf, this.key);
+    return {
+      service: row.service as string,
+      type: (row.type as string) as CredentialType,
+      value,
+      url: (row.url as string) ?? null,
+      notes: (row.notes as string) ?? null,
+      created: row.created as number,
+      updated: row.updated as number,
+      expires: (row.expires as number) ?? null,
+    };
+  }
+
+  list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
+    const rows = this.db.prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type").all() as Array<{
+      service: string;
+      type: string;
+      url: string | null;
+      expires: number | null;
+    }>;
+    return rows;
+  }
+
+  delete(service: string, type?: CredentialType): boolean {
+    if (type) {
+      const r = this.db.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, type);
+      return r.changes > 0;
+    }
+    const r = this.db.prepare("DELETE FROM credentials WHERE service = ?").run(service);
+    return r.changes > 0;
   }
 
   close(): void {
@@ -897,7 +1198,13 @@ function mergeResults(
     }
   }
 
-  merged.sort((a, b) => b.score - a.score);
+  merged.sort((a, b) => {
+    const s = b.score - a.score;
+    if (s !== 0) return s;
+    const da = a.entry.sourceDate ?? a.entry.createdAt;
+    const db = b.entry.sourceDate ?? b.entry.createdAt;
+    return db - da;
+  });
   return merged.slice(0, limit);
 }
 
@@ -1064,6 +1371,29 @@ const SENSITIVE_PATTERNS = [
   /credit.?card/i,
 ];
 
+/** Patterns that suggest a credential value - for auto-detect prompt to store */
+const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
+  { regex: /Bearer\s+eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i, type: "bearer", hint: "Bearer/JWT token" },
+  { regex: /sk-[A-Za-z0-9]{20,}/, type: "api_key", hint: "OpenAI-style API key (sk-...)" },
+  { regex: /ghp_[A-Za-z0-9]{36}/, type: "api_key", hint: "GitHub personal access token" },
+  { regex: /gho_[A-Za-z0-9]{36}/, type: "api_key", hint: "GitHub OAuth token" },
+  { regex: /xox[baprs]-[A-Za-z0-9-]{10,}/, type: "token", hint: "Slack token" },
+  { regex: /ssh\s+[\w@.-]+\s+[\w@.-]+/i, type: "ssh", hint: "SSH connection string" },
+  { regex: /[\w.-]+@[\w.-]+\.\w+.*(?:password|passwd|token|key)\s*[:=]\s*\S+/i, type: "password", hint: "Credentials with host/email" },
+];
+
+function detectCredentialPatterns(text: string): Array<{ type: string; hint: string }> {
+  const found: Array<{ type: string; hint: string }> = [];
+  const seen = new Set<string>();
+  for (const { regex, type, hint } of CREDENTIAL_PATTERNS) {
+    if (regex.test(text) && !seen.has(hint)) {
+      seen.add(hint);
+      found.push({ type, hint });
+    }
+  }
+  return found;
+}
+
 /** True if fact looks like identifier/number (IP, email, phone, UUID, etc.). Used by consolidate to skip by default (2.2/2.4). */
 function isStructuredForConsolidation(
   text: string,
@@ -1226,8 +1556,14 @@ async function runConsolidate(
     }
     if (!mergedText) continue;
 
-    const first = factsDb.getById(clusterIds[0]);
+    const clusterFacts = clusterIds.map((id) => factsDb.getById(id)).filter(Boolean) as MemoryEntry[];
+    const first = clusterFacts[0];
     const category = (first?.category as MemoryCategory) ?? "other";
+    const maxSourceDate = clusterFacts.reduce(
+      (acc, f) => (f.sourceDate != null && (acc == null || f.sourceDate > acc) ? f.sourceDate : acc),
+      null as number | null,
+    );
+    const mergedTags = [...new Set(clusterFacts.flatMap((f) => f.tags ?? []))];
 
     if (opts.dryRun) {
       logger.info(`memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`);
@@ -1243,6 +1579,8 @@ async function runConsolidate(
       key: null,
       value: null,
       source: "conversation",
+      sourceDate: maxSourceDate,
+      tags: mergedTags.length > 0 ? mergedTags : undefined,
     });
     try {
       const vector = await embeddings.embed(mergedText);
@@ -1445,6 +1783,7 @@ let factsDb: FactsDB;
 let vectorDb: VectorDB;
 let embeddings: Embeddings;
 let openaiClient: OpenAI;
+let credentialsDb: CredentialsDB | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1469,9 +1808,45 @@ const memoryHybridPlugin = {
     embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
     openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
+    if (cfg.credentials.enabled) {
+      const credPath = join(dirname(resolvedSqlitePath), "credentials.db");
+      credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey);
+      api.logger.info(`memory-hybrid: credentials store enabled (${credPath})`);
+    } else {
+      credentialsDb = null;
+    }
+
     api.logger.info(
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
     );
+
+    // Prerequisite checks (async, non-blocking): verify keys and model access so user gets clear errors
+    void (async () => {
+      try {
+        await embeddings.embed("verify");
+        api.logger.info("memory-hybrid: embedding API check OK");
+      } catch (e) {
+        api.logger.error(
+          `memory-hybrid: Embedding API check failed — ${String(e)}. ` +
+            "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.",
+        );
+      }
+      if (cfg.credentials.enabled && credentialsDb) {
+        try {
+          const items = credentialsDb.list();
+          if (items.length > 0) {
+            const first = items[0];
+            credentialsDb.get(first.service, first.type as CredentialType);
+          }
+          api.logger.info("memory-hybrid: credentials vault check OK");
+        } catch (e) {
+          api.logger.error(
+            `memory-hybrid: Credentials vault check failed — ${String(e)}. ` +
+              "Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.",
+          );
+        }
+      }
+    })();
 
     // ========================================================================
     // Tools
@@ -1493,28 +1868,36 @@ const memoryHybridPlugin = {
               description: "Optional: filter by entity name for exact lookup",
             }),
           ),
+          tag: Type.Optional(
+            Type.String({
+              description: "Optional: filter by topic tag (e.g. nibe, zigbee)",
+            }),
+          ),
         }),
         async execute(_toolCallId, params) {
           const {
             query,
             limit = 5,
             entity,
-          } = params as { query: string; limit?: number; entity?: string };
+            tag,
+          } = params as { query: string; limit?: number; entity?: string; tag?: string };
 
           let sqliteResults: SearchResult[] = [];
           if (entity) {
-            sqliteResults = factsDb.lookup(entity);
+            sqliteResults = factsDb.lookup(entity, undefined, tag);
           }
 
-          const ftsResults = factsDb.search(query, limit);
+          const ftsResults = factsDb.search(query, limit, { tag });
           sqliteResults = [...sqliteResults, ...ftsResults];
 
           let lanceResults: SearchResult[] = [];
-          try {
-            const vector = await embeddings.embed(query);
-            lanceResults = await vectorDb.search(vector, limit, 0.3);
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
+          if (!tag) {
+            try {
+              const vector = await embeddings.embed(query);
+              lanceResults = await vectorDb.search(vector, limit, 0.3);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
+            }
           }
 
           const results = mergeResults(sqliteResults, lanceResults, limit);
@@ -1541,6 +1924,10 @@ const memoryHybridPlugin = {
             importance: r.entry.importance,
             score: r.score,
             backend: r.backend,
+            tags: r.entry.tags?.length ? r.entry.tags : undefined,
+            sourceDate: r.entry.sourceDate
+              ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+              : undefined,
           }));
 
           return {
@@ -1589,6 +1976,11 @@ const memoryHybridPlugin = {
           decayClass: Type.Optional(
             stringEnum(DECAY_CLASSES as unknown as readonly string[]),
           ),
+          tags: Type.Optional(
+            Type.Array(Type.String(), {
+              description: "Topic tags for sharper retrieval (e.g. nibe, zigbee). Auto-inferred if omitted.",
+            }),
+          ),
         }),
         async execute(_toolCallId, params) {
           const {
@@ -1599,6 +1991,7 @@ const memoryHybridPlugin = {
             key: paramKey,
             value: paramValue,
             decayClass: paramDecayClass,
+            tags: paramTags,
           } = params as {
             text: string;
             importance?: number;
@@ -1607,6 +2000,7 @@ const memoryHybridPlugin = {
             key?: string;
             value?: string;
             decayClass?: DecayClass;
+            tags?: string[];
           };
 
           let textToStore = text;
@@ -1628,6 +2022,11 @@ const memoryHybridPlugin = {
           const key = paramKey || extracted.key;
           const value = paramValue || extracted.value;
 
+          const tags =
+            paramTags && paramTags.length > 0
+              ? paramTags.map((t) => t.trim().toLowerCase()).filter(Boolean)
+              : extractTags(textToStore, entity);
+
           const summaryThreshold = cfg.autoRecall.summaryThreshold;
           const summary =
             summaryThreshold > 0 && textToStore.length > summaryThreshold
@@ -1644,6 +2043,7 @@ const memoryHybridPlugin = {
             source: "conversation",
             decayClass: paramDecayClass,
             summary,
+            tags,
           });
 
           try {
@@ -1781,6 +2181,145 @@ const memoryHybridPlugin = {
       },
       { name: "memory_forget" },
     );
+
+    // Credential tools (opt-in)
+    if (cfg.credentials.enabled && credentialsDb) {
+      api.registerTool(
+        {
+          name: "credential_store",
+          label: "Store Credential",
+          description:
+            "Store a credential (API key, token, password, SSH key, etc.) in encrypted storage. Use exact service names for reliable retrieval.",
+          parameters: Type.Object({
+            service: Type.String({ description: "Service name (e.g. 'home-assistant', 'github', 'openai')" }),
+            type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
+            value: Type.String({ description: "The secret value (token, password, API key)" }),
+            url: Type.Optional(Type.String({ description: "Optional URL or endpoint" })),
+            notes: Type.Optional(Type.String({ description: "Optional notes" })),
+            expires: Type.Optional(Type.Number({ description: "Optional Unix timestamp when credential expires" })),
+          }),
+          async execute(_toolCallId, params) {
+            const { service, type, value, url, notes, expires } = params as {
+              service: string;
+              type: CredentialType;
+              value: string;
+              url?: string;
+              notes?: string;
+              expires?: number | null;
+            };
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            credentialsDb.store({ service, type, value, url, notes, expires });
+            return {
+              content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
+              details: { service, type },
+            };
+          },
+        },
+        { name: "credential_store" },
+      );
+
+      api.registerTool(
+        {
+          name: "credential_get",
+          label: "Get Credential",
+          description:
+            "Retrieve a credential by service name. Exact lookup — no fuzzy search. Specify type to disambiguate when multiple credential types exist for a service.",
+          parameters: Type.Object({
+            service: Type.String({ description: "Service name (e.g. 'home-assistant', 'github')" }),
+            type: Type.Optional(stringEnum(CREDENTIAL_TYPES as unknown as readonly string[])),
+          }),
+          async execute(_toolCallId, params) {
+            const { service, type } = params as { service: string; type?: CredentialType };
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            const entry = credentialsDb.get(service, type);
+            if (!entry) {
+              return {
+                content: [{ type: "text", text: `No credential found for service "${service}"${type ? ` (type: ${type})` : ""}.` }],
+                details: { found: false },
+              };
+            }
+            const warnDays = cfg.credentials.expiryWarningDays ?? 7;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const expiresSoon = entry.expires != null && entry.expires - nowSec < warnDays * 24 * 3600;
+            const expiryWarning = expiresSoon
+              ? ` [WARNING: Expires in ${Math.ceil((entry.expires! - nowSec) / 86400)} days — consider rotating]`
+              : "";
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Credential for ${entry.service} (${entry.type}) retrieved. Value available in tool result (details.value).${expiryWarning}`,
+                },
+              ],
+              details: {
+                service: entry.service,
+                type: entry.type,
+                url: entry.url,
+                expires: entry.expires,
+                value: entry.value,
+                sensitiveFields: ["value"],
+              },
+            };
+          },
+        },
+        { name: "credential_get" },
+      );
+
+      api.registerTool(
+        {
+          name: "credential_list",
+          label: "List Credentials",
+          description: "List stored credentials (service/type/url only — no values). Use credential_get to retrieve a specific credential.",
+          parameters: Type.Object({}),
+          async execute() {
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            const items = credentialsDb.list();
+            if (items.length === 0) {
+              return {
+                content: [{ type: "text", text: "No credentials stored." }],
+                details: { count: 0, items: [] },
+              };
+            }
+            const lines = items.map(
+              (i) => `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${new Date(i.expires * 1000).toISOString()}]` : ""}`,
+            );
+            return {
+              content: [{ type: "text", text: `Stored credentials:\n${lines.join("\n")}` }],
+              details: { count: items.length, items },
+            };
+          },
+        },
+        { name: "credential_list" },
+      );
+
+      api.registerTool(
+        {
+          name: "credential_delete",
+          label: "Delete Credential",
+          description: "Delete a stored credential by service name. Optionally specify type to delete only that credential type.",
+          parameters: Type.Object({
+            service: Type.String({ description: "Service name" }),
+            type: Type.Optional(stringEnum(CREDENTIAL_TYPES as unknown as readonly string[])),
+          }),
+          async execute(_toolCallId, params) {
+            const { service, type } = params as { service: string; type?: CredentialType };
+            if (!credentialsDb) throw new Error("Credentials store not available");
+            const deleted = credentialsDb.delete(service, type);
+            if (!deleted) {
+              return {
+                content: [{ type: "text", text: `No credential found for "${service}"${type ? ` (type: ${type})` : ""}.` }],
+                details: { deleted: false },
+              };
+            }
+            return {
+              content: [{ type: "text", text: `Deleted credential for ${service}${type ? ` (${type})` : ""}.` }],
+              details: { deleted: true, service, type },
+            };
+          },
+        },
+        { name: "credential_delete" },
+      );
+    }
 
     api.registerTool(
       {
@@ -2073,6 +2612,8 @@ const memoryHybridPlugin = {
                   key: extracted.key,
                   value: extracted.value,
                   source: `daily-scan:${dateStr}`,
+                  sourceDate: Math.floor(new Date(dateStr).getTime() / 1000),
+                  tags: extractTags(trimmed, extracted.entity),
                 });
                 totalStored++;
               }
@@ -2096,11 +2637,16 @@ const memoryHybridPlugin = {
           .description("Search memories across both backends")
           .argument("<query>", "Search query")
           .option("--limit <n>", "Max results", "5")
-          .action(async (query, opts) => {
-            const limit = parseInt(opts.limit);
-            const sqlResults = factsDb.search(query, limit);
-            const vector = await embeddings.embed(query);
-            const lanceResults = await vectorDb.search(vector, limit, 0.3);
+          .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
+          .action(async (query, opts: { limit?: string; tag?: string }) => {
+            const limit = parseInt(opts.limit || "5");
+            const tag = opts.tag?.trim();
+            const sqlResults = factsDb.search(query, limit, { tag });
+            let lanceResults: SearchResult[] = [];
+            if (!tag) {
+              const vector = await embeddings.embed(query);
+              lanceResults = await vectorDb.search(vector, limit, 0.3);
+            }
             const merged = mergeResults(sqlResults, lanceResults, limit);
 
             const output = merged.map((r) => ({
@@ -2110,6 +2656,10 @@ const memoryHybridPlugin = {
               entity: r.entry.entity,
               score: r.score,
               backend: r.backend,
+              tags: r.entry.tags?.length ? r.entry.tags : undefined,
+              sourceDate: r.entry.sourceDate
+                ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+                : undefined,
             }));
             console.log(JSON.stringify(output, null, 2));
           });
@@ -2119,16 +2669,70 @@ const memoryHybridPlugin = {
           .description("Exact entity lookup in SQLite")
           .argument("<entity>", "Entity name")
           .option("--key <key>", "Optional key filter")
-          .action(async (entity, opts) => {
-            const results = factsDb.lookup(entity, opts.key);
+          .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
+          .action(async (entity, opts: { key?: string; tag?: string }) => {
+            const results = factsDb.lookup(entity, opts.key, opts.tag?.trim());
             const output = results.map((r) => ({
               id: r.entry.id,
               text: r.entry.text,
               entity: r.entry.entity,
               key: r.entry.key,
               value: r.entry.value,
+              tags: r.entry.tags?.length ? r.entry.tags : undefined,
+              sourceDate: r.entry.sourceDate
+                ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+                : undefined,
             }));
             console.log(JSON.stringify(output, null, 2));
+          });
+
+        mem
+          .command("store")
+          .description("Store a fact (for scripts; agents use memory_store tool)")
+          .requiredOption("--text <text>", "Fact text")
+          .option("--category <cat>", "Category", "other")
+          .option("--entity <entity>", "Entity name")
+          .option("--key <key>", "Structured key")
+          .option("--value <value>", "Structured value")
+          .option("--source-date <date>", "When fact originated (ISO-8601, e.g. 2026-01-15)")
+          .option("--tags <tags>", "Comma-separated topic tags (e.g. nibe,zigbee); auto-inferred if omitted")
+          .action(async (opts: { text: string; category?: string; entity?: string; key?: string; value?: string; sourceDate?: string; tags?: string }) => {
+            const text = opts.text;
+            if (!text || text.length < 2) {
+              console.error("--text is required and must be at least 2 characters");
+              process.exitCode = 1;
+              return;
+            }
+            if (factsDb.hasDuplicate(text)) {
+              console.log("Similar memory already exists.");
+              return;
+            }
+            const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
+            const tags = opts.tags
+              ? opts.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
+              : undefined;
+            const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
+            const entity = opts.entity ?? extracted.entity ?? null;
+            const entry = factsDb.store({
+              text,
+              category: (opts.category ?? "other") as MemoryCategory,
+              importance: 0.7,
+              entity,
+              key: opts.key ?? extracted.key ?? null,
+              value: opts.value ?? extracted.value ?? null,
+              source: "cli",
+              sourceDate,
+              tags: tags ?? extractTags(text, entity),
+            });
+            try {
+              const vector = await embeddings.embed(text);
+              if (!(await vectorDb.hasDuplicate(vector))) {
+                await vectorDb.store({ text, vector, importance: 0.7, category: opts.category ?? "other" });
+              }
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+            }
+            console.log(`Stored: "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}" [id: ${entry.id}]`);
           });
 
         mem
@@ -2265,6 +2869,133 @@ const memoryHybridPlugin = {
           });
 
         mem
+          .command("install")
+          .description("Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.")
+          .option("--dry-run", "Print what would be merged without writing")
+          .action(async (opts: { dryRun?: boolean }) => {
+            const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+            const configPath = join(openclawDir, "openclaw.json");
+            mkdirSync(openclawDir, { recursive: true });
+            const memoryDir = join(openclawDir, "memory");
+            mkdirSync(memoryDir, { recursive: true });
+
+            const fullDefaults = {
+              memory: { backend: "builtin" as const, citations: "auto" as const },
+              plugins: {
+                slots: { memory: "memory-hybrid" as const },
+                entries: {
+                  "memory-core": { enabled: true },
+                  "memory-hybrid": {
+                    enabled: true,
+                    config: {
+                      embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
+                      autoCapture: true,
+                      autoRecall: true,
+                      captureMaxChars: 5000,
+                      store: { fuzzyDedupe: false },
+                      autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
+                      categories: [] as string[],
+                      credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
+                    },
+                  },
+                },
+              },
+              agents: {
+                defaults: {
+                  bootstrapMaxChars: 15000,
+                  bootstrapTotalMaxChars: 50000,
+                  memorySearch: {
+                    enabled: true,
+                    sources: ["memory"],
+                    provider: "openai",
+                    model: "text-embedding-3-small",
+                    sync: { onSessionStart: true, onSearch: true, watch: true },
+                    chunking: { tokens: 500, overlap: 50 },
+                    query: { maxResults: 8, minScore: 0.3, hybrid: { enabled: true } },
+                  },
+                  compaction: {
+                    mode: "default",
+                    memoryFlush: {
+                      enabled: true,
+                      softThresholdTokens: 4000,
+                      systemPrompt: "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
+                      prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
+                    },
+                  },
+                  pruning: { ttl: "30m" },
+                },
+              },
+              jobs: [
+                {
+                  name: "nightly-memory-sweep",
+                  schedule: "0 2 * * *",
+                  channel: "system",
+                  message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
+                  isolated: true,
+                  model: "gemini",
+                },
+              ],
+            };
+
+            function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
+              for (const key of Object.keys(source)) {
+                const srcVal = source[key];
+                const tgtVal = target[key];
+                if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
+                  deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
+                } else if (key === "jobs" && Array.isArray(srcVal)) {
+                  const arr = (Array.isArray(tgtVal) ? [...tgtVal] : []) as unknown[];
+                  const hasNightly = arr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                  if (!hasNightly) {
+                    const nightly = (srcVal as unknown[]).find((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                    if (nightly) arr.push(nightly);
+                  }
+                  (target as Record<string, unknown>)[key] = arr;
+                } else if (!Array.isArray(srcVal)) {
+                  (target as Record<string, unknown>)[key] = srcVal;
+                }
+              }
+            }
+
+            let config: Record<string, unknown> = {};
+            if (existsSync(configPath)) {
+              try {
+                config = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+              } catch (e) {
+                console.error(`Could not read ${configPath}: ${e}`);
+                return;
+              }
+            }
+            const existingApiKey = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.["memory-hybrid"] && (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>)?.config && ((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>).config as Record<string, unknown>)?.embedding && (((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>).config as Record<string, unknown>).embedding as Record<string, unknown>)?.apiKey;
+            const isRealKey = typeof existingApiKey === "string" && existingApiKey.length >= 10 && existingApiKey !== "YOUR_OPENAI_API_KEY" && existingApiKey !== "<OPENAI_API_KEY>";
+
+            if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
+            if (!(config.agents && typeof config.agents === "object")) config.agents = { defaults: {} };
+            deepMerge(config, fullDefaults as unknown as Record<string, unknown>);
+            if (isRealKey) {
+              const entries = (config.plugins as Record<string, unknown>).entries as Record<string, unknown>;
+              const mh = entries["memory-hybrid"] as Record<string, unknown>;
+              const cfg = mh?.config as Record<string, unknown>;
+              const emb = cfg?.embedding as Record<string, unknown>;
+              if (emb) emb.apiKey = existingApiKey;
+            }
+            const after = JSON.stringify(config, null, 2);
+
+            if (opts.dryRun) {
+              console.log("Would merge into " + configPath + ":");
+              console.log(after);
+              return;
+            }
+            writeFileSync(configPath, after, "utf-8");
+            console.log("Config written: " + configPath);
+            console.log("Applied: plugins.slots.memory=memory-hybrid, memory-hybrid config (all features), memorySearch, compaction prompts, bootstrap limits, pruning, autoClassify, nightly-memory-sweep job.");
+            console.log("\nNext steps:");
+            console.log("  1. Set embedding.apiKey in plugins.entries[\"memory-hybrid\"].config (or use env:OPENAI_API_KEY in config).");
+            console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
+            console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
+          });
+
+        mem
           .command("verify")
           .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
           .option("--fix", "Print or apply default config for missing items")
@@ -2277,14 +3008,17 @@ const memoryHybridPlugin = {
             let lanceOk = false;
             let embeddingOk = false;
 
+            const loadBlocking: string[] = [];
             if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
               issues.push("embedding.apiKey is missing, placeholder, or too short");
-              fixes.push('Add "embedding": { "apiKey": "<your-key>", "model": "text-embedding-3-small" } to plugin config');
+              loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
+              fixes.push("LOAD-BLOCKING: Set plugins.entries[\"memory-hybrid\"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to \"text-embedding-3-small\"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.");
               configOk = false;
             }
             if (!cfg.embedding.model) {
               issues.push("embedding.model is missing");
-              fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large"');
+              loadBlocking.push("embedding.model is missing");
+              fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large" in plugin config');
               configOk = false;
             }
             const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
@@ -2298,6 +3032,7 @@ const memoryHybridPlugin = {
               console.log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
             } catch (e) {
               issues.push(`SQLite: ${String(e)}`);
+              fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
               console.log(`SQLite: FAIL — ${String(e)}`);
             }
 
@@ -2307,6 +3042,7 @@ const memoryHybridPlugin = {
               console.log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
             } catch (e) {
               issues.push(`LanceDB: ${String(e)}`);
+              fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
               console.log(`LanceDB: FAIL — ${String(e)}`);
             }
 
@@ -2316,7 +3052,94 @@ const memoryHybridPlugin = {
               console.log("Embedding API: OK");
             } catch (e) {
               issues.push(`Embedding API: ${String(e)}`);
+              fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries["memory-hybrid"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
               console.log(`Embedding API: FAIL — ${String(e)}`);
+            }
+
+            // Features summary
+            console.log("\nFeatures:");
+            console.log(`  autoCapture: ${cfg.autoCapture}`);
+            console.log(`  autoRecall: ${cfg.autoRecall.enabled}`);
+            console.log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "off"}`);
+            console.log(`  credentials: ${cfg.credentials.enabled ? "enabled" : "disabled"}`);
+            console.log(`  store.fuzzyDedupe: ${cfg.store.fuzzyDedupe}`);
+
+            // Credentials: enabled?, key defined?, vault accessible?
+            let credentialsOk = true;
+            if (cfg.credentials.enabled) {
+              const keyDefined = !!cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16;
+              if (!keyDefined) {
+                issues.push("credentials.enabled but encryption key missing or too short (min 16 chars or env:VAR)");
+                loadBlocking.push("credentials enabled but encryption key missing or too short");
+                fixes.push("LOAD-BLOCKING: Set credentials.encryptionKey to env:OPENCLAW_CRED_KEY and export OPENCLAW_CRED_KEY (min 16 chars), or set a 16+ character secret in plugin config. See docs/CREDENTIALS.md.");
+                credentialsOk = false;
+                console.log("\nCredentials: enabled — key missing or too short (set OPENCLAW_CRED_KEY or credentials.encryptionKey)");
+              } else if (credentialsDb) {
+                try {
+                  const items = credentialsDb.list();
+                  if (items.length > 0) {
+                    const first = items[0];
+                    credentialsDb.get(first.service, first.type as CredentialType);
+                  }
+                  console.log(`\nCredentials: enabled — key set, vault OK (${items.length} stored)`);
+                } catch (e) {
+                  issues.push(`Credentials vault: ${String(e)} (wrong key or corrupted DB)`);
+                  fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the same key used when credentials were stored, or disable credentials in config. See docs/CREDENTIALS.md.`);
+                  credentialsOk = false;
+                  console.log(`\nCredentials: enabled — vault FAIL — ${String(e)} (check OPENCLAW_CRED_KEY / encryptionKey)`);
+                }
+              } else {
+                console.log("\nCredentials: enabled — key set (vault not opened in this process)");
+              }
+            } else {
+              console.log("\nCredentials: disabled");
+            }
+
+            // Session distillation: last run (optional file)
+            const memoryDir = dirname(resolvedSqlitePath);
+            const distillLastRunPath = join(memoryDir, ".distill_last_run");
+            if (existsSync(distillLastRunPath)) {
+              try {
+                const line = readFileSync(distillLastRunPath, "utf-8").split("\n")[0]?.trim() || "";
+                console.log(`\nSession distillation: last run recorded ${line ? `— ${line}` : "(empty file)"}`);
+              } catch {
+                console.log("\nSession distillation: last run file present but unreadable");
+              }
+            } else {
+              console.log("\nSession distillation: last run not recorded (run scripts/distill-sessions/ then 'openclaw hybrid-mem record-distill' to record)");
+            }
+
+            // Optional / suggested jobs (e.g. nightly session distillation)
+            let nightlySweepDefined = false;
+            let nightlySweepEnabled = true;
+            if (existsSync(defaultConfigPath)) {
+              try {
+                const raw = readFileSync(defaultConfigPath, "utf-8");
+                const root = JSON.parse(raw) as Record<string, unknown>;
+                const jobs = root.jobs;
+                if (Array.isArray(jobs)) {
+                  const nightly = jobs.find((j: unknown) => typeof j === "object" && j !== null && (j as Record<string, unknown>).name === "nightly-memory-sweep") as Record<string, unknown> | undefined;
+                  if (nightly) {
+                    nightlySweepDefined = true;
+                    nightlySweepEnabled = nightly.enabled !== false;
+                  }
+                } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+                  const nightly = (jobs as Record<string, unknown>)["nightly-memory-sweep"];
+                  if (nightly && typeof nightly === "object") {
+                    nightlySweepDefined = true;
+                    nightlySweepEnabled = (nightly as Record<string, unknown>).enabled !== false;
+                  }
+                }
+              } catch {
+                // ignore parse or read errors
+              }
+            }
+            console.log("\nOptional / suggested jobs (openclaw.json):");
+            if (nightlySweepDefined) {
+              console.log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
+            } else {
+              console.log("  nightly-memory-sweep (session distillation): not defined");
+              fixes.push("Optional: Add nightly-memory-sweep to openclaw.json \"jobs\" array for incremental session distillation. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
             }
 
             console.log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
@@ -2334,35 +3157,115 @@ const memoryHybridPlugin = {
               console.log(`\nLog file not found: ${opts.logFile}`);
             }
 
-            const allOk = configOk && sqliteOk && lanceOk && embeddingOk;
+            const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
             if (allOk) {
               console.log("\nAll checks passed.");
+              if (!nightlySweepDefined) {
+                console.log("Optional: Add nightly-memory-sweep to openclaw.json \"jobs\" for incremental session distillation. See docs/SESSION-DISTILLATION.md.");
+              }
             } else {
-              console.log("\nIssues:");
-              issues.forEach((i) => console.log(`  - ${i}`));
+              console.log("\n--- Issues ---");
+              if (loadBlocking.length > 0) {
+                console.log("Load-blocking (prevent OpenClaw / plugin from loading):");
+                loadBlocking.forEach((i) => console.log(`  - ${i}`));
+              }
+              const other = issues.filter((i) => !loadBlocking.includes(i));
+              if (other.length > 0) {
+                console.log(other.length > 0 && loadBlocking.length > 0 ? "Other:" : "Issues:");
+                other.forEach((i) => console.log(`  - ${i}`));
+              }
+              console.log("\n--- Fixes for detected issues ---");
+              fixes.forEach((f) => console.log(`  • ${f}`));
+              console.log("\nEdit config: " + defaultConfigPath + " (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.");
             }
 
             if (opts.fix) {
-              console.log("\n--- Fix suggestions ---");
-              fixes.forEach((f) => console.log(`  ${f}`));
-              const snippet = {
-                embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },
-                autoCapture: true,
-                autoRecall: true,
-                captureMaxChars: 5000,
-                store: { fuzzyDedupe: false },
-              };
-              console.log("\nMinimal config snippet to merge into plugins.entries[\"memory-hybrid\"].config:");
-              console.log(JSON.stringify(snippet, null, 2));
+              const applied: string[] = [];
               if (existsSync(defaultConfigPath)) {
-                console.log(`\nConfig file found: ${defaultConfigPath}. Merge the snippet above into the memory-hybrid config entry if values are missing.`);
+                try {
+                  const raw = readFileSync(defaultConfigPath, "utf-8");
+                  const fixConfig = JSON.parse(raw) as Record<string, unknown>;
+                  let changed = false;
+                  if (!fixConfig.plugins || typeof fixConfig.plugins !== "object") fixConfig.plugins = {};
+                  const plugins = fixConfig.plugins as Record<string, unknown>;
+                  if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
+                  const entries = plugins.entries as Record<string, unknown>;
+                  if (!entries["memory-hybrid"] || typeof entries["memory-hybrid"] !== "object") entries["memory-hybrid"] = { enabled: true, config: {} };
+                  const mh = entries["memory-hybrid"] as Record<string, unknown>;
+                  if (!mh.config || typeof mh.config !== "object") mh.config = {};
+                  const cfg = mh.config as Record<string, unknown>;
+                  if (!cfg.embedding || typeof cfg.embedding !== "object") cfg.embedding = {};
+                  const emb = cfg.embedding as Record<string, unknown>;
+                  const curKey = emb.apiKey;
+                  const placeholder = typeof curKey !== "string" || curKey.length < 10 || curKey === "YOUR_OPENAI_API_KEY" || curKey === "<OPENAI_API_KEY>";
+                  if (placeholder) {
+                    emb.apiKey = process.env.OPENAI_API_KEY || "YOUR_OPENAI_API_KEY";
+                    emb.model = emb.model || "text-embedding-3-small";
+                    changed = true;
+                    applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
+                  }
+                  if (!fixConfig.jobs || !Array.isArray(fixConfig.jobs)) fixConfig.jobs = [];
+                  const jobsArr = fixConfig.jobs as unknown[];
+                  if (!jobsArr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep")) {
+                    jobsArr.push({
+                      name: "nightly-memory-sweep",
+                      schedule: "0 2 * * *",
+                      channel: "system",
+                      message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
+                      isolated: true,
+                      model: "gemini",
+                    });
+                    changed = true;
+                    applied.push("Added nightly-memory-sweep to jobs");
+                  }
+                  const memoryDirPath = dirname(resolvedSqlitePath);
+                  if (!existsSync(memoryDirPath)) {
+                    mkdirSync(memoryDirPath, { recursive: true });
+                    applied.push("Created memory directory: " + memoryDirPath);
+                  }
+                  if (changed) {
+                    writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
+                  }
+                  if (applied.length > 0) {
+                    console.log("\n--- Applied fixes ---");
+                    applied.forEach((a) => console.log("  • " + a));
+                    if (changed) console.log("Config written: " + defaultConfigPath + ". Restart the gateway and run verify again.");
+                  }
+                } catch (e) {
+                  console.log("\nCould not apply fixes to config: " + String(e));
+                  const snippet = {
+                    embedding: { apiKey: process.env.OPENAI_API_KEY || "<set your key>", model: "text-embedding-3-small" },
+                    autoCapture: true,
+                    autoRecall: true,
+                    captureMaxChars: 5000,
+                    store: { fuzzyDedupe: false },
+                  };
+                  console.log("Minimal config snippet to merge into plugins.entries[\"memory-hybrid\"].config:");
+                  console.log(JSON.stringify(snippet, null, 2));
+                }
+              } else {
+                console.log("\n--- Fix (--fix) ---");
+                console.log("Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.");
               }
             }
           });
 
         mem
+          .command("record-distill")
+          .description("Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)")
+          .action(async () => {
+            const memoryDir = dirname(resolvedSqlitePath);
+            mkdirSync(memoryDir, { recursive: true });
+            const path = join(memoryDir, ".distill_last_run");
+            const ts = new Date().toISOString();
+            writeFileSync(path, ts + "\n", "utf-8");
+            console.log(`Recorded distillation run: ${ts}`);
+            console.log(`Written to ${path}. Run 'openclaw hybrid-mem verify' to see it.`);
+          });
+
+        mem
           .command("uninstall")
-          .description("Disable hybrid memory and restore default memory manager; optionally remove data.")
+          .description("Revert to OpenClaw default memory (memory-core). Safe: OpenClaw works normally; your data is kept unless you use --clean-all.")
           .option("--clean-all", "Remove SQLite and LanceDB data (irreversible)")
           .option("--force-cleanup", "Same as --clean-all")
           .option("--leave-config", "Do not modify openclaw.json; only print instructions")
@@ -2387,7 +3290,7 @@ const memoryHybridPlugin = {
                 (entries["memory-hybrid"] as Record<string, boolean>).enabled = false;
                 writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
                 console.log("Config updated: plugins.slots.memory = \"memory-core\", memory-hybrid disabled.");
-                console.log("Restart the gateway to use the default OpenClaw memory manager.");
+                console.log("OpenClaw will use the default memory manager. Restart the gateway. Your hybrid data is kept unless you run with --clean-all.");
               } catch (e) {
                 console.error(`Could not update config (${configPath}): ${e}`);
                 console.log("Apply these changes manually:");
@@ -2410,7 +3313,7 @@ const memoryHybridPlugin = {
             }
 
             if (!doClean) {
-              console.log("\nMemory data (SQLite and LanceDB) was left in place. To remove it, run: openclaw hybrid-mem uninstall --clean-all");
+              console.log("\nMemory data (SQLite and LanceDB) was left in place. To remove it: openclaw hybrid-mem uninstall --clean-all");
               return;
             }
             console.log("\nRemoving hybrid-memory data...");
@@ -2438,7 +3341,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -2478,7 +3381,13 @@ const memoryHybridPlugin = {
                 }
               }
             }
-            candidates.sort((a, b) => b.score - a.score);
+            candidates.sort((a, b) => {
+              const s = b.score - a.score;
+              if (s !== 0) return s;
+              const da = a.entry.sourceDate ?? a.entry.createdAt;
+              const db = b.entry.sourceDate ?? b.entry.createdAt;
+              return db - da;
+            });
             candidates = candidates.slice(0, limit);
           }
 
@@ -2704,6 +3613,73 @@ const memoryHybridPlugin = {
       });
     }
 
+    // Credential auto-detect: when patterns found in conversation, persist hint for next turn
+    if (cfg.credentials.enabled && cfg.credentials.autoDetect) {
+      const pendingPath = join(dirname(resolvedSqlitePath), "credentials-pending.json");
+      const PENDING_TTL_MS = 5 * 60 * 1000; // 5 min
+
+      api.on("agent_end", async (event) => {
+        if (!event.messages || event.messages.length === 0) return;
+        try {
+          const texts: string[] = [];
+          for (const msg of event.messages) {
+            if (!msg || typeof msg !== "object") continue;
+            const msgObj = msg as Record<string, unknown>;
+            const content = msgObj.content;
+            if (typeof content === "string") texts.push(content);
+            else if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block && typeof block === "object" && "type" in block && (block as Record<string, unknown>).type === "text" && "text" in block) {
+                  const t = (block as Record<string, unknown>).text;
+                  if (typeof t === "string") texts.push(t);
+                }
+              }
+            }
+          }
+          const allText = texts.join("\n");
+          const detected = detectCredentialPatterns(allText);
+          if (detected.length === 0) return;
+          mkdirSync(dirname(pendingPath), { recursive: true });
+          writeFileSync(
+            pendingPath,
+            JSON.stringify({
+              hints: detected.map((d) => d.hint),
+              at: Date.now(),
+            }),
+            "utf-8",
+          );
+          api.logger.info(`memory-hybrid: credential patterns detected (${detected.map((d) => d.hint).join(", ")}) — will prompt next turn`);
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: credential auto-detect failed: ${err}`);
+        }
+      });
+
+      api.on("before_agent_start", async () => {
+        try {
+          if (!existsSync(pendingPath)) return;
+          const raw = readFileSync(pendingPath, "utf-8");
+          const data = JSON.parse(raw) as { hints?: string[]; at?: number };
+          const at = typeof data.at === "number" ? data.at : 0;
+          if (Date.now() - at > PENDING_TTL_MS) {
+            rmSync(pendingPath, { force: true });
+            return;
+          }
+          const hints = Array.isArray(data.hints) ? data.hints : [];
+          if (hints.length === 0) {
+            rmSync(pendingPath, { force: true });
+            return;
+          }
+          rmSync(pendingPath, { force: true });
+          const hintText = hints.join(", ");
+          return {
+            prependContext: `\n<credential-hint>\nA credential may have been shared in the previous exchange (${hintText}). Consider asking the user if they want to store it securely with credential_store.\n</credential-hint>\n`,
+          };
+        } catch {
+          try { rmSync(pendingPath, { force: true }); } catch { /* ignore */ }
+        }
+      });
+    }
+
     // ========================================================================
     // Service
     // ========================================================================
@@ -2767,6 +3743,7 @@ const memoryHybridPlugin = {
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
         factsDb.close();
+        if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }
         api.logger.info("memory-hybrid: stopped");
       },
     });

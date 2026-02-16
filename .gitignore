@@ -19,6 +19,9 @@ openclaw.json
 # LanceDB data
 lancedb/
 
+# Internal / maintainer-only docs (npm publish setup, etc.)
+internal/
+
 # OS files
 .DS_Store
 Thumbs.db

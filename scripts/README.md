@@ -1,4 +1,19 @@
-# Upgrade scripts (LanceDB reinstall after OpenClaw upgrades)
+# Scripts
+
+## First install: config only (no gateway needed)
+
+**`install-hybrid-config.mjs`** — Writes full Hybrid Memory defaults (plugin slot, memorySearch, compaction prompts, nightly-memory-sweep job) into `~/.openclaw/openclaw.json` so you can get a complete config before the first gateway start.
+
+```bash
+# From repo root (set OPENCLAW_HOME if needed)
+node scripts/install-hybrid-config.mjs
+```
+
+Then set your OpenAI API key in the config, copy the plugin to the extensions dir, run `npm install` there, and start the gateway. See the repo [README](../README.md) § First install.
+
+---
+
+## Upgrade scripts (LanceDB reinstall after OpenClaw upgrades)
 
 After every **OpenClaw upgrade**, the active memory extension’s native deps (e.g. `@lancedb/lancedb`, and for memory-hybrid `better-sqlite3`) must be reinstalled in the extension directory and the gateway restarted. These scripts automate that.
 
@@ -40,6 +55,8 @@ See [../docs/hybrid-memory-manager-v3.md §12](../docs/hybrid-memory-manager-v3.
 ## Backfill (memory-hybrid)
 
 The **dynamic backfill script** `backfill-memory.mjs` seeds the memory-hybrid plugin from `MEMORY.md` and `memory/**/*.md` under your workspace. It uses no hardcoded dates or section names: it discovers files by glob and parses content so it keeps working as you add files or change structure.
+
+**When parsing old memories:** Include `source_date` if available. Lines with a `[YYYY-MM-DD]` prefix are parsed: the date is stored as `source_date` and stripped from the fact text.
 
 **Requirements:** Plugin config in `~/.openclaw/openclaw.json` (including `embedding.apiKey`). The script loads `better-sqlite3`, `openai`, and `@lancedb/lancedb` from the memory-hybrid extension’s `node_modules`.
 

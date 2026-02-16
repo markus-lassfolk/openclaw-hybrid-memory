@@ -58,6 +58,29 @@ export type StoreConfig = {
   fuzzyDedupe: boolean;
 };
 
+/** Credential types supported by the credentials store */
+export const CREDENTIAL_TYPES = [
+  "token",
+  "password",
+  "api_key",
+  "ssh",
+  "bearer",
+  "other",
+] as const;
+export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
+
+/** Opt-in credentials: structured, encrypted storage for API keys, tokens, etc. */
+export type CredentialsConfig = {
+  enabled: boolean;
+  store: "sqlite";
+  /** Encryption key: "env:VAR_NAME" resolves from env, or raw string (not recommended) */
+  encryptionKey: string;
+  /** When enabled, detect credential patterns in conversation and prompt to store (default false) */
+  autoDetect?: boolean;
+  /** Days before expiry to warn (default 7) */
+  expiryWarningDays?: number;
+};
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -74,6 +97,8 @@ export type HybridMemoryConfig = {
   autoClassify: AutoClassifyConfig;
   /** Store options (2.3): fuzzyDedupe = skip store when normalized text matches existing. */
   store: StoreConfig;
+  /** Opt-in credential management: structured, encrypted storage (default: disabled) */
+  credentials: CredentialsConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -136,7 +161,11 @@ export const hybridConfigSchema = {
 
     const embedding = cfg.embedding as Record<string, unknown> | undefined;
     if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error("embedding.apiKey is required");
+      throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"memory-hybrid\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
+    }
+    const rawKey = (embedding.apiKey as string).trim();
+    if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
+      throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
 
     const model =
@@ -239,6 +268,47 @@ export const hybridConfigSchema = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
     };
 
+    // Parse credentials config (opt-in). Enable automatically when a valid encryption key is set.
+    const credRaw = cfg.credentials as Record<string, unknown> | undefined;
+    const explicitlyDisabled = credRaw?.enabled === false;
+    const encKeyRaw = typeof credRaw?.encryptionKey === "string" ? credRaw.encryptionKey : "";
+    let encryptionKey = "";
+    if (encKeyRaw.startsWith("env:")) {
+      const envVar = encKeyRaw.slice(4).trim();
+      const val = process.env[envVar];
+      if (val) encryptionKey = val;
+    } else if (encKeyRaw.length >= 16) {
+      encryptionKey = encKeyRaw;
+    }
+    const hasValidKey = encryptionKey.length >= 16;
+    const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
+
+    let credentials: CredentialsConfig;
+    if (shouldEnable && hasValidKey) {
+      credentials = {
+        enabled: true,
+        store: "sqlite",
+        encryptionKey,
+        autoDetect: credRaw?.autoDetect === true,
+        expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
+          ? Math.floor(credRaw.expiryWarningDays)
+          : 7,
+      };
+    } else if (shouldEnable && !hasValidKey) {
+      if (encKeyRaw.startsWith("env:")) {
+        throw new Error(`Credentials encryption key env var ${encKeyRaw.slice(4).trim()} is not set. Run 'openclaw hybrid-mem verify --fix' for help.`);
+      }
+      throw new Error("credentials.encryptionKey must be at least 16 characters (or use env:VAR). Run 'openclaw hybrid-mem verify --fix' for help.");
+    } else {
+      credentials = {
+        enabled: false,
+        store: "sqlite",
+        encryptionKey: "",
+        autoDetect: false,
+        expiryWarningDays: 7,
+      };
+    }
+
     return {
       embedding: {
         provider: "openai",
@@ -255,6 +325,7 @@ export const hybridConfigSchema = {
       categories: [...getMemoryCategories()],
       autoClassify,
       store,
+      credentials,
     };
   },
 };

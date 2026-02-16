@@ -6,6 +6,11 @@ Hybrid memory plugin: **SQLite + FTS5** for structured facts and **LanceDB** for
 
 Based on the design in **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (Clawdboss.ai). The plugin has since been extended with auto-capture, auto-recall, decay/TTL, auto-classify, token caps, consolidation, verify/uninstall CLI, and more — see the repo root and [hybrid-memory-manager-v3.md](../../docs/hybrid-memory-manager-v3.md).
 
+## Requirements
+
+- **OpenAI API key** — Required. The plugin uses it for embeddings (default model `text-embedding-3-small`); without a valid `embedding.apiKey` in config the plugin does not load. Optional features (auto-classify, summarize, consolidate) use the same key with a chat model (e.g. `gpt-4o-mini`). See the [v3 guide](../../docs/hybrid-memory-manager-v3.md) §1.5 and §4.
+- **Build tools** for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
+
 ## Installation (use the v3 guide)
 
 **Do not use the old setup prompts** in `docs/archive/` (SETUP-PROMPT-1..4). They target an older plugin version and do not match the current `index.ts` / `config.ts`. They are kept for **credit and history only**.

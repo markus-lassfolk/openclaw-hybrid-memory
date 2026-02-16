@@ -20,7 +20,12 @@
             "model": "text-embedding-3-small"
           },
           "autoCapture": true,
-          "autoRecall": true
+          "autoRecall": true,
+          "credentials": {
+            "enabled": true,
+            "store": "sqlite",
+            "encryptionKey": "env:OPENCLAW_CRED_KEY"
+          }
         }
       }
     }

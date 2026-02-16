@@ -51,8 +51,18 @@ function expandPath(p) {
 }
 
 // Simple fact extraction (no hardcoded sections — pattern-based)
+// When parsing old memories: include source_date if available (e.g. [YYYY-MM-DD] prefix).
 function extractFact(line) {
-  const t = line.replace(/^[-*#>\s]+/, "").trim();
+  let t = line.replace(/^[-*#>\s]+/, "").trim();
+
+  // If line starts with [YYYY-MM-DD], extract as source_date and strip from text
+  const datePrefix = /^\[(\d{4}-\d{2}-\d{2})\]\s*/;
+  let source_date = null;
+  const match = t.match(datePrefix);
+  if (match) {
+    source_date = match[1];
+    t = t.slice(match[0].length).trim();
+  }
   if (t.length < 10 || t.length > 500) return null;
   const lower = t.toLowerCase();
   if (/\b(api[_-]?key|password|secret|token)\s*[:=]/i.test(t)) return null;
@@ -103,7 +113,7 @@ function extractFact(line) {
 
   // Fallback: keep as generic fact so backfill doesn't drop valid bullets
   if (!entity && !key && category === "other") {
-    return { text: t, category: "other", entity: null, key: null, value: t.slice(0, 200) };
+    return { text: t, category: "other", entity: null, key: null, value: t.slice(0, 200), source_date };
   }
   return {
     text: t,
@@ -111,6 +121,7 @@ function extractFact(line) {
     entity: entity || null,
     key: key || null,
     value: value || t.slice(0, 200),
+    source_date,
   };
 }
 
@@ -263,13 +274,26 @@ async function main() {
       CREATE INDEX IF NOT EXISTS idx_facts_decay ON facts(decay_class);
     `);
   }
+  const colsAfter = db.prepare("PRAGMA table_info(facts)").all().map((c) => c.name);
+  if (!colsAfter.includes("source_date")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_source_date ON facts(source_date) WHERE source_date IS NOT NULL`);
+  }
   const hasDup = (text) => db.prepare("SELECT id FROM facts WHERE text = ? LIMIT 1").get(text);
 
   const nowSec = Math.floor(Date.now() / 1000);
   const stableTtl = 90 * 24 * 3600;
+  const parseSourceDate = (s) => {
+    if (!s || typeof s !== "string") return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+    if (!m) return null;
+    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+    const sec = Math.floor(ms / 1000);
+    return isNaN(sec) ? null : sec;
+  };
   const insertFact = db.prepare(
-    `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stable', ?, ?, 1.0)`
+    `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, source_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stable', ?, ?, 1.0, ?)`
   );
 
   const conn = await lancedb.connect(lancePath);
@@ -299,6 +323,7 @@ async function main() {
       continue;
     }
     const id = randomUUID();
+    const sourceDate = parseSourceDate(fact.source_date);
     insertFact.run(
       id,
       fact.text,
@@ -310,7 +335,8 @@ async function main() {
       `backfill:${fact.source}`,
       nowSec,
       nowSec + stableTtl,
-      nowSec
+      nowSec,
+      sourceDate
     );
     const { data } = await openai.embeddings.create({
       model,

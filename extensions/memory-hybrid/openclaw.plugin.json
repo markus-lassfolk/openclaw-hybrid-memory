@@ -1,7 +1,7 @@
 {
   "id": "memory-hybrid",
   "kind": "memory",
-  "version": "2026.2.15",
+  "version": "2026.2.16",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",
@@ -105,6 +105,24 @@
     "store.fuzzyDedupe": {
       "label": "Store fuzzy dedupe",
       "help": "Skip storing when normalized text (trim, collapse whitespace, lowercase) matches an existing fact (2.3)"
+    },
+    "credentials.enabled": {
+      "label": "Credentials",
+      "help": "Opt-in encrypted credential store for API keys, tokens, passwords"
+    },
+    "credentials.encryptionKey": {
+      "label": "Credentials encryption key",
+      "sensitive": true,
+      "placeholder": "env:OPENCLAW_CRED_KEY",
+      "help": "Use env:VAR_NAME (e.g. env:OPENCLAW_CRED_KEY) or provide 16+ char secret"
+    },
+    "credentials.autoDetect": {
+      "label": "Credential auto-detect",
+      "help": "When enabled, detect API keys/tokens in conversation and prompt to store"
+    },
+    "credentials.expiryWarningDays": {
+      "label": "Expiry warning days",
+      "help": "Warn when credentials expire within this many days (default 7)"
     }
   },
   "configSchema": {
@@ -183,6 +201,18 @@
         "properties": {
           "fuzzyDedupe": { "type": "boolean" }
         }
+      },
+      "credentials": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "store": { "type": "string", "enum": ["sqlite"] },
+          "encryptionKey": { "type": "string" },
+          "autoDetect": { "type": "boolean", "description": "Detect credential patterns in conversation and prompt to store" },
+          "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
+        },
+        "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
       }
     },
     "required": ["embedding"]
