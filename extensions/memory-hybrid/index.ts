@@ -1182,6 +1182,18 @@ class ProposalsDB {
   }
 
   private rowToEntry(row: any): ProposalEntry {
+    // Parse evidence_sessions with error handling for corrupted data
+    let evidenceSessions: string[] = [];
+    try {
+      evidenceSessions = JSON.parse(row.evidence_sessions);
+      if (!Array.isArray(evidenceSessions)) {
+        evidenceSessions = [];
+      }
+    } catch {
+      // Corrupted JSON - fallback to empty array
+      evidenceSessions = [];
+    }
+
     return {
       id: row.id,
       targetFile: row.target_file,
@@ -1189,7 +1201,7 @@ class ProposalsDB {
       observation: row.observation,
       suggestedChange: row.suggested_change,
       confidence: row.confidence,
-      evidenceSessions: JSON.parse(row.evidence_sessions),
+      evidenceSessions,
       status: row.status,
       createdAt: row.created_at,
       reviewedAt: row.reviewed_at,
@@ -3010,8 +3022,8 @@ const memoryHybridPlugin = {
     // ========================================================================
 
     if (cfg.personaProposals.enabled && proposalsDb) {
-      // Helper: audit trail logging
-      const auditProposal = (action: string, proposalId: string, details?: any) => {
+      // Shared helper: audit trail logging (used by both tools and CLI commands)
+      const auditProposal = (action: string, proposalId: string, details?: any, logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }) => {
         const auditDir = join(dirname(resolvedSqlitePath), "memory", "decisions");
         mkdirSync(auditDir, { recursive: true });
         const timestamp = new Date().toISOString();
@@ -3025,7 +3037,12 @@ const memoryHybridPlugin = {
         try {
           writeFileSync(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
         } catch (err) {
-          api.logger.warn(`memory-hybrid: audit log write failed: ${err}`);
+          const msg = `Audit log write failed: ${err}`;
+          if (logger?.warn) {
+            logger.warn(`memory-hybrid: ${msg}`);
+          } else if (logger?.error) {
+            logger.error(msg);
+          }
         }
       };
 
@@ -3079,6 +3096,47 @@ const memoryHybridPlugin = {
               confidence: number;
               evidenceSessions: string[];
             };
+
+            // Field length validation (prevent database bloat and file corruption)
+            const MAX_TITLE_LENGTH = 200;
+            const MAX_OBSERVATION_LENGTH = 5000;
+            const MAX_SUGGESTED_CHANGE_LENGTH = 10000;
+
+            if (title.length > MAX_TITLE_LENGTH) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Title too long: ${title.length} chars (max: ${MAX_TITLE_LENGTH})`,
+                  },
+                ],
+                details: { error: "title_too_long", length: title.length, max: MAX_TITLE_LENGTH },
+              };
+            }
+
+            if (observation.length > MAX_OBSERVATION_LENGTH) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Observation too long: ${observation.length} chars (max: ${MAX_OBSERVATION_LENGTH})`,
+                  },
+                ],
+                details: { error: "observation_too_long", length: observation.length, max: MAX_OBSERVATION_LENGTH },
+              };
+            }
+
+            if (suggestedChange.length > MAX_SUGGESTED_CHANGE_LENGTH) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Suggested change too long: ${suggestedChange.length} chars (max: ${MAX_SUGGESTED_CHANGE_LENGTH})`,
+                  },
+                ],
+                details: { error: "suggested_change_too_long", length: suggestedChange.length, max: MAX_SUGGESTED_CHANGE_LENGTH },
+              };
+            }
 
             // Rate limiting
             const rateCheck = checkRateLimit();
@@ -3141,7 +3199,7 @@ const memoryHybridPlugin = {
               title,
               confidence,
               evidenceCount: evidenceSessions.length,
-            });
+            }, api.logger);
 
             api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
 
@@ -4702,25 +4760,7 @@ const memoryHybridPlugin = {
     // ========================================================================
 
     if (cfg.personaProposals.enabled && proposalsDb) {
-      // Helper functions for CLI commands
-      const auditProposal = (action: string, proposalId: string, details?: any) => {
-        const auditDir = join(dirname(resolvedSqlitePath), "memory", "decisions");
-        mkdirSync(auditDir, { recursive: true });
-        const timestamp = new Date().toISOString();
-        const entry = {
-          timestamp,
-          action,
-          proposalId,
-          ...details,
-        };
-        const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
-        try {
-          writeFileSync(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
-        } catch (err) {
-          console.error(`Audit log write failed: ${err}`);
-        }
-      };
-
+      // auditProposal is defined in the shared scope above and reused here
       api.registerCli(({ program }) => {
         const proposals = program
           .command("proposals")
@@ -4754,7 +4794,7 @@ const memoryHybridPlugin = {
               reviewedBy: opts.reviewedBy ?? "cli-user",
               previousStatus: "pending",
               newStatus,
-            });
+            }, { error: console.error });
 
             console.log(`Proposal ${proposalId} ${action}d.`);
             if (action === "approve") {
@@ -4777,6 +4817,19 @@ const memoryHybridPlugin = {
               process.exit(1);
             }
 
+            // Re-validate targetFile against current allowedFiles config (defense against config changes or DB tampering)
+            if (!cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
+              console.error(`Target file ${proposal.targetFile} is no longer in allowedFiles. Cannot apply.`);
+              console.error(`Current allowedFiles: ${cfg.personaProposals.allowedFiles.join(", ")}`);
+              process.exit(1);
+            }
+
+            // Additional path traversal defense (even though schema validates at creation)
+            if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
+              console.error(`Invalid target file path: ${proposal.targetFile}. Path traversal detected.`);
+              process.exit(1);
+            }
+
             // Resolve target file path
             const targetPath = api.resolvePath(proposal.targetFile);
 
@@ -4785,25 +4838,38 @@ const memoryHybridPlugin = {
               process.exit(1);
             }
 
+            // Mark as applied BEFORE file operations to prevent concurrent double-application
+            // If file ops fail, we'll have an "applied" proposal that didn't actually apply,
+            // but that's safer than applying twice. The backup and audit log provide recovery.
+            proposalsDb!.markApplied(proposalId);
+
             // Create backup
             const backupPath = `${targetPath}.backup-${Date.now()}`;
             try {
               const original = readFileSync(targetPath, "utf-8");
               writeFileSync(backupPath, original);
 
-              // Apply change
-              const timestamp = new Date().toISOString();
-              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${proposal.observation} -->\n\n${proposal.suggestedChange}\n`;
-              writeFileSync(targetPath, original + changeBlock);
+              // Escape HTML comment sequences to prevent breakout
+              const escapeHtmlComment = (text: string): string => {
+                return text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
+              };
 
-              proposalsDb!.markApplied(proposalId);
+              // Apply change (simple append strategy)
+              // TODO: Future enhancement - use cfg.personaProposals.validationModel for:
+              //   - Smart diff application (parse existing structure, insert intelligently)
+              //   - Content validation (check for dangerous patterns)
+              //   - Merge conflict resolution
+              const timestamp = new Date().toISOString();
+              const safeObservation = escapeHtmlComment(proposal.observation);
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
+              writeFileSync(targetPath, original + changeBlock);
 
               auditProposal("applied", proposalId, {
                 targetFile: proposal.targetFile,
                 targetPath,
                 backupPath,
                 timestamp,
-              });
+              }, { error: console.error });
 
               console.log(`Proposal ${proposalId} applied to ${proposal.targetFile}`);
               console.log(`Backup saved: ${backupPath}`);

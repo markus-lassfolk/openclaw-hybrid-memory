@@ -106,7 +106,7 @@ export type PersonaProposalsConfig = {
   proposalTTLDays: number;
   /** Require minimum session evidence count (default: 10) */
   minSessionEvidence: number;
-  /** LLM model for proposal validation/formatting (default: gpt-4o-mini) */
+  /** LLM model for proposal validation/formatting (default: gpt-4o-mini). Reserved for future use: smart diff application, content validation, merge conflict resolution. */
   validationModel: string;
 };
 
