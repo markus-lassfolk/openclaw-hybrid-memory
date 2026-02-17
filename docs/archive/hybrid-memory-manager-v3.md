@@ -7,7 +7,7 @@ Single deployment-ready reference for the **full hybrid memory system**: vector/
 
 This document unifies:
 
-- **Current setup** (hybrid-hierarchical memory from `hybrid-hierarchical-memory-guide.md` v2.0, see [archive](archive/))
+- **Current setup** (hybrid-hierarchical memory from `hybrid-hierarchical-memory-guide.md` v2.0, see [archive](../archive/))
 - **ucsandman** [OpenClaw-Hierarchical-Memory-System](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System): index + drill-down, token math, safeguards
 - **Clawdboss.ai** [Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory): **memory-hybrid** plugin (SQLite+FTS5+LanceDB), decay, checkpoints
 
@@ -19,27 +19,27 @@ The full documentation is split into focused guides for easy navigation:
 
 | Document | What it covers |
 |----------|---------------|
-| **[QUICKSTART.md](QUICKSTART.md)** | Install the plugin, apply config, verify — get running in 10 minutes |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap vs memory files, MEMORY.md template |
-| **[CONFIGURATION.md](CONFIGURATION.md)** | All `openclaw.json` settings: plugin config, memorySearch, compaction, auto-recall, bootstrap limits |
-| **[FEATURES.md](FEATURES.md)** | Categories, classification pipeline, decay & pruning, auto-classify, source dates, auto-tagging |
-| **[CLI-REFERENCE.md](CLI-REFERENCE.md)** | All `openclaw hybrid-mem` commands with options |
-| **[MEMORY-PROTOCOL.md](MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md block for the Memory Protocol |
-| **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** | Common issues, API key behaviour, diagnostic commands |
-| **[MAINTENANCE.md](MAINTENANCE.md)** | File hygiene, periodic review, deployment flow, upgrading OpenClaw |
+| **[QUICKSTART.md](../QUICKSTART.md)** | Install the plugin, apply config, verify — get running in 10 minutes |
+| **[ARCHITECTURE.md](../ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap vs memory files, MEMORY.md template |
+| **[CONFIGURATION.md](../CONFIGURATION.md)** | All `openclaw.json` settings: plugin config, memorySearch, compaction, auto-recall, bootstrap limits |
+| **[FEATURES.md](../FEATURES.md)** | Categories, classification pipeline, decay & pruning, auto-classify, source dates, auto-tagging |
+| **[CLI-REFERENCE.md](../CLI-REFERENCE.md)** | All `openclaw hybrid-mem` commands with options |
+| **[MEMORY-PROTOCOL.md](../MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md block for the Memory Protocol |
+| **[TROUBLESHOOTING.md](../TROUBLESHOOTING.md)** | Common issues, API key behaviour, diagnostic commands |
+| **[MAINTENANCE.md](../MAINTENANCE.md)** | File hygiene, periodic review, deployment flow, upgrading OpenClaw |
 
 ### Other docs
 
 | Document | What it covers |
 |----------|---------------|
-| [CREDENTIALS.md](CREDENTIALS.md) | Credentials vault (opt-in encrypted credential store) |
-| [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) | Extracting facts from session logs |
-| [GRAPH-MEMORY.md](GRAPH-MEMORY.md) | Graph memory / fact linking (FR-007) |
-| [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) | Write-ahead log design |
-| [SETUP-AUTONOMOUS.md](SETUP-AUTONOMOUS.md) | AI-friendly setup (imperative phase-by-phase for agents) |
-| [REFLECTION.md](REFLECTION.md) | Reflection system (FR-011) |
-| [MODEL-AGNOSTIC-ANALYSIS.md](MODEL-AGNOSTIC-ANALYSIS.md) | Analysis of multi-provider support options |
-| [FEEDBACK-ROADMAP.md](FEEDBACK-ROADMAP.md) | Post-PR #15 feedback roadmap (completed) |
+| [CREDENTIALS.md](../CREDENTIALS.md) | Credentials vault (opt-in encrypted credential store) |
+| [SESSION-DISTILLATION.md](../SESSION-DISTILLATION.md) | Extracting facts from session logs |
+| [GRAPH-MEMORY.md](../GRAPH-MEMORY.md) | Graph memory / fact linking (FR-007) |
+| [WAL-CRASH-RESILIENCE.md](../WAL-CRASH-RESILIENCE.md) | Write-ahead log design |
+| [SETUP-AUTONOMOUS.md](../SETUP-AUTONOMOUS.md) | AI-friendly setup (imperative phase-by-phase for agents) |
+| [REFLECTION.md](../REFLECTION.md) | Reflection system (FR-011) |
+| [MODEL-AGNOSTIC-ANALYSIS.md](../MODEL-AGNOSTIC-ANALYSIS.md) | Analysis of multi-provider support options |
+| [FEEDBACK-ROADMAP.md](../FEEDBACK-ROADMAP.md) | Post-PR #15 feedback roadmap (completed) |
 
 ---
 
@@ -62,7 +62,7 @@ openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
 ```
 
-See [QUICKSTART.md](QUICKSTART.md) for the full walkthrough.
+See [QUICKSTART.md](../QUICKSTART.md) for the full walkthrough.
 
 ---
 
@@ -75,7 +75,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the full walkthrough.
 | Semantic file search | memorySearch (BM25 + vector) | Automatic |
 | Hierarchical files | `memory/` directory + `MEMORY.md` | Manual read/write |
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full design.
 
 ---
 
