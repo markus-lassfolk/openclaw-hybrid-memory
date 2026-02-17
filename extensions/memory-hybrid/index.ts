@@ -180,6 +180,15 @@ type WALEntry = {
   };
 };
 
+/**
+ * Write-Ahead Log for crash resilience.
+ * 
+ * Note: This implementation uses synchronous file I/O for simplicity and assumes
+ * single-threaded operation. In high-throughput scenarios with concurrent memory
+ * operations, consider implementing a write queue or mutex to serialize WAL writes
+ * and prevent potential race conditions that could corrupt the newline-delimited
+ * JSON format.
+ */
 class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
@@ -200,19 +209,39 @@ class WriteAheadLog {
   write(entry: WALEntry): void {
     // Append entry as newline-delimited JSON for O(1) writes
     const line = JSON.stringify(entry) + "\n";
+    let fd: number | undefined;
     try {
-      const fd = openSync(this.walPath, "a");
+      fd = openSync(this.walPath, "a");
       writeSync(fd, line);
-      closeSync(fd);
     } catch (err) {
       this.logger?.warn(`memory-hybrid: WAL append failed for entry ${entry.id} (${err}), falling back to read-modify-write`);
       // Fallback to less efficient method if append fails
       const entries = this.readAll();
       entries.push(entry);
       this.writeAll(entries);
+    } finally {
+      if (fd !== undefined) {
+        try {
+          closeSync(fd);
+        } catch {
+          // Swallow close errors to avoid masking the original error or fallback behavior
+        }
+      }
     }
   }
 
+  /**
+   * Remove a WAL entry by ID.
+   * 
+   * Note: This is an O(n) operation that reads the entire WAL, filters entries,
+   * and rewrites the file. This is acceptable because:
+   * 1. WAL entries are short-lived (pruned after maxAge, default 5 minutes)
+   * 2. Removes happen after successful commits, not on the critical write path
+   * 3. The pruneStale() operation periodically cleans up the WAL
+   * 
+   * For high-throughput scenarios, consider using tombstone markers instead of
+   * immediate removal, deferring cleanup to pruneStale().
+   */
   remove(id: string): void {
     // Read all entries, filter out the one to remove, and rewrite
     const entries = this.readAll();
@@ -230,11 +259,23 @@ class WriteAheadLog {
         // Legacy JSON array format
         return JSON.parse(content) as WALEntry[];
       } else {
-        // Newline-delimited JSON format
-        return content
+        // Newline-delimited JSON format - parse each line individually to skip malformed entries
+        const lines = content
           .split("\n")
-          .filter((line) => line.trim().length > 0)
-          .map((line) => JSON.parse(line) as WALEntry);
+          .filter((line) => line.trim().length > 0);
+        const entries: WALEntry[] = [];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          try {
+            const parsed = JSON.parse(line) as WALEntry;
+            entries.push(parsed);
+          } catch (parseErr) {
+            this.logger?.warn(
+              `memory-hybrid: WAL read skipped malformed JSON line ${i} (${parseErr})`
+            );
+          }
+        }
+        return entries;
       }
     } catch (err) {
       this.logger?.warn(`memory-hybrid: WAL read failed (${err}), returning empty array`);
@@ -243,7 +284,11 @@ class WriteAheadLog {
   }
 
   private writeAll(entries: WALEntry[]): void {
-    // Write as newline-delimited JSON (always with trailing newline for consistency)
+    // Write as newline-delimited JSON; write empty string when there are no entries
+    if (entries.length === 0) {
+      writeFileSync(this.walPath, "", "utf-8");
+      return;
+    }
     const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
     writeFileSync(this.walPath, content, "utf-8");
   }
@@ -2713,9 +2758,9 @@ const memoryHybridPlugin = {
     }
 
     // Initialize WAL (Write-Ahead Log) for crash resilience
-    if (cfg.wal?.enabled) {
-      const walPath = cfg.wal?.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
-      const maxAge = cfg.wal?.maxAge || 300000; // 5 minutes default
+    if (cfg.wal.enabled) {
+      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
+      const maxAge = cfg.wal.maxAge || 300000; // 5 minutes default
       wal = new WriteAheadLog(api.resolvePath(walPath), maxAge, api.logger);
       api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
       
@@ -3049,7 +3094,32 @@ const memoryHybridPlugin = {
               }
 
               if (classification.action === "DELETE" && classification.targetId) {
+                // WAL: Write pending DELETE operation
+                const walEntryId = randomUUID();
+                if (wal) {
+                  try {
+                    wal.write({
+                      id: walEntryId,
+                      timestamp: Date.now(),
+                      operation: "delete",
+                      data: { targetId: classification.targetId },
+                    });
+                  } catch (err) {
+                    api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+                  }
+                }
+
                 factsDb.supersede(classification.targetId, null);
+
+                // Remove from WAL after successful commit
+                if (wal) {
+                  try {
+                    wal.remove(walEntryId);
+                  } catch (err) {
+                    api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
+                  }
+                }
+
                 return {
                   content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
                   details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
@@ -5102,7 +5172,32 @@ const memoryHybridPlugin = {
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
+                    // WAL: Write pending DELETE operation
+                    const walEntryId = randomUUID();
+                    if (wal) {
+                      try {
+                        wal.write({
+                          id: walEntryId,
+                          timestamp: Date.now(),
+                          operation: "delete",
+                          data: { targetId: classification.targetId },
+                        });
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
+                      }
+                    }
+
                     factsDb.supersede(classification.targetId, null);
+
+                    // Remove from WAL after successful commit
+                    if (wal) {
+                      try {
+                        wal.remove(walEntryId);
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
+                      }
+                    }
+
                     api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                     continue;
                   }
