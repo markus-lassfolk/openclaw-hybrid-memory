@@ -157,6 +157,81 @@ function parseSourceDate(v: string | number | null | undefined): number | null {
   return !isNaN(n) && n > 0 ? n : null;
 }
 
+// ============================================================================
+// Write-Ahead Log (WAL) for Crash Resilience
+// ============================================================================
+
+type WALEntry = {
+  id: string;
+  timestamp: number;
+  operation: "store" | "delete" | "update";
+  data: {
+    text: string;
+    category?: string;
+    importance?: number;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    source?: string;
+    decayClass?: DecayClass;
+    summary?: string | null;
+    tags?: string[];
+    vector?: number[];
+  };
+};
+
+class WriteAheadLog {
+  private walPath: string;
+  private maxAge: number;
+
+  constructor(walPath: string, maxAge: number = 300000) {
+    this.walPath = walPath;
+    this.maxAge = maxAge;
+    mkdirSync(dirname(walPath), { recursive: true });
+    
+    // Initialize WAL file if it doesn't exist
+    if (!existsSync(walPath)) {
+      writeFileSync(walPath, "[]", "utf-8");
+    }
+  }
+
+  write(entry: WALEntry): void {
+    const entries = this.readAll();
+    entries.push(entry);
+    writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+  }
+
+  remove(id: string): void {
+    const entries = this.readAll();
+    const filtered = entries.filter((e) => e.id !== id);
+    writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+  }
+
+  readAll(): WALEntry[] {
+    try {
+      const content = readFileSync(this.walPath, "utf-8");
+      return JSON.parse(content) as WALEntry[];
+    } catch {
+      return [];
+    }
+  }
+
+  pruneStale(): number {
+    const now = Date.now();
+    const entries = this.readAll();
+    const fresh = entries.filter((e) => now - e.timestamp < this.maxAge);
+    const pruned = entries.length - fresh.length;
+    if (pruned > 0) {
+      writeFileSync(this.walPath, JSON.stringify(fresh, null, 2), "utf-8");
+    }
+    return pruned;
+  }
+
+  clear(): void {
+    writeFileSync(this.walPath, "[]", "utf-8");
+  }
+}
+
 class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
@@ -695,8 +770,8 @@ class FactsDB {
     return row?.id ?? null;
   }
 
-  /** FR-008/010: Mark a fact as superseded by a new fact. */
-  supersede(oldId: string, newId: string): boolean {
+  /** FR-008/010: Mark a fact as superseded by a new fact. For deletions, pass null as newId. */
+  supersede(oldId: string, newId: string | null): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
     const result = this.liveDb
       .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
@@ -1486,7 +1561,10 @@ Examples:
     const reason = match[3].trim();
 
     // Validate targetId if UPDATE or DELETE
-    if ((action === "UPDATE" || action === "DELETE") && targetId) {
+    if (action === "UPDATE" || action === "DELETE") {
+      if (!targetId) {
+        return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
+      }
       const validTarget = existingFacts.find((f) => f.id === targetId);
       if (!validTarget) {
         return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
@@ -2553,6 +2631,7 @@ let vectorDb: VectorDB;
 let embeddings: Embeddings;
 let openaiClient: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
+let wal: WriteAheadLog | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -2599,6 +2678,26 @@ const memoryHybridPlugin = {
       } catch {
         // ignore invalid or missing file
       }
+    }
+
+    // Initialize WAL (Write-Ahead Log) for crash resilience
+    if (cfg.wal.enabled) {
+      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
+      const maxAge = cfg.wal.maxAge || 300000; // 5 minutes default
+      wal = new WriteAheadLog(api.resolvePath(walPath), maxAge);
+      api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
+      
+      // Prune stale entries on startup
+      const pruned = wal.pruneStale();
+      if (pruned > 0) {
+        api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
+      }
+      
+      // TODO: Implement WAL recovery logic here
+      // For now, we just log that WAL is enabled
+      // Recovery would replay uncommitted operations from the WAL
+    } else {
+      wal = null;
     }
 
     api.logger.info(
@@ -2918,7 +3017,7 @@ const memoryHybridPlugin = {
               }
 
               if (classification.action === "DELETE" && classification.targetId) {
-                factsDb.supersede(classification.targetId, "deleted");
+                factsDb.supersede(classification.targetId, null);
                 return {
                   content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
                   details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
@@ -4971,7 +5070,7 @@ const memoryHybridPlugin = {
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
-                    factsDb.supersede(classification.targetId, "deleted");
+                    factsDb.supersede(classification.targetId, null);
                     api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                     continue;
                   }
