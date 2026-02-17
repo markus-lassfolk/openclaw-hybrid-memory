@@ -1,7 +1,7 @@
 # Autonomous Hybrid Memory Setup
 
 **For:** An OpenClaw agent setting up the full hybrid memory system on itself.
-**Reference:** [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) (documentation hub). For troubleshooting see [TROUBLESHOOTING.md](TROUBLESHOOTING.md). For configuration see [CONFIGURATION.md](CONFIGURATION.md).
+**Reference:** [README](../README.md) (project overview and all docs). For troubleshooting see [TROUBLESHOOTING.md](TROUBLESHOOTING.md). For configuration see [CONFIGURATION.md](CONFIGURATION.md).
 **Repo root:** The directory containing this file's parent (`docs/`).
 
 **Prerequisites:** An **OpenAI API key** is required. The memory-hybrid plugin will not load without `embedding.apiKey` in config. You will need it in Phase 4; if the user has not provided one, stop and ask before writing config. A **Google (Gemini) API key** is optional but recommended for Phase 7b (session distillation); if missing, that phase will be skipped or run with another model (smaller batches).
@@ -10,7 +10,7 @@
 
 ## Instructions
 
-You are setting up the **full hybrid memory system** on this OpenClaw instance. Follow each phase in order. After each phase, run the verification step before continuing. Skip steps that are already done (check first). If a step fails, consult `hybrid-memory-manager-v3.md` at the noted section.
+You are setting up the **full hybrid memory system** on this OpenClaw instance. Follow each phase in order. After each phase, run the verification step before continuing. Skip steps that are already done (check first). If a step fails, consult [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ---
 
@@ -367,7 +367,7 @@ Run through this checklist:
 
 | What | Where |
 |------|-------|
-| Documentation hub | [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) |
+| Project overview | [README](../README.md) |
 | Quick start (manual) | [QUICKSTART.md](QUICKSTART.md) |
 | Plugin source | `extensions/memory-hybrid/` |
 | Config snippet | `deploy/openclaw.memory-snippet.json` |

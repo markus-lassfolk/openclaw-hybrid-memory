@@ -4,11 +4,11 @@ Your OpenClaw agent forgets after each session. This plugin gives it **lasting m
 
 Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw-hybrid-memory) v3 deployment.
 
-**Repository:** [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory) · **Docs:** [v3 deployment guide](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/hybrid-memory-manager-v3.md) · [README / Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory#quick-start)
+**Repository:** [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory) · **Docs:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md) · [README](https://github.com/markus-lassfolk/openclaw-hybrid-memory#quick-start)
 
 ## Requirements
 
-- **OpenAI API key** — Required. The plugin uses it for embeddings (default model `text-embedding-3-small`); without a valid `embedding.apiKey` in config the plugin does not load. Optional features (auto-classify, summarize, consolidate, **memory classification [FR-008]**) use the same key with a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts (by embedding similarity) before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. See the [v3 guide](../../docs/hybrid-memory-manager-v3.md) §1.5 and §4.
+- **OpenAI API key** — Required. The plugin uses it for embeddings (default model `text-embedding-3-small`); without a valid `embedding.apiKey` in config the plugin does not load. Optional features (auto-classify, summarize, consolidate, **memory classification [FR-008]**) use the same key with a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts (by embedding similarity) before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
 - **Build tools** for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
 ## Installation
@@ -25,7 +25,7 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 
 **3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job).
 
-**More options:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory#quick-start) and [v3 deployment guide](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/hybrid-memory-manager-v3.md) (manual config merge, from-source install).
+**More options:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md) and [Configuration](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md) (manual config merge, from-source install).
 
 ## Files in this directory
 
@@ -48,4 +48,4 @@ Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential`
 
 ## Credits
 
-Based on the design in **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (Clawdboss.ai). The plugin has since been extended with auto-capture, auto-recall, decay/TTL, auto-classify, token caps, consolidation, verify/uninstall CLI, and more — see the repo root and [hybrid-memory-manager-v3.md](../../docs/hybrid-memory-manager-v3.md).
+Based on the design in **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (Clawdboss.ai). The plugin has since been extended with auto-capture, auto-recall, decay/TTL, auto-classify, token caps, consolidation, verify/uninstall CLI, and more — see the [repo README](../../README.md) and [docs/](../../docs/).

@@ -134,6 +134,6 @@ If you want to proceed with Option C later, the next step is to add `embedding.p
 
 ## Related docs
 
-- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [README](../README.md) — Project overview and all docs
 - [CONFIGURATION.md](CONFIGURATION.md) — Current config reference (OpenAI-only)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture overview
