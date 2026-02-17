@@ -490,8 +490,9 @@ export class FactsDB {
     const range = maxRank - minRank || 1;
 
     const results = rows.map((row) => {
-      const bm25Score = 1 - ((row.rank as number) - minRank) / range ?? 0.8;
-      const freshness = (row.freshness as number) ?? 1.0;
+      const rawScore = 1 - ((row.rank as number) - minRank) / range;
+      const bm25Score = Number.isNaN(rawScore) ? 0.8 : rawScore;
+      const freshness = (row.freshness as number) || 1.0;
       const confidence = (row.confidence as number) || 1.0;
       const composite = bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15;
 
