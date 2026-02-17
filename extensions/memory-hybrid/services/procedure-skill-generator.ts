@@ -141,14 +141,3 @@ ${stepsMd}
     paths,
   };
 }
-
-/**
- * Return procedures that are stale (past TTL) for revalidation/decay.
- */
-export function getStaleProcedures(
-  factsDb: FactsDB,
-  ttlDays: number,
-  limit = 100,
-): ProcedureEntry[] {
-  return factsDb.getStaleProcedures(ttlDays, limit);
-}
