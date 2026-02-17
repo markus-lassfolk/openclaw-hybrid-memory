@@ -36,6 +36,27 @@ export type StoreCliResult =
   | { outcome: "updated"; id: string; supersededId: string; reason: string }
   | { outcome: "stored"; id: string; textPreview: string };
 
+export type InstallCliResult =
+  | { ok: true; configPath: string; dryRun: boolean; written: boolean; configJson?: string; pluginId: string }
+  | { ok: false; error: string };
+
+export type VerifyCliSink = { log: (s: string) => void; error?: (s: string) => void };
+
+export type DistillWindowResult = { mode: "full" | "incremental"; startDate: string; endDate: string; mtimeDays: number };
+
+export type RecordDistillResult = { path: string; timestamp: string };
+
+export type ExtractDailyResult = { totalExtracted: number; totalStored: number; daysBack: number; dryRun: boolean };
+export type ExtractDailySink = { log: (s: string) => void; warn: (s: string) => void };
+
+export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
+
+export type UninstallCliResult =
+  | { outcome: "config_updated"; pluginId: string; cleaned: string[] }
+  | { outcome: "config_not_found"; pluginId: string; cleaned: string[] }
+  | { outcome: "config_error"; error: string; pluginId: string; cleaned: string[] }
+  | { outcome: "leave_config"; pluginId: string; cleaned: string[] };
+
 export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
@@ -45,6 +66,13 @@ export type HybridMemCliContext = {
   parseSourceDate: (v: string | number | null | undefined) => number | null;
   getMemoryCategories: () => string[];
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
+  runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
+  runVerify: (opts: { fix: boolean; logFile?: string }, sink: VerifyCliSink) => Promise<void>;
+  runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
+  runRecordDistill: () => Promise<RecordDistillResult>;
+  runExtractDaily: (opts: { days: number; dryRun: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
+  runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runFindDuplicates: (opts: {
     threshold: number;
     includeStructured: boolean;
@@ -93,6 +121,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     parseSourceDate: parseDate,
     getMemoryCategories,
     runStore,
+    runInstall,
+    runVerify,
+    runDistillWindow,
+    runRecordDistill,
+    runExtractDaily,
+    runMigrateToVault,
+    runUninstall,
     runFindDuplicates,
     runConsolidate,
     runReflection,
@@ -333,6 +368,90 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     });
 
   mem
+    .command("install")
+    .description("Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.")
+    .option("--dry-run", "Print what would be merged without writing")
+    .action(async (opts: { dryRun?: boolean }) => {
+      const result = await runInstall({ dryRun: !!opts.dryRun });
+      if (!result.ok) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      if (result.dryRun) {
+        console.log("Would merge into " + result.configPath + ":");
+        console.log(result.configJson ?? "");
+        return;
+      }
+      console.log("Config written: " + result.configPath);
+      console.log(`Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, pruning, autoClassify, nightly-memory-sweep job.`);
+      console.log("\nNext steps:");
+      console.log(`  1. Set embedding.apiKey in plugins.entries["${result.pluginId}"].config (or use env:OPENAI_API_KEY in config).`);
+      console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
+      console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
+    });
+
+  mem
+    .command("verify")
+    .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
+    .option("--fix", "Print or apply default config for missing items")
+    .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
+    .action(async (opts: { fix?: boolean; logFile?: string }) => {
+      await runVerify(
+        { fix: !!opts.fix, logFile: opts.logFile },
+        { log: (s) => console.log(s), error: (s) => console.error(s) },
+      );
+    });
+
+  mem
+    .command("distill-window")
+    .description("Print the session distillation window (full or incremental). Use at start of a distillation job to decide what to process; end the job with record-distill.")
+    .option("--json", "Output machine-readable JSON only (mode, startDate, endDate, mtimeDays)")
+    .action(async (opts: { json?: boolean }) => {
+      const result = await runDistillWindow({ json: !!opts.json });
+      if (opts.json) {
+        console.log(JSON.stringify(result));
+        return;
+      }
+      console.log(`Distill window: ${result.mode}`);
+      console.log(`  startDate: ${result.startDate}`);
+      console.log(`  endDate: ${result.endDate}`);
+      console.log(`  mtimeDays: ${result.mtimeDays} (use find ... -mtime -${result.mtimeDays} for session files)`);
+      console.log("Process sessions from that window; then run: openclaw hybrid-mem record-distill");
+    });
+
+  mem
+    .command("record-distill")
+    .description("Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)")
+    .action(async () => {
+      const result = await runRecordDistill();
+      console.log(`Recorded distillation run: ${result.timestamp}`);
+      console.log(`Written to ${result.path}. Run 'openclaw hybrid-mem verify' to see it.`);
+    });
+
+  mem
+    .command("extract-daily")
+    .description("Extract structured facts from daily memory files")
+    .option("--days <n>", "How many days back to scan", "7")
+    .option("--dry-run", "Show extractions without storing")
+    .action(async (opts: { days: string; dryRun?: boolean }) => {
+      const daysBack = parseInt(opts.days);
+      const result = await runExtractDaily(
+        { days: daysBack, dryRun: !!opts.dryRun },
+        { log: (s) => console.log(s), warn: (s) => console.warn(s) },
+      );
+      if (result.dryRun) {
+        console.log(`\nWould extract: ${result.totalExtracted} facts from last ${result.daysBack} days`);
+      } else {
+        console.log(
+          `\nExtracted ${result.totalStored} new facts (${result.totalExtracted} candidates, ${
+            result.totalExtracted - result.totalStored
+          } duplicates skipped)`,
+        );
+      }
+    });
+
+  mem
     .command("find-duplicates")
     .description("Report pairs of facts with embedding similarity ≥ threshold (2.2); no merge")
     .option("--threshold <n>", "Similarity threshold 0–1 (default 0.92)", "0.92")
@@ -475,6 +594,72 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         for (const [cat, count] of Object.entries(result.breakdown)) {
           console.log(`  ${cat}: ${count}`);
         }
+      }
+    });
+
+  const cred = mem
+    .command("credentials")
+    .description("Credentials vault commands");
+  cred
+    .command("migrate-to-vault")
+    .description("Move credential facts from memory into vault and redact originals (idempotent)")
+    .action(async () => {
+      const result = await runMigrateToVault();
+      if (result === null) {
+        console.error("Credentials vault is disabled. Enable it in plugin config (credentials.encryptionKey) and restart.");
+        return;
+      }
+      console.log(`Migrated: ${result.migrated}, skipped: ${result.skipped}`);
+      if (result.errors.length > 0) {
+        console.error("Errors:");
+        result.errors.forEach((e) => console.error(`  - ${e}`));
+      }
+    });
+
+  mem
+    .command("uninstall")
+    .description("Revert to OpenClaw default memory (memory-core). Safe: OpenClaw works normally; your data is kept unless you use --clean-all.")
+    .option("--clean-all", "Remove SQLite and LanceDB data (irreversible)")
+    .option("--force-cleanup", "Same as --clean-all")
+    .option("--leave-config", "Do not modify openclaw.json; only print instructions")
+    .action(async (opts: { cleanAll?: boolean; forceCleanup?: boolean; leaveConfig?: boolean }) => {
+      const cleanAll = !!opts.cleanAll || !!opts.forceCleanup;
+      const result = await runUninstall({ cleanAll, leaveConfig: !!opts.leaveConfig });
+      const pluginId = result.pluginId;
+      switch (result.outcome) {
+        case "config_updated":
+          console.log(`Config updated: plugins.slots.memory = "memory-core", ${pluginId} disabled.`);
+          console.log("OpenClaw will use the default memory manager. Restart the gateway. Your hybrid data is kept unless you run with --clean-all.");
+          break;
+        case "config_not_found":
+          console.log("Config file not found. Apply these changes manually:");
+          console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
+          console.log("  2. Set plugins.slots.memory to \"memory-core\".");
+          console.log(`  3. Set plugins.entries["${pluginId}"].enabled to false.`);
+          console.log("  4. Restart the gateway.");
+          break;
+        case "config_error":
+          console.error(`Could not update config: ${result.error}`);
+          console.log("Apply these changes manually:");
+          console.log("  1. Set plugins.slots.memory to \"memory-core\"");
+          console.log(`  2. Set plugins.entries["${pluginId}"].enabled to false`);
+          console.log("  3. Restart the gateway.");
+          break;
+        case "leave_config":
+          console.log("To use the default OpenClaw memory manager instead of hybrid:");
+          console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
+          console.log("  2. Set plugins.slots.memory to \"memory-core\".");
+          console.log(`  3. Set plugins.entries["${pluginId}"].enabled to false.`);
+          console.log("  4. Restart the gateway.");
+          break;
+      }
+      if (!cleanAll) {
+        console.log("\nMemory data (SQLite and LanceDB) was left in place. To remove it: openclaw hybrid-mem uninstall --clean-all");
+      } else if (result.cleaned.length > 0) {
+        console.log("\nRemoving hybrid-memory data...");
+        console.log("Removed: " + result.cleaned.join(", "));
+      } else {
+        console.log("\nNo hybrid data files found at configured paths.");
       }
     });
 }
