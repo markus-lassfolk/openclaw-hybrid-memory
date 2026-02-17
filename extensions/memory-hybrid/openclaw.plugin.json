@@ -42,7 +42,7 @@
     },
     "autoRecall.injectionFormat": {
       "label": "Auto-Recall injection format",
-      "help": "full = [backend/category] text, short = category: text, minimal = text only (saves tokens)"
+      "help": "full | short | minimal | progressive (progressive = memory index, agent fetches on demand)"
     },
     "autoRecall.limit": {
       "label": "Auto-Recall limit",
@@ -181,6 +181,21 @@
     "reflection.minObservations": {
       "label": "Min observations for pattern",
       "help": "Minimum observations required to generate a pattern (default 2)"
+    },
+    "wal.enabled": {
+      "label": "WAL (Write-Ahead Log)",
+      "help": "Enable crash resilience: uncommitted operations recovered on startup (FR-003, default true)"
+    },
+    "wal.walPath": {
+      "label": "WAL file path",
+      "placeholder": "~/.openclaw/memory/memory.wal",
+      "advanced": true,
+      "help": "Path to WAL file (default next to SQLite DB)"
+    },
+    "wal.maxAge": {
+      "label": "WAL max age (ms)",
+      "advanced": true,
+      "help": "Max age for WAL entries before prune (default 300000)"
     }
   },
   "configSchema": {
@@ -299,6 +314,16 @@
           "minObservations": { "type": "number" }
         },
         "description": "Reflection layer: analyze facts to extract behavioral patterns (FR-011)"
+      },
+      "wal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable Write-Ahead Log for crash resilience (default true)" },
+          "walPath": { "type": "string", "description": "Path to WAL file (default ~/.openclaw/memory/memory.wal)" },
+          "maxAge": { "type": "number", "description": "Max age in ms for WAL entries before prune (default 300000)" }
+        },
+        "description": "Write-Ahead Log for crash resilience (FR-003); uncommitted ops recovered on startup"
       }
     },
     "required": ["embedding"]

@@ -4193,13 +4193,13 @@ const memoryHybridPlugin = {
         mem
           .command("consolidate")
           .description("Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster (2.4)")
-          .option("--threshold <n>", "Similarity threshold 0–1 (default 0.92)", "0.92")
+          .option("--threshold <n>", "Cosine similarity threshold 0–1 (default 0.96; higher = fewer merges)", "0.96")
           .option("--include-structured", "Include identifier-like facts (IP, email, etc.); default is to skip")
           .option("--dry-run", "Report clusters and would-merge only; do not store or delete")
           .option("--limit <n>", "Max facts to consider (default 300)", "300")
           .option("--model <model>", "LLM for merge (default gpt-4o-mini)", "gpt-4o-mini")
           .action(async (opts: { threshold?: string; includeStructured?: boolean; dryRun?: boolean; limit?: string; model?: string }) => {
-            const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.92")));
+            const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.96")));
             const limit = Math.min(500, Math.max(10, parseInt(opts.limit || "300")));
             const result = await runConsolidate(
               factsDb,
@@ -5177,6 +5177,7 @@ const memoryHybridPlugin = {
                         source: "auto-capture",
                         decayClass: oldFact.decayClass,
                         summary,
+                        tags: extractTags(textToStore, extracted.entity),
                       });
                       factsDb.supersede(classification.targetId, newEntry.id);
                       try {
@@ -5255,6 +5256,7 @@ const memoryHybridPlugin = {
               value: extracted.value,
               source: "auto-capture",
               summary,
+              tags: extractTags(textToStore, extracted.entity),
             });
 
             try {
