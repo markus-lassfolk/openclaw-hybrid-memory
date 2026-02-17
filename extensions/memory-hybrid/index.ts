@@ -881,6 +881,32 @@ class FactsDB {
     };
   }
 
+  /** Get all non-expired facts (for reflection). */
+  getAll(): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`)
+      .all(nowSec) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      category: row.category as MemoryCategory,
+      importance: row.importance as number,
+      entity: (row.entity as string) || null,
+      key: (row.key as string) || null,
+      value: (row.value as string) || null,
+      source: row.source as string,
+      createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
+      decayClass: (row.decay_class as DecayClass) || "stable",
+      expiresAt: (row.expires_at as number) || null,
+      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
+      confidence: (row.confidence as number) || 1.0,
+      summary: (row.summary as string) || undefined,
+    }));
+  }
+
   count(): number {
     const row = this.liveDb
       .prepare(`SELECT COUNT(*) as cnt FROM facts`)
@@ -1903,6 +1929,188 @@ function detectCategory(text: string): MemoryCategory {
   if (/born|birthday|lives|works|is\s|are\s|has\s|have\s/i.test(lower))
     return "fact";
   return "other";
+}
+
+// ============================================================================
+// Reflection Layer (FR-011): Pattern Synthesis from Observations
+// ============================================================================
+
+/**
+ * Reflection prompt template: analyze facts to extract behavioral patterns.
+ * Based on Claude-Diary and Generative Agents paper approach.
+ */
+function buildReflectionPrompt(facts: MemoryEntry[], window: number, minObservations: number): string {
+  const factsByCategory = new Map<string, MemoryEntry[]>();
+  for (const fact of facts) {
+    if (!factsByCategory.has(fact.category)) {
+      factsByCategory.set(fact.category, []);
+    }
+    factsByCategory.get(fact.category)!.push(fact);
+  }
+
+  const factsSummary = [...factsByCategory.entries()]
+    .map(([cat, items]) => {
+      const lines = items.map((f, i) => `  ${i + 1}. ${f.text}`).join("\n");
+      return `[${cat}] (${items.length} observations)\n${lines}`;
+    })
+    .join("\n\n");
+
+  return `You are analyzing a user's interaction history to identify behavioral patterns.
+
+Below are facts extracted from the last ${window} days of sessions.
+Identify recurring patterns — preferences that appear across multiple sessions,
+consistent decision-making tendencies, and working-style traits.
+
+Rules:
+- Only report patterns supported by ${minObservations}+ observations
+- Be specific and actionable ("prefers X over Y" not "has preferences")
+- Each pattern should be 1-2 sentences
+- Do not repeat individual facts; synthesize higher-level insights
+- Focus on patterns that would help an AI agent match the user's working style
+- Output each pattern on a new line, starting with "PATTERN:"
+
+Facts:
+${factsSummary}
+
+Output format (one per line):
+PATTERN: [your pattern here]
+PATTERN: [another pattern here]`;
+}
+
+/**
+ * Run reflection analysis: gather recent facts, send to LLM, extract patterns, deduplicate, store.
+ */
+async function runReflection(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: Embeddings,
+  openai: OpenAI,
+  opts: {
+    window: number;
+    model: string;
+    minObservations: number;
+    dryRun: boolean;
+  },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number }> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const windowStartSec = nowSec - opts.window * 24 * 3600;
+
+  // Gather recent observations (exclude existing patterns/rules to avoid recursion)
+  const allFacts = factsDb.getAll();
+  const recentFacts = allFacts.filter((f) => {
+    const factDate = f.sourceDate ?? f.createdAt;
+    return factDate >= windowStartSec && f.category !== "pattern" && f.category !== "rule";
+  });
+
+  if (recentFacts.length < opts.minObservations) {
+    logger.info(`memory-hybrid: reflect — only ${recentFacts.length} facts in window (need ${opts.minObservations}+)`);
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  logger.info(`memory-hybrid: reflect — analyzing ${recentFacts.length} facts from last ${opts.window} days...`);
+
+  const prompt = buildReflectionPrompt(recentFacts, opts.window, opts.minObservations);
+
+  let responseText: string;
+  try {
+    const resp = await openai.chat.completions.create({
+      model: opts.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 1000,
+    });
+    responseText = (resp.choices[0]?.message?.content ?? "").trim();
+  } catch (err) {
+    logger.warn(`memory-hybrid: reflect LLM call failed: ${err}`);
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  if (!responseText) {
+    logger.info("memory-hybrid: reflect — no patterns extracted");
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  // Parse patterns from response
+  const lines = responseText.split("\n");
+  const patterns: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("PATTERN:")) {
+      const pattern = trimmed.slice(8).trim();
+      if (pattern.length >= 20 && pattern.length <= 500) {
+        patterns.push(pattern);
+      }
+    }
+  }
+
+  if (patterns.length === 0) {
+    logger.info("memory-hybrid: reflect — no valid patterns found in response");
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  logger.info(`memory-hybrid: reflect — extracted ${patterns.length} patterns`);
+
+  if (opts.dryRun) {
+    for (let i = 0; i < patterns.length; i++) {
+      logger.info(`  ${i + 1}. ${patterns[i]}`);
+    }
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: 0 };
+  }
+
+  // Deduplicate against existing patterns using semantic similarity
+  const existingPatterns = allFacts.filter((f) => f.category === "pattern");
+  let stored = 0;
+
+  for (const pattern of patterns) {
+    // Check for semantic duplicates
+    let isDuplicate = false;
+    try {
+      const patternVector = await embeddings.embed(pattern);
+      for (const existing of existingPatterns) {
+        const existingVector = await embeddings.embed(existing.text);
+        const dist = Math.sqrt(
+          patternVector.reduce((s, v, k) => s + (v - existingVector[k]) ** 2, 0),
+        );
+        const similarity = 1 / (1 + dist);
+        if (similarity >= 0.85) {
+          isDuplicate = true;
+          logger.info(`memory-hybrid: reflect — skipping duplicate pattern (${(similarity * 100).toFixed(0)}% similar to existing)`);
+          break;
+        }
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect — embedding failed for pattern: ${err}`);
+      continue;
+    }
+
+    if (isDuplicate) continue;
+
+    // Store pattern with high importance and permanent decay
+    const entry = factsDb.store({
+      text: pattern,
+      category: "pattern",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+      decayClass: "permanent",
+      tags: ["reflection", "pattern"],
+    });
+
+    try {
+      const vector = await embeddings.embed(pattern);
+      await vectorDb.store({ text: pattern, vector, importance: 0.9, category: "pattern" });
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect — vector store failed for pattern: ${err}`);
+    }
+
+    stored++;
+    logger.info(`memory-hybrid: reflect — stored pattern: ${pattern.slice(0, 80)}...`);
+  }
+
+  return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: stored };
 }
 
 // ============================================================================
@@ -3262,6 +3470,51 @@ const memoryHybridPlugin = {
       { name: "memory_prune" },
     );
 
+    api.registerTool(
+      {
+        name: "memory_reflect",
+        label: "Memory Reflect",
+        description:
+          "Analyze recent facts to extract behavioral patterns and meta-insights (FR-011). Use this periodically to synthesize higher-order patterns from observations.",
+        parameters: Type.Object({
+          window: Type.Optional(
+            Type.Number({ description: "Time window in days (default from config or 14)" }),
+          ),
+        }),
+        async execute(_toolCallId, params) {
+          const { window = cfg.reflection.defaultWindow } = params as { window?: number };
+          const validWindow = Math.max(1, Math.min(90, window));
+
+          const result = await runReflection(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openaiClient,
+            {
+              window: validWindow,
+              model: cfg.reflection.model,
+              minObservations: cfg.reflection.minObservations,
+              dryRun: false,
+            },
+            api.logger,
+          );
+
+          const text = `Reflection complete.\nFacts analyzed: ${result.factsAnalyzed} (last ${validWindow} days)\nPatterns extracted: ${result.patternsExtracted}\nPatterns stored: ${result.patternsStored}`;
+
+          return {
+            content: [{ type: "text", text }],
+            details: {
+              factsAnalyzed: result.factsAnalyzed,
+              patternsExtracted: result.patternsExtracted,
+              patternsStored: result.patternsStored,
+              window: validWindow,
+            },
+          };
+        },
+      },
+      { name: "memory_reflect" },
+    );
+
     // ========================================================================
     // CLI Commands
     // ========================================================================
@@ -3757,6 +4010,33 @@ const memoryHybridPlugin = {
               console.log(`    A: ${trim(p.textA, 80)}`);
               console.log(`    B: ${trim(p.textB, 80)}`);
             }
+          });
+
+        mem
+          .command("reflect")
+          .description("Analyze recent facts to extract behavioral patterns (FR-011)")
+          .option("--window <days>", "Time window in days (default from config or 14)", String(cfg.reflection.defaultWindow))
+          .option("--dry-run", "Show extracted patterns without storing")
+          .option("--model <model>", "LLM for reflection (default from config or gpt-4o-mini)", cfg.reflection.model)
+          .action(async (opts: { window?: string; dryRun?: boolean; model?: string }) => {
+            const window = Math.max(1, parseInt(opts.window || String(cfg.reflection.defaultWindow)));
+            const model = opts.model || cfg.reflection.model;
+            const result = await runReflection(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openaiClient,
+              {
+                window,
+                model,
+                minObservations: cfg.reflection.minObservations,
+                dryRun: !!opts.dryRun,
+              },
+              api.logger,
+            );
+            console.log(`Facts analyzed: ${result.factsAnalyzed} (last ${window} days)`);
+            console.log(`Patterns extracted: ${result.patternsExtracted}`);
+            console.log(`Patterns stored: ${result.patternsStored}${opts.dryRun ? " (dry run)" : ""}`);
           });
 
         mem
@@ -4394,7 +4674,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
