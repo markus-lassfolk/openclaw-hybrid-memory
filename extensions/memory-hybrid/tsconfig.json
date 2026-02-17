@@ -15,6 +15,6 @@
     "sourceMap": true,
     "types": ["vitest/globals"]
   },
-  "include": ["*.ts", "tests/**/*.ts"],
+  "include": ["*.ts", "tests/**/*.ts","types/**/*.d.ts"],
   "exclude": ["dist", "node_modules"]
 }

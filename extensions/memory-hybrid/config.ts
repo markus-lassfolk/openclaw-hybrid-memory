@@ -29,7 +29,7 @@ export type AutoClassifyConfig = {
   minFactsForNewCategory?: number;
 };
 
-/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index */
+/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index (agent fetches on demand) */
 export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive";
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
@@ -57,13 +57,13 @@ export type AutoRecallConfig = {
   summarizeModel: string;        // model for summarize-when-over-budget (default gpt-4o-mini)
 };
 
-/** Store options: fuzzy dedupe (2.3) uses normalized-text hash to skip near-duplicate facts. */
+/** Store options: fuzzy dedupe (2.3) and optional FR-008 classify-before-write. */
 export type StoreConfig = {
   fuzzyDedupe: boolean;
-  /** FR-008: When true, classify incoming facts as ADD/UPDATE/DELETE/NOOP before storing (default true). Uses a cheap LLM call. */
-  classifyBeforeWrite: boolean;
-  /** FR-008: Model to use for memory operation classification (default: same as autoClassify.model). */
-  classifyModel: string;
+  /** FR-008: Classify incoming fact against existing similar facts (ADD/UPDATE/DELETE/NOOP) before storing (default: false) */
+  classifyBeforeWrite?: boolean;
+  /** Model for classification (default: gpt-4o-mini) */
+  classifyModel?: string;
 };
 
 /** Write-Ahead Log (WAL) configuration for crash resilience */
@@ -76,6 +76,29 @@ export type WALConfig = {
   maxAge?: number;
 };
 
+/** Proposal statuses for persona evolution workflow */
+export const PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applied"] as const;
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+
+/** Identity file types that can be proposed for modification */
+export const IDENTITY_FILE_TYPES = ["SOUL.md", "IDENTITY.md", "USER.md"] as const;
+export type IdentityFileType = (typeof IDENTITY_FILE_TYPES)[number];
+
+/** Opt-in persona proposals: agent self-evolution with human approval gate */
+export type PersonaProposalsConfig = {
+  enabled: boolean;
+  /** Identity files that can be modified via proposals (default: ["SOUL.md", "IDENTITY.md", "USER.md"]) */
+  allowedFiles: IdentityFileType[];
+  /** Max proposals per week to prevent spam (default: 5) */
+  maxProposalsPerWeek: number;
+  /** Min confidence score 0-1 for proposals (default: 0.7) */
+  minConfidence: number;
+  /** Days before proposals auto-expire if not reviewed (default: 30, 0 = never) */
+  proposalTTLDays: number;
+  /** Require minimum session evidence count (default: 10) */
+  minSessionEvidence: number;
+};
+
 /** Graph-based spreading activation (FR-007): auto-linking and traversal settings */
 export type GraphConfig = {
   enabled: boolean;
@@ -86,16 +109,6 @@ export type GraphConfig = {
   useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
 };
 
-/** Reflection: analyze facts to extract behavioral patterns and meta-insights */
-export type ReflectionConfig = {
-  enabled: boolean;
-  /** Model for reflection analysis (default gpt-4o-mini) */
-  model: string;
-  /** Default time window in days for reflection (default 14) */
-  defaultWindow: number;
-  /** Minimum observations required to generate a pattern (default 2) */
-  minObservations: number;
-};
 
 /** Credential types supported by the credentials store */
 export const CREDENTIAL_TYPES = [
@@ -143,8 +156,8 @@ export type HybridMemoryConfig = {
   graph: GraphConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
-  /** Reflection: analyze facts to extract behavioral patterns (FR-011) */
-  reflection: ReflectionConfig;
+  /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
+  personaProposals: PersonaProposalsConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -386,17 +399,32 @@ export const hybridConfigSchema = {
       useInRecall: graphRaw?.useInRecall !== false,
     };
 
-    // Parse reflection config (FR-011)
-    const reflRaw = cfg.reflection as Record<string, unknown> | undefined;
-    const reflection: ReflectionConfig = {
-      enabled: reflRaw?.enabled === true,
-      model: typeof reflRaw?.model === "string" ? reflRaw.model : "gpt-4o-mini",
-      defaultWindow: typeof reflRaw?.defaultWindow === "number" && reflRaw.defaultWindow > 0
-        ? Math.floor(reflRaw.defaultWindow)
-        : 14,
-      minObservations: typeof reflRaw?.minObservations === "number" && reflRaw.minObservations >= 1
-        ? Math.floor(reflRaw.minObservations)
-        : 2,
+    // Parse persona proposals config (opt-in, disabled by default)
+    const proposalsRaw = cfg.personaProposals as Record<string, unknown> | undefined;
+    const personaProposals: PersonaProposalsConfig = {
+      enabled: proposalsRaw?.enabled === true,
+      allowedFiles: (() => {
+        if (!Array.isArray(proposalsRaw?.allowedFiles)) {
+          return [...IDENTITY_FILE_TYPES];
+        }
+        const filtered = (proposalsRaw.allowedFiles as string[]).filter((f) => 
+          IDENTITY_FILE_TYPES.includes(f as IdentityFileType)
+        ) as IdentityFileType[];
+        // Fallback to defaults if filter produces empty array
+        return filtered.length > 0 ? filtered : [...IDENTITY_FILE_TYPES];
+      })(),
+      maxProposalsPerWeek: typeof proposalsRaw?.maxProposalsPerWeek === "number" && proposalsRaw.maxProposalsPerWeek > 0
+        ? Math.floor(proposalsRaw.maxProposalsPerWeek)
+        : 5,
+      minConfidence: typeof proposalsRaw?.minConfidence === "number" && proposalsRaw.minConfidence >= 0 && proposalsRaw.minConfidence <= 1
+        ? proposalsRaw.minConfidence
+        : 0.7,
+      proposalTTLDays: typeof proposalsRaw?.proposalTTLDays === "number" && proposalsRaw.proposalTTLDays >= 0
+        ? Math.floor(proposalsRaw.proposalTTLDays)
+        : 30,
+      minSessionEvidence: typeof proposalsRaw?.minSessionEvidence === "number" && proposalsRaw.minSessionEvidence > 0
+        ? Math.floor(proposalsRaw.minSessionEvidence)
+        : 10,
     };
 
     return {
@@ -418,7 +446,7 @@ export const hybridConfigSchema = {
       credentials,
       graph,
       wal,
-      reflection,
+      personaProposals,
     };
   },
 };
