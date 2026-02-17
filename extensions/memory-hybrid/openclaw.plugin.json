@@ -170,11 +170,6 @@
       "label": "Min session evidence",
       "help": "Minimum number of session references required (default: 10)"
     },
-    "personaProposals.validationModel": {
-      "label": "Validation model",
-      "placeholder": "gpt-4o-mini",
-      "help": "LLM model for proposal validation/formatting (default: gpt-4o-mini)"
-    },
     "graph.enabled": {
       "label": "Graph memory",
       "help": "Enable graph-based spreading activation for zero-LLM recall (FR-007)"
@@ -314,8 +309,7 @@
           "maxProposalsPerWeek": { "type": "number", "description": "Max proposals per week to prevent spam (default: 5)" },
           "minConfidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "Min confidence score for proposals (default: 0.7)" },
           "proposalTTLDays": { "type": "number", "description": "Days before proposals auto-expire (default: 30, 0 = never)" },
-          "minSessionEvidence": { "type": "number", "description": "Min session evidence count (default: 10)" },
-          "validationModel": { "type": "string", "description": "LLM model for validation (default: gpt-4o-mini)" }
+          "minSessionEvidence": { "type": "number", "description": "Min session evidence count (default: 10)" }
         },
         "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
       },
