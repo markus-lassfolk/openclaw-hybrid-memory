@@ -34,7 +34,6 @@ import {
   vectorDimsForModel,
   CREDENTIAL_TYPES,
   type CredentialType,
-  type WALConfig,
 } from "./config.js";
 import { versionInfo } from "./versionInfo.js";
 
@@ -62,6 +61,14 @@ type MemoryEntry = {
   summary?: string | null;
   /** Topic tags for sharper retrieval (FR-001); e.g. nibe, zigbee, auth */
   tags?: string[] | null;
+  /** FR-005: Number of times this fact has been retrieved via search/recall */
+  recallCount?: number;
+  /** FR-005: Last time this fact was accessed (unix seconds) */
+  lastAccessed?: number | null;
+  /** FR-008/010: When this fact was superseded by a newer version (unix seconds; null = current) */
+  supersededAt?: number | null;
+  /** FR-008/010: ID of the fact that superseded this one */
+  supersededBy?: string | null;
 };
 
 type SearchResult = {
@@ -70,27 +77,138 @@ type SearchResult = {
   backend: "sqlite" | "lancedb";
 };
 
-// Link types for graph-based spreading activation (FR-007)
-const LINK_TYPES = [
-  "SUPERSEDES",
-  "CAUSED_BY",
-  "PART_OF",
-  "RELATED_TO",
-  "DEPENDS_ON",
-] as const;
-type LinkType = (typeof LINK_TYPES)[number];
-
-type MemoryLink = {
+type WALEntry = {
   id: string;
-  sourceFact: string;
-  targetFact: string;
-  linkType: LinkType;
-  strength: number; // 0.0-1.0
-  createdAt: number;
+  timestamp: number;
+  operation: "store" | "delete" | "update";
+  data: {
+    text: string;
+    category?: string;
+    importance?: number;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    source?: string;
+    decayClass?: DecayClass;
+    summary?: string | null;
+    tags?: string[];
+    vector?: number[];
+  };
 };
 
-// Score assigned to facts discovered via graph traversal (lower than direct search matches)
-const GRAPH_DISCOVERED_SCORE = 0.5;
+// ============================================================================
+// Write-Ahead Log (WAL) for Crash Resilience
+// ============================================================================
+
+/**
+ * Write-Ahead Log (WAL) for crash resilience.
+ * 
+ * Before committing memory operations to SQLite/LanceDB, we write them to a
+ * WAL file. If the agent crashes during generation, the WAL is replayed on
+ * startup to ensure no data loss.
+ */
+class WriteAheadLog {
+  private walPath: string;
+  private maxAge: number;
+
+  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
+    this.walPath = walPath;
+    this.maxAge = maxAge;
+    mkdirSync(dirname(walPath), { recursive: true });
+  }
+
+  /**
+   * Write a pending memory operation to the WAL.
+   * This is a synchronous operation to ensure durability before proceeding.
+   */
+  write(entry: WALEntry): void {
+    try {
+      const entries = this.readAll();
+      entries.push(entry);
+      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+    } catch (err) {
+      throw new Error(`WAL write failed: ${err}`);
+    }
+  }
+
+  /**
+   * Read all pending operations from the WAL.
+   */
+  readAll(): WALEntry[] {
+    try {
+      if (!existsSync(this.walPath)) {
+        return [];
+      }
+      const content = readFileSync(this.walPath, "utf-8");
+      if (!content.trim()) {
+        return [];
+      }
+      const entries = JSON.parse(content) as WALEntry[];
+      return Array.isArray(entries) ? entries : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Remove a specific entry from the WAL after successful commit.
+   */
+  remove(id: string): void {
+    try {
+      const entries = this.readAll();
+      const filtered = entries.filter((e) => e.id !== id);
+      if (filtered.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+      }
+    } catch (err) {
+      throw new Error(`WAL remove failed: ${err}`);
+    }
+  }
+
+  /**
+   * Clear the entire WAL file.
+   */
+  clear(): void {
+    try {
+      if (existsSync(this.walPath)) {
+        rmSync(this.walPath, { force: true });
+      }
+    } catch (err) {
+      throw new Error(`WAL clear failed: ${err}`);
+    }
+  }
+
+  /**
+   * Get entries that are not stale (within maxAge).
+   */
+  getValidEntries(): WALEntry[] {
+    const entries = this.readAll();
+    const now = Date.now();
+    return entries.filter((e) => now - e.timestamp < this.maxAge);
+  }
+
+  /**
+   * Remove stale entries from the WAL.
+   */
+  pruneStale(): number {
+    const entries = this.readAll();
+    const now = Date.now();
+    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+    const pruned = entries.length - valid.length;
+    
+    if (pruned > 0) {
+      if (valid.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
+      }
+    }
+    
+    return pruned;
+  }
+}
 
 // ============================================================================
 // SQLite + FTS5 Backend
@@ -176,6 +294,9 @@ class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
+  private supersededTextsCache: Set<string> | null = null;
+  private supersededTextsCacheTime: number = 0;
+  private readonly SUPERSEDED_CACHE_TTL_MS = 60000; // 1 minute cache
 
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     this.dbPath = dbPath;
@@ -240,28 +361,6 @@ class FactsDB {
       CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
     `);
 
-    // ---- Memory links table for graph-based spreading activation (FR-007) ----
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS memory_links (
-        id TEXT PRIMARY KEY,
-        source_fact_id TEXT NOT NULL,
-        target_fact_id TEXT NOT NULL,
-        link_type TEXT NOT NULL,
-        strength REAL NOT NULL DEFAULT 1.0,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_fact_id) REFERENCES facts(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Indexes for efficient graph traversal
-    this.liveDb.exec(`
-      CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_fact_id);
-      CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id);
-      CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type);
-      CREATE INDEX IF NOT EXISTS idx_links_source_type ON memory_links(source_fact_id, link_type);
-    `);
-
     // ---- TTL/Decay migration ----
     this.migrateDecayColumns();
 
@@ -279,6 +378,12 @@ class FactsDB {
 
     // ---- Tags for topic filtering (FR-001) ----
     this.migrateTagsColumn();
+
+    // ---- Access tracking for dynamic salience (FR-005) ----
+    this.migrateAccessTracking();
+
+    // ---- Supersession columns for contradiction resolution (FR-008/010) ----
+    this.migrateSupersessionColumns();
   }
 
   private migrateTagsColumn(): void {
@@ -289,6 +394,35 @@ class FactsDB {
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`,
+    );
+  }
+
+  /** FR-005: Add recall_count and last_accessed for dynamic salience scoring. */
+  private migrateAccessTracking(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("recall_count")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_accessed INTEGER`);
+    this.liveDb.exec(`UPDATE facts SET last_accessed = last_confirmed_at WHERE last_accessed IS NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_last_accessed ON facts(last_accessed) WHERE last_accessed IS NOT NULL`,
+    );
+  }
+
+  /** FR-008/010: Add superseded_at and superseded_by for contradiction resolution. */
+  private migrateSupersessionColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("superseded_at")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN superseded_at INTEGER`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN superseded_by TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_superseded ON facts(superseded_at) WHERE superseded_at IS NOT NULL`,
     );
   }
 
@@ -469,11 +603,12 @@ class FactsDB {
     };
   }
 
-  private refreshAccessedFacts(ids: string[]): void {
+  /** FR-005: Update recall count and last accessed timestamp for salience boosting. */
+  refreshAccessedFacts(ids: string[]): void {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const stmt = this.liveDb.prepare(`
+    const stmtDecay = this.liveDb.prepare(`
       UPDATE facts
       SET last_confirmed_at = @now,
           expires_at = CASE decay_class
@@ -485,14 +620,23 @@ class FactsDB {
         AND decay_class IN ('stable', 'active')
     `);
 
+    // FR-005: Track access count and timestamp for dynamic salience scoring
+    const stmtAccess = this.liveDb.prepare(`
+      UPDATE facts
+      SET recall_count = recall_count + 1,
+          last_accessed = @now
+      WHERE id = @id
+    `);
+
     const tx = this.liveDb.transaction(() => {
       for (const id of ids) {
-        stmt.run({
+        stmtDecay.run({
           now: nowSec,
           stableTtl: TTL_DEFAULTS.stable,
           activeTtl: TTL_DEFAULTS.active,
           id,
         });
+        stmtAccess.run({ now: nowSec, id });
       }
     });
     tx();
@@ -501,9 +645,9 @@ class FactsDB {
   search(
     query: string,
     limit = 5,
-    options: { includeExpired?: boolean; tag?: string } = {},
+    options: { includeExpired?: boolean; tag?: string; includeSuperseded?: boolean } = {},
   ): SearchResult[] {
-    const { includeExpired = false, tag } = options;
+    const { includeExpired = false, tag, includeSuperseded = false } = options;
 
     const safeQuery = query
       .replace(/['"]/g, "")
@@ -518,6 +662,9 @@ class FactsDB {
     const expiryFilter = includeExpired
       ? ""
       : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
+    const supersededFilter = includeSuperseded
+      ? ""
+      : "AND f.superseded_at IS NULL";
     const tagFilter =
       tag && tag.trim()
         ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern"
@@ -536,6 +683,7 @@ class FactsDB {
          JOIN facts_fts fts ON f.rowid = fts.rowid
          WHERE facts_fts MATCH @query
            ${expiryFilter}
+           ${supersededFilter}
            ${tagFilter}
          ORDER BY rank
          LIMIT @limit`,
@@ -578,6 +726,10 @@ class FactsDB {
           lastConfirmedAt: (row.last_confirmed_at as number) || 0,
           confidence,
           summary: (row.summary as string) || undefined,
+          recallCount: (row.recall_count as number) || 0,
+          lastAccessed: (row.last_accessed as number) || null,
+          supersededAt: (row.superseded_at as number) || null,
+          supersededBy: (row.superseded_by as string) || null,
         },
         score: composite,
         backend: "sqlite" as const,
@@ -607,8 +759,8 @@ class FactsDB {
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
 
     const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
 
     const params = key
       ? tagParam !== null
@@ -639,6 +791,10 @@ class FactsDB {
         lastConfirmedAt: (row.last_confirmed_at as number) || 0,
         confidence: (row.confidence as number) || 1.0,
         summary: (row.summary as string) || undefined,
+        recallCount: (row.recall_count as number) || 0,
+        lastAccessed: (row.last_accessed as number) || null,
+        supersededAt: (row.superseded_at as number) || null,
+        supersededBy: (row.superseded_by as string) || null,
       },
       score: (row.confidence as number) || 1.0,
       backend: "sqlite" as const,
@@ -673,6 +829,116 @@ class FactsDB {
     return row?.id ?? null;
   }
 
+  /** FR-008/010: Mark a fact as superseded by a new fact. */
+  supersede(oldId: string, newId: string | null): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const result = this.liveDb
+      .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
+      .run(nowSec, newId, oldId);
+    if (result.changes > 0) {
+      this.invalidateSupersededCache();
+    }
+    return result.changes > 0;
+  }
+
+
+  /** FR-008: Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
+  findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const results: MemoryEntry[] = [];
+
+    // Priority 1: exact entity+key match (most likely an UPDATE)
+    if (entity && key) {
+      const rows = this.liveDb
+        .prepare(
+          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(entity, key, nowSec, limit) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        results.push(this.rowToEntry(row));
+      }
+    }
+
+    // Priority 2: same entity, different key
+    if (entity && results.length < limit) {
+      const remaining = limit - results.length;
+      const seenIds = new Set(results.map((r) => r.id));
+      const rows = this.liveDb
+        .prepare(
+          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(entity, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const entry = this.rowToEntry(row);
+        if (!seenIds.has(entry.id)) {
+          results.push(entry);
+          seenIds.add(entry.id);
+          if (results.length >= limit) break;
+        }
+      }
+    }
+
+    // Priority 3: FTS text match
+    if (results.length < limit) {
+      const remaining = limit - results.length;
+      const seenIds = new Set(results.map((r) => r.id));
+      const words = text
+        .replace(/['"]/g, "")
+        .split(/\s+/)
+        .filter((w) => w.length > 2)
+        .slice(0, 5)
+        .map((w) => `"${w}"`)
+        .join(" OR ");
+      if (words) {
+        try {
+          const rows = this.liveDb
+            .prepare(
+              `SELECT f.* FROM facts f JOIN facts_fts fts ON f.rowid = fts.rowid WHERE facts_fts MATCH ? AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?) LIMIT ?`
+            )
+            .all(words, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
+          for (const row of rows) {
+            const entry = this.rowToEntry(row);
+            if (!seenIds.has(entry.id)) {
+              results.push(entry);
+              seenIds.add(entry.id);
+              if (results.length >= limit) break;
+            }
+          }
+        } catch {
+          // FTS query can fail on unusual input; ignore
+        }
+      }
+    }
+
+    return results.slice(0, limit);
+  }
+
+  /** Convert a raw SQLite row to MemoryEntry. */
+  private rowToEntry(row: Record<string, unknown>): MemoryEntry {
+    return {
+      id: row.id as string,
+      text: row.text as string,
+      category: row.category as MemoryCategory,
+      importance: row.importance as number,
+      entity: (row.entity as string) || null,
+      key: (row.key as string) || null,
+      value: (row.value as string) || null,
+      source: row.source as string,
+      createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
+      decayClass: (row.decay_class as DecayClass) || "stable",
+      expiresAt: (row.expires_at as number) || null,
+      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
+      confidence: (row.confidence as number) || 1.0,
+      summary: (row.summary as string) || undefined,
+      recallCount: (row.recall_count as number) || 0,
+      lastAccessed: (row.last_accessed as number) || null,
+      supersededAt: (row.superseded_at as number) || null,
+      supersededBy: (row.superseded_by as string) || null,
+    };
+  }
+
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
   getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -695,24 +961,36 @@ class FactsDB {
   getById(id: string): MemoryEntry | null {
     const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
-    return {
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-    };
+    return this.rowToEntry(row);
+  }
+
+  /** Get all non-expired, non-superseded facts (for reflection). */
+  getAll(): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL ORDER BY created_at DESC`)
+      .all(nowSec) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
+  /** Get texts of superseded facts (for filtering LanceDB results). Cached for 1 minute to avoid repeated queries. */
+  getSupersededTexts(): Set<string> {
+    const now = Date.now();
+    if (this.supersededTextsCache && (now - this.supersededTextsCacheTime) < this.SUPERSEDED_CACHE_TTL_MS) {
+      return this.supersededTextsCache;
+    }
+    
+    const rows = this.liveDb
+      .prepare(`SELECT text FROM facts WHERE superseded_at IS NOT NULL`)
+      .all() as Array<{ text: string }>;
+    this.supersededTextsCache = new Set(rows.map((r) => r.text.toLowerCase()));
+    this.supersededTextsCacheTime = now;
+    return this.supersededTextsCache;
+  }
+  
+  /** Invalidate superseded texts cache (called after supersede operations). */
+  private invalidateSupersededCache(): void {
+    this.supersededTextsCache = null;
   }
 
   count(): number {
@@ -885,6 +1163,10 @@ class FactsDB {
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
       confidence: (row.confidence as number) || 1.0,
       summary: (row.summary as string) || undefined,
+      recallCount: (row.recall_count as number) || 0,
+      lastAccessed: (row.last_accessed as number) || null,
+      supersededAt: (row.superseded_at as number) || null,
+      supersededBy: (row.superseded_by as string) || null,
     }));
   }
 
@@ -902,143 +1184,6 @@ class FactsDB {
       this.applyPragmas();
     }
     return this.db;
-  }
-
-  // ---- Graph-based spreading activation (FR-007) ----
-
-  /** Create a typed link between two facts. */
-  createLink(sourceFact: string, targetFact: string, linkType: LinkType, strength = 1.0): string {
-    const id = randomUUID();
-    const nowSec = Math.floor(Date.now() / 1000);
-    
-    // Validate and clamp strength to [0.0, 1.0]
-    const validStrength = Math.max(0.0, Math.min(1.0, strength));
-    
-    this.liveDb
-      .prepare(
-        `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(id, sourceFact, targetFact, linkType, validStrength, nowSec);
-    
-    return id;
-  }
-
-  /** Get all links for a fact (both outgoing and incoming). */
-  getLinksForFact(factId: string): Array<{
-    id: string;
-    sourceFact: string;
-    targetFact: string;
-    linkType: LinkType;
-    strength: number;
-    direction: "outgoing" | "incoming";
-  }> {
-    const outgoing = this.liveDb
-      .prepare(
-        `SELECT id, source_fact_id, target_fact_id, link_type, strength
-         FROM memory_links
-         WHERE source_fact_id = ?`
-      )
-      .all(factId) as Array<{
-        id: string;
-        source_fact_id: string;
-        target_fact_id: string;
-        link_type: string;
-        strength: number;
-      }>;
-
-    const incoming = this.liveDb
-      .prepare(
-        `SELECT id, source_fact_id, target_fact_id, link_type, strength
-         FROM memory_links
-         WHERE target_fact_id = ?`
-      )
-      .all(factId) as Array<{
-        id: string;
-        source_fact_id: string;
-        target_fact_id: string;
-        link_type: string;
-        strength: number;
-      }>;
-
-    return [
-      ...outgoing.map((l) => ({
-        id: l.id,
-        sourceFact: l.source_fact_id,
-        targetFact: l.target_fact_id,
-        linkType: l.link_type as LinkType,
-        strength: l.strength,
-        direction: "outgoing" as const,
-      })),
-      ...incoming.map((l) => ({
-        id: l.id,
-        sourceFact: l.source_fact_id,
-        targetFact: l.target_fact_id,
-        linkType: l.link_type as LinkType,
-        strength: l.strength,
-        direction: "incoming" as const,
-      })),
-    ];
-  }
-
-  /** 
-   * Traverse the graph starting from a set of fact IDs using BFS.
-   * Returns connected fact IDs up to maxDepth hops away.
-   */
-  traverseGraph(startFactIds: string[], maxDepth = 2): Set<string> {
-    if (startFactIds.length === 0) return new Set();
-    
-    const visited = new Set<string>(startFactIds);
-    const queue: Array<{ id: string; depth: number }> = startFactIds.map((id) => ({
-      id,
-      depth: 0,
-    }));
-
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      
-      if (current.depth >= maxDepth) continue;
-
-      const links = this.getLinksForFact(current.id);
-      
-      for (const link of links) {
-        const nextId = link.direction === "outgoing" ? link.targetFact : link.sourceFact;
-        
-        if (!visited.has(nextId)) {
-          visited.add(nextId);
-          queue.push({ id: nextId, depth: current.depth + 1 });
-        }
-      }
-    }
-
-    return visited;
-  }
-
-  /**
-   * Find similar facts to a given fact ID based on vector similarity.
-   * Used for auto-linking during storage.
-   */
-  async findSimilarFactsForLinking(
-    factId: string,
-    vectorDb: VectorDB,
-    embeddings: Embeddings,
-    limit = 3,
-    minScore = 0.7
-  ): Promise<Array<{ id: string; score: number }>> {
-    const fact = this.getById(factId);
-    if (!fact) return [];
-
-    try {
-      const vector = await embeddings.embed(fact.text);
-      const results = await vectorDb.search(vector, limit + 1, minScore); // +1 to exclude self
-      
-      return results
-        .filter((r) => r.entry.id !== factId)
-        .slice(0, limit)
-        .map((r) => ({ id: r.entry.id, score: r.score }));
-    } catch (err) {
-      return [];
-    }
   }
 
   close(): void {
@@ -1343,139 +1488,6 @@ class Embeddings {
 }
 
 // ============================================================================
-// Write-Ahead Log (WAL) for Crash Resilience
-// ============================================================================
-
-type WALEntry = {
-  id: string;
-  timestamp: number;
-  operation: "store" | "delete" | "update";
-  data: {
-    text: string;
-    category?: string;
-    importance?: number;
-    entity?: string | null;
-    key?: string | null;
-    value?: string | null;
-    source?: string;
-    decayClass?: DecayClass;
-    summary?: string | null;
-    tags?: string[];
-    vector?: number[];
-  };
-};
-
-/**
- * Write-Ahead Log (WAL) for crash resilience.
- * 
- * Before committing memory operations to SQLite/LanceDB, we write them to a
- * WAL file. If the agent crashes during generation, the WAL is replayed on
- * startup to ensure no data loss.
- */
-class WriteAheadLog {
-  private walPath: string;
-  private maxAge: number;
-
-  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
-    this.walPath = walPath;
-    this.maxAge = maxAge;
-    mkdirSync(dirname(walPath), { recursive: true });
-  }
-
-  /**
-   * Write a pending memory operation to the WAL.
-   * This is a synchronous operation to ensure durability before proceeding.
-   */
-  write(entry: WALEntry): void {
-    try {
-      const entries = this.readAll();
-      entries.push(entry);
-      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
-    } catch (err) {
-      throw new Error(`WAL write failed: ${err}`);
-    }
-  }
-
-  /**
-   * Read all pending operations from the WAL.
-   */
-  readAll(): WALEntry[] {
-    try {
-      if (!existsSync(this.walPath)) {
-        return [];
-      }
-      const content = readFileSync(this.walPath, "utf-8");
-      if (!content.trim()) {
-        return [];
-      }
-      const entries = JSON.parse(content) as WALEntry[];
-      return Array.isArray(entries) ? entries : [];
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Remove a specific entry from the WAL after successful commit.
-   */
-  remove(id: string): void {
-    try {
-      const entries = this.readAll();
-      const filtered = entries.filter((e) => e.id !== id);
-      if (filtered.length === 0) {
-        this.clear();
-      } else {
-        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
-      }
-    } catch (err) {
-      throw new Error(`WAL remove failed: ${err}`);
-    }
-  }
-
-  /**
-   * Clear the entire WAL file.
-   */
-  clear(): void {
-    try {
-      if (existsSync(this.walPath)) {
-        rmSync(this.walPath, { force: true });
-      }
-    } catch (err) {
-      throw new Error(`WAL clear failed: ${err}`);
-    }
-  }
-
-  /**
-   * Get entries that are not stale (within maxAge).
-   */
-  getValidEntries(): WALEntry[] {
-    const entries = this.readAll();
-    const now = Date.now();
-    return entries.filter((e) => now - e.timestamp < this.maxAge);
-  }
-
-  /**
-   * Remove stale entries from the WAL.
-   */
-  pruneStale(): number {
-    const entries = this.readAll();
-    const now = Date.now();
-    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
-    const pruned = entries.length - valid.length;
-    
-    if (pruned > 0) {
-      if (valid.length === 0) {
-        this.clear();
-      } else {
-        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
-      }
-    }
-    
-    return pruned;
-  }
-}
-
-// ============================================================================
 // Token estimate (for auto-recall cap)
 // ============================================================================
 
@@ -1492,6 +1504,7 @@ function mergeResults(
   sqliteResults: SearchResult[],
   lanceResults: SearchResult[],
   limit: number,
+  factsDb?: FactsDB,
 ): SearchResult[] {
   const seen = new Set<string>();
   const merged: SearchResult[] = [];
@@ -1503,13 +1516,18 @@ function mergeResults(
     }
   }
 
+  // Get superseded fact texts for filtering LanceDB results (optimized: text-only query)
+  const supersededTexts = factsDb ? factsDb.getSupersededTexts() : new Set<string>();
+
   for (const r of lanceResults) {
+    // Skip if this text matches a superseded fact
+    const isSuperseded = supersededTexts.has(r.entry.text.toLowerCase());
     const isDupe = merged.some(
       (m) =>
         m.entry.id === r.entry.id ||
         m.entry.text.toLowerCase() === r.entry.text.toLowerCase(),
     );
-    if (!isDupe) {
+    if (!isDupe && !isSuperseded) {
       merged.push(r);
     }
   }
@@ -1522,6 +1540,101 @@ function mergeResults(
     return db - da;
   });
   return merged.slice(0, limit);
+}
+
+// ============================================================================
+// FR-008: Memory Operation Classification (ADD/UPDATE/DELETE/NOOP)
+// ============================================================================
+
+type MemoryClassification = {
+  action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
+  targetId?: string;
+  reason: string;
+  /** For UPDATE: the updated text to store (only if LLM suggests a merge) */
+  updatedText?: string;
+};
+
+/**
+ * FR-008: Classify an incoming fact against existing similar facts.
+ * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
+ * Falls back to ADD on error.
+ */
+async function classifyMemoryOperation(
+  candidateText: string,
+  candidateEntity: string | null,
+  candidateKey: string | null,
+  existingFacts: MemoryEntry[],
+  openai: OpenAI,
+  model: string,
+  logger: { warn: (msg: string) => void },
+): Promise<MemoryClassification> {
+  if (existingFacts.length === 0) {
+    return { action: "ADD", reason: "no similar facts found" };
+  }
+
+  const existingLines = existingFacts
+    .slice(0, 5)
+    .map(
+      (f, i) =>
+        `${i + 1}. [id=${f.id}] ${f.category}${f.entity ? ` | entity: ${f.entity}` : ""}${f.key ? ` | key: ${f.key}` : ""}: ${f.text.slice(0, 300)}`,
+    )
+    .join("\n");
+
+  const prompt = `You are a memory classifier. A new fact is being stored. Compare it against existing facts and decide what to do.
+
+New fact: "${candidateText.slice(0, 500)}"${candidateEntity ? `\nEntity: ${candidateEntity}` : ""}${candidateKey ? `\nKey: ${candidateKey}` : ""}
+
+Existing similar facts:
+${existingLines}
+
+Classify as one of:
+- ADD: The new fact is genuinely new information not covered by any existing fact.
+- UPDATE <id>: The new fact supersedes or updates an existing fact (e.g., a preference changed, a value was corrected). Specify which existing fact id it replaces.
+- DELETE <id>: The new fact explicitly retracts or negates an existing fact (e.g., "I no longer use X"). Specify which fact to invalidate.
+- NOOP: The new fact is already adequately captured by existing facts. No action needed.
+
+Respond with exactly one line in this format: ACTION [id] | reason
+Examples:
+  ADD | this is new information about the user's work setup
+  UPDATE abc-123 | user changed their preferred IDE from VS Code to Cursor
+  DELETE def-456 | user explicitly stated they no longer use Docker
+  NOOP | this preference is already stored as fact #2`;
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+      max_tokens: 100,
+    });
+    const content = (resp.choices[0]?.message?.content ?? "").trim();
+
+    // Parse: "ACTION [id] | reason"
+    const match = content.match(/^(ADD|UPDATE|DELETE|NOOP)\s*([a-f0-9-]*)\s*\|\s*(.+)$/i);
+    if (!match) {
+      return { action: "ADD", reason: `unparseable LLM response: ${content.slice(0, 80)}` };
+    }
+
+    const action = match[1].toUpperCase() as MemoryClassification["action"];
+    const targetId = match[2]?.trim() || undefined;
+    const reason = match[3].trim();
+
+    // Validate targetId if UPDATE or DELETE - must have a valid targetId
+    if (action === "UPDATE" || action === "DELETE") {
+      if (!targetId) {
+        return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
+      }
+      const validTarget = existingFacts.find((f) => f.id === targetId);
+      if (!validTarget) {
+        return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
+      }
+    }
+
+    return { action, targetId, reason };
+  } catch (err) {
+    logger.warn(`memory-hybrid: classify operation failed: ${err}`);
+    return { action: "ADD", reason: "classification failed; defaulting to ADD" };
+  }
 }
 
 // ============================================================================
@@ -1914,6 +2027,219 @@ function detectCategory(text: string): MemoryCategory {
 }
 
 // ============================================================================
+// Reflection Layer (FR-011): Pattern Synthesis from Observations
+// ============================================================================
+
+/**
+ * Reflection prompt template: analyze facts to extract behavioral patterns.
+ * Based on Claude-Diary and Generative Agents paper approach.
+ */
+function buildReflectionPrompt(facts: MemoryEntry[], window: number, minObservations: number): string {
+  const factsByCategory = new Map<string, MemoryEntry[]>();
+  for (const fact of facts) {
+    if (!factsByCategory.has(fact.category)) {
+      factsByCategory.set(fact.category, []);
+    }
+    factsByCategory.get(fact.category)!.push(fact);
+  }
+
+  // Limit facts per category and truncate long texts to prevent token overflow
+  const MAX_FACTS_PER_CATEGORY = 50;
+  const MAX_FACT_LENGTH = 300;
+  
+  const factsSummary = [...factsByCategory.entries()]
+    .map(([cat, items]) => {
+      const limited = items.slice(0, MAX_FACTS_PER_CATEGORY);
+      const lines = limited.map((f, i) => {
+        const text = f.text.length > MAX_FACT_LENGTH 
+          ? f.text.slice(0, MAX_FACT_LENGTH) + "..."
+          : f.text;
+        return `  ${i + 1}. ${text}`;
+      }).join("\n");
+      const suffix = items.length > MAX_FACTS_PER_CATEGORY 
+        ? `\n  ... and ${items.length - MAX_FACTS_PER_CATEGORY} more`
+        : "";
+      return `[${cat}] (${items.length} observations)\n${lines}${suffix}`;
+    })
+    .join("\n\n");
+
+  return `You are analyzing a user's interaction history to identify behavioral patterns.
+
+Below are facts extracted from the last ${window} days of sessions.
+Identify recurring patterns — preferences that appear across multiple sessions,
+consistent decision-making tendencies, and working-style traits.
+
+Rules:
+- Only report patterns supported by ${minObservations}+ observations
+- Be specific and actionable ("prefers X over Y" not "has preferences")
+- Each pattern should be 1-2 sentences
+- Do not repeat individual facts; synthesize higher-level insights
+- Focus on patterns that would help an AI agent match the user's working style
+- Output each pattern on a new line, starting with "PATTERN:"
+
+Facts:
+${factsSummary}
+
+Output format (one per line):
+PATTERN: [your pattern here]
+PATTERN: [another pattern here]`;
+}
+
+/**
+ * Run reflection analysis: gather recent facts, send to LLM, extract patterns, deduplicate, store.
+ */
+async function runReflection(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: Embeddings,
+  openai: OpenAI,
+  opts: {
+    window: number;
+    model: string;
+    minObservations: number;
+    dryRun: boolean;
+  },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number }> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const windowStartSec = nowSec - opts.window * 24 * 3600;
+
+  // Gather recent observations (exclude existing patterns/rules to avoid recursion)
+  const allFacts = factsDb.getAll();
+  const recentFacts = allFacts.filter((f) => {
+    const factDate = f.sourceDate ?? f.createdAt;
+    return factDate >= windowStartSec && f.category !== "pattern" && f.category !== "rule";
+  });
+
+  if (recentFacts.length < opts.minObservations) {
+    logger.info(`memory-hybrid: reflect — only ${recentFacts.length} facts in window (need ${opts.minObservations}+)`);
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  logger.info(`memory-hybrid: reflect — analyzing ${recentFacts.length} facts from last ${opts.window} days...`);
+
+  const prompt = buildReflectionPrompt(recentFacts, opts.window, opts.minObservations);
+
+  let responseText: string;
+  try {
+    const resp = await openai.chat.completions.create({
+      model: opts.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 1000,
+    });
+    responseText = (resp.choices[0]?.message?.content ?? "").trim();
+  } catch (err) {
+    logger.warn(`memory-hybrid: reflect LLM call failed: ${err}`);
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  if (!responseText) {
+    logger.info("memory-hybrid: reflect — no patterns extracted");
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  // Parse patterns from response
+  const lines = responseText.split("\n");
+  const patterns: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("PATTERN:")) {
+      const pattern = trimmed.slice(8).trim();
+      if (pattern.length >= 20 && pattern.length <= 500) {
+        patterns.push(pattern);
+      }
+    }
+  }
+
+  if (patterns.length === 0) {
+    logger.info("memory-hybrid: reflect — no valid patterns found in response");
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
+  }
+
+  logger.info(`memory-hybrid: reflect — extracted ${patterns.length} patterns`);
+
+  if (opts.dryRun) {
+    for (let i = 0; i < patterns.length; i++) {
+      logger.info(`  ${i + 1}. ${patterns[i]}`);
+    }
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: 0 };
+  }
+
+  // Deduplicate against existing patterns using semantic similarity
+  const existingPatterns = allFacts.filter((f) => f.category === "pattern");
+  
+  // Pre-compute embeddings for existing patterns to avoid redundant API calls
+  const existingEmbeddings: Array<{ text: string; vector: number[] }> = [];
+  for (const existing of existingPatterns) {
+    try {
+      const vector = await embeddings.embed(existing.text);
+      existingEmbeddings.push({ text: existing.text, vector });
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect — failed to embed existing pattern: ${err}`);
+    }
+  }
+  
+  let stored = 0;
+
+  for (const pattern of patterns) {
+    // Check for semantic duplicates
+    let isDuplicate = false;
+    let patternVector: number[];
+    try {
+      patternVector = await embeddings.embed(pattern);
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect — embedding failed for pattern: ${err}`);
+      continue;
+    }
+
+    for (const existing of existingEmbeddings) {
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are normalized)
+      // Cosine similarity = dot product for unit vectors
+      const dotProduct = patternVector.reduce((s, v, k) => s + v * existing.vector[k], 0);
+      const cosineSimilarity = dotProduct; // Already normalized, so no need to divide by magnitudes
+      
+      // 0.85 cosine similarity = 85% similar (actual semantic similarity)
+      if (cosineSimilarity >= 0.85) {
+        isDuplicate = true;
+        logger.info(`memory-hybrid: reflect — skipping duplicate pattern (${(cosineSimilarity * 100).toFixed(0)}% similar to existing)`);
+        break;
+      }
+    }
+
+    if (isDuplicate) continue;
+
+    // Store pattern with high importance and permanent decay
+    const entry = factsDb.store({
+      text: pattern,
+      category: "pattern",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+      decayClass: "permanent",
+      tags: ["reflection", "pattern"],
+    });
+
+    try {
+      // Reuse the already-computed embedding
+      await vectorDb.store({ text: pattern, vector: patternVector, importance: 0.9, category: "pattern" });
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect — vector store failed for pattern: ${err}`);
+    }
+
+    // Add to existing embeddings so subsequent patterns in this batch are checked against it
+    existingEmbeddings.push({ text: pattern, vector: patternVector });
+
+    stored++;
+    logger.info(`memory-hybrid: reflect — stored pattern: ${pattern.slice(0, 80)}...`);
+  }
+
+  return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: stored };
+}
+
+// ============================================================================
 // LLM-based Auto-Classifier
 // ============================================================================
 
@@ -1997,9 +2323,10 @@ async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
-      if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
+      // Cosine similarity = dot product for unit vectors
+      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (cosineSim >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }
 
@@ -2128,15 +2455,16 @@ async function runFindDuplicates(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
-      if (score >= opts.threshold) {
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
+      // Cosine similarity = dot product for unit vectors
+      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (cosineSim >= opts.threshold) {
         const idA = ids[i];
         const idB = ids[j];
         pairs.push({
           idA,
           idB,
-          score,
+          score: cosineSim,
           textA: idToFact.get(idA)!.text,
           textB: idToFact.get(idB)!.text,
         });
@@ -2399,7 +2727,6 @@ const memoryHybridPlugin = {
       credentialsDb = null;
     }
 
-    // Initialize Write-Ahead Log for crash resilience
     if (cfg.wal.enabled) {
       const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
       wal = new WriteAheadLog(walPath, cfg.wal.maxAge);
@@ -2528,52 +2855,23 @@ const memoryHybridPlugin = {
             }
           }
 
-          const results = mergeResults(sqliteResults, lanceResults, limit);
+          const results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
 
-          // Graph traversal: find connected facts (FR-007)
-          let graphResults: SearchResult[] = [];
-          if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
-            try {
-              const startIds = results.map((r) => r.entry.id);
-              const connectedIds = factsDb.traverseGraph(startIds, cfg.graph.maxTraversalDepth);
-              
-              // Get facts for connected IDs (excluding those already in results)
-              const seenIds = new Set(startIds);
-              for (const id of connectedIds) {
-                if (!seenIds.has(id)) {
-                  const fact = factsDb.getById(id);
-                  if (fact) {
-                    graphResults.push({
-                      entry: fact,
-                      score: GRAPH_DISCOVERED_SCORE,
-                      backend: "sqlite",
-                    });
-                  }
-                }
-              }
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: graph traversal failed: ${err}`);
-            }
-          }
-
-          // Merge graph results with original results
-          const allResults = [...results, ...graphResults].slice(0, limit * 2); // Allow more results with graph
-
-          if (allResults.length === 0) {
+          if (results.length === 0) {
             return {
               content: [{ type: "text", text: "No relevant memories found." }],
               details: { count: 0 },
             };
           }
 
-          const text = allResults
+          const text = results
             .map(
               (r, i) =>
                 `${i + 1}. [${r.backend}/${r.entry.category}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%)`,
             )
             .join("\n");
 
-          const sanitized = allResults.map((r) => ({
+          const sanitized = results.map((r) => ({
             id: r.entry.id,
             text: r.entry.text,
             category: r.entry.category,
@@ -2587,15 +2885,14 @@ const memoryHybridPlugin = {
               : undefined,
           }));
 
-          const graphNote = graphResults.length > 0 ? ` (includes ${graphResults.length} graph-connected facts)` : "";
           return {
             content: [
               {
                 type: "text",
-                text: `Found ${allResults.length} memories${graphNote}:\n\n${text}`,
+                text: `Found ${results.length} memories:\n\n${text}`,
               },
             ],
-            details: { count: allResults.length, memories: sanitized, graphConnected: graphResults.length },
+            details: { count: results.length, memories: sanitized },
           };
         },
       },
@@ -2745,12 +3042,116 @@ const memoryHybridPlugin = {
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
 
-          // Generate vector first (needed for WAL)
+          // Generate vector first (needed for WAL and storage)
           let vector: number[] | undefined;
           try {
             vector = await embeddings.embed(textToStore);
           } catch (err) {
             api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          }
+
+          // FR-008: Classify the operation before storing
+          if (cfg.store.classifyBeforeWrite) {
+            const similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
+            if (similarFacts.length > 0) {
+              const classification = await classifyMemoryOperation(
+                textToStore, entity, key, similarFacts, openaiClient, cfg.store.classifyModel, api.logger,
+              );
+
+              if (classification.action === "NOOP") {
+                return {
+                  content: [{ type: "text", text: `Already known: ${classification.reason}` }],
+                  details: { action: "noop", reason: classification.reason },
+                };
+              }
+
+              if (classification.action === "DELETE" && classification.targetId) {
+                factsDb.supersede(classification.targetId, null);
+                return {
+                  content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
+                  details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
+                };
+              }
+
+              if (classification.action === "UPDATE" && classification.targetId) {
+                const oldFact = factsDb.getById(classification.targetId);
+                if (oldFact) {
+                  // WAL: Write pending UPDATE operation
+                  const walEntryId = randomUUID();
+                  if (wal) {
+                    try {
+                      wal.write({
+                        id: walEntryId,
+                        timestamp: Date.now(),
+                        operation: "update",
+                        data: {
+                          text: textToStore,
+                          category,
+                          importance: Math.max(importance, oldFact.importance),
+                          entity: entity || oldFact.entity,
+                          key: key || oldFact.key,
+                          value: value || oldFact.value,
+                          source: "conversation",
+                          decayClass: paramDecayClass ?? oldFact.decayClass,
+                          summary,
+                          tags,
+                          vector,
+                        },
+                      });
+                    } catch (err) {
+                      api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+                    }
+                  }
+
+                  // Store the new version and supersede the old one
+                  const newEntry = factsDb.store({
+                    text: textToStore,
+                    category: category as MemoryCategory,
+                    importance: Math.max(importance, oldFact.importance),
+                    entity: entity || oldFact.entity,
+                    key: key || oldFact.key,
+                    value: value || oldFact.value,
+                    source: "conversation",
+                    decayClass: paramDecayClass ?? oldFact.decayClass,
+                    summary,
+                    tags,
+                  });
+                  factsDb.supersede(classification.targetId, newEntry.id);
+
+                  const finalImportance = Math.max(importance, oldFact.importance);
+                  try {
+                    if (vector && !(await vectorDb.hasDuplicate(vector))) {
+                      await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category });
+                    }
+                  } catch (err) {
+                    api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                  }
+
+                  // WAL: Remove entry after successful commit
+                  if (wal) {
+                    try {
+                      wal.remove(walEntryId);
+                    } catch (err) {
+                      api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
+                    }
+                  }
+
+                  api.logger.info?.(
+                    `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
+                  );
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: `Updated: superseded old fact with "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${newEntry.decayClass}] (reason: ${classification.reason})`,
+                      },
+                    ],
+                    details: { action: "updated", id: newEntry.id, superseded: classification.targetId, reason: classification.reason, backend: "both", decayClass: newEntry.decayClass },
+                  };
+                }
+              }
+              // action === "ADD" falls through to normal store
+            }
           }
 
           // WAL: Write pending operation before committing to storage
@@ -2807,29 +3208,6 @@ const memoryHybridPlugin = {
             api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
           }
 
-          // Auto-linking: create RELATED_TO links to similar facts (FR-007)
-          let linkedCount = 0;
-          if (cfg.graph.enabled && cfg.graph.autoLink) {
-            try {
-              const similarFacts = await factsDb.findSimilarFactsForLinking(
-                entry.id,
-                vectorDb,
-                embeddings,
-                cfg.graph.autoLinkLimit,
-                cfg.graph.autoLinkMinScore
-              );
-              
-              for (const similar of similarFacts) {
-                factsDb.createLink(entry.id, similar.id, "RELATED_TO", similar.score);
-                linkedCount++;
-              }
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: auto-linking failed: ${err}`);
-            }
-          }
-
-          const linkInfo = linkedCount > 0 ? ` (linked to ${linkedCount} related facts)` : "";
-
           // WAL: Remove entry after successful commit
           if (wal) {
             try {
@@ -2843,10 +3221,10 @@ const memoryHybridPlugin = {
             content: [
               {
                 type: "text",
-                text: `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${linkInfo}`,
+                text: `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]`,
               },
             ],
-            details: { action: "created", id: entry.id, backend: "both", decayClass: entry.decayClass, linksCreated: linkedCount },
+            details: { action: "created", id: entry.id, backend: "both", decayClass: entry.decayClass },
           };
         },
       },
@@ -2898,7 +3276,7 @@ const memoryHybridPlugin = {
               lanceResults = await vectorDb.search(vector, 5, 0.7);
             } catch {}
 
-            const results = mergeResults(sqlResults, lanceResults, 5);
+            const results = mergeResults(sqlResults, lanceResults, 5, factsDb);
 
             if (results.length === 0) {
               return {
@@ -2959,136 +3337,6 @@ const memoryHybridPlugin = {
         },
       },
       { name: "memory_forget" },
-    );
-
-    // Graph-based memory link tools (FR-007)
-    api.registerTool(
-      {
-        name: "memory_link",
-        label: "Create Memory Link",
-        description:
-          "Create a typed relationship link between two facts. Use this to establish causal, hierarchical, or semantic relationships.",
-        parameters: Type.Object({
-          sourceFact: Type.String({ description: "Source fact ID" }),
-          targetFact: Type.String({ description: "Target fact ID" }),
-          linkType: stringEnum(LINK_TYPES as unknown as readonly string[]),
-          strength: Type.Optional(
-            Type.Number({ description: "Link strength 0.0-1.0 (default: 1.0)" }),
-          ),
-        }),
-        async execute(_toolCallId, params) {
-          const {
-            sourceFact,
-            targetFact,
-            linkType,
-            strength = 1.0,
-          } = params as {
-            sourceFact: string;
-            targetFact: string;
-            linkType: LinkType;
-            strength?: number;
-          };
-
-          // Validate that both facts exist
-          const source = factsDb.getById(sourceFact);
-          const target = factsDb.getById(targetFact);
-
-          if (!source) {
-            return {
-              content: [{ type: "text", text: `Source fact ${sourceFact} not found.` }],
-              details: { error: "source_not_found" },
-            };
-          }
-
-          if (!target) {
-            return {
-              content: [{ type: "text", text: `Target fact ${targetFact} not found.` }],
-              details: { error: "target_not_found" },
-            };
-          }
-
-          const linkId = factsDb.createLink(sourceFact, targetFact, linkType, strength);
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Created ${linkType} link from "${source.text.slice(0, 50)}..." to "${target.text.slice(0, 50)}..." (strength: ${strength})`,
-              },
-            ],
-            details: { action: "link_created", linkId, sourceFact, targetFact, linkType, strength },
-          };
-        },
-      },
-      { name: "memory_link" },
-    );
-
-    api.registerTool(
-      {
-        name: "memory_graph",
-        label: "Explore Memory Graph",
-        description:
-          "Explore the graph of connected facts. Shows all linked facts for a given fact ID with relationship types.",
-        parameters: Type.Object({
-          factId: Type.String({ description: "Fact ID to explore" }),
-          depth: Type.Optional(
-            Type.Number({ description: "Traversal depth (default: 1, max: 3)" }),
-          ),
-        }),
-        async execute(_toolCallId, params) {
-          const { factId, depth = 1 } = params as {
-            factId: string;
-            depth?: number;
-          };
-
-          const fact = factsDb.getById(factId);
-          if (!fact) {
-            return {
-              content: [{ type: "text", text: `Fact ${factId} not found.` }],
-              details: { error: "fact_not_found" },
-            };
-          }
-
-          const maxDepth = Math.min(Math.max(1, depth), 3);
-          const connectedIds = factsDb.traverseGraph([factId], maxDepth);
-          
-          // Get direct links for the fact
-          const directLinks = factsDb.getLinksForFact(factId);
-
-          const linkDescriptions = directLinks.map((link) => {
-            const otherId = link.direction === "outgoing" ? link.targetFact : link.sourceFact;
-            const otherFact = factsDb.getById(otherId);
-            const arrow = link.direction === "outgoing" ? "→" : "←";
-            return `  ${arrow} [${link.linkType}] ${otherFact?.text.slice(0, 60) || otherId} (strength: ${link.strength.toFixed(2)})`;
-          });
-
-          const text = [
-            `Fact: "${fact.text.slice(0, 100)}${fact.text.length > 100 ? "..." : ""}"`,
-            ``,
-            `Direct links (${directLinks.length}):`,
-            ...linkDescriptions,
-            ``,
-            `Total connected facts (depth ${maxDepth}): ${connectedIds.size - 1}`, // -1 to exclude the fact itself
-          ].join("\n");
-
-          return {
-            content: [{ type: "text", text }],
-            details: {
-              factId,
-              directLinks: directLinks.length,
-              totalConnected: connectedIds.size - 1,
-              links: directLinks.map((l) => ({
-                id: l.id,
-                type: l.linkType,
-                direction: l.direction,
-                otherId: l.direction === "outgoing" ? l.targetFact : l.sourceFact,
-                strength: l.strength,
-              })),
-            },
-          };
-        },
-      },
-      { name: "memory_graph" },
     );
 
     // Credential tools (opt-in)
@@ -3360,6 +3608,58 @@ const memoryHybridPlugin = {
       { name: "memory_prune" },
     );
 
+    api.registerTool(
+      {
+        name: "memory_reflect",
+        label: "Memory Reflect",
+        description:
+          "Analyze recent facts to extract behavioral patterns and meta-insights (FR-011). Use this periodically to synthesize higher-order patterns from observations.",
+        parameters: Type.Object({
+          window: Type.Optional(
+            Type.Number({ description: "Time window in days (default from config or 14)" }),
+          ),
+        }),
+        async execute(_toolCallId, params) {
+          if (!cfg.reflection.enabled) {
+            return {
+              content: [{ type: "text", text: "Reflection is disabled. Enable it in config: reflection.enabled = true" }],
+              details: { enabled: false },
+            };
+          }
+
+          const { window = cfg.reflection.defaultWindow } = params as { window?: number };
+          const validWindow = Math.max(1, Math.min(90, window));
+
+          const result = await runReflection(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openaiClient,
+            {
+              window: validWindow,
+              model: cfg.reflection.model,
+              minObservations: cfg.reflection.minObservations,
+              dryRun: false,
+            },
+            api.logger,
+          );
+
+          const text = `Reflection complete.\nFacts analyzed: ${result.factsAnalyzed} (last ${validWindow} days)\nPatterns extracted: ${result.patternsExtracted}\nPatterns stored: ${result.patternsStored}`;
+
+          return {
+            content: [{ type: "text", text }],
+            details: {
+              factsAnalyzed: result.factsAnalyzed,
+              patternsExtracted: result.patternsExtracted,
+              patternsStored: result.patternsStored,
+              window: validWindow,
+            },
+          };
+        },
+      },
+      { name: "memory_reflect" },
+    );
+
     // ========================================================================
     // CLI Commands
     // ========================================================================
@@ -3602,7 +3902,7 @@ const memoryHybridPlugin = {
               const vector = await embeddings.embed(query);
               lanceResults = await vectorDb.search(vector, limit, 0.3);
             }
-            const merged = mergeResults(sqlResults, lanceResults, limit);
+            const merged = mergeResults(sqlResults, lanceResults, limit, factsDb);
 
             const output = merged.map((r) => ({
               id: r.entry.id,
@@ -3855,6 +4155,39 @@ const memoryHybridPlugin = {
               console.log(`    A: ${trim(p.textA, 80)}`);
               console.log(`    B: ${trim(p.textB, 80)}`);
             }
+          });
+
+        mem
+          .command("reflect")
+          .description("Analyze recent facts to extract behavioral patterns (FR-011)")
+          .option("--window <days>", "Time window in days (default from config or 14)", String(cfg.reflection.defaultWindow))
+          .option("--dry-run", "Show extracted patterns without storing")
+          .option("--model <model>", "LLM for reflection (default from config or gpt-4o-mini)", cfg.reflection.model)
+          .option("--force", "Run even if reflection is disabled in config")
+          .action(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
+            if (!cfg.reflection.enabled && !opts.force) {
+              console.error("Reflection is disabled in config. Enable it with reflection.enabled = true, or use --force to run anyway.");
+              process.exitCode = 1;
+              return;
+            }
+            const window = Math.max(1, Math.min(90, parseInt(opts.window || String(cfg.reflection.defaultWindow))));
+            const model = opts.model || cfg.reflection.model;
+            const result = await runReflection(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openaiClient,
+              {
+                window,
+                model,
+                minObservations: cfg.reflection.minObservations,
+                dryRun: !!opts.dryRun,
+              },
+              api.logger,
+            );
+            console.log(`Facts analyzed: ${result.factsAnalyzed} (last ${window} days)`);
+            console.log(`Patterns extracted: ${result.patternsExtracted}`);
+            console.log(`Patterns stored: ${result.patternsStored}${opts.dryRun ? " (dry run)" : ""}`);
           });
 
         mem
@@ -4492,7 +4825,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -4504,7 +4837,11 @@ const memoryHybridPlugin = {
         if (!event.prompt || event.prompt.length < 5) return;
 
         try {
-          const { limit, minScore } = cfg.autoRecall;
+          // FR-009: Use wider candidate pool for progressive disclosure
+          const isProgressive = cfg.autoRecall.injectionFormat === "progressive";
+          const searchLimit = isProgressive ? Math.max(cfg.autoRecall.limit, 15) : cfg.autoRecall.limit;
+          const { minScore } = cfg.autoRecall;
+          const limit = searchLimit;
           const ftsResults = factsDb.search(event.prompt, limit);
           let lanceResults: SearchResult[] = [];
           try {
@@ -4516,7 +4853,7 @@ const memoryHybridPlugin = {
             );
           }
 
-          let candidates = mergeResults(ftsResults, lanceResults, limit);
+          let candidates = mergeResults(ftsResults, lanceResults, limit, factsDb);
 
           const { entityLookup } = cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
@@ -4544,7 +4881,7 @@ const memoryHybridPlugin = {
 
           if (candidates.length === 0) return;
 
-          if (cfg.autoRecall.preferLongTerm || cfg.autoRecall.useImportanceRecency) {
+          {
             const nowSec = Math.floor(Date.now() / 1000);
             const NINETY_DAYS_SEC = 90 * 24 * 3600;
             const boosted = candidates.map((r) => {
@@ -4570,6 +4907,11 @@ const memoryHybridPlugin = {
                         );
                 s *= importanceFactor * recencyFactor;
               }
+              // FR-005: Access-count salience boost — frequently recalled facts score higher
+              const recallCount = r.entry.recallCount ?? 0;
+              if (recallCount > 0) {
+                s *= 1 + 0.1 * Math.log(recallCount + 1);
+              }
               return { ...r, score: s };
             });
             boosted.sort((a, b) => b.score - a.score);
@@ -4584,6 +4926,46 @@ const memoryHybridPlugin = {
             summarizeWhenOverBudget,
             summarizeModel,
           } = cfg.autoRecall;
+
+          // FR-009: Progressive disclosure — inject a lightweight index, let the agent decide what to fetch
+          if (injectionFormat === "progressive") {
+            const totalTokens = candidates.reduce((sum, r) => {
+              const t = r.entry.summary || r.entry.text;
+              return sum + estimateTokens(t);
+            }, 0);
+            const indexHeader = `<relevant-memories format="index">\nAvailable memories (${candidates.length} matches, ~${totalTokens} tokens total):\n`;
+            const indexFooter = `\n→ Use memory_recall("query") or memory_recall with an entity/key to fetch full details.\n</relevant-memories>`;
+            let indexTokens = estimateTokens(indexHeader + indexFooter);
+            const indexLines: string[] = [];
+
+            for (let i = 0; i < candidates.length; i++) {
+              const r = candidates[i];
+              const title = r.entry.key
+                ? `${r.entry.entity ? r.entry.entity + ": " : ""}${r.entry.key}`
+                : (r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : ""));
+              const tokenCost = estimateTokens(r.entry.summary || r.entry.text);
+              const line = `  ${i + 1}. [${r.entry.category}] ${title} (${tokenCost} tok)`;
+              const lineTokens = estimateTokens(line + "\n");
+              if (indexTokens + lineTokens > maxTokens) break;
+              indexLines.push(line);
+              indexTokens += lineTokens;
+            }
+
+            if (indexLines.length === 0) return;
+
+            // Track access for the memories included in the index
+            const includedIds = candidates.slice(0, indexLines.length).map((r) => r.entry.id);
+            factsDb.refreshAccessedFacts(includedIds);
+
+            const indexContent = indexLines.join("\n");
+            api.logger.info?.(
+              `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
+            );
+            return {
+              prependContext: `${indexHeader}${indexContent}${indexFooter}`,
+            };
+          }
+
           const header = "<relevant-memories>\nThe following memories may be relevant:\n";
           const footer = "\n</relevant-memories>";
           let usedTokens = estimateTokens(header + footer);
@@ -4727,6 +5109,107 @@ const memoryHybridPlugin = {
               summaryThreshold > 0 && textToStore.length > summaryThreshold
                 ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
                 : undefined;
+
+            // FR-008: Classify before auto-capture to avoid stale duplicates
+            if (cfg.store.classifyBeforeWrite) {
+              const similarFacts = factsDb.findSimilarForClassification(
+                textToStore, extracted.entity, extracted.key, 3,
+              );
+              if (similarFacts.length > 0) {
+                try {
+                  const classification = await classifyMemoryOperation(
+                    textToStore, extracted.entity, extracted.key, similarFacts,
+                    openaiClient, cfg.store.classifyModel, api.logger,
+                  );
+                  if (classification.action === "NOOP") continue;
+                  if (classification.action === "DELETE" && classification.targetId) {
+                    factsDb.supersede(classification.targetId, null);
+                    api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
+                    continue;
+                  }
+                  if (classification.action === "UPDATE" && classification.targetId) {
+                    const oldFact = factsDb.getById(classification.targetId);
+                    if (oldFact) {
+                      const finalImportance = Math.max(0.7, oldFact.importance);
+                      
+                      // Generate vector first
+                      let vector: number[] | undefined;
+                      try {
+                        vector = await embeddings.embed(textToStore);
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+                      }
+
+                      // WAL: Write pending UPDATE operation
+                      const walEntryId = randomUUID();
+                      if (wal) {
+                        try {
+                          wal.write({
+                            id: walEntryId,
+                            timestamp: Date.now(),
+                            operation: "update",
+                            data: {
+                              text: textToStore,
+                              category,
+                              importance: finalImportance,
+                              entity: extracted.entity || oldFact.entity,
+                              key: extracted.key || oldFact.key,
+                              value: extracted.value || oldFact.value,
+                              source: "auto-capture",
+                              decayClass: oldFact.decayClass,
+                              summary,
+                              tags: extractTags(textToStore, extracted.entity),
+                              vector,
+                            },
+                          });
+                        } catch (err) {
+                          api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
+                        }
+                      }
+
+                      const newEntry = factsDb.store({
+                        text: textToStore,
+                        category,
+                        importance: finalImportance,
+                        entity: extracted.entity || oldFact.entity,
+                        key: extracted.key || oldFact.key,
+                        value: extracted.value || oldFact.value,
+                        source: "auto-capture",
+                        decayClass: oldFact.decayClass,
+                        summary,
+                      });
+                      factsDb.supersede(classification.targetId, newEntry.id);
+                      try {
+                        if (vector && !(await vectorDb.hasDuplicate(vector))) {
+                          await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category });
+                        }
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
+                      }
+
+                      // WAL: Remove entry after successful commit
+                      if (wal) {
+                        try {
+                          wal.remove(walEntryId);
+                        } catch (err) {
+                          api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
+                        }
+                      }
+
+                      api.logger.info?.(
+                        `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
+                      );
+                      stored++;
+                      continue;
+                    }
+                  }
+                  // ADD: fall through to normal store
+                } catch (err) {
+                  api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
+                  // fall through to normal store on error
+                }
+              }
+            }
 
             // Generate vector first (needed for WAL)
             let vector: number[] | undefined;
@@ -4902,7 +5385,7 @@ const memoryHybridPlugin = {
 
             for (const entry of pendingEntries) {
               try {
-                if (entry.operation === "store") {
+                if (entry.operation === "store" || entry.operation === "update") {
                   const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
                   
                   // Check if already stored (idempotency)
@@ -4945,15 +5428,15 @@ const memoryHybridPlugin = {
               }
             }
 
-            if (recovered > 0) {
-              api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
+            if (recovered > 0 || failed > 0) {
+              api.logger.info(`memory-hybrid: WAL recovery complete — ${recovered} recovered, ${failed} failed`);
             }
-          }
-
-          // Prune stale WAL entries
-          const pruned = wal.pruneStale();
-          if (pruned > 0) {
-            api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
+            
+            // Prune any remaining stale entries
+            const pruned = wal.pruneStale();
+            if (pruned > 0) {
+              api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
+            }
           }
         }
 
