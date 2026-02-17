@@ -23,6 +23,10 @@ export type AutoClassifyConfig = {
   enabled: boolean;
   model: string;       // e.g. "gpt-4.1-nano", "gpt-4o-mini", or any chat model
   batchSize: number;   // facts per LLM call (default 20)
+  /** When true, LLM can suggest new categories from "other" facts; labels with at least minFactsForNewCategory become real categories (default true) */
+  suggestCategories?: boolean;
+  /** Minimum facts with the same suggested label before we create that category (default 10). Not told to the LLM. */
+  minFactsForNewCategory?: number;
 };
 
 /** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
@@ -161,7 +165,7 @@ export const hybridConfigSchema = {
 
     const embedding = cfg.embedding as Record<string, unknown> | undefined;
     if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"memory-hybrid\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
+      throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
     const rawKey = (embedding.apiKey as string).trim();
     if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
@@ -190,6 +194,8 @@ export const hybridConfigSchema = {
       enabled: acCfg?.enabled === true,
       model: typeof acCfg?.model === "string" ? acCfg.model : "gpt-4o-mini",
       batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
+      suggestCategories: acCfg?.suggestCategories !== false,
+      minFactsForNewCategory: typeof acCfg?.minFactsForNewCategory === "number" ? acCfg.minFactsForNewCategory : 10,
     };
 
     // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars?, injectionFormat? }

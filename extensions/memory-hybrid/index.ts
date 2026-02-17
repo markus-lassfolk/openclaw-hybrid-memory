@@ -23,6 +23,7 @@ import { stringEnum } from "openclaw/plugin-sdk";
 import {
   DEFAULT_MEMORY_CATEGORIES,
   getMemoryCategories,
+  setMemoryCategories,
   isValidCategory,
   type MemoryCategory,
   DECAY_CLASSES,
@@ -1831,6 +1832,100 @@ async function runFindDuplicates(
   return { pairs, candidatesCount: candidateFacts.length, skippedStructured };
 }
 
+/** Minimum "other" facts before we run category discovery (avoid noise on tiny sets). */
+const MIN_OTHER_FOR_DISCOVERY = 15;
+/** Batch size for discovery prompts (leave room for JSON array of labels). */
+const DISCOVERY_BATCH_SIZE = 25;
+
+/**
+ * Normalize a free-form label to a valid category slug: lowercase, alphanumeric + underscore.
+ * Returns empty string if result would be "other" or invalid.
+ */
+function normalizeSuggestedLabel(s: string): string {
+  const t = s
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+  return t && t !== "other" && t.length <= 40 ? t : "";
+}
+
+/**
+ * Ask the LLM to group "other" facts by topic (free-form labels). Labels with at least
+ * minFactsForNewCategory facts become new categories; we do not tell the LLM the threshold.
+ * Returns list of newly created category names; updates DB and persists to discoveredCategoriesPath.
+ */
+async function discoverCategoriesFromOther(
+  db: FactsDB,
+  openai: OpenAI,
+  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  discoveredCategoriesPath: string,
+): Promise<string[]> {
+  if (config.suggestCategories !== true) return [];
+  const minForNew = config.minFactsForNewCategory ?? 10;
+  const others = db.getByCategory("other");
+  if (others.length < MIN_OTHER_FOR_DISCOVERY) return [];
+
+  logger.info(`memory-hybrid: category discovery on ${others.length} "other" facts (min ${minForNew} per label)`);
+
+  const existingCategories = new Set(getMemoryCategories());
+  const labelToIds = new Map<string, string[]>();
+
+  for (let i = 0; i < others.length; i += DISCOVERY_BATCH_SIZE) {
+    const batch = others.slice(i, i + DISCOVERY_BATCH_SIZE);
+    const factLines = batch.map((f, idx) => `${idx + 1}. ${f.text.slice(0, 280)}`).join("\n");
+    const prompt = `For each fact below, assign a short category label (1–2 words) that describes its topic or type. Use the same label for facts about the same topic. Output only a JSON array of strings, one label per fact in the same order. No explanation.`;
+
+    try {
+      const resp = await openai.chat.completions.create({
+        model: config.model,
+        messages: [{ role: "user", content: `${prompt}\n\nFacts:\n${factLines}` }],
+        temperature: 0,
+        max_tokens: batch.length * 24,
+      });
+      const content = resp.choices[0]?.message?.content?.trim() || "[]";
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) continue;
+      const labels: unknown[] = JSON.parse(jsonMatch[0]);
+      for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
+        const raw = typeof labels[j] === "string" ? (labels[j] as string) : "";
+        const label = normalizeSuggestedLabel(raw);
+        if (!label) continue;
+        if (!labelToIds.has(label)) labelToIds.set(label, []);
+        labelToIds.get(label)!.push(batch[j].id);
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: category discovery batch failed: ${err}`);
+    }
+    if (i + DISCOVERY_BATCH_SIZE < others.length) await new Promise((r) => setTimeout(r, 400));
+  }
+
+  const newCategoryNames: string[] = [];
+  for (const [label, ids] of labelToIds) {
+    if (existingCategories.has(label)) continue;
+    if (ids.length < minForNew) continue;
+    newCategoryNames.push(label);
+    for (const id of ids) db.updateCategory(id, label);
+  }
+
+  if (newCategoryNames.length === 0) return [];
+
+  setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
+  logger.info(`memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`);
+
+  mkdirSync(dirname(discoveredCategoriesPath), { recursive: true });
+  const existingList: string[] = existsSync(discoveredCategoriesPath)
+    ? (JSON.parse(readFileSync(discoveredCategoriesPath, "utf-8")) as string[])
+    : [];
+  const merged = [...new Set([...existingList, ...newCategoryNames])];
+  writeFileSync(discoveredCategoriesPath, JSON.stringify(merged, null, 2), "utf-8");
+
+  return newCategoryNames;
+}
+
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
  * Returns a map of factId → newCategory.
@@ -1886,17 +1981,24 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
 
 /**
  * Run auto-classification on all "other" facts. Called on schedule or manually.
- * Also suggests new categories if clusters are found.
+ * If opts.discoveredCategoriesPath and config.suggestCategories are set, runs category discovery first
+ * (LLM groups "other" by free-form label; labels with ≥ minFactsForNewCategory become new categories).
  */
 async function runAutoClassify(
   db: FactsDB,
   openai: OpenAI,
-  config: { model: string; batchSize: number },
+  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  opts?: { discoveredCategoriesPath?: string },
 ): Promise<{ reclassified: number; suggested: string[] }> {
   const categories = getMemoryCategories();
 
-  // Get all "other" facts
+  // Optionally discover new categories from "other" (free-form grouping; threshold not told to LLM)
+  if (opts?.discoveredCategoriesPath && config.suggestCategories) {
+    await discoverCategoriesFromOther(db, openai, config, logger, opts.discoveredCategoriesPath);
+  }
+
+  // Get all "other" facts (after discovery some may have been reclassified)
   const others = db.getByCategory("other");
   if (others.length === 0) {
     return { reclassified: 0, suggested: [] };
@@ -1951,8 +2053,10 @@ let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 
+const PLUGIN_ID = "openclaw-hybrid-memory";
+
 const memoryHybridPlugin = {
-  id: "memory-hybrid",
+  id: PLUGIN_ID,
   name: "Memory (Hybrid: SQLite + LanceDB)",
   description:
     "Two-tier memory: SQLite+FTS5 for structured facts, LanceDB for semantic search",
@@ -1977,6 +2081,20 @@ const memoryHybridPlugin = {
       api.logger.info(`memory-hybrid: credentials store enabled (${credPath})`);
     } else {
       credentialsDb = null;
+    }
+
+    // Load previously discovered categories so they remain available after restart
+    const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
+    if (existsSync(discoveredPath)) {
+      try {
+        const loaded = JSON.parse(readFileSync(discoveredPath, "utf-8")) as string[];
+        if (Array.isArray(loaded) && loaded.length > 0) {
+          setMemoryCategories([...getMemoryCategories(), ...loaded]);
+          api.logger.info(`memory-hybrid: loaded ${loaded.length} discovered categories`);
+        }
+      } catch {
+        // ignore invalid or missing file
+      }
     }
 
     api.logger.info(
@@ -3068,25 +3186,43 @@ const memoryHybridPlugin = {
 
         mem
           .command("classify")
-          .description("Auto-classify 'other' facts using LLM (uses autoClassify config)")
+          .description("Auto-classify 'other' facts using LLM (uses autoClassify config). Runs category discovery first when enabled.")
           .option("--dry-run", "Show classifications without applying")
           .option("--limit <n>", "Max facts to classify", "500")
           .option("--model <model>", "Override LLM model")
           .action(async (opts: { dryRun?: boolean; limit?: string; model?: string }) => {
             const classifyModel = opts.model || cfg.autoClassify.model;
             const limit = parseInt(opts.limit || "500");
+            const logger = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
 
             console.log(`Auto-classify config:`);
             console.log(`  Model: ${classifyModel}`);
             console.log(`  Batch size: ${cfg.autoClassify.batchSize}`);
+            console.log(`  Suggest categories: ${cfg.autoClassify.suggestCategories !== false}`);
             console.log(`  Categories: ${getMemoryCategories().join(", ")}`);
             console.log(`  Limit: ${limit}`);
             console.log(`  Dry run: ${!!opts.dryRun}\n`);
 
-            const others = factsDb.getByCategory("other").slice(0, limit);
-            console.log(`Found ${others.length} "other" facts to classify\n`);
+            let others = factsDb.getByCategory("other").slice(0, limit);
+            if (others.length === 0) {
+              console.log("No 'other' facts to classify.");
+              return;
+            }
 
-            if (others.length === 0) return;
+            // Run category discovery first (when not dry-run and enough "other" facts)
+            if (!opts.dryRun && cfg.autoClassify.suggestCategories && others.length >= MIN_OTHER_FOR_DISCOVERY) {
+              const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
+              await discoverCategoriesFromOther(
+                factsDb,
+                openaiClient,
+                { ...cfg.autoClassify, model: classifyModel },
+                logger,
+                discoveredPath,
+              );
+              others = factsDb.getByCategory("other").slice(0, limit);
+            }
+
+            console.log(`Classifying ${others.length} "other" facts\n`);
 
             let totalReclassified = 0;
 
@@ -3213,10 +3349,10 @@ const memoryHybridPlugin = {
             const fullDefaults = {
               memory: { backend: "builtin" as const, citations: "auto" as const },
               plugins: {
-                slots: { memory: "memory-hybrid" as const },
+                slots: { memory: PLUGIN_ID },
                 entries: {
                   "memory-core": { enabled: true },
-                  "memory-hybrid": {
+                  [PLUGIN_ID]: {
                     enabled: true,
                     config: {
                       embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
@@ -3297,7 +3433,7 @@ const memoryHybridPlugin = {
                 return;
               }
             }
-            const existingApiKey = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.["memory-hybrid"] && (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>)?.config && ((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>).config as Record<string, unknown>)?.embedding && (((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)["memory-hybrid"] as Record<string, unknown>).config as Record<string, unknown>).embedding as Record<string, unknown>)?.apiKey;
+            const existingApiKey = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID] && (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config && ((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>)?.embedding && (((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>).embedding as Record<string, unknown>)?.apiKey;
             const isRealKey = typeof existingApiKey === "string" && existingApiKey.length >= 10 && existingApiKey !== "YOUR_OPENAI_API_KEY" && existingApiKey !== "<OPENAI_API_KEY>";
 
             if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
@@ -3305,7 +3441,7 @@ const memoryHybridPlugin = {
             deepMerge(config, fullDefaults as unknown as Record<string, unknown>);
             if (isRealKey) {
               const entries = (config.plugins as Record<string, unknown>).entries as Record<string, unknown>;
-              const mh = entries["memory-hybrid"] as Record<string, unknown>;
+              const mh = entries[PLUGIN_ID] as Record<string, unknown>;
               const cfg = mh?.config as Record<string, unknown>;
               const emb = cfg?.embedding as Record<string, unknown>;
               if (emb) emb.apiKey = existingApiKey;
@@ -3319,9 +3455,9 @@ const memoryHybridPlugin = {
             }
             writeFileSync(configPath, after, "utf-8");
             console.log("Config written: " + configPath);
-            console.log("Applied: plugins.slots.memory=memory-hybrid, memory-hybrid config (all features), memorySearch, compaction prompts, bootstrap limits, pruning, autoClassify, nightly-memory-sweep job.");
+            console.log(`Applied: plugins.slots.memory=${PLUGIN_ID}, ${PLUGIN_ID} config (all features), memorySearch, compaction prompts, bootstrap limits, pruning, autoClassify, nightly-memory-sweep job.`);
             console.log("\nNext steps:");
-            console.log("  1. Set embedding.apiKey in plugins.entries[\"memory-hybrid\"].config (or use env:OPENAI_API_KEY in config).");
+            console.log(`  1. Set embedding.apiKey in plugins.entries["${PLUGIN_ID}"].config (or use env:OPENAI_API_KEY in config).`);
             console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
             console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
           });
@@ -3343,7 +3479,7 @@ const memoryHybridPlugin = {
             if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
               issues.push("embedding.apiKey is missing, placeholder, or too short");
               loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
-              fixes.push("LOAD-BLOCKING: Set plugins.entries[\"memory-hybrid\"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to \"text-embedding-3-small\"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.");
+              fixes.push(`LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`);
               configOk = false;
             }
             if (!cfg.embedding.model) {
@@ -3383,7 +3519,7 @@ const memoryHybridPlugin = {
               console.log("Embedding API: OK");
             } catch (e) {
               issues.push(`Embedding API: ${String(e)}`);
-              fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries["memory-hybrid"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
+              fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
               console.log(`Embedding API: FAIL — ${String(e)}`);
             }
 
@@ -3437,13 +3573,40 @@ const memoryHybridPlugin = {
                 console.log("\nSession distillation: last run file present but unreadable");
               }
             } else {
-              console.log("\nSession distillation: last run not recorded (run scripts/distill-sessions/ then 'openclaw hybrid-mem record-distill' to record)");
+              console.log("\nSession distillation: last run not recorded (optional).");
+              console.log("  If you use session distillation (extracting facts from old logs): after each run, run: openclaw hybrid-mem record-distill");
+              console.log("  If you have a nightly distillation cron job: add a final step to that job to run openclaw hybrid-mem record-distill so this is recorded.");
+              console.log("  If you don't use it, ignore this.");
             }
 
             // Optional / suggested jobs (e.g. nightly session distillation)
+            // Check OpenClaw cron store first (~/.openclaw/cron/jobs.json), then legacy openclaw.json "jobs"
             let nightlySweepDefined = false;
             let nightlySweepEnabled = true;
-            if (existsSync(defaultConfigPath)) {
+            const cronStorePath = join(openclawDir, "cron", "jobs.json");
+            if (existsSync(cronStorePath)) {
+              try {
+                const raw = readFileSync(cronStorePath, "utf-8");
+                const store = JSON.parse(raw) as Record<string, unknown>;
+                const jobs = store.jobs;
+                if (Array.isArray(jobs)) {
+                  const nightly = jobs.find((j: unknown) => {
+                    if (typeof j !== "object" || j === null) return false;
+                    const name = String((j as Record<string, unknown>).name ?? "").toLowerCase();
+                    const pl = (j as Record<string, unknown>).payload as Record<string, unknown> | undefined;
+                    const msg = String(pl?.message ?? (j as Record<string, unknown>).message ?? "").toLowerCase();
+                    return /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name) || /nightly memory distillation|memory distillation pipeline/.test(msg);
+                  }) as Record<string, unknown> | undefined;
+                  if (nightly) {
+                    nightlySweepDefined = true;
+                    nightlySweepEnabled = nightly.enabled !== false;
+                  }
+                }
+              } catch {
+                // ignore parse or read errors
+              }
+            }
+            if (!nightlySweepDefined && existsSync(defaultConfigPath)) {
               try {
                 const raw = readFileSync(defaultConfigPath, "utf-8");
                 const root = JSON.parse(raw) as Record<string, unknown>;
@@ -3462,15 +3625,15 @@ const memoryHybridPlugin = {
                   }
                 }
               } catch {
-                // ignore parse or read errors
+                // ignore
               }
             }
-            console.log("\nOptional / suggested jobs (openclaw.json):");
+            console.log("\nOptional / suggested jobs (cron store or openclaw.json):");
             if (nightlySweepDefined) {
               console.log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
             } else {
               console.log("  nightly-memory-sweep (session distillation): not defined");
-              fixes.push("Optional: Add nightly-memory-sweep to openclaw.json \"jobs\" array for incremental session distillation. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
+              fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
             }
 
             console.log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
@@ -3492,7 +3655,7 @@ const memoryHybridPlugin = {
             if (allOk) {
               console.log("\nAll checks passed.");
               if (!nightlySweepDefined) {
-                console.log("Optional: Add nightly-memory-sweep to openclaw.json \"jobs\" for incremental session distillation. See docs/SESSION-DISTILLATION.md.");
+                console.log("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.");
               }
             } else {
               console.log("\n--- Issues ---");
@@ -3521,8 +3684,8 @@ const memoryHybridPlugin = {
                   const plugins = fixConfig.plugins as Record<string, unknown>;
                   if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
                   const entries = plugins.entries as Record<string, unknown>;
-                  if (!entries["memory-hybrid"] || typeof entries["memory-hybrid"] !== "object") entries["memory-hybrid"] = { enabled: true, config: {} };
-                  const mh = entries["memory-hybrid"] as Record<string, unknown>;
+                  if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = { enabled: true, config: {} };
+                  const mh = entries[PLUGIN_ID] as Record<string, unknown>;
                   if (!mh.config || typeof mh.config !== "object") mh.config = {};
                   const cfg = mh.config as Record<string, unknown>;
                   if (!cfg.embedding || typeof cfg.embedding !== "object") cfg.embedding = {};
@@ -3535,19 +3698,22 @@ const memoryHybridPlugin = {
                     changed = true;
                     applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
                   }
-                  if (!fixConfig.jobs || !Array.isArray(fixConfig.jobs)) fixConfig.jobs = [];
-                  const jobsArr = fixConfig.jobs as unknown[];
-                  if (!jobsArr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep")) {
-                    jobsArr.push({
+                  // Add nightly-memory-sweep job if missing (same as install), so upgrade/snippet-only users get it without running full install.
+                  const jobs = Array.isArray(fixConfig.jobs) ? fixConfig.jobs : [];
+                  const hasNightly = jobs.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                  if (!hasNightly) {
+                    jobs.push({
                       name: "nightly-memory-sweep",
                       schedule: "0 2 * * *",
                       channel: "system",
-                      message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
+                      message:
+                        "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
                       isolated: true,
                       model: "gemini",
                     });
+                    (fixConfig as Record<string, unknown>).jobs = jobs;
                     changed = true;
-                    applied.push("Added nightly-memory-sweep to jobs");
+                    applied.push("Added nightly-memory-sweep job for session distillation");
                   }
                   const memoryDirPath = dirname(resolvedSqlitePath);
                   if (!existsSync(memoryDirPath)) {
@@ -3571,7 +3737,7 @@ const memoryHybridPlugin = {
                     captureMaxChars: 5000,
                     store: { fuzzyDedupe: false },
                   };
-                  console.log("Minimal config snippet to merge into plugins.entries[\"memory-hybrid\"].config:");
+                  console.log(`Minimal config snippet to merge into plugins.entries["${PLUGIN_ID}"].config:`);
                   console.log(JSON.stringify(snippet, null, 2));
                 }
               } else {
@@ -3608,6 +3774,81 @@ const memoryHybridPlugin = {
             }
           });
 
+        /** Full distillation: max days of history to process when .distill_last_run is missing (avoids unbounded first run). */
+        const FULL_DISTILL_MAX_DAYS = 90;
+        /** Incremental: process at least this many days when last run exists (overlap window). */
+        const INCREMENTAL_MIN_DAYS = 3;
+
+        mem
+          .command("distill-window")
+          .description("Print the session distillation window (full or incremental). Use at start of a distillation job to decide what to process; end the job with record-distill.")
+          .option("--json", "Output machine-readable JSON only (mode, startDate, endDate, mtimeDays)")
+          .action(async (opts: { json?: boolean }) => {
+            const memoryDir = dirname(resolvedSqlitePath);
+            const distillLastRunPath = join(memoryDir, ".distill_last_run");
+            const now = new Date();
+            const today = now.toISOString().slice(0, 10);
+
+            let mode: "full" | "incremental";
+            let startDate: string;
+            let endDate: string = today;
+            let mtimeDays: number;
+
+            if (!existsSync(distillLastRunPath)) {
+              mode = "full";
+              const start = new Date(now);
+              start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+              startDate = start.toISOString().slice(0, 10);
+              mtimeDays = FULL_DISTILL_MAX_DAYS;
+            } else {
+              try {
+                const line = readFileSync(distillLastRunPath, "utf-8").split("\n")[0]?.trim() || "";
+                if (!line) {
+                  mode = "full";
+                  const start = new Date(now);
+                  start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+                  startDate = start.toISOString().slice(0, 10);
+                  mtimeDays = FULL_DISTILL_MAX_DAYS;
+                } else {
+                  const lastRun = new Date(line);
+                  if (Number.isNaN(lastRun.getTime())) {
+                    mode = "full";
+                    const start = new Date(now);
+                    start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+                    startDate = start.toISOString().slice(0, 10);
+                    mtimeDays = FULL_DISTILL_MAX_DAYS;
+                  } else {
+                    mode = "incremental";
+                    const lastRunDate = lastRun.toISOString().slice(0, 10);
+                    const threeDaysAgo = new Date(now);
+                    threeDaysAgo.setDate(threeDaysAgo.getDate() - INCREMENTAL_MIN_DAYS);
+                    const threeDaysAgoStr = threeDaysAgo.toISOString().slice(0, 10);
+                    startDate = lastRunDate < threeDaysAgoStr ? lastRunDate : threeDaysAgoStr;
+                    const start = new Date(startDate);
+                    mtimeDays = Math.ceil((now.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+                    if (mtimeDays < 1) mtimeDays = 1;
+                  }
+                }
+              } catch {
+                mode = "full";
+                const start = new Date(now);
+                start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+                startDate = start.toISOString().slice(0, 10);
+                mtimeDays = FULL_DISTILL_MAX_DAYS;
+              }
+            }
+
+            if (opts.json) {
+              console.log(JSON.stringify({ mode, startDate, endDate, mtimeDays }));
+              return;
+            }
+            console.log(`Distill window: ${mode}`);
+            console.log(`  startDate: ${startDate}`);
+            console.log(`  endDate: ${endDate}`);
+            console.log(`  mtimeDays: ${mtimeDays} (use find ... -mtime -${mtimeDays} for session files)`);
+            console.log("Process sessions from that window; then run: openclaw hybrid-mem record-distill");
+          });
+
         mem
           .command("record-distill")
           .description("Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)")
@@ -3642,31 +3883,31 @@ const memoryHybridPlugin = {
                 (plugins.slots as Record<string, string>).memory = "memory-core";
                 if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
                 const entries = plugins.entries as Record<string, unknown>;
-                if (!entries["memory-hybrid"] || typeof entries["memory-hybrid"] !== "object") {
-                  entries["memory-hybrid"] = {};
+                if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") {
+                  entries[PLUGIN_ID] = {};
                 }
-                (entries["memory-hybrid"] as Record<string, boolean>).enabled = false;
+                (entries[PLUGIN_ID] as Record<string, boolean>).enabled = false;
                 writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
-                console.log("Config updated: plugins.slots.memory = \"memory-core\", memory-hybrid disabled.");
+                console.log(`Config updated: plugins.slots.memory = "memory-core", ${PLUGIN_ID} disabled.`);
                 console.log("OpenClaw will use the default memory manager. Restart the gateway. Your hybrid data is kept unless you run with --clean-all.");
               } catch (e) {
                 console.error(`Could not update config (${configPath}): ${e}`);
                 console.log("Apply these changes manually:");
                 console.log("  1. Set plugins.slots.memory to \"memory-core\"");
-                console.log("  2. Set plugins.entries[\"memory-hybrid\"].enabled to false");
+                console.log(`  2. Set plugins.entries["${PLUGIN_ID}"].enabled to false`);
                 console.log("  3. Restart the gateway.");
               }
             } else if (!opts.leaveConfig) {
               console.log(`Config file not found at ${configPath}. Apply these changes manually:`);
               console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
               console.log("  2. Set plugins.slots.memory to \"memory-core\".");
-              console.log("  3. Set plugins.entries[\"memory-hybrid\"].enabled to false.");
+              console.log(`  3. Set plugins.entries["${PLUGIN_ID}"].enabled to false.`);
               console.log("  4. Restart the gateway.");
             } else {
               console.log("To use the default OpenClaw memory manager instead of hybrid:");
               console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
               console.log("  2. Set plugins.slots.memory to \"memory-core\".");
-              console.log("  3. Set plugins.entries[\"memory-hybrid\"].enabled to false.");
+              console.log(`  3. Set plugins.entries["${PLUGIN_ID}"].enabled to false.`);
               console.log("  4. Restart the gateway.");
             }
 
@@ -3699,7 +3940,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -4043,7 +4284,7 @@ const memoryHybridPlugin = {
     // ========================================================================
 
     api.registerService({
-      id: "memory-hybrid",
+      id: PLUGIN_ID,
       start: () => {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
@@ -4073,11 +4314,14 @@ const memoryHybridPlugin = {
         // Daily auto-classify: reclassify "other" facts using LLM (if enabled)
         if (cfg.autoClassify.enabled) {
           const CLASSIFY_INTERVAL = 24 * 60 * 60_000; // 24 hours
+          const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
 
           // Run once shortly after startup (5 min delay to let things settle)
           classifyStartupTimeout = setTimeout(async () => {
             try {
-              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger);
+              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger, {
+                discoveredCategoriesPath: discoveredPath,
+              });
             } catch (err) {
               api.logger.warn(`memory-hybrid: startup auto-classify failed: ${err}`);
             }
@@ -4085,7 +4329,9 @@ const memoryHybridPlugin = {
 
           classifyTimer = setInterval(async () => {
             try {
-              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger);
+              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger, {
+                discoveredCategoriesPath: discoveredPath,
+              });
             } catch (err) {
               api.logger.warn(`memory-hybrid: daily auto-classify failed: ${err}`);
             }

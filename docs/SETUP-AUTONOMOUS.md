@@ -64,7 +64,7 @@ memory/archive/
 
 Read `~/.openclaw/openclaw.json`. **Deep-merge** the following keys (do not overwrite unrelated config). If a key already has the correct value, skip it.
 
-**4a. Plugin slot and entries** — set `plugins.slots.memory` to `"memory-hybrid"`. Ensure `plugins.entries.memory-core.enabled` is `true`. Set `plugins.entries.memory-hybrid`:
+**4a. Plugin slot and entries** — set `plugins.slots.memory` to `"openclaw-hybrid-memory"`. Ensure `plugins.entries.memory-core.enabled` is `true`. Set `plugins.entries.openclaw-hybrid-memory`:
 
 ```json
 {
@@ -127,7 +127,7 @@ Context is taken from the model catalog automatically. Only add `contextTokens` 
 { "ttl": "30m" }
 ```
 
-**4g. Auto-classify (recommended)** — enable LLM-based reclassification of `"other"` facts. Add `autoClassify` and optionally `categories` inside `plugins.entries.memory-hybrid.config`:
+**4g. Auto-classify (recommended)** — enable LLM-based reclassification of `"other"` facts. Add `autoClassify` and optionally `categories` inside `plugins.entries.openclaw-hybrid-memory.config`:
 
 ```json
 {

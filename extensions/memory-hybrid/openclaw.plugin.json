@@ -1,5 +1,5 @@
 {
-  "id": "memory-hybrid",
+  "id": "openclaw-hybrid-memory",
   "kind": "memory",
   "version": "2026.2.16",
   "uiHints": {
@@ -102,6 +102,14 @@
       "placeholder": "gpt-4.1-nano",
       "help": "Cheap/fast model for classification (e.g. gpt-4.1-nano, gpt-4o-mini)"
     },
+    "autoClassify.suggestCategories": {
+      "label": "Suggest categories",
+      "help": "Let LLM suggest new categories from 'other' facts; labels with ≥ minFactsForNewCategory become real categories"
+    },
+    "autoClassify.minFactsForNewCategory": {
+      "label": "Min facts for new category",
+      "help": "Minimum facts with same suggested label before creating that category (default 10); not told to the LLM"
+    },
     "store.fuzzyDedupe": {
       "label": "Store fuzzy dedupe",
       "help": "Skip storing when normalized text (trim, collapse whitespace, lowercase) matches an existing fact (2.3)"
@@ -192,7 +200,9 @@
         "properties": {
           "enabled": { "type": "boolean" },
           "model": { "type": "string" },
-          "batchSize": { "type": "number" }
+          "batchSize": { "type": "number" },
+          "suggestCategories": { "type": "boolean" },
+          "minFactsForNewCategory": { "type": "number" }
         }
       },
       "store": {

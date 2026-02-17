@@ -159,19 +159,19 @@ Merge these into your existing `openclaw.json` (e.g. `~/.openclaw/openclaw.json`
 
 ### 4.1 Memory slot and memory-hybrid plugin
 
-OpenClaw allows only one plugin to own the `memory` slot. Set it to **memory-hybrid**:
+OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-hybrid-memory** (the plugin id, same as the npm package name):
 
 ```json
 {
   "plugins": {
     "slots": {
-      "memory": "memory-hybrid"
+      "memory": "openclaw-hybrid-memory"
     },
     "entries": {
       "memory-core": {
         "enabled": true
       },
-      "memory-hybrid": {
+      "openclaw-hybrid-memory": {
         "enabled": true,
         "config": {
           "embedding": {
@@ -375,7 +375,7 @@ conversation text
 
 **Stage 2 -- Heuristic classification.** The `detectCategory()` function runs a fast regex pass on the text and returns the first matching category. This happens inline during capture -- no LLM call, no latency. Anything that doesn't match falls through to `"other"`.
 
-**Stage 3 -- LLM auto-classify.** If enabled (§4.9), a background job periodically queries all `"other"` facts and sends them to a cheap LLM in batches to be reclassified into proper categories.
+**Stage 3 -- LLM auto-classify.** If enabled (§4.9), a background job periodically queries all `"other"` facts and sends them to a cheap LLM in batches to be reclassified into proper categories. When **category discovery** is enabled (`autoClassify.suggestCategories`, default `true`), the job first asks the LLM to group "other" facts by free-form topic labels (e.g. "food", "travel"); any label that appears on at least `minFactsForNewCategory` facts (default 10) is created as a new category and those facts are reclassified. The threshold is not shown to the LLM, so it cannot game the system. New categories are persisted to `~/.openclaw/memory/.discovered-categories.json` and loaded on next startup.
 
 **Manual override.** The `memory_store` tool accepts an explicit `category` parameter that bypasses heuristic detection entirely.
 
@@ -441,7 +441,7 @@ Categories can be extended from config without editing code. Add a `categories` 
 {
   "plugins": {
     "entries": {
-      "memory-hybrid": {
+      "openclaw-hybrid-memory": {
         "config": {
           "categories": ["research", "health", "finance"]
         }
@@ -453,7 +453,9 @@ Categories can be extended from config without editing code. Add a `categories` 
 
 The five defaults (`preference`, `fact`, `decision`, `entity`, `other`) are always included; your custom categories are merged in and deduplicated. Restart the gateway to pick them up.
 
-Once registered, custom categories are available in:
+**Category discovery.** You can also let the LLM suggest new categories from "other" facts: when `autoClassify.suggestCategories` is true (default), the auto-classify job groups "other" facts by free-form topic; any label with at least `minFactsForNewCategory` facts (default 10) becomes a real category. See the Stage 3 description above. Set `suggestCategories: false` to disable.
+
+Once registered, custom categories (from config or discovery) are available in:
 
 - The **`memory_store` tool** -- the `category` parameter enum includes them.
 - The **LLM auto-classifier** -- the prompt lists all categories so it can assign custom ones.
@@ -472,7 +474,7 @@ Without a heuristic pattern, custom categories are only assigned via explicit `m
 
 #### 4.8.5 Category-related configuration reference
 
-All category settings live in `openclaw.json` under `plugins.entries.memory-hybrid.config`:
+All category settings live in `openclaw.json` under `plugins.entries.openclaw-hybrid-memory.config`:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -521,7 +523,7 @@ Add `autoClassify` to your memory-hybrid plugin config:
 {
   "plugins": {
     "entries": {
-      "memory-hybrid": {
+      "openclaw-hybrid-memory": {
         "config": {
           "autoClassify": {
             "enabled": true,
@@ -798,7 +800,7 @@ Raw session logs. Write what happened, decisions made, issues found. They are se
 
 After config merge and restart:
 
-1. **Memory slot:** `plugins.slots.memory` is `"memory-hybrid"`. Without it, the hybrid plugin is disabled (logs may say memory slot set to memory-core).
+1. **Memory slot:** `plugins.slots.memory` is `"openclaw-hybrid-memory"`. Without it, the hybrid plugin is disabled (logs may say memory slot set to memory-core).
 2. **Plugin loaded:** Logs show e.g. `memory-hybrid: initialized` (and DB paths if logged). CLI: `openclaw hybrid-mem stats` runs and shows fact/vector counts.
 3. **Embedding API key:** Set in plugin config (inline or env); no errors on gateway start or on first message that triggers recall.
 4. **memorySearch:** `agents.defaults.memorySearch` is enabled, `sync.onSessionStart: true`, `sync.watch: true`. After a session start, file changes under `memory/` are picked up.
@@ -814,7 +816,7 @@ After config merge and restart:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| memory-hybrid disabled / "memory slot set to memory-core" | Slot not set | Set `plugins.slots.memory` to `"memory-hybrid"` |
+| memory-hybrid disabled / "memory slot set to memory-core" | Slot not set | Set `plugins.slots.memory` to `"openclaw-hybrid-memory"` |
 | Plugin fails to load / "embedding.apiKey is required" | No OpenAI key in config or key is empty | Add `embedding.apiKey` (and `embedding.model`) to plugin config. Use a valid [OpenAI API key](https://platform.openai.com/api-keys). The plugin does **not** support other embedding providers or automatic failover; embeddings and LLM calls (auto-classify, summarize, consolidate) use OpenAI only. |
 | Invalid or expired API key | Key wrong, revoked, or out of credits | Gateway may load; first embed (recall, store, search) or `openclaw hybrid-mem verify` will fail with 401/403. Fix the key in config and restart. Run `openclaw hybrid-mem verify` to confirm. |
 | Missing env var for API key | Env not loaded in non-interactive shell | Inline key in config or ensure env is set for the process |
@@ -867,7 +869,7 @@ Run **`openclaw hybrid-mem verify`** to check config (embedding API key and mode
 
 ### Uninstall and default memory fallback
 
-Run **`openclaw hybrid-mem uninstall`** to **revert to the default OpenClaw memory manager** (memory-core). This does not break OpenClaw: the app works normally with default memory; your hybrid data (SQLite and LanceDB) is left in place unless you pass **`--clean-all`** or **`--force-cleanup`** (removes those files; irreversible). By default, uninstall updates your config: sets `plugins.slots.memory` to `"memory-core"` and `plugins.entries["memory-hybrid"].enabled` to `false`. Restart the gateway to take effect. Use **`--leave-config`** to skip modifying the config and only print manual instructions.
+Run **`openclaw hybrid-mem uninstall`** to **revert to the default OpenClaw memory manager** (memory-core). This does not break OpenClaw: the app works normally with default memory; your hybrid data (SQLite and LanceDB) is left in place unless you pass **`--clean-all`** or **`--force-cleanup`** (removes those files; irreversible). By default, uninstall updates your config: sets `plugins.slots.memory` to `"memory-core"` and `plugins.entries["openclaw-hybrid-memory"].enabled` to `false`. Restart the gateway to take effect. Use **`--leave-config`** to skip modifying the config and only print manual instructions.
 
 ---
 

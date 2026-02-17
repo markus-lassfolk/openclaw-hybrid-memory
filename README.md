@@ -36,7 +36,7 @@ For a **great setup in one go** (all features, compaction prompts, nightly sessi
 **Option A — Before first gateway start (no plugin loaded yet)**  
 1. Copy `extensions/memory-hybrid/` into your OpenClaw extensions directory ([v3 §3](docs/hybrid-memory-manager-v3.md)) and run **`npm install`** inside it.  
 2. From this repo, run **`node scripts/install-hybrid-config.mjs`** (or set `OPENCLAW_HOME` if needed). This writes `~/.openclaw/openclaw.json` with full defaults and the nightly job.  
-3. Edit the config and set **`plugins.entries["memory-hybrid"].config.embedding.apiKey`** to your OpenAI key (replace `YOUR_OPENAI_API_KEY`).  
+3. Edit the config and set **`plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey`** to your OpenAI key (replace `YOUR_OPENAI_API_KEY`).  
 4. Start the gateway, then run **`openclaw hybrid-mem verify [--fix]`**.
 
 **Option B — After the plugin is already loaded**  
@@ -44,6 +44,8 @@ For a **great setup in one go** (all features, compaction prompts, nightly sessi
 2. Restart the gateway and run **`openclaw hybrid-mem verify [--fix]`**.
 
 If something fails, error messages point you to **`openclaw hybrid-mem verify [--fix]`** for guidance; **`--fix`** can add missing config keys, the nightly job, and the memory dir. To revert to the default OpenClaw memory: **`openclaw hybrid-mem uninstall`** — OpenClaw works normally again; your data is kept unless you use `--clean-all`.
+
+**Duplicate or “id mismatch” in logs?** Use the plugin **id** in config, not the npm package name: `plugins.slots.memory` = `"openclaw-hybrid-memory"` and `plugins.entries["openclaw-hybrid-memory"]`. Remove any backup extension folders (e.g. `memory-hybrid.bak-*`) from OpenClaw’s extensions directory so only one copy of the plugin loads.
 
 ## Start here: Hybrid Memory Manager v3.0
 
