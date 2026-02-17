@@ -32,6 +32,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `reflect-meta [--dry-run] [--model M] [--force]` | Synthesize higher-level meta-patterns. |
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and optional jobs. Idempotent. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. |
+| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
 | `record-distill` | Record that session distillation was run (timestamp for `verify`). |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
