@@ -174,6 +174,47 @@
       "label": "Validation model",
       "placeholder": "gpt-4o-mini",
       "help": "LLM model for proposal validation/formatting (default: gpt-4o-mini)"
+    },
+    "graph.enabled": {
+      "label": "Graph memory",
+      "help": "Enable graph-based spreading activation for zero-LLM recall (FR-007)"
+    },
+    "graph.autoLink": {
+      "label": "Auto-link",
+      "help": "Auto-create RELATED_TO links to similar facts when storing (default false)"
+    },
+    "graph.autoLinkMinScore": {
+      "label": "Auto-link min score",
+      "help": "Min similarity score for auto-linking (default 0.7)"
+    },
+    "graph.autoLinkLimit": {
+      "label": "Auto-link limit",
+      "help": "Max similar facts to link per storage (default 3)"
+    },
+    "graph.maxTraversalDepth": {
+      "label": "Max traversal depth",
+      "help": "Max hops for graph traversal in recall (default 2)"
+    },
+    "graph.useInRecall": {
+      "label": "Use in recall",
+      "help": "Enable graph traversal in memory_recall (default true)"
+    },
+    "reflection.enabled": {
+      "label": "Reflection",
+      "help": "Enable reflection layer to analyze facts and extract behavioral patterns (FR-011)"
+    },
+    "reflection.model": {
+      "label": "Reflection model",
+      "placeholder": "gpt-4o-mini",
+      "help": "Model for reflection analysis (default gpt-4o-mini)"
+    },
+    "reflection.defaultWindow": {
+      "label": "Reflection window (days)",
+      "help": "Default time window in days for reflection analysis (default 14)"
+    },
+    "reflection.minObservations": {
+      "label": "Min observations for pattern",
+      "help": "Minimum observations required to generate a pattern (default 2)"
     }
   },
   "configSchema": {
