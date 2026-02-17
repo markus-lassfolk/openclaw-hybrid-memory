@@ -84,6 +84,8 @@ Then run the backfill script to seed the plugin DBs from the new files.
 
 **Important:** After every OpenClaw upgrade (e.g. `npm update -g openclaw`), the memory-hybrid plugin's native dependencies can break. You must **reinstall extension deps and restart the gateway**.
 
+→ Full guide: [UPGRADE-OPENCLAW.md](UPGRADE-OPENCLAW.md)
+
 ### Recommended: upgrade scripts + alias
 
 1. Copy `scripts/post-upgrade.sh` and `scripts/upgrade.sh` from this repo into `~/.openclaw/scripts/`.
@@ -104,6 +106,10 @@ If you upgrade by other means, run `~/.openclaw/scripts/post-upgrade.sh` manuall
 
 ## Related docs
 
+- [UPGRADE-OPENCLAW.md](UPGRADE-OPENCLAW.md) — What to do after every OpenClaw upgrade
+- [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md) — Upgrading the hybrid-memory plugin
+- [BACKUP.md](BACKUP.md) — What to back up and how to restore
+- [UNINSTALL.md](UNINSTALL.md) — Uninstalling the solution
 - [OPERATIONS.md](OPERATIONS.md) — Background jobs, cron, scripts, upgrading
 - [EXAMPLES.md](EXAMPLES.md) — Monthly maintenance routine and other recipes
 - [QUICKSTART.md](QUICKSTART.md) — Installation
