@@ -22,16 +22,11 @@ Rules (NEW)                 → Actionable one-line directives for agent behavio
 
 ### 1. Observation Collection
 
-The system gathers recent facts from the last N days (default: 14), excluding existing patterns/rules to avoid recursion:
+The system gathers recent facts from the last N days (default: 14) using `getRecentFacts()`, excluding pattern and rule categories to avoid recursion:
 
 ```typescript
-// Facts from the last 14 days
-const recentFacts = allFacts.filter((f) => {
-  const factDate = f.sourceDate ?? f.createdAt;
-  return factDate >= windowStartSec && 
-         f.category !== "pattern" && 
-         f.category !== "rule";
-});
+// Facts from the last 14 days (excludes pattern/rule by default)
+const recentFacts = factsDb.getRecentFacts(windowDays);
 ```
 
 ### 2. LLM Analysis

@@ -160,6 +160,32 @@ Boost long-lived facts:
 }
 ```
 
+### Progressive disclosure (FR-009): agent-driven memory retrieval
+
+Inject a lightweight memory index instead of full texts; the agent uses `memory_recall` to fetch only what it needs. Saves tokens and scales to large memory stores:
+
+```json
+{
+  "autoRecall": {
+    "injectionFormat": "progressive",
+    "progressiveMaxCandidates": 15,
+    "progressiveIndexMaxTokens": 300
+  }
+}
+```
+
+Optional: pin frequently used or permanent facts in full, rest as index:
+
+```json
+{
+  "autoRecall": {
+    "injectionFormat": "progressive_hybrid",
+    "progressivePinnedRecallCount": 3,
+    "progressiveGroupByCategory": true
+  }
+}
+```
+
 ---
 
 ## Using tags effectively

@@ -31,3 +31,16 @@ export function estimateTokensForDisplay(text: string): number {
   const words = text.split(/\s+/).filter(Boolean);
   return words.reduce((sum, w) => sum + Math.max(1, Math.ceil(w.length / 4)), 0);
 }
+
+/**
+ * FR-009: Format a single progressive index line as "[category] title (N tok)".
+ * Used by auto-recall when injectionFormat is progressive or progressive_hybrid.
+ */
+export function formatProgressiveIndexLine(
+  category: string,
+  title: string,
+  tokenCost: number,
+  position: number,
+): string {
+  return `  ${position}. [${category}] ${title} (${tokenCost} tok)`;
+}

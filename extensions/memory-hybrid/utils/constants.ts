@@ -37,3 +37,6 @@ export const BATCH_THROTTLE_MS = 200;
 export const SQLITE_BUSY_TIMEOUT_MS = 5000;
 /** Seconds per day. */
 export const SECONDS_PER_DAY = 86400;
+
+/** FR-004: Max tokens for HOT tier (always-loaded session context). */
+export const HOT_TIER_MAX_TOKENS = 2000;
