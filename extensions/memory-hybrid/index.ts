@@ -14,7 +14,7 @@ import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync, renameSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -1403,22 +1403,12 @@ class WriteAheadLog {
   /**
    * Write a pending memory operation to the WAL.
    * This is a synchronous operation to ensure durability before proceeding.
-   * Uses atomic write (temp file + rename) to prevent corruption on crash.
-   * 
-   * Note: For maximum durability guarantees, this could use fsync before rename
-   * (via fs.openSync + fs.writeSync + fs.fsyncSync + fs.closeSync), but the
-   * current atomic rename approach provides good crash-safety for most use cases.
    */
   write(entry: WALEntry): void {
     try {
       const entries = this.readAll();
       entries.push(entry);
-      const content = JSON.stringify(entries, null, 2);
-      
-      // Atomic write: write to temp file, then rename
-      const tempPath = `${this.walPath}.tmp`;
-      writeFileSync(tempPath, content, "utf-8");
-      renameSync(tempPath, this.walPath);
+      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
     } catch (err) {
       throw new Error(`WAL write failed: ${err}`);
     }
@@ -1445,7 +1435,6 @@ class WriteAheadLog {
 
   /**
    * Remove a specific entry from the WAL after successful commit.
-   * Uses atomic write (temp file + rename) to prevent corruption on crash.
    */
   remove(id: string): void {
     try {
@@ -1454,10 +1443,7 @@ class WriteAheadLog {
       if (filtered.length === 0) {
         this.clear();
       } else {
-        const content = JSON.stringify(filtered, null, 2);
-        const tempPath = `${this.walPath}.tmp`;
-        writeFileSync(tempPath, content, "utf-8");
-        renameSync(tempPath, this.walPath);
+        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
       }
     } catch (err) {
       throw new Error(`WAL remove failed: ${err}`);
@@ -2757,7 +2743,7 @@ const memoryHybridPlugin = {
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
 
-          // Generate vector first (this can take time and may fail)
+          // Generate vector first (needed for WAL)
           let vector: number[] | undefined;
           try {
             vector = await embeddings.embed(textToStore);
@@ -2765,15 +2751,13 @@ const memoryHybridPlugin = {
             api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
           }
 
-          // WAL: Write pending operation AFTER embedding generation, BEFORE storage
-          // Timestamp now reflects when we're ready to commit (not when we started)
-          // This prevents slow embeddings from causing entries to age out
+          // WAL: Write pending operation before committing to storage
           const walEntryId = randomUUID();
           if (wal) {
             try {
               wal.write({
                 id: walEntryId,
-                timestamp: Date.now(), // Captured after embedding completes
+                timestamp: Date.now(),
                 operation: "store",
                 data: {
                   text: textToStore,
@@ -2786,7 +2770,7 @@ const memoryHybridPlugin = {
                   decayClass: paramDecayClass,
                   summary,
                   tags,
-                  vector, // Include the computed vector
+                  vector,
                 },
               });
             } catch (err) {
@@ -3372,7 +3356,7 @@ const memoryHybridPlugin = {
               };
             }
 
-            // Evidence validation: check count and content quality
+            // Evidence check
             if (evidenceSessions.length < cfg.personaProposals.minSessionEvidence) {
               return {
                 content: [
@@ -3382,34 +3366,6 @@ const memoryHybridPlugin = {
                   },
                 ],
                 details: { error: "insufficient_evidence", provided: evidenceSessions.length, minRequired: cfg.personaProposals.minSessionEvidence },
-              };
-            }
-
-            // Validate evidence session content (non-empty, unique)
-            const invalidSessions = evidenceSessions.filter(s => typeof s !== "string" || s.trim().length === 0);
-            if (invalidSessions.length > 0) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Evidence sessions must be non-empty strings. Found ${invalidSessions.length} invalid entries.`,
-                  },
-                ],
-                details: { error: "invalid_evidence_sessions", invalidCount: invalidSessions.length },
-              };
-            }
-
-            // Check for duplicate evidence sessions (without trimming to preserve exact matches)
-            const uniqueSessions = new Set(evidenceSessions);
-            if (uniqueSessions.size !== evidenceSessions.length) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Evidence sessions must be unique. Found ${evidenceSessions.length - uniqueSessions.size} duplicate(s).`,
-                  },
-                ],
-                details: { error: "duplicate_evidence_sessions", duplicateCount: evidenceSessions.length - uniqueSessions.size },
               };
             }
 
@@ -3615,13 +3571,11 @@ const memoryHybridPlugin = {
               // Apply change (simple append strategy)
               // TODO: Future enhancement - use cfg.personaProposals.validationModel for:
               //   - Smart diff application (parse existing structure, insert intelligently)
-              //   - Advanced content validation (semantic checks, pattern detection)
+              //   - Content validation (check for dangerous patterns)
               //   - Merge conflict resolution
-              // NOTE: validationModel config is reserved for this future enhancement
               const timestamp = new Date().toISOString();
               const safeObservation = escapeHtmlComment(proposal.observation);
-              const safeSuggestedChange = escapeHtmlComment(proposal.suggestedChange);
-              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${safeSuggestedChange}\n`;
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
               writeFileSync(targetPath, original + changeBlock);
 
               auditProposal("applied", proposalId, {
@@ -5044,7 +4998,7 @@ const memoryHybridPlugin = {
               }
             }
 
-            // Now commit to actual storage
+            // Now commit to actual storage (include tags to match WAL entry)
             factsDb.store({
               text: textToStore,
               category,
@@ -5054,6 +5008,7 @@ const memoryHybridPlugin = {
               value: extracted.value,
               source: "auto-capture",
               summary,
+              tags: extractTags(textToStore, extracted.entity),
             });
 
             try {
@@ -5162,7 +5117,7 @@ const memoryHybridPlugin = {
 
     api.registerService({
       id: PLUGIN_ID,
-      start: async () => {
+      start: () => {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
@@ -5174,13 +5129,11 @@ const memoryHybridPlugin = {
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
         }
 
-        // WAL Recovery: replay uncommitted operations from previous session (blocking)
-        // This must complete before service starts to ensure consistent state
+        // WAL Recovery: replay uncommitted operations from previous session
         if (wal) {
           const pendingEntries = wal.getValidEntries();
           if (pendingEntries.length > 0) {
             api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
-            
             let recovered = 0;
             let failed = 0;
 
@@ -5195,7 +5148,7 @@ const memoryHybridPlugin = {
                     factsDb.store({
                       text,
                       category: (category as MemoryCategory) || "other",
-                      importance: importance || 0.7,
+                      importance: importance ?? 0.7,
                       entity: entity || null,
                       key: key || null,
                       value: value || null,
@@ -5205,27 +5158,16 @@ const memoryHybridPlugin = {
                       tags,
                     });
 
-                    // Store to LanceDB (generate vector if missing)
-                    let vector = entry.data.vector;
-                    if (!vector) {
-                      try {
-                        vector = await embeddings.embed(text);
-                      } catch (err) {
-                        api.logger.warn(`memory-hybrid: WAL recovery embedding failed for entry ${entry.id}: ${err}`);
-                      }
-                    }
-                    
-                    if (vector) {
-                      try {
-                        await vectorDb.store({
-                          text,
-                          vector,
-                          importance: importance || 0.7,
-                          category: category || "other",
-                        });
-                      } catch (err) {
+                    // Store to LanceDB (async, best effort)
+                    if (entry.data.vector) {
+                      void vectorDb.store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance ?? 0.7,
+                        category: category || "other",
+                      }).catch((err) => {
                         api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
-                      }
+                      });
                     }
 
                     recovered++;
@@ -5335,10 +5277,6 @@ export const _testing = {
   unionFind,
   getRoot,
   mergeResults,
-  // Crypto functions (for credentials-db.test.ts)
-  deriveKey,
-  encryptValue,
-  decryptValue,
   // Classes for testing
   FactsDB,
   CredentialsDB,
