@@ -196,3 +196,7 @@ Facts can have optional **tags** for topic filtering, inferred at write time via
 - [CONFIGURATION.md](CONFIGURATION.md) — Config reference for all features
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System design overview
+- [REFLECTION.md](REFLECTION.md) — Reflection layer (pattern synthesis from facts)
+- [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph-based spreading activation (fact linking)
+- [CREDENTIALS.md](CREDENTIALS.md) — Credential vault (opt-in encrypted store)
+- [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Extracting facts from session logs

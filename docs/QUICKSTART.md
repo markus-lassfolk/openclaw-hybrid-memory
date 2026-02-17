@@ -136,3 +136,5 @@ Restart the gateway after backfill so memorySearch re-indexes.
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and fixes
 - [MAINTENANCE.md](MAINTENANCE.md) — File hygiene, upgrades, periodic review
+- [SETUP-AUTONOMOUS.md](SETUP-AUTONOMOUS.md) — AI-friendly setup (let an agent install it)
+- [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Extract facts from old session logs

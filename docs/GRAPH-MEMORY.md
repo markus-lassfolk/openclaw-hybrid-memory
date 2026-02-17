@@ -453,4 +453,12 @@ Add `valid_at` / `invalid_at` columns to support superseded links without deleti
 
 ---
 
-**Questions?** See [hybrid-memory-manager-v3.md](./hybrid-memory-manager-v3.md) or open an issue.
+---
+
+## Related docs
+
+- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [FEATURES.md](FEATURES.md) — Categories, decay, and other fact features
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture overview
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
+- [CONFIGURATION.md](CONFIGURATION.md) — Graph config settings (`graph.enabled`, `graph.autoLink`, etc.)

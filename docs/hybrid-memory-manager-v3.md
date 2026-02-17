@@ -38,6 +38,8 @@ The full documentation is split into focused guides for easy navigation:
 | [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) | Write-ahead log design |
 | [SETUP-AUTONOMOUS.md](SETUP-AUTONOMOUS.md) | AI-friendly setup (imperative phase-by-phase for agents) |
 | [REFLECTION.md](REFLECTION.md) | Reflection system (FR-011) |
+| [MODEL-AGNOSTIC-ANALYSIS.md](MODEL-AGNOSTIC-ANALYSIS.md) | Analysis of multi-provider support options |
+| [FEEDBACK-ROADMAP.md](FEEDBACK-ROADMAP.md) | Post-PR #15 feedback roadmap (completed) |
 
 ---
 

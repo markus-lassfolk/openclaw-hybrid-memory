@@ -274,3 +274,6 @@ At runtime: `openclaw hybrid-mem stats` shows versions.
 - [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and fixes
+- [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault configuration
+- [REFLECTION.md](REFLECTION.md) — Reflection layer configuration
+- [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph memory configuration

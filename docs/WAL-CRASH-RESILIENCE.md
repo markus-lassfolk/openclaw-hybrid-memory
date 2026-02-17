@@ -282,3 +282,11 @@ Potential improvements for future versions:
 - [Elite Longterm Memory](https://github.com/example/elite-longterm-memory) - Inspiration for WAL pattern
 - [SQLite WAL Mode](https://www.sqlite.org/wal.html) - Database-level WAL
 - [Write-Ahead Logging](https://en.wikipedia.org/wiki/Write-ahead_logging) - General concept
+
+---
+
+## Related docs
+
+- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture overview
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and fixes

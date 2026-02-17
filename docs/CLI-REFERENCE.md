@@ -84,3 +84,6 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 - [CONFIGURATION.md](CONFIGURATION.md) — Full config reference
 - [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and fixes
+- [REFLECTION.md](REFLECTION.md) — Reflection layer (`reflect`, `reflect-rules`, `reflect-meta`)
+- [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault (`credentials migrate-to-vault`)
+- [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation (`distill-window`, `record-distill`)

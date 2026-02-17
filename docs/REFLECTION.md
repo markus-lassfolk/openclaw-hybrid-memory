@@ -369,3 +369,12 @@ Synthesizes meta-patterns from current patterns. Returns: `{ metaExtracted, meta
 
 - **Claude-Diary** ([github.com/rlancemartin/claude-diary](https://github.com/rlancemartin/claude-diary)): Three-layer architecture (observations → reflections → rules)
 - **Generative Agents** (Stanford/Google, arXiv 2304.03442): Foundational paper on observation → reflection → planning for believable agent behavior
+
+---
+
+## Related docs
+
+- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [FEATURES.md](FEATURES.md) — Categories, decay, auto-classify (the observation layer)
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) — `reflect`, `reflect-rules`, `reflect-meta` commands
+- [CONFIGURATION.md](CONFIGURATION.md) — Reflection config in plugin settings
