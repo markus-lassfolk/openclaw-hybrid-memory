@@ -34,9 +34,7 @@ import {
   vectorDimsForModel,
   CREDENTIAL_TYPES,
   type CredentialType,
-  type WALConfig,
   PROPOSAL_STATUSES,
-  type ProposalStatus,
   IDENTITY_FILE_TYPES,
   type IdentityFileType,
 } from "./config.js";
@@ -166,6 +164,9 @@ class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
+  private supersededTextsCache: Set<string> | null = null;
+  private supersededTextsCacheTime = 0;
+  private readonly SUPERSEDED_CACHE_TTL_MS = 60_000;
 
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     this.dbPath = dbPath;
@@ -472,7 +473,8 @@ class FactsDB {
     };
   }
 
-  private refreshAccessedFacts(ids: string[]): void {
+  /** FR-005: Update recall_count and last_accessed for facts (public for progressive disclosure). */
+  refreshAccessedFacts(ids: string[]): void {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
@@ -2813,7 +2815,7 @@ const memoryHybridPlugin = {
             }),
           ),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
             query,
             limit = 5,
@@ -2921,7 +2923,7 @@ const memoryHybridPlugin = {
             }),
           ),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
             text,
             importance = 0.7,
@@ -3039,7 +3041,7 @@ const memoryHybridPlugin = {
             const similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
-                textToStore, entity, key, similarFacts, openaiClient, cfg.store.classifyModel, api.logger,
+                textToStore, entity, key, similarFacts, openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
               );
 
               if (classification.action === "NOOP") {
@@ -3228,7 +3230,7 @@ const memoryHybridPlugin = {
             Type.String({ description: "Specific memory ID" }),
           ),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { query, memoryId } = params as {
             query?: string;
             memoryId?: string;
@@ -3339,7 +3341,7 @@ const memoryHybridPlugin = {
             notes: Type.Optional(Type.String({ description: "Optional notes" })),
             expires: Type.Optional(Type.Number({ description: "Optional Unix timestamp when credential expires" })),
           }),
-          async execute(_toolCallId, params) {
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { service, type, value, url, notes, expires } = params as {
               service: string;
               type: CredentialType;
@@ -3369,7 +3371,7 @@ const memoryHybridPlugin = {
             service: Type.String({ description: "Service name (e.g. 'home-assistant', 'github')" }),
             type: Type.Optional(stringEnum(CREDENTIAL_TYPES as unknown as readonly string[])),
           }),
-          async execute(_toolCallId, params) {
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { service, type } = params as { service: string; type?: CredentialType };
             if (!credentialsDb) throw new Error("Credentials store not available");
             const entry = credentialsDb.get(service, type);
@@ -3442,7 +3444,7 @@ const memoryHybridPlugin = {
             service: Type.String({ description: "Service name" }),
             type: Type.Optional(stringEnum(CREDENTIAL_TYPES as unknown as readonly string[])),
           }),
-          async execute(_toolCallId, params) {
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { service, type } = params as { service: string; type?: CredentialType };
             if (!credentialsDb) throw new Error("Credentials store not available");
             const deleted = credentialsDb.delete(service, type);
@@ -3485,7 +3487,7 @@ const memoryHybridPlugin = {
             }),
           ),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { action, intent, state, expectedOutcome, workingFiles } =
             params as {
               action: "save" | "restore";
@@ -3562,7 +3564,7 @@ const memoryHybridPlugin = {
             stringEnum(["hard", "soft", "both"] as const),
           ),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { mode = "both" } = params as { mode?: "hard" | "soft" | "both" };
 
           let hardPruned = 0;
@@ -3655,7 +3657,7 @@ const memoryHybridPlugin = {
               description: "List of session IDs or references that support this proposal",
             }),
           }),
-          async execute(_toolCallId, params) {
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
             const {
               targetFile,
               title,
@@ -3830,7 +3832,7 @@ const memoryHybridPlugin = {
             status: Type.Optional(stringEnum(PROPOSAL_STATUSES)),
             targetFile: Type.Optional(Type.String()),
           }),
-          async execute(_toolCallId, params) {
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { status, targetFile } = params as { status?: string; targetFile?: string };
 
             const proposals = proposalsDb!.list({ status, targetFile });
@@ -3850,7 +3852,7 @@ const memoryHybridPlugin = {
             const lines = proposals.map((p) => {
               const age = Math.floor((Date.now() / 1000 - p.createdAt) / 86400);
               const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / 86400) : null;
-              return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.slice(0, 120)}...`;
+              return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? p.observation.slice(0, 120) + "..." : p.observation}`;
             });
 
             return {
@@ -3888,9 +3890,7 @@ const memoryHybridPlugin = {
 
       // Register CLI commands for human-only review/apply operations
       api.registerCli(({ program }) => {
-        const proposals = program
-          .command("proposals")
-          .description("Manage persona proposals (human-only commands)");
+        const proposals = program.command("proposals").description("Manage persona proposals (human-only commands)");
 
         proposals
           .command("review <proposalId> <action>")
@@ -4009,8 +4009,7 @@ const memoryHybridPlugin = {
 
     api.registerCli(
       ({ program }) => {
-        const mem = program
-          .command("hybrid-mem")
+        const mem = program.command("hybrid-mem")
           .description("Hybrid memory plugin commands");
 
         mem
@@ -4041,7 +4040,7 @@ const memoryHybridPlugin = {
           .option("--hard", "Only hard-delete expired facts")
           .option("--soft", "Only soft-decay confidence")
           .option("--dry-run", "Show what would be pruned without deleting")
-          .action(async (opts) => {
+          .action(async (opts: { dryRun?: boolean; hard?: boolean; soft?: boolean }) => {
             if (opts.dryRun) {
               const expired = factsDb.countExpired();
               console.log(`Would prune: ${expired} expired facts`);
@@ -4067,7 +4066,7 @@ const memoryHybridPlugin = {
           .argument("<action>", "save or restore")
           .option("--intent <text>", "Intent for save")
           .option("--state <text>", "State for save")
-          .action(async (action, opts) => {
+          .action(async (action: string, opts: { intent?: string; state?: string }) => {
             if (action === "save") {
               if (!opts.intent || !opts.state) {
                 console.error("--intent and --state required for save");
@@ -4236,7 +4235,7 @@ const memoryHybridPlugin = {
           .argument("<query>", "Search query")
           .option("--limit <n>", "Max results", "5")
           .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-          .action(async (query, opts: { limit?: string; tag?: string }) => {
+          .action(async (query: string, opts: { limit?: string; tag?: string }) => {
             const limit = parseInt(opts.limit || "5");
             const tag = opts.tag?.trim();
             const sqlResults = factsDb.search(query, limit, { tag });
@@ -4268,7 +4267,7 @@ const memoryHybridPlugin = {
           .argument("<entity>", "Entity name")
           .option("--key <key>", "Optional key filter")
           .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-          .action(async (entity, opts: { key?: string; tag?: string }) => {
+          .action(async (entity: string, opts: { key?: string; tag?: string }) => {
             const results = factsDb.lookup(entity, opts.key, opts.tag?.trim());
             const output = results.map((r) => ({
               id: r.entry.id,
@@ -5143,8 +5142,9 @@ const memoryHybridPlugin = {
     // ========================================================================
 
     if (cfg.autoRecall.enabled) {
-      api.on("before_agent_start", async (event) => {
-        if (!event.prompt || event.prompt.length < 5) return;
+      api.on("before_agent_start", async (event: unknown) => {
+        const e = event as { prompt?: string };
+        if (!e.prompt || e.prompt.length < 5) return;
 
         try {
           // FR-009: Use wider candidate pool for progressive disclosure
@@ -5152,10 +5152,10 @@ const memoryHybridPlugin = {
           const searchLimit = isProgressive ? Math.max(cfg.autoRecall.limit, 15) : cfg.autoRecall.limit;
           const { minScore } = cfg.autoRecall;
           const limit = searchLimit;
-          const ftsResults = factsDb.search(event.prompt, limit);
+          const ftsResults = factsDb.search(e.prompt, limit);
           let lanceResults: SearchResult[] = [];
           try {
-            const vector = await embeddings.embed(event.prompt);
+            const vector = await embeddings.embed(e.prompt);
             lanceResults = await vectorDb.search(vector, limit, minScore);
           } catch (err) {
             api.logger.warn(
@@ -5167,7 +5167,7 @@ const memoryHybridPlugin = {
 
           const { entityLookup } = cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
-            const promptLower = event.prompt.toLowerCase();
+            const promptLower = e.prompt.toLowerCase();
             const seenIds = new Set(candidates.map((c) => c.entry.id));
             for (const entity of entityLookup.entities) {
               if (!promptLower.includes(entity.toLowerCase())) continue;
@@ -5361,14 +5361,15 @@ const memoryHybridPlugin = {
     }
 
     if (cfg.autoCapture) {
-      api.on("agent_end", async (event) => {
-        if (!event.success || !event.messages || event.messages.length === 0) {
+      api.on("agent_end", async (event: unknown) => {
+        const ev = event as { success?: boolean; messages?: unknown[] };
+        if (!ev.success || !ev.messages || ev.messages.length === 0) {
           return;
         }
 
         try {
           const texts: string[] = [];
-          for (const msg of event.messages) {
+          for (const msg of ev.messages) {
             if (!msg || typeof msg !== "object") continue;
             const msgObj = msg as Record<string, unknown>;
             const role = msgObj.role;
@@ -5429,7 +5430,7 @@ const memoryHybridPlugin = {
                 try {
                   const classification = await classifyMemoryOperation(
                     textToStore, extracted.entity, extracted.key, similarFacts,
-                    openaiClient, cfg.store.classifyModel, api.logger,
+                    openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
@@ -5607,11 +5608,12 @@ const memoryHybridPlugin = {
       const pendingPath = join(dirname(resolvedSqlitePath), "credentials-pending.json");
       const PENDING_TTL_MS = 5 * 60 * 1000; // 5 min
 
-      api.on("agent_end", async (event) => {
-        if (!event.messages || event.messages.length === 0) return;
+      api.on("agent_end", async (event: unknown) => {
+        const ev = event as { messages?: unknown[] };
+        if (!ev.messages || ev.messages.length === 0) return;
         try {
           const texts: string[] = [];
-          for (const msg of event.messages) {
+          for (const msg of ev.messages) {
             if (!msg || typeof msg !== "object") continue;
             const msgObj = msg as Record<string, unknown>;
             const content = msgObj.content;
@@ -5717,38 +5719,6 @@ const memoryHybridPlugin = {
                     });
 
                     // Store to LanceDB (async, best effort)
-                    if (entry.data.vector) {
-                      void vectorDb.store({
-                        text,
-                        vector: entry.data.vector,
-                        importance: importance ?? 0.7,
-                        category: category || "other",
-                      }).catch((err) => {
-                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
-                      });
-                    }
-
-                    recovered++;
-                  }
-                } else if (entry.operation === "update") {
-                  // Legacy "update" entries from prior versions: treat as store
-                  api.logger.warn(`memory-hybrid: WAL recovery found legacy "update" operation (entry ${entry.id}), treating as store`);
-                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
-                  
-                  if (!factsDb.hasDuplicate(text)) {
-                    factsDb.store({
-                      text,
-                      category: (category as MemoryCategory) || "other",
-                      importance: importance ?? 0.7,
-                      entity: entity || null,
-                      key: key || null,
-                      value: value || null,
-                      source: source || "wal-recovery",
-                      decayClass,
-                      summary,
-                      tags,
-                    });
-
                     if (entry.data.vector) {
                       void vectorDb.store({
                         text,
@@ -5870,6 +5840,10 @@ export const _testing = {
   unionFind,
   getRoot,
   mergeResults,
+  // Encryption primitives (used by CredentialsDB)
+  deriveKey,
+  encryptValue,
+  decryptValue,
   // Classes for testing
   FactsDB,
   CredentialsDB,
