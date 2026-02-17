@@ -2697,6 +2697,14 @@ const memoryHybridPlugin = {
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
 
+          // Generate vector first (needed for WAL and storage)
+          let vector: number[] | undefined;
+          try {
+            vector = await embeddings.embed(textToStore);
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          }
+
           // FR-008: Classify the operation before storing
           if (cfg.store.classifyBeforeWrite) {
             const similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
@@ -2723,6 +2731,33 @@ const memoryHybridPlugin = {
               if (classification.action === "UPDATE" && classification.targetId) {
                 const oldFact = factsDb.getById(classification.targetId);
                 if (oldFact) {
+                  // WAL: Write pending UPDATE operation
+                  const walEntryId = randomUUID();
+                  if (wal) {
+                    try {
+                      wal.write({
+                        id: walEntryId,
+                        timestamp: Date.now(),
+                        operation: "update",
+                        data: {
+                          text: textToStore,
+                          category,
+                          importance: Math.max(importance, oldFact.importance),
+                          entity: entity || oldFact.entity,
+                          key: key || oldFact.key,
+                          value: value || oldFact.value,
+                          source: "conversation",
+                          decayClass: paramDecayClass ?? oldFact.decayClass,
+                          summary,
+                          tags,
+                          vector,
+                        },
+                      });
+                    } catch (err) {
+                      api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+                    }
+                  }
+
                   // Store the new version and supersede the old one
                   const newEntry = factsDb.store({
                     text: textToStore,
@@ -2739,12 +2774,20 @@ const memoryHybridPlugin = {
                   factsDb.supersede(classification.targetId, newEntry.id);
 
                   try {
-                    const vector = await embeddings.embed(textToStore);
-                    if (!(await vectorDb.hasDuplicate(vector))) {
+                    if (vector && !(await vectorDb.hasDuplicate(vector))) {
                       await vectorDb.store({ text: textToStore, vector, importance, category });
                     }
                   } catch (err) {
                     api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                  }
+
+                  // WAL: Remove entry after successful commit
+                  if (wal) {
+                    try {
+                      wal.remove(walEntryId);
+                    } catch (err) {
+                      api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
+                    }
                   }
 
                   api.logger.info?.(
@@ -2765,6 +2808,34 @@ const memoryHybridPlugin = {
             }
           }
 
+          // WAL: Write pending operation before committing to storage
+          const walEntryId = randomUUID();
+          if (wal) {
+            try {
+              wal.write({
+                id: walEntryId,
+                timestamp: Date.now(),
+                operation: "store",
+                data: {
+                  text: textToStore,
+                  category,
+                  importance,
+                  entity,
+                  key,
+                  value,
+                  source: "conversation",
+                  decayClass: paramDecayClass,
+                  summary,
+                  tags,
+                  vector,
+                },
+              });
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+            }
+          }
+
+          // Now commit to actual storage
           const entry = factsDb.store({
             text: textToStore,
             category: category as MemoryCategory,
@@ -2779,8 +2850,7 @@ const memoryHybridPlugin = {
           });
 
           try {
-            const vector = await embeddings.embed(textToStore);
-            if (!(await vectorDb.hasDuplicate(vector))) {
+            if (vector && !(await vectorDb.hasDuplicate(vector))) {
               await vectorDb.store({
                 text: textToStore,
                 vector,
@@ -2790,6 +2860,15 @@ const memoryHybridPlugin = {
             }
           } catch (err) {
             api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+          }
+
+          // WAL: Remove entry after successful commit
+          if (wal) {
+            try {
+              wal.remove(walEntryId);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
+            }
           }
 
           return {
@@ -4616,6 +4695,40 @@ const memoryHybridPlugin = {
                   if (classification.action === "UPDATE" && classification.targetId) {
                     const oldFact = factsDb.getById(classification.targetId);
                     if (oldFact) {
+                      // Generate vector first
+                      let vector: number[] | undefined;
+                      try {
+                        vector = await embeddings.embed(textToStore);
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+                      }
+
+                      // WAL: Write pending UPDATE operation
+                      const walEntryId = randomUUID();
+                      if (wal) {
+                        try {
+                          wal.write({
+                            id: walEntryId,
+                            timestamp: Date.now(),
+                            operation: "update",
+                            data: {
+                              text: textToStore,
+                              category,
+                              importance: Math.max(0.7, oldFact.importance),
+                              entity: extracted.entity || oldFact.entity,
+                              key: extracted.key || oldFact.key,
+                              value: extracted.value || oldFact.value,
+                              source: "auto-capture",
+                              summary,
+                              tags: extractTags(textToStore, extracted.entity),
+                              vector,
+                            },
+                          });
+                        } catch (err) {
+                          api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
+                        }
+                      }
+
                       const newEntry = factsDb.store({
                         text: textToStore,
                         category,
@@ -4628,13 +4741,22 @@ const memoryHybridPlugin = {
                       });
                       factsDb.supersede(classification.targetId, newEntry.id);
                       try {
-                        const vector = await embeddings.embed(textToStore);
-                        if (!(await vectorDb.hasDuplicate(vector))) {
+                        if (vector && !(await vectorDb.hasDuplicate(vector))) {
                           await vectorDb.store({ text: textToStore, vector, importance: 0.7, category });
                         }
                       } catch (err) {
                         api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
                       }
+
+                      // WAL: Remove entry after successful commit
+                      if (wal) {
+                        try {
+                          wal.remove(walEntryId);
+                        } catch (err) {
+                          api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
+                        }
+                      }
+
                       api.logger.info?.(
                         `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                       );
@@ -4650,6 +4772,41 @@ const memoryHybridPlugin = {
               }
             }
 
+            // Generate vector first (needed for WAL)
+            let vector: number[] | undefined;
+            try {
+              vector = await embeddings.embed(textToStore);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+            }
+
+            // WAL: Write pending operation before committing to storage
+            const walEntryId = randomUUID();
+            if (wal) {
+              try {
+                wal.write({
+                  id: walEntryId,
+                  timestamp: Date.now(),
+                  operation: "store",
+                  data: {
+                    text: textToStore,
+                    category,
+                    importance: 0.7,
+                    entity: extracted.entity,
+                    key: extracted.key,
+                    value: extracted.value,
+                    source: "auto-capture",
+                    summary,
+                    tags: extractTags(textToStore, extracted.entity),
+                    vector,
+                  },
+                });
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
+              }
+            }
+
+            // Now commit to actual storage
             factsDb.store({
               text: textToStore,
               category,
@@ -4662,14 +4819,22 @@ const memoryHybridPlugin = {
             });
 
             try {
-              const vector = await embeddings.embed(textToStore);
-              if (!(await vectorDb.hasDuplicate(vector))) {
+              if (vector && !(await vectorDb.hasDuplicate(vector))) {
                 await vectorDb.store({ text: textToStore, vector, importance: 0.7, category });
               }
             } catch (err) {
               api.logger.warn(
                 `memory-hybrid: vector capture failed: ${err}`,
               );
+            }
+
+            // WAL: Remove entry after successful commit
+            if (wal) {
+              try {
+                wal.remove(walEntryId);
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
+              }
             }
 
             stored++;
