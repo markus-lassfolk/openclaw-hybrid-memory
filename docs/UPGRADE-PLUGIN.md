@@ -10,6 +10,19 @@ When a **new version of the openclaw-hybrid-memory plugin** is released, this is
 
 ---
 
+## Using NPM only (recommended)
+
+To avoid **"duplicate plugin id detected"** and have a single upgrade path, use only the plugin installed by OpenClaw into `~/.openclaw/extensions`. Remove the global/bundled copy once:
+
+```bash
+# From this repo, or run the same logic manually
+./scripts/use-npm-only.sh
+```
+
+That removes `$(npm root -g)/openclaw/extensions/memory-hybrid` if it exists. After that, only the NPM-installed copy in `~/.openclaw/extensions/openclaw-hybrid-memory` is loaded.
+
+---
+
 ## Quick upgrade (NPM)
 
 If you installed the plugin via OpenClaw's plugin system:
@@ -20,7 +33,7 @@ openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
 ```
 
-This fetches the latest version, installs it (and its dependencies), and replaces the previous copy. Restart is required so the gateway loads the new code.
+This fetches the latest version, installs it (and its dependencies, including native `better-sqlite3`), and replaces the previous copy. A `postinstall` script in the package ensures `better-sqlite3` is rebuilt after install. Restart is required so the gateway loads the new code.
 
 ---
 

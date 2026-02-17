@@ -13,11 +13,13 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Installation
 
-**1. Install the plugin** (OpenClaw will place it in your extensions directory and run `npm install`):
+**1. Install the plugin** (OpenClaw installs to `~/.openclaw/extensions` and runs `npm install`; a `postinstall` script rebuilds `better-sqlite3` for your platform):
 
 ```bash
 openclaw plugins install openclaw-hybrid-memory
 ```
+
+If you see **"duplicate plugin id detected"**, remove the global copy once so only the NPM copy is used: run `./scripts/use-npm-only.sh` from the [repo root](https://github.com/markus-lassfolk/openclaw-hybrid-memory). Then use `openclaw plugins install openclaw-hybrid-memory` for all upgrades.
 
 Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
 

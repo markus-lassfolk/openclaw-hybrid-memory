@@ -20,6 +20,18 @@ openclaw hybrid-mem stats         # show fact/vector counts
 
 ---
 
+## Install warning: "dangerous code patterns" / "credential harvesting"
+
+When you run `openclaw plugins install openclaw-hybrid-memory`, the OpenClaw plugin scanner may show:
+
+```text
+WARNING: Plugin "openclaw-hybrid-memory" contains dangerous code patterns: Environment variable access combined with network send — possible credential harvesting
+```
+
+This is a **false positive**. The plugin only uses your OpenAI API key to call OpenAI’s embedding API; it does not send credentials anywhere else. The scanner flags any plugin that both reads environment variables (e.g. for config) and performs network requests. You can ignore this warning and continue. To use your key from the environment, set `embedding.apiKey` in config to `"${OPENAI_API_KEY}"` (see [CONFIGURATION.md](CONFIGURATION.md)).
+
+---
+
 ## Common issues
 
 | Symptom | Cause | Fix |
@@ -36,6 +48,8 @@ openclaw hybrid-mem stats         # show fact/vector counts
 | Memory files not found by search | File index stale | Ensure `sync.onSessionStart: true` and `sync.watch: true`; restart and start a new session |
 | `hybrid-mem stats` still 0 after seed | Seed used wrong paths or schema | Point seed at same DB paths as plugin |
 | `npm install` fails ("openclaw": "workspace:*") | devDependencies reference workspace protocols | Remove devDependencies: `node -e "let p=require('./package.json'); delete p.devDependencies; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2))"` then `npm install` |
+| "duplicate plugin id detected" / two copies of memory-hybrid | Plugin exists in both global openclaw and ~/.openclaw/extensions | Use NPM only: run `./scripts/use-npm-only.sh` (from this repo) to remove the global copy. Then use `openclaw plugins install openclaw-hybrid-memory` for upgrades. See [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md#using-npm-only-recommended). |
+| Could not locate bindings file (better_sqlite3.node) | Native module not built after install | In the extension dir (`~/.openclaw/extensions/openclaw-hybrid-memory` or global path) run `npm install` then `npm rebuild better-sqlite3`. Restart gateway. The published package includes a `postinstall` that runs rebuild; if it still fails, ensure build tools (e.g. `build-essential`, `python3`) are installed. |
 
 ---
 
