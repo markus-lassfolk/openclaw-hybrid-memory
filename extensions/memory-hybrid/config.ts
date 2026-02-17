@@ -85,6 +85,16 @@ export type CredentialsConfig = {
   expiryWarningDays?: number;
 };
 
+/** Write-Ahead Log (WAL) configuration for crash resilience */
+export type WALConfig = {
+  /** Enable WAL for crash resilience (default: true) */
+  enabled: boolean;
+  /** Path to WAL file (default: same directory as SQLite DB) */
+  walPath?: string;
+  /** Maximum age of WAL entries before they're considered stale (ms, default: 5 minutes) */
+  maxAge?: number;
+};
+
 /** Proposal statuses for persona evolution workflow */
 export const PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applied"] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
@@ -128,6 +138,8 @@ export type HybridMemoryConfig = {
   store: StoreConfig;
   /** Opt-in credential management: structured, encrypted storage (default: disabled) */
   credentials: CredentialsConfig;
+  /** Write-Ahead Log for crash resilience (default: enabled) */
+  wal: WALConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
 };
@@ -301,6 +313,14 @@ export const hybridConfigSchema = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
     };
 
+    // Parse WAL config (enabled by default for crash resilience)
+    const walRaw = cfg.wal as Record<string, unknown> | undefined;
+    const wal: WALConfig = {
+      enabled: walRaw?.enabled !== false,
+      walPath: typeof walRaw?.walPath === "string" ? walRaw.walPath : undefined,
+      maxAge: typeof walRaw?.maxAge === "number" && walRaw.maxAge > 0 ? walRaw.maxAge : 5 * 60 * 1000,
+    };
+
     // Parse credentials config (opt-in). Enable automatically when a valid encryption key is set.
     const credRaw = cfg.credentials as Record<string, unknown> | undefined;
     const explicitlyDisabled = credRaw?.enabled === false;
@@ -341,6 +361,16 @@ export const hybridConfigSchema = {
         expiryWarningDays: 7,
       };
     }
+
+    // Parse WAL config (enabled by default for crash resilience)
+    const walRaw = cfg.wal as Record<string, unknown> | undefined;
+    const wal: WALConfig = {
+      enabled: walRaw?.enabled !== false,
+      walPath: typeof walRaw?.walPath === "string" ? walRaw.walPath : undefined,
+      maxAge: typeof walRaw?.maxAge === "number" && walRaw.maxAge > 0
+        ? walRaw.maxAge
+        : 5 * 60_000, // 5 minutes default
+    };
 
     // Parse persona proposals config (opt-in, disabled by default)
     const proposalsRaw = cfg.personaProposals as Record<string, unknown> | undefined;
@@ -390,6 +420,7 @@ export const hybridConfigSchema = {
       autoClassify,
       store,
       credentials,
+      wal,
       personaProposals,
     };
   },

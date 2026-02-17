@@ -34,6 +34,7 @@ import {
   vectorDimsForModel,
   CREDENTIAL_TYPES,
   type CredentialType,
+  type WALConfig,
   PROPOSAL_STATUSES,
   type ProposalStatus,
   IDENTITY_FILE_TYPES,
@@ -1360,6 +1361,139 @@ class Embeddings {
 }
 
 // ============================================================================
+// Write-Ahead Log (WAL) for Crash Resilience
+// ============================================================================
+
+type WALEntry = {
+  id: string;
+  timestamp: number;
+  operation: "store" | "delete" | "update";
+  data: {
+    text: string;
+    category?: string;
+    importance?: number;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    source?: string;
+    decayClass?: DecayClass;
+    summary?: string | null;
+    tags?: string[];
+    vector?: number[];
+  };
+};
+
+/**
+ * Write-Ahead Log (WAL) for crash resilience.
+ * 
+ * Before committing memory operations to SQLite/LanceDB, we write them to a
+ * WAL file. If the agent crashes during generation, the WAL is replayed on
+ * startup to ensure no data loss.
+ */
+class WriteAheadLog {
+  private walPath: string;
+  private maxAge: number;
+
+  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
+    this.walPath = walPath;
+    this.maxAge = maxAge;
+    mkdirSync(dirname(walPath), { recursive: true });
+  }
+
+  /**
+   * Write a pending memory operation to the WAL.
+   * This is a synchronous operation to ensure durability before proceeding.
+   */
+  write(entry: WALEntry): void {
+    try {
+      const entries = this.readAll();
+      entries.push(entry);
+      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+    } catch (err) {
+      throw new Error(`WAL write failed: ${err}`);
+    }
+  }
+
+  /**
+   * Read all pending operations from the WAL.
+   */
+  readAll(): WALEntry[] {
+    try {
+      if (!existsSync(this.walPath)) {
+        return [];
+      }
+      const content = readFileSync(this.walPath, "utf-8");
+      if (!content.trim()) {
+        return [];
+      }
+      const entries = JSON.parse(content) as WALEntry[];
+      return Array.isArray(entries) ? entries : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Remove a specific entry from the WAL after successful commit.
+   */
+  remove(id: string): void {
+    try {
+      const entries = this.readAll();
+      const filtered = entries.filter((e) => e.id !== id);
+      if (filtered.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+      }
+    } catch (err) {
+      throw new Error(`WAL remove failed: ${err}`);
+    }
+  }
+
+  /**
+   * Clear the entire WAL file.
+   */
+  clear(): void {
+    try {
+      if (existsSync(this.walPath)) {
+        rmSync(this.walPath, { force: true });
+      }
+    } catch (err) {
+      throw new Error(`WAL clear failed: ${err}`);
+    }
+  }
+
+  /**
+   * Get entries that are not stale (within maxAge).
+   */
+  getValidEntries(): WALEntry[] {
+    const entries = this.readAll();
+    const now = Date.now();
+    return entries.filter((e) => now - e.timestamp < this.maxAge);
+  }
+
+  /**
+   * Remove stale entries from the WAL.
+   */
+  pruneStale(): number {
+    const entries = this.readAll();
+    const now = Date.now();
+    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+    const pruned = entries.length - valid.length;
+    
+    if (pruned > 0) {
+      if (valid.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
+      }
+    }
+    
+    return pruned;
+  }
+}
+
+// ============================================================================
 // Token estimate (for auto-recall cap)
 // ============================================================================
 
@@ -2248,6 +2382,7 @@ let vectorDb: VectorDB;
 let embeddings: Embeddings;
 let openaiClient: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
+let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
@@ -2282,6 +2417,15 @@ const memoryHybridPlugin = {
       api.logger.info(`memory-hybrid: credentials store enabled (${credPath})`);
     } else {
       credentialsDb = null;
+    }
+
+    // Initialize Write-Ahead Log for crash resilience
+    if (cfg.wal.enabled) {
+      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
+      wal = new WriteAheadLog(walPath, cfg.wal.maxAge);
+      api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
+    } else {
+      wal = null;
     }
 
     if (cfg.personaProposals.enabled) {
@@ -2599,6 +2743,42 @@ const memoryHybridPlugin = {
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
 
+          // Generate vector first (needed for WAL)
+          let vector: number[] | undefined;
+          try {
+            vector = await embeddings.embed(textToStore);
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          }
+
+          // WAL: Write pending operation before committing to storage
+          const walEntryId = randomUUID();
+          if (wal) {
+            try {
+              wal.write({
+                id: walEntryId,
+                timestamp: Date.now(),
+                operation: "store",
+                data: {
+                  text: textToStore,
+                  category,
+                  importance,
+                  entity,
+                  key,
+                  value,
+                  source: "conversation",
+                  decayClass: paramDecayClass,
+                  summary,
+                  tags,
+                  vector,
+                },
+              });
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+            }
+          }
+
+          // Now commit to actual storage
           const entry = factsDb.store({
             text: textToStore,
             category: category as MemoryCategory,
@@ -2613,8 +2793,7 @@ const memoryHybridPlugin = {
           });
 
           try {
-            const vector = await embeddings.embed(textToStore);
-            if (!(await vectorDb.hasDuplicate(vector))) {
+            if (vector && !(await vectorDb.hasDuplicate(vector))) {
               await vectorDb.store({
                 text: textToStore,
                 vector,
@@ -2624,6 +2803,15 @@ const memoryHybridPlugin = {
             }
           } catch (err) {
             api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+          }
+
+          // WAL: Remove entry after successful commit
+          if (wal) {
+            try {
+              wal.remove(walEntryId);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
+            }
           }
 
           return {
@@ -2660,6 +2848,8 @@ const memoryHybridPlugin = {
           };
 
           if (memoryId) {
+            // DELETE must use factsDb.delete(id) only. Do not use supersede(id, "deleted"):
+            // supersede expects a valid replacement fact ID (UUID); "deleted" is not a fact and would break the supersession contract.
             const sqlDeleted = factsDb.delete(memoryId);
             let lanceDeleted = false;
             try {
@@ -2698,6 +2888,7 @@ const memoryHybridPlugin = {
 
             if (results.length === 1 && results[0].score > 0.9) {
               const id = results[0].entry.id;
+              // Same as above: use delete(id), never supersede(id, "deleted").
               factsDb.delete(id);
               try {
                 await vectorDb.delete(id);
@@ -4773,6 +4964,41 @@ const memoryHybridPlugin = {
                 ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
                 : undefined;
 
+            // Generate vector first (needed for WAL)
+            let vector: number[] | undefined;
+            try {
+              vector = await embeddings.embed(textToStore);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+            }
+
+            // WAL: Write pending operation before committing to storage
+            const walEntryId = randomUUID();
+            if (wal) {
+              try {
+                wal.write({
+                  id: walEntryId,
+                  timestamp: Date.now(),
+                  operation: "store",
+                  data: {
+                    text: textToStore,
+                    category,
+                    importance: 0.7,
+                    entity: extracted.entity,
+                    key: extracted.key,
+                    value: extracted.value,
+                    source: "auto-capture",
+                    summary,
+                    tags: extractTags(textToStore, extracted.entity),
+                    vector,
+                  },
+                });
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
+              }
+            }
+
+            // Now commit to actual storage
             factsDb.store({
               text: textToStore,
               category,
@@ -4785,14 +5011,22 @@ const memoryHybridPlugin = {
             });
 
             try {
-              const vector = await embeddings.embed(textToStore);
-              if (!(await vectorDb.hasDuplicate(vector))) {
+              if (vector && !(await vectorDb.hasDuplicate(vector))) {
                 await vectorDb.store({ text: textToStore, vector, importance: 0.7, category });
               }
             } catch (err) {
               api.logger.warn(
                 `memory-hybrid: vector capture failed: ${err}`,
               );
+            }
+
+            // WAL: Remove entry after successful commit
+            if (wal) {
+              try {
+                wal.remove(walEntryId);
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
+              }
             }
 
             stored++;
@@ -4892,6 +5126,71 @@ const memoryHybridPlugin = {
         if (expired > 0) {
           const pruned = factsDb.pruneExpired();
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
+        }
+
+        // WAL Recovery: replay uncommitted operations from previous session
+        if (wal) {
+          const pendingEntries = wal.getValidEntries();
+          if (pendingEntries.length > 0) {
+            api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
+            let recovered = 0;
+            let failed = 0;
+
+            for (const entry of pendingEntries) {
+              try {
+                if (entry.operation === "store") {
+                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                  
+                  // Check if already stored (idempotency)
+                  if (!factsDb.hasDuplicate(text)) {
+                    // Store to SQLite
+                    factsDb.store({
+                      text,
+                      category: (category as MemoryCategory) || "other",
+                      importance: importance || 0.7,
+                      entity: entity || null,
+                      key: key || null,
+                      value: value || null,
+                      source: source || "wal-recovery",
+                      decayClass,
+                      summary,
+                      tags,
+                    });
+
+                    // Store to LanceDB (async, best effort)
+                    if (entry.data.vector) {
+                      void vectorDb.store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance || 0.7,
+                        category: category || "other",
+                      }).catch((err) => {
+                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                      });
+                    }
+
+                    recovered++;
+                  }
+                }
+                
+                // Remove successfully processed entry
+                wal.remove(entry.id);
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
+                failed++;
+              }
+            }
+
+            if (recovered > 0) {
+              api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
+            }
+          }
+
+          // Prune stale WAL entries
+          const pruned = wal.pruneStale();
+          if (pruned > 0) {
+            api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
+          }
         }
 
         pruneTimer = setInterval(() => {
