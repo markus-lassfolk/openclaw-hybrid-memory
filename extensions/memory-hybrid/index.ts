@@ -183,10 +183,12 @@ type WALEntry = {
 class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
+  private logger?: { warn: (msg: string) => void };
 
-  constructor(walPath: string, maxAge: number = 300000) {
+  constructor(walPath: string, maxAge: number = 300000, logger?: { warn: (msg: string) => void }) {
     this.walPath = walPath;
     this.maxAge = maxAge;
+    this.logger = logger;
     mkdirSync(dirname(walPath), { recursive: true });
     
     // Initialize WAL file if it doesn't exist
@@ -202,7 +204,8 @@ class WriteAheadLog {
       const fd = openSync(this.walPath, "a");
       writeSync(fd, line);
       closeSync(fd);
-    } catch {
+    } catch (err) {
+      this.logger?.warn(`memory-hybrid: WAL append failed (${err}), falling back to read-modify-write`);
       // Fallback to less efficient method if append fails
       const entries = this.readAll();
       entries.push(entry);
@@ -233,7 +236,8 @@ class WriteAheadLog {
           .filter((line) => line.trim().length > 0)
           .map((line) => JSON.parse(line) as WALEntry);
       }
-    } catch {
+    } catch (err) {
+      this.logger?.warn(`memory-hybrid: WAL read failed (${err}), returning empty array`);
       return [];
     }
   }
@@ -2712,7 +2716,7 @@ const memoryHybridPlugin = {
     if (cfg.wal?.enabled) {
       const walPath = cfg.wal?.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
       const maxAge = cfg.wal?.maxAge || 300000; // 5 minutes default
-      wal = new WriteAheadLog(api.resolvePath(walPath), maxAge);
+      wal = new WriteAheadLog(api.resolvePath(walPath), maxAge, api.logger);
       api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
       
       // Prune stale entries on startup
