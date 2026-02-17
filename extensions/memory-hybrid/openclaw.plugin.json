@@ -355,16 +355,6 @@
           "minObservations": { "type": "number" }
         },
         "description": "Reflection layer: analyze facts to extract behavioral patterns (FR-011)"
-      },
-      "wal": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "enabled": { "type": "boolean", "description": "Enable Write-Ahead Log for crash resilience (default: true)" },
-          "walPath": { "type": "string", "description": "Path to WAL file (default: same directory as SQLite DB)" },
-          "maxAge": { "type": "number", "description": "Max age in ms for WAL entries before prune (default: 300000)" }
-        },
-        "description": "Write-Ahead Log for crash resilience; uncommitted ops recovered on startup"
       }
     },
     "required": ["embedding"]
