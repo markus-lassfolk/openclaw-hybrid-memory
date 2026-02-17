@@ -2199,7 +2199,7 @@ const memoryHybridPlugin = {
             const initialIds = new Set(results.map((r) => r.entry.id));
             const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
             const extraIds = connectedIds.filter((id) => !initialIds.has(id));
-            const getByIdOpts = asOfSec != null ? { asOf: asOfSec } : undefined;
+            const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
             for (const id of extraIds) {
               const entry = factsDb.getById(id, getByIdOpts);
               if (entry) {
@@ -4614,16 +4614,6 @@ const memoryHybridPlugin = {
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
-          // FR-004: HOT tier — always inject first (cap by hotMaxTokens)
-          let hotBlock = "";
-          if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
-            const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens);
-            if (hotResults.length > 0) {
-              const hotLines = hotResults.map((r) => `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`);
-              hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
-            }
-          }
-
           // FR-009: Use configurable candidate pool for progressive disclosure
           const fmt = cfg.autoRecall.injectionFormat;
           const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -4642,6 +4632,17 @@ const memoryHybridPlugin = {
                   sessionId: cfg.autoRecall.scopeFilter.sessionId ?? null,
                 }
               : undefined;
+
+          // FR-004: HOT tier — always inject first (cap by hotMaxTokens)
+          let hotBlock = "";
+          if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
+            const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens, scopeFilter);
+            if (hotResults.length > 0) {
+              const hotLines = hotResults.map((r) => `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`);
+              hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
+            }
+          }
+
           const ftsResults = factsDb.search(e.prompt, limit, { tierFilter, scopeFilter });
           let lanceResults: SearchResult[] = [];
           try {
