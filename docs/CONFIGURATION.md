@@ -51,6 +51,15 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 
 `store.fuzzyDedupe` (default `false`): enables fuzzy deduplication — before storing, normalizes text, hashes it, skips if an existing fact has the same hash.
 
+**FR-008 — Memory operation classification (Mem0-style):**
+
+| Key | Default | Description |
+|-----|--------|-------------|
+| `store.classifyBeforeWrite` | `false` | When `true`, classify each new fact against similar existing facts (by embedding + entity/key) as ADD, UPDATE, DELETE, or NOOP before storing. Reduces duplicates and stale contradictions. Applies to auto-capture, `memory_store` tool, CLI `hybrid-mem store`, and `extract-daily`. |
+| `store.classifyModel` | `gpt-4o-mini` | Chat model used for the classification call (low cost). |
+
+Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classifyModel": "gpt-4o-mini" }`
+
 ### Auto-recall options
 
 `autoRecall` can be `true` (defaults) or an object:
@@ -73,7 +82,11 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
     },
     "summaryThreshold": 300,
     "summaryMaxChars": 80,
-    "useSummaryInInjection": true
+    "useSummaryInInjection": true,
+    "progressiveMaxCandidates": 15,
+    "progressiveIndexMaxTokens": 300,
+    "progressiveGroupByCategory": false,
+    "progressivePinnedRecallCount": 3
   }
 }
 ```
@@ -82,7 +95,7 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 |-----|---------|-------------|
 | `maxTokens` | `800` | Total tokens injected per turn |
 | `maxPerMemoryChars` | `0` | Truncate each memory to N chars (0 = no truncation) |
-| `injectionFormat` | `"full"` | Per-memory line: `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only |
+| `injectionFormat` | `"full"` | `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only, `progressive` = memory index (agent fetches via `memory_recall`), `progressive_hybrid` = pinned in full + rest as index |
 | `limit` | `5` | Max memories considered for injection |
 | `minScore` | `0.3` | Minimum vector search score (0–1) |
 | `preferLongTerm` | `false` | Boost permanent (×1.2) and stable (×1.1) facts |
@@ -91,6 +104,41 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 | `summaryThreshold` | `300` | Facts longer than this get a stored summary |
 | `summaryMaxChars` | `80` | Max chars for the summary |
 | `useSummaryInInjection` | `true` | Use summary in injection to save tokens |
+| `progressiveMaxCandidates` | `15` | (FR-009) Max memories in progressive index; used when `injectionFormat` is `progressive` or `progressive_hybrid` |
+| `progressiveIndexMaxTokens` | `300` when progressive | (FR-009) Token cap for the index block in progressive mode |
+| `progressiveGroupByCategory` | `false` | (FR-009) Group index lines by category for readability |
+| `progressivePinnedRecallCount` | `3` | (FR-009) In `progressive_hybrid`: facts with recallCount ≥ this or permanent decay are injected in full |
+| `scopeFilter` | (none) | (FR-006) Multi-user: restrict auto-recall to global + matching scopes. `{ "userId": "alice", "agentId": "support-bot", "sessionId": "sess-xyz" }` — omit any to not filter by that dimension. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
+
+---
+
+## FR-004: Memory tiering (hot/warm/cold)
+
+Dynamic tiering keeps a small **HOT** set always loaded, uses **WARM** for semantic search, and archives **COLD** for manual or deep retrieval only. Compaction runs on session end (or via `hybrid-mem compact`).
+
+```json
+{
+  "memoryTiering": {
+    "enabled": true,
+    "hotMaxTokens": 2000,
+    "compactionOnSessionEnd": true,
+    "inactivePreferenceDays": 7,
+    "hotMaxFacts": 50
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Enable HOT/WARM/COLD tiers and compaction |
+| `hotMaxTokens` | `2000` | Max tokens for HOT tier always injected at session start (&lt;2k per issue) |
+| `compactionOnSessionEnd` | `true` | Run compaction automatically when the agent session ends |
+| `inactivePreferenceDays` | `7` | Preferences not accessed in this many days (and currently HOT) are moved to WARM |
+| `hotMaxFacts` | `50` | Max facts allowed in HOT when promoting blockers |
+
+**Compaction rules:** Completed tasks (category `decision` or tag `task`) → COLD. Inactive preferences (in HOT, not accessed recently) → WARM. Active blockers (tag `blocker`) → HOT, capped by `hotMaxTokens` and `hotMaxFacts`.
+
+→ Full detail: [MEMORY-TIERING.md](MEMORY-TIERING.md)
 
 ---
 
@@ -233,6 +281,38 @@ See [FEATURES.md](FEATURES.md) for how auto-classify works. Configuration:
 | `enabled` | `false` | Enable background auto-classify on startup + every 24h |
 | `model` | `"gpt-4o-mini"` | Any chat model your API key supports |
 | `batchSize` | `20` | Facts per LLM call |
+
+---
+
+## Reflection (FR-011)
+
+Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for full documentation.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "reflection": {
+            "enabled": false,
+            "model": "gpt-4o-mini",
+            "defaultWindow": 14,
+            "minObservations": 2
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable reflection layer (CLI and memory_reflect tool) |
+| `model` | `"gpt-4o-mini"` | LLM for reflection analysis |
+| `defaultWindow` | `14` | Time window in days for fact gathering |
+| `minObservations` | `2` | Minimum observations to support a pattern |
 
 ---
 

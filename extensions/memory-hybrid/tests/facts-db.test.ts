@@ -280,6 +280,84 @@ describe("FactsDB.lookup", () => {
     expect(results.length).toBe(1);
     expect(results[0].entry.id).toBe(newer.id);
   });
+
+  it("FR-005: frequently recalled fact scores higher (dynamic salience)", () => {
+    const a = db.store({ text: "User prefers dark mode", category: "preference", importance: 0.7, entity: "user", key: "theme", value: "dark", source: "test", confidence: 0.8 });
+    const b = db.store({ text: "User prefers TypeScript", category: "preference", importance: 0.7, entity: "user", key: "language", value: "TypeScript", source: "test", confidence: 0.8 });
+
+    for (let i = 0; i < 15; i++) {
+      db.refreshAccessedFacts([a.id]);
+    }
+
+    const results = db.lookup("user");
+    expect(results.length).toBe(2);
+    const scoreA = results.find((r) => r.entry.id === a.id)?.score ?? 0;
+    const scoreB = results.find((r) => r.entry.id === b.id)?.score ?? 0;
+    expect(scoreA).toBeGreaterThan(scoreB);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-004: Dynamic memory tiering (hot/warm/cold)
+// ---------------------------------------------------------------------------
+
+describe("FactsDB FR-004 tiering", () => {
+  it("stores with default tier warm and getHotFacts returns only hot", () => {
+    const a = db.store({ text: "Hot blocker", category: "fact", importance: 0.9, entity: null, key: null, value: null, source: "test", tags: ["blocker"] });
+    const b = db.store({ text: "Warm fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    expect(a.tier).toBe("warm");
+    expect(b.tier).toBe("warm");
+    expect(db.getHotFacts(2000).length).toBe(0);
+    db.setTier(a.id, "hot");
+    const hot = db.getHotFacts(2000);
+    expect(hot.length).toBe(1);
+    expect(hot[0].entry.id).toBe(a.id);
+  });
+
+  it("getHotFacts caps by token budget", () => {
+    const id1 = db.store({ text: "Short.", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test" }).id;
+    const id2 = db.store({ text: "Also short.", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test" }).id;
+    db.setTier(id1, "hot");
+    db.setTier(id2, "hot");
+    const hot = db.getHotFacts(2);
+    expect(hot.length).toBeLessThanOrEqual(2);
+  });
+
+  it("search with tierFilter warm excludes cold", () => {
+    const w = db.store({ text: "Warm preference", category: "preference", importance: 0.8, entity: "user", key: null, value: null, source: "test" });
+    const c = db.store({ text: "Cold decision", category: "decision", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.setTier(c.id, "cold");
+    const warmResults = db.search("preference", 5, { tierFilter: "warm" });
+    expect(warmResults.some((r) => r.entry.id === w.id)).toBe(true);
+    expect(warmResults.some((r) => r.entry.id === c.id)).toBe(false);
+    const allResults = db.search("decision", 5, { tierFilter: "all" });
+    expect(allResults.some((r) => r.entry.id === c.id)).toBe(true);
+  });
+
+  it("runCompaction returns counts and promotes blockers to hot", () => {
+    const blocker = db.store({ text: "Active blocker", category: "fact", importance: 0.9, entity: null, key: null, value: null, source: "test", tags: ["blocker"] });
+    const counts = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(counts).toMatchObject({ hot: expect.any(Number), warm: expect.any(Number), cold: expect.any(Number) });
+    const hotFact = db.getById(blocker.id);
+    expect(hotFact?.tier).toBe("hot");
+  });
+
+  it("runCompaction moves completed tasks (decision) to COLD", () => {
+    const task = db.store({ text: "Decided to use SQLite", category: "decision", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    expect(db.getById(task.id)?.tier).toBe("warm");
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    const coldFact = db.getById(task.id);
+    expect(coldFact?.tier).toBe("cold");
+  });
+
+  it("runCompaction moves inactive hot preferences to WARM", () => {
+    const pref = db.store({ text: "User prefers TypeScript", category: "preference", importance: 0.8, entity: "user", key: null, value: null, source: "test" });
+    db.setTier(pref.id, "hot");
+    expect(db.getById(pref.id)?.tier).toBe("hot");
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    const warmFact = db.getById(pref.id);
+    expect(warmFact?.tier).toBe("warm");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -342,6 +420,251 @@ describe("FactsDB.supersede", () => {
     const c = db.store({ text: "C", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
     db.supersede(a.id, b.id);
     expect(db.supersede(a.id, c.id)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-010: Bi-temporal and point-in-time
+// ---------------------------------------------------------------------------
+
+describe("FactsDB FR-010 bi-temporal", () => {
+  it("getById with asOf returns null when fact not yet valid", () => {
+    const entry = db.store({
+      text: "Future fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      validFrom: 2000,
+      validUntil: null,
+    });
+    expect(db.getById(entry.id)).not.toBeNull();
+    expect(db.getById(entry.id, { asOf: 1999 })).toBeNull();
+  });
+
+  it("getById with asOf returns null when fact no longer valid", () => {
+    const entry = db.store({
+      text: "Past fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      validFrom: 1000,
+      validUntil: 2000,
+    });
+    expect(db.getById(entry.id, { asOf: 2000 })).toBeNull();
+    expect(db.getById(entry.id, { asOf: 2001 })).toBeNull();
+    expect(db.getById(entry.id, { asOf: 1500 })).not.toBeNull();
+  });
+
+  it("getById with asOf returns fact when valid at that time", () => {
+    const entry = db.store({
+      text: "Time-bounded fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      validFrom: 1000,
+      validUntil: 3000,
+    });
+    expect(db.getById(entry.id, { asOf: 1000 })).not.toBeNull();
+    expect(db.getById(entry.id, { asOf: 2500 })).not.toBeNull();
+    expect(db.getById(entry.id, { asOf: 2999 })).not.toBeNull();
+  });
+
+  it("search with asOf returns only facts valid at that time", () => {
+    const old = db.store({
+      text: "Old theme preference",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "test",
+      validFrom: 1000,
+    });
+    const newer = db.store({
+      text: "New theme preference",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "light",
+      source: "test",
+      validFrom: 2000,
+      supersedesId: old.id,
+    });
+    db.supersede(old.id, newer.id);
+    const supersessionTime = db.getById(old.id)!.validUntil!;
+
+    const current = db.search("theme", 5);
+    expect(current.some((r) => r.entry.id === newer.id)).toBe(true);
+    expect(current.some((r) => r.entry.id === old.id)).toBe(false);
+
+    const asOf1500 = db.search("theme", 5, { asOf: 1500 });
+    expect(asOf1500.some((r) => r.entry.id === old.id)).toBe(true);
+    expect(asOf1500.some((r) => r.entry.id === newer.id)).toBe(false);
+
+    const afterSupersession = db.search("theme", 5, { asOf: supersessionTime + 1 });
+    expect(afterSupersession.some((r) => r.entry.id === newer.id)).toBe(true);
+    expect(afterSupersession.some((r) => r.entry.id === old.id)).toBe(false);
+  });
+
+  it("search with includeSuperseded returns superseded facts", () => {
+    const old = db.store({
+      text: "Superseded preference",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "mode",
+      value: "old",
+      source: "test",
+    });
+    const newer = db.store({
+      text: "Current preference",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "mode",
+      value: "new",
+      source: "test",
+    });
+    db.supersede(old.id, newer.id);
+
+    const def = db.search("preference", 5);
+    expect(def.length).toBeGreaterThanOrEqual(1);
+    expect(def.some((r) => r.entry.id === old.id)).toBe(false);
+
+    const withSuperseded = db.search("preference", 5, { includeSuperseded: true });
+    expect(withSuperseded.some((r) => r.entry.id === old.id)).toBe(true);
+  });
+
+  it("lookup with asOf returns only facts valid at that time", () => {
+    const old = db.store({
+      text: "Old value",
+      category: "fact",
+      importance: 0.7,
+      entity: "Entity",
+      key: "key",
+      value: "v1",
+      source: "test",
+      validFrom: 1000,
+    });
+    const newer = db.store({
+      text: "New value",
+      category: "fact",
+      importance: 0.7,
+      entity: "Entity",
+      key: "key",
+      value: "v2",
+      source: "test",
+      validFrom: 2000,
+      supersedesId: old.id,
+    });
+    db.supersede(old.id, newer.id);
+    const supersessionTime = db.getById(old.id)!.validUntil!;
+
+    const at1500 = db.lookup("Entity", "key", undefined, { asOf: 1500 });
+    expect(at1500.length).toBe(1);
+    expect(at1500[0].entry.value).toBe("v1");
+
+    const afterSupersession = db.lookup("Entity", "key", undefined, { asOf: supersessionTime + 1 });
+    expect(afterSupersession.length).toBe(1);
+    expect(afterSupersession[0].entry.value).toBe("v2");
+  });
+
+  it("lookup with includeSuperseded returns superseded facts", () => {
+    const old = db.store({
+      text: "Old",
+      category: "fact",
+      importance: 0.7,
+      entity: "X",
+      key: "k",
+      value: "old",
+      source: "test",
+    });
+    const newer = db.store({
+      text: "New",
+      category: "fact",
+      importance: 0.7,
+      entity: "X",
+      key: "k",
+      value: "new",
+      source: "test",
+    });
+    db.supersede(old.id, newer.id);
+
+    const def = db.lookup("X", "k");
+    expect(def.length).toBe(1);
+    expect(def[0].entry.id).toBe(newer.id);
+
+    const withSuperseded = db.lookup("X", "k", undefined, { includeSuperseded: true });
+    expect(withSuperseded.length).toBe(2);
+  });
+
+  it("store with supersedesId and validFrom sets fields; supersede marks old", () => {
+    const old = db.store({
+      text: "Original",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const t = 5000;
+    const replacement = db.store({
+      text: "Replacement",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      validFrom: t,
+      supersedesId: old.id,
+    });
+    db.supersede(old.id, replacement.id);
+
+    expect(replacement.validFrom).toBe(t);
+    expect(replacement.supersedesId).toBe(old.id);
+    const oldUpdated = db.getById(old.id);
+    expect(oldUpdated?.supersededAt).toBeGreaterThan(0);
+    expect(oldUpdated?.supersededBy).toBe(replacement.id);
+    expect(oldUpdated?.validUntil).toBeGreaterThan(0);
+  });
+
+  it("getFactsForConsolidation excludes superseded facts", () => {
+    const a = db.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.supersede(a.id, b.id);
+
+    const forConsolidation = db.getFactsForConsolidation(100);
+    const ids = forConsolidation.map((f) => f.id);
+    expect(ids).toContain(b.id);
+    expect(ids).not.toContain(a.id);
   });
 });
 
@@ -509,6 +832,28 @@ describe("FactsDB.getByCategory", () => {
   });
 });
 
+describe("FactsDB.getRecentFacts", () => {
+  it("returns facts from window and excludes pattern/rule by default", () => {
+    db.store({ text: "Preference A", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({ text: "Pattern B", category: "pattern", importance: 0.9, entity: null, key: null, value: null, source: "reflection" });
+    db.store({ text: "Decision C", category: "decision", importance: 0.8, entity: null, key: null, value: null, source: "test" });
+    db.store({ text: "Rule D", category: "rule", importance: 0.9, entity: null, key: null, value: null, source: "reflection" });
+
+    const recent = db.getRecentFacts(14);
+    expect(recent.length).toBe(2);
+    expect(recent.map((e) => e.category).sort()).toEqual(["decision", "preference"]);
+  });
+
+  it("respects excludeCategories option", () => {
+    db.store({ text: "Pref", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({ text: "Fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+
+    const withoutPref = db.getRecentFacts(14, { excludeCategories: ["preference"] });
+    expect(withoutPref.length).toBe(1);
+    expect(withoutPref[0].category).toBe("fact");
+  });
+});
+
 describe("FactsDB.updateCategory", () => {
   it("changes category of a fact", () => {
     const entry = db.store({ text: "Miscategorized", category: "other", importance: 0.7, entity: null, key: null, value: null, source: "test" });
@@ -580,5 +925,241 @@ describe("FactsDB.backfillDecayClasses", () => {
     });
     const counts = db.backfillDecayClasses();
     expect(counts.permanent).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-005: Hebbian createOrStrengthenRelatedLink
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.createOrStrengthenRelatedLink", () => {
+  it("creates RELATED_TO link when none exists", () => {
+    const a = db.store({ text: "Fact A", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const b = db.store({ text: "Fact B", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+
+    db.createOrStrengthenRelatedLink(a.id, b.id);
+
+    const linksFromA = db.getLinksFrom(a.id);
+    const linksFromB = db.getLinksFrom(b.id);
+    const expectedTarget = a.id < b.id ? b.id : a.id;
+    const allLinks = [...linksFromA, ...linksFromB];
+    const related = allLinks.filter((l) => l.linkType === "RELATED_TO");
+    expect(related.length).toBe(1);
+    expect(related[0].targetFactId).toBe(expectedTarget);
+    expect(related[0].strength).toBeGreaterThan(0);
+  });
+
+  it("strengthens existing RELATED_TO link on repeated co-recall", () => {
+    const a = db.store({ text: "Fact A", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const b = db.store({ text: "Fact B", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+
+    db.createOrStrengthenRelatedLink(a.id, b.id);
+    const afterFirst = db.getLinksFrom(a.id < b.id ? a.id : b.id).find((l) => l.linkType === "RELATED_TO");
+    const strength1 = afterFirst?.strength ?? 0;
+
+    db.createOrStrengthenRelatedLink(a.id, b.id);
+    const afterSecond = db.getLinksFrom(a.id < b.id ? a.id : b.id).find((l) => l.linkType === "RELATED_TO");
+    const strength2 = afterSecond?.strength ?? 0;
+
+    expect(strength2).toBeGreaterThan(strength1);
+  });
+
+  it("does nothing when fact IDs are the same", () => {
+    const a = db.store({ text: "Fact A", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.createOrStrengthenRelatedLink(a.id, a.id);
+    const links = db.getLinksFrom(a.id);
+    expect(links.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-006: Memory Scoping
+// ---------------------------------------------------------------------------
+
+describe("FactsDB FR-006 scoping", () => {
+  it("stores with default global scope", () => {
+    const entry = db.store({
+      text: "Company policy",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    expect(entry.scope).toBe("global");
+    expect(entry.scopeTarget == null).toBe(true); // null or undefined for global
+  });
+
+  it("stores with user scope and scopeTarget", () => {
+    const entry = db.store({
+      text: "User prefers dark mode",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+    expect(entry.scope).toBe("user");
+    expect(entry.scopeTarget).toBe("alice");
+  });
+
+  it("search with scopeFilter returns global + matching scopes", () => {
+    db.store({
+      text: "Global prefers default mode visible to all",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "Alice prefers dark mode",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+    db.store({
+      text: "Bob prefers light mode",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "light",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+
+    const results = db.search("prefers mode", 10, {
+      scopeFilter: { userId: "alice", agentId: null, sessionId: null },
+    });
+    expect(results.length).toBeGreaterThanOrEqual(2); // global + alice
+    const texts = results.map((r) => r.entry.text);
+    expect(texts).toContain("Global prefers default mode visible to all");
+    expect(texts).toContain("Alice prefers dark mode");
+    expect(texts).not.toContain("Bob prefers light mode");
+  });
+
+  it("lookup with scopeFilter returns global + matching scopes", () => {
+    db.store({
+      text: "Alice theme is dark",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+    db.store({
+      text: "Bob theme is light",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "light",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+
+    const results = db.lookup("user", "theme", undefined, {
+      scopeFilter: { userId: "alice", agentId: null, sessionId: null },
+    });
+    expect(results.length).toBe(1);
+    expect(results[0].entry.scopeTarget).toBe("alice");
+  });
+
+  it("getById with scopeFilter returns null when not in scope", () => {
+    const entry = db.store({
+      text: "Private to alice",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "secret",
+      value: "x",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+
+    expect(db.getById(entry.id, { scopeFilter: { userId: "alice" } })).not.toBeNull();
+    expect(db.getById(entry.id, { scopeFilter: { userId: "bob" } })).toBeNull();
+  });
+
+  it("pruneSessionScope deletes session-scoped facts", () => {
+    db.store({
+      text: "Session note A",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-xyz",
+    });
+    db.store({
+      text: "Session note B",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-xyz",
+    });
+    db.store({
+      text: "Session note for other session",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-abc",
+    });
+
+    const count = db.pruneSessionScope("sess-xyz");
+    expect(count).toBe(2);
+
+    const remaining = db.getAll();
+    const sessionNotes = remaining.filter((e) => e.text.includes("Session note"));
+    expect(sessionNotes.length).toBe(1);
+    expect(sessionNotes[0].scopeTarget).toBe("sess-abc");
+  });
+
+  it("promoteScope changes scope from session to global", () => {
+    const entry = db.store({
+      text: "Promoted note",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-xyz",
+    });
+
+    const ok = db.promoteScope(entry.id, "global", null);
+    expect(ok).toBe(true);
+
+    const updated = db.getById(entry.id);
+    expect(updated?.scope).toBe("global");
+    expect(updated?.scopeTarget).toBeNull();
   });
 });
