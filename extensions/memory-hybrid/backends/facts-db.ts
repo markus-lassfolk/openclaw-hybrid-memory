@@ -519,15 +519,17 @@ export class FactsDB {
   }
 
   /** FR-004: Get HOT-tier facts for session context, capped by token budget. */
-  getHotFacts(maxTokens: number): SearchResult[] {
+  getHotFacts(maxTokens: number, scopeFilter?: ScopeFilter | null): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
+    const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
     const rows = this.liveDb
       .prepare(
         `SELECT * FROM facts
          WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         ${scopeClause}
          ORDER BY COALESCE(last_accessed, last_confirmed_at, created_at) DESC`,
       )
-      .all(nowSec) as Array<Record<string, unknown>>;
+      .all(nowSec, ...scopeParams) as Array<Record<string, unknown>>;
     const hotRows = rows;
     const results: SearchResult[] = [];
     let usedTokens = 0;
@@ -535,7 +537,10 @@ export class FactsDB {
       if (usedTokens >= maxTokens) break;
       const entry = this.rowToEntry(row);
       const tokens = estimateTokensForDisplay(entry.summary || entry.text);
-      if (usedTokens + tokens > maxTokens) break;
+      if (usedTokens + tokens > maxTokens) {
+        // Skip oversized entry and continue scanning for smaller facts that might fit
+        continue;
+      }
       usedTokens += tokens;
       results.push({ entry, score: 1.0, backend: "sqlite" as const });
     }
