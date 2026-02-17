@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+(nothing yet)
+
+---
+
+## [2026.2.173] - 2026-02-17
+
 ### Added
 
 - **Explicit Memory Scoping (FR-006):** Four scope types for stored memories: **Global** (available to all), **User-Private** (only when talking to a specific user), **Agent-Specific** (only by this agent), **Session-Scoped** (ephemeral, cleared on session end unless promoted). New `scope` and `scope_target` columns in facts table; migration adds them with default `global`. `memory_store` accepts optional `scope` and `scopeTarget`; `memory_recall` accepts `userId`, `agentId`, `sessionId` to filter results. New tool `memory_promote` promotes session-scoped memories to global or agent scope. CLI: `hybrid-mem store --scope user --scope-target alice`, `hybrid-mem search --user-id alice`, `hybrid-mem scope prune-session <session-id>`, `hybrid-mem scope promote --id <fact-id> --scope global`. Config: `autoRecall.scopeFilter: { userId?, agentId?, sessionId? }` for auto-recall filtering in multi-user environments. See [docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md) and [issue #6](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/6).
