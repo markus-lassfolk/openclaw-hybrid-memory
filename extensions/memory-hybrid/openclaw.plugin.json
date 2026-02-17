@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.2.16",
+  "version": "2026.2.172",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",
@@ -131,6 +131,30 @@
     "credentials.expiryWarningDays": {
       "label": "Expiry warning days",
       "help": "Warn when credentials expire within this many days (default 7)"
+    },
+    "graph.enabled": {
+      "label": "Graph memory",
+      "help": "Enable graph-based spreading activation for zero-LLM recall (FR-007)"
+    },
+    "graph.autoLink": {
+      "label": "Auto-link",
+      "help": "Auto-create RELATED_TO links to similar facts when storing (default false)"
+    },
+    "graph.autoLinkMinScore": {
+      "label": "Auto-link min score",
+      "help": "Min similarity score for auto-linking (default 0.7)"
+    },
+    "graph.autoLinkLimit": {
+      "label": "Auto-link limit",
+      "help": "Max similar facts to link per storage (default 3)"
+    },
+    "graph.maxTraversalDepth": {
+      "label": "Max traversal depth",
+      "help": "Max hops for graph traversal in recall (default 2)"
+    },
+    "graph.useInRecall": {
+      "label": "Use in recall",
+      "help": "Enable graph traversal in memory_recall (default true)"
     }
   },
   "configSchema": {
@@ -223,6 +247,19 @@
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
         "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
+      },
+      "graph": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable graph-based spreading activation (FR-007)" },
+          "autoLink": { "type": "boolean", "description": "Auto-create RELATED_TO links during storage" },
+          "autoLinkMinScore": { "type": "number", "description": "Min similarity score for auto-linking (default 0.7)" },
+          "autoLinkLimit": { "type": "number", "description": "Max similar facts to link per storage (default 3)" },
+          "maxTraversalDepth": { "type": "number", "description": "Max hops for graph traversal in recall (default 2)" },
+          "useInRecall": { "type": "boolean", "description": "Enable graph traversal in memory_recall (default true)" }
+        },
+        "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
       }
     },
     "required": ["embedding"]

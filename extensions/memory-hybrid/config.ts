@@ -62,6 +62,16 @@ export type StoreConfig = {
   fuzzyDedupe: boolean;
 };
 
+/** Graph-based spreading activation (FR-007): auto-linking and traversal settings */
+export type GraphConfig = {
+  enabled: boolean;
+  autoLink: boolean;            // Auto-create RELATED_TO links during storage
+  autoLinkMinScore: number;     // Min similarity score for auto-linking (default 0.7)
+  autoLinkLimit: number;        // Max similar facts to link per storage (default 3)
+  maxTraversalDepth: number;    // Max hops for graph traversal in recall (default 2)
+  useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
+};
+
 /** Credential types supported by the credentials store */
 export const CREDENTIAL_TYPES = [
   "token",
@@ -113,6 +123,8 @@ export type HybridMemoryConfig = {
   store: StoreConfig;
   /** Opt-in credential management: structured, encrypted storage (default: disabled) */
   credentials: CredentialsConfig;
+  /** Graph-based spreading activation (FR-007): auto-linking and graph traversal */
+  graph: GraphConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
 };
@@ -335,6 +347,23 @@ export const hybridConfigSchema = {
       };
     }
 
+    // Parse graph config (FR-007)
+    const graphRaw = cfg.graph as Record<string, unknown> | undefined;
+    const graph: GraphConfig = {
+      enabled: graphRaw?.enabled !== false,
+      autoLink: graphRaw?.autoLink === true,
+      autoLinkMinScore: typeof graphRaw?.autoLinkMinScore === "number" && graphRaw.autoLinkMinScore >= 0 && graphRaw.autoLinkMinScore <= 1
+        ? graphRaw.autoLinkMinScore
+        : 0.7,
+      autoLinkLimit: typeof graphRaw?.autoLinkLimit === "number" && graphRaw.autoLinkLimit > 0
+        ? Math.floor(graphRaw.autoLinkLimit)
+        : 3,
+      maxTraversalDepth: typeof graphRaw?.maxTraversalDepth === "number" && graphRaw.maxTraversalDepth > 0
+        ? Math.floor(graphRaw.maxTraversalDepth)
+        : 2,
+      useInRecall: graphRaw?.useInRecall !== false,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -352,6 +381,7 @@ export const hybridConfigSchema = {
       autoClassify,
       store,
       credentials,
+      graph,
       wal,
     };
   },
