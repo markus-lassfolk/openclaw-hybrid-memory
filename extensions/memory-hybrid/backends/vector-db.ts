@@ -155,7 +155,7 @@ export class VectorDB {
   async count(): Promise<number> {
     try {
       await this.ensureInitialized();
-      return this.table!.countRows();
+      return await this.table!.countRows();
     } catch (err) {
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
       return 0;
