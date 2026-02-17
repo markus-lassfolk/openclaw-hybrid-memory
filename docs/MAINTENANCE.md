@@ -109,3 +109,5 @@ If you upgrade by other means, run `~/.openclaw/scripts/post-upgrade.sh` manuall
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System design
+- [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation pipeline
+- [SETUP-AUTONOMOUS.md](SETUP-AUTONOMOUS.md) — AI-friendly autonomous setup

@@ -1,7 +1,7 @@
 # Autonomous Hybrid Memory Setup
 
 **For:** An OpenClaw agent setting up the full hybrid memory system on itself.
-**Reference:** [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) (full details, troubleshooting, explanations).
+**Reference:** [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) (documentation hub). For troubleshooting see [TROUBLESHOOTING.md](TROUBLESHOOTING.md). For configuration see [CONFIGURATION.md](CONFIGURATION.md).
 **Repo root:** The directory containing this file's parent (`docs/`).
 
 **Prerequisites:** An **OpenAI API key** is required. The memory-hybrid plugin will not load without `embedding.apiKey` in config. You will need it in Phase 4; if the user has not provided one, stop and ask before writing config. A **Google (Gemini) API key** is optional but recommended for Phase 7b (session distillation); if missing, that phase will be skipped or run with another model (smaller batches).
@@ -359,7 +359,7 @@ Run through this checklist:
 
 **If all pass:** Setup is complete. The hybrid memory system is operational. Decay and pruning run automatically (every 60 minutes, no cron needed). Auto-classify runs on startup (5-min delay) and every 24 hours if enabled. Report success to the user.
 
-**If any fail:** Consult [hybrid-memory-manager-v3.md §12 Troubleshooting](hybrid-memory-manager-v3.md) for the specific symptom.
+**If any fail:** Consult [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for the specific symptom.
 
 ---
 
@@ -367,12 +367,16 @@ Run through this checklist:
 
 | What | Where |
 |------|-------|
-| Full reference doc | `docs/hybrid-memory-manager-v3.md` |
+| Documentation hub | [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) |
+| Quick start (manual) | [QUICKSTART.md](QUICKSTART.md) |
 | Plugin source | `extensions/memory-hybrid/` |
 | Config snippet | `deploy/openclaw.memory-snippet.json` |
+| Config reference | [CONFIGURATION.md](CONFIGURATION.md) |
 | Backfill script | `scripts/backfill-memory.mjs` |
 | Upgrade scripts | `scripts/post-upgrade.sh`, `scripts/upgrade.sh` |
 | Session distillation | `scripts/distill-sessions/`, [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) |
-| Categories & auto-classify | v3 §4.8, §4.9 |
-| Troubleshooting | v3 §12 |
-| CLI commands | v3 §13 |
+| Categories & auto-classify | [FEATURES.md](FEATURES.md) |
+| Troubleshooting | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
+| CLI commands | [CLI-REFERENCE.md](CLI-REFERENCE.md) |
+| Credentials vault | [CREDENTIALS.md](CREDENTIALS.md) |
+| Maintenance & upgrades | [MAINTENANCE.md](MAINTENANCE.md) |

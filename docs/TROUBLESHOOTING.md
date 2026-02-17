@@ -64,3 +64,5 @@ The plugin does **not** support automatic failover to another provider. All embe
 - [CONFIGURATION.md](CONFIGURATION.md) — Full config reference
 - [MAINTENANCE.md](MAINTENANCE.md) — Upgrades and periodic review
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
+- [CREDENTIALS.md](CREDENTIALS.md) — Credential vault troubleshooting
+- [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) — Write-ahead log design

@@ -129,3 +129,11 @@ Then the plugin only stores **model ids** (e.g. `openai/text-embedding-3-small`,
 | Effort | — | Small | Small–medium (if API exists) | Medium (2–4 days) |
 
 If you want to proceed with Option C later, the next step is to add `embedding.provider` and the Google embedding path (and optionally `chat.provider` plus one extra chat adapter), then iterate. For now we keep hardcoded models.
+
+---
+
+## Related docs
+
+- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [CONFIGURATION.md](CONFIGURATION.md) — Current config reference (OpenAI-only)
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture overview
