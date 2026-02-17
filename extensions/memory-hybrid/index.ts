@@ -5435,7 +5435,12 @@ const memoryHybridPlugin = {
               indexCap - estimateTokens(indexHeader + indexFooter),
               1,
             );
-            if (indexLines.length === 0) return;
+            if (indexLines.length === 0) {
+              if (procedureBlock) {
+                return { prependContext: procedureBlock };
+              }
+              return;
+            }
             lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
             factsDb.refreshAccessedFacts(includedIds);
@@ -5481,7 +5486,12 @@ const memoryHybridPlugin = {
             usedTokens += lineTokens;
           }
 
-          if (lines.length === 0) return;
+          if (lines.length === 0) {
+            if (procedureBlock) {
+              return { prependContext: procedureBlock };
+            }
+            return;
+          }
 
           // FR-005: Access tracking for injected memories
           factsDb.refreshAccessedFacts(injectedIds);
@@ -5536,7 +5546,12 @@ const memoryHybridPlugin = {
             }
           }
 
-          if (!memoryContext) return;
+          if (!memoryContext) {
+            if (procedureBlock) {
+              return { prependContext: procedureBlock };
+            }
+            return;
+          }
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
             api.logger.info?.(

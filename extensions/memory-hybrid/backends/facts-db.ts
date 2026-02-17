@@ -1625,7 +1625,7 @@ export class FactsDB {
     try {
       const rows = this.liveDb
         .prepare(
-          `SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type ASC, p.confidence DESC, CASE WHEN p.last_validated IS NULL THEN 1 ELSE 0 END, p.last_validated DESC LIMIT ?`,
+          `SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type DESC, p.confidence DESC, CASE WHEN p.last_validated IS NULL THEN 1 ELSE 0 END, p.last_validated DESC LIMIT ?`,
         )
         .all(safeQuery, limit) as Array<Record<string, unknown>>;
       return rows.map((r) => this.procedureRowToEntry(r));
@@ -1641,32 +1641,48 @@ export class FactsDB {
   }
 
   /** Record a successful use of a procedure (bump success_count, last_validated). */
-  recordProcedureSuccess(id: string): boolean {
+  recordProcedureSuccess(id: string, recipeJson?: string): boolean {
     const now = Math.floor(Date.now() / 1000);
     const proc = this.getProcedureById(id);
     if (!proc) return false;
     const successCount = proc.successCount + 1;
     const confidence = Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount));
-    this.liveDb
-      .prepare(
-        `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(successCount, now, confidence, now, id);
+    if (recipeJson !== undefined) {
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', recipe_json = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(successCount, now, confidence, recipeJson, now, id);
+    } else {
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(successCount, now, confidence, now, id);
+    }
     return true;
   }
 
   /** Record a failed use (bump failure_count, last_failed). */
-  recordProcedureFailure(id: string): boolean {
+  recordProcedureFailure(id: string, recipeJson?: string): boolean {
     const now = Math.floor(Date.now() / 1000);
     const proc = this.getProcedureById(id);
     if (!proc) return false;
     const failureCount = proc.failureCount + 1;
     const confidence = Math.max(0.1, 0.5 + 0.1 * (proc.successCount - failureCount));
-    this.liveDb
-      .prepare(
-        `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(failureCount, now, confidence, now, id);
+    if (recipeJson !== undefined) {
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', recipe_json = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(failureCount, now, confidence, recipeJson, now, id);
+    } else {
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(failureCount, now, confidence, now, id);
+    }
     return true;
   }
 
