@@ -3282,6 +3282,127 @@ const memoryHybridPlugin = {
           api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
         }
       }, 24 * 60 * 60_000); // daily
+
+      // Register CLI commands for human-only review/apply operations
+      api.registerCli(({ program }) => {
+        const proposals = program
+          .command("proposals")
+          .description("Manage persona proposals (human-only commands)");
+
+        proposals
+          .command("review <proposalId> <action>")
+          .description("Approve or reject a persona proposal (action: approve|reject)")
+          .option("--reviewed-by <name>", "Name/ID of reviewer")
+          .action(async (proposalId: string, action: string, opts: { reviewedBy?: string }) => {
+            if (action !== "approve" && action !== "reject") {
+              console.error("Action must be 'approve' or 'reject'");
+              process.exit(1);
+            }
+
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              console.error(`Proposal ${proposalId} not found`);
+              process.exit(1);
+            }
+
+            if (proposal.status !== "pending") {
+              console.error(`Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`);
+              process.exit(1);
+            }
+
+            const newStatus = action === "approve" ? "approved" : "rejected";
+            proposalsDb!.updateStatus(proposalId, newStatus, opts.reviewedBy);
+
+            auditProposal(action, proposalId, {
+              reviewedBy: opts.reviewedBy ?? "cli-user",
+              previousStatus: "pending",
+              newStatus,
+            }, { error: console.error });
+
+            console.log(`Proposal ${proposalId} ${action}d.`);
+            if (action === "approve") {
+              console.log(`\nUse 'openclaw proposals apply ${proposalId}' to apply the change.`);
+            }
+          });
+
+        proposals
+          .command("apply <proposalId>")
+          .description("Apply an approved persona proposal to its target identity file")
+          .action(async (proposalId: string) => {
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              console.error(`Proposal ${proposalId} not found`);
+              process.exit(1);
+            }
+
+            if (proposal.status !== "approved") {
+              console.error(`Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`);
+              process.exit(1);
+            }
+
+            // Re-validate targetFile against current allowedFiles config (defense against config changes or DB tampering)
+            if (!cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
+              console.error(`Target file ${proposal.targetFile} is no longer in allowedFiles. Cannot apply.`);
+              console.error(`Current allowedFiles: ${cfg.personaProposals.allowedFiles.join(", ")}`);
+              process.exit(1);
+            }
+
+            // Additional path traversal defense (even though schema validates at creation)
+            if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
+              console.error(`Invalid target file path: ${proposal.targetFile}. Path traversal detected.`);
+              process.exit(1);
+            }
+
+            // Resolve target file path
+            const targetPath = api.resolvePath(proposal.targetFile);
+
+            if (!existsSync(targetPath)) {
+              console.error(`Target file ${proposal.targetFile} not found at ${targetPath}`);
+              process.exit(1);
+            }
+
+            // Mark as applied BEFORE file operations to prevent concurrent double-application
+            // If file ops fail, we'll have an "applied" proposal that didn't actually apply,
+            // but that's safer than applying twice. The backup and audit log provide recovery.
+            proposalsDb!.markApplied(proposalId);
+
+            // Create backup
+            const backupPath = `${targetPath}.backup-${Date.now()}`;
+            try {
+              const original = readFileSync(targetPath, "utf-8");
+              writeFileSync(backupPath, original);
+
+              // Escape HTML comment sequences to prevent breakout
+              const escapeHtmlComment = (text: string): string => {
+                return text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
+              };
+
+              // Apply change (simple append strategy)
+              // TODO: Future enhancement - use cfg.personaProposals.validationModel for:
+              //   - Smart diff application (parse existing structure, insert intelligently)
+              //   - Content validation (check for dangerous patterns)
+              //   - Merge conflict resolution
+              const timestamp = new Date().toISOString();
+              const safeObservation = escapeHtmlComment(proposal.observation);
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
+              writeFileSync(targetPath, original + changeBlock);
+
+              auditProposal("applied", proposalId, {
+                targetFile: proposal.targetFile,
+                targetPath,
+                backupPath,
+                timestamp,
+              }, { error: console.error });
+
+              console.log(`Proposal ${proposalId} applied to ${proposal.targetFile}`);
+              console.log(`Backup saved: ${backupPath}`);
+              console.log(`\nChange:\n${proposal.suggestedChange}`);
+            } catch (err) {
+              console.error(`Failed to apply proposal: ${err}`);
+              process.exit(1);
+            }
+          });
+      });
     }
 
     // ========================================================================
@@ -4752,133 +4873,6 @@ const memoryHybridPlugin = {
         } catch {
           try { rmSync(pendingPath, { force: true }); } catch { /* ignore */ }
         }
-      });
-    }
-
-    // ========================================================================
-    // Persona Proposals CLI Commands (human-only, not agent-callable)
-    // ========================================================================
-
-    if (cfg.personaProposals.enabled && proposalsDb) {
-      // auditProposal is defined in the shared scope above and reused here
-      api.registerCli(({ program }) => {
-        const proposals = program
-          .command("proposals")
-          .description("Manage persona proposals (human-only commands)");
-
-        proposals
-          .command("review <proposalId> <action>")
-          .description("Approve or reject a persona proposal (action: approve|reject)")
-          .option("--reviewed-by <name>", "Name/ID of reviewer")
-          .action(async (proposalId: string, action: string, opts: { reviewedBy?: string }) => {
-            if (action !== "approve" && action !== "reject") {
-              console.error("Action must be 'approve' or 'reject'");
-              process.exit(1);
-            }
-
-            const proposal = proposalsDb!.get(proposalId);
-            if (!proposal) {
-              console.error(`Proposal ${proposalId} not found`);
-              process.exit(1);
-            }
-
-            if (proposal.status !== "pending") {
-              console.error(`Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`);
-              process.exit(1);
-            }
-
-            const newStatus = action === "approve" ? "approved" : "rejected";
-            proposalsDb!.updateStatus(proposalId, newStatus, opts.reviewedBy);
-
-            auditProposal(action, proposalId, {
-              reviewedBy: opts.reviewedBy ?? "cli-user",
-              previousStatus: "pending",
-              newStatus,
-            }, { error: console.error });
-
-            console.log(`Proposal ${proposalId} ${action}d.`);
-            if (action === "approve") {
-              console.log(`\nUse 'openclaw proposals apply ${proposalId}' to apply the change.`);
-            }
-          });
-
-        proposals
-          .command("apply <proposalId>")
-          .description("Apply an approved persona proposal to its target identity file")
-          .action(async (proposalId: string) => {
-            const proposal = proposalsDb!.get(proposalId);
-            if (!proposal) {
-              console.error(`Proposal ${proposalId} not found`);
-              process.exit(1);
-            }
-
-            if (proposal.status !== "approved") {
-              console.error(`Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`);
-              process.exit(1);
-            }
-
-            // Re-validate targetFile against current allowedFiles config (defense against config changes or DB tampering)
-            if (!cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
-              console.error(`Target file ${proposal.targetFile} is no longer in allowedFiles. Cannot apply.`);
-              console.error(`Current allowedFiles: ${cfg.personaProposals.allowedFiles.join(", ")}`);
-              process.exit(1);
-            }
-
-            // Additional path traversal defense (even though schema validates at creation)
-            if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
-              console.error(`Invalid target file path: ${proposal.targetFile}. Path traversal detected.`);
-              process.exit(1);
-            }
-
-            // Resolve target file path
-            const targetPath = api.resolvePath(proposal.targetFile);
-
-            if (!existsSync(targetPath)) {
-              console.error(`Target file ${proposal.targetFile} not found at ${targetPath}`);
-              process.exit(1);
-            }
-
-            // Mark as applied BEFORE file operations to prevent concurrent double-application
-            // If file ops fail, we'll have an "applied" proposal that didn't actually apply,
-            // but that's safer than applying twice. The backup and audit log provide recovery.
-            proposalsDb!.markApplied(proposalId);
-
-            // Create backup
-            const backupPath = `${targetPath}.backup-${Date.now()}`;
-            try {
-              const original = readFileSync(targetPath, "utf-8");
-              writeFileSync(backupPath, original);
-
-              // Escape HTML comment sequences to prevent breakout
-              const escapeHtmlComment = (text: string): string => {
-                return text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
-              };
-
-              // Apply change (simple append strategy)
-              // TODO: Future enhancement - use cfg.personaProposals.validationModel for:
-              //   - Smart diff application (parse existing structure, insert intelligently)
-              //   - Content validation (check for dangerous patterns)
-              //   - Merge conflict resolution
-              const timestamp = new Date().toISOString();
-              const safeObservation = escapeHtmlComment(proposal.observation);
-              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
-              writeFileSync(targetPath, original + changeBlock);
-
-              auditProposal("applied", proposalId, {
-                targetFile: proposal.targetFile,
-                targetPath,
-                backupPath,
-                timestamp,
-              }, { error: console.error });
-
-              console.log(`Proposal ${proposalId} applied to ${proposal.targetFile}`);
-              console.log(`Backup saved: ${backupPath}`);
-              console.log(`\nChange:\n${proposal.suggestedChange}`);
-            } catch (err) {
-              console.error(`Failed to apply proposal: ${err}`);
-              process.exit(1);
-            }
-          });
       });
     }
 

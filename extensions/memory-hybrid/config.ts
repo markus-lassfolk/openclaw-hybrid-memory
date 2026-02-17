@@ -346,9 +346,16 @@ export const hybridConfigSchema = {
     const proposalsRaw = cfg.personaProposals as Record<string, unknown> | undefined;
     const personaProposals: PersonaProposalsConfig = {
       enabled: proposalsRaw?.enabled === true,
-      allowedFiles: Array.isArray(proposalsRaw?.allowedFiles)
-        ? (proposalsRaw.allowedFiles as string[]).filter((f) => IDENTITY_FILE_TYPES.includes(f as IdentityFileType)) as IdentityFileType[]
-        : [...IDENTITY_FILE_TYPES],
+      allowedFiles: (() => {
+        if (!Array.isArray(proposalsRaw?.allowedFiles)) {
+          return [...IDENTITY_FILE_TYPES];
+        }
+        const filtered = (proposalsRaw.allowedFiles as string[]).filter((f) => 
+          IDENTITY_FILE_TYPES.includes(f as IdentityFileType)
+        ) as IdentityFileType[];
+        // Fallback to defaults if filter produces empty array
+        return filtered.length > 0 ? filtered : [...IDENTITY_FILE_TYPES];
+      })(),
       maxProposalsPerWeek: typeof proposalsRaw?.maxProposalsPerWeek === "number" && proposalsRaw.maxProposalsPerWeek > 0
         ? Math.floor(proposalsRaw.maxProposalsPerWeek)
         : 5,
