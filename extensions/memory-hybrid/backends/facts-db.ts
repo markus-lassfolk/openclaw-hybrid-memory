@@ -1296,6 +1296,62 @@ export class FactsDB {
     return stats;
   }
 
+  /** FR-004: Tier breakdown (hot/warm/cold) for non-superseded facts. */
+  statsBreakdownByTier(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT COALESCE(tier, 'warm') as tier, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY tier`,
+      )
+      .all() as Array<{ tier: string; cnt: number }>;
+    const stats: Record<string, number> = { hot: 0, warm: 0, cold: 0 };
+    for (const row of rows) {
+      stats[row.tier || "warm"] = row.cnt;
+    }
+    return stats;
+  }
+
+  /** Source breakdown (conversation, cli, distillation, reflection, etc.) for non-superseded facts. */
+  statsBreakdownBySource(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT source, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY source`,
+      )
+      .all() as Array<{ source: string; cnt: number }>;
+    const stats: Record<string, number> = {};
+    for (const row of rows) {
+      stats[row.source || "unknown"] = row.cnt;
+    }
+    return stats;
+  }
+
+  /** Estimated total tokens stored (summary or text) for non-superseded facts. Uses same heuristic as auto-recall. */
+  estimateStoredTokens(): number {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT summary, text FROM facts WHERE superseded_at IS NULL`,
+      )
+      .all() as Array<{ summary: string | null; text: string }>;
+    return rows.reduce((sum, r) => sum + estimateTokensForDisplay(r.summary || r.text), 0);
+  }
+
+  /** Estimated tokens by tier (hot/warm/cold) for non-superseded facts. */
+  estimateStoredTokensByTier(): { hot: number; warm: number; cold: number } {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`,
+      )
+      .all() as Array<{ tier: string; summary: string | null; text: string }>;
+    const out = { hot: 0, warm: 0, cold: 0 };
+    for (const r of rows) {
+      const tok = estimateTokensForDisplay(r.summary || r.text);
+      const t = r.tier || "warm";
+      if (t === "hot") out.hot += tok;
+      else if (t === "cold") out.cold += tok;
+      else out.warm += tok;
+    }
+    return out;
+  }
+
   countExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
     const row = this.liveDb

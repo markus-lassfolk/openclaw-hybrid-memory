@@ -158,8 +158,10 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
 
   mem
     .command("stats")
-    .description("Show memory statistics with decay breakdown")
-    .action(async () => {
+    .description("Show memory statistics with decay breakdown. Use --efficiency for tiers, sources, and token estimates.")
+    .option("--efficiency", "Show tier/source breakdown, estimated tokens, and token-savings note")
+    .action(async (opts?: { efficiency?: boolean }) => {
+      const efficiency = opts?.efficiency ?? false;
       const sqlCount = factsDb.count();
       let lanceCount = 0;
       try {
@@ -180,6 +182,30 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       }
       if (expired > 0) {
         console.log(`\nExpired (pending prune): ${expired}`);
+      }
+
+      if (efficiency) {
+        const tierBreakdown = factsDb.statsBreakdownByTier();
+        const sourceBreakdown = factsDb.statsBreakdownBySource();
+        const totalTokens = factsDb.estimateStoredTokens();
+        const tokensByTier = factsDb.estimateStoredTokensByTier();
+
+        console.log(`\n--- Efficiency ---`);
+        console.log(`\nBy tier (FR-004 hot/warm/cold):`);
+        for (const t of ["hot", "warm", "cold"]) {
+          const cnt = tierBreakdown[t] ?? 0;
+          const tok = tokensByTier[t as keyof typeof tokensByTier] ?? 0;
+          console.log(`  ${t.padEnd(6)} ${cnt} facts  ~${tok.toLocaleString()} tokens`);
+        }
+        console.log(`\nBy source:`);
+        const sources = Object.entries(sourceBreakdown).sort((a, b) => b[1] - a[1]);
+        for (const [src, cnt] of sources) {
+          console.log(`  ${src.padEnd(16)} ${cnt}`);
+        }
+        console.log(`\nEstimated tokens in memory: ~${totalTokens.toLocaleString()}`);
+        console.log(`\nToken savings: When auto-recall injects memories, providers can cache them.`);
+        console.log(`Cache Read is typically 90%+ cheaper than Input. Compare your provider dashboard`);
+        console.log(`(Input vs Cache Read) to see actual savings — many users see 90-97% reduction.`);
       }
     });
 
