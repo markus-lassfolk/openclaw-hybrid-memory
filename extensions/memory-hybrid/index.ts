@@ -5052,6 +5052,7 @@ const memoryHybridPlugin = {
                         key: extracted.key || oldFact.key,
                         value: extracted.value || oldFact.value,
                         source: "auto-capture",
+                        decayClass: oldFact.decayClass,
                         summary,
                       });
                       factsDb.supersede(classification.targetId, newEntry.id);
