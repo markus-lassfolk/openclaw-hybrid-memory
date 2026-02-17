@@ -23,7 +23,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 | **Redundant code** | truncateText / truncateForStorage | ✅ Done |
 | **Redundant code** | safeEmbed centralize embedding errors | ✅ Done |
 | **WAL** | Append-only NDJSON + compact in pruneStale | ✅ Done |
-| **Code smells** | Named constants (REFLECTION_*, CREDENTIAL_*) | ✅ Done |
+| **Code smells** | Named constants | ✅ Done (15+ in `utils/constants.ts`) |
 | **Code smells** | Error swallowing (catch blocks log) | ✅ Done |
 | **Architecture** | Split index.ts into modules | ✅ Done (WAL, VectorDB, FactsDB, types, utils, services, prompts, cli — all CLI commands in `cli/register.ts`) |
 | **Architecture** | Embedding provider interface | ✅ Done (EmbeddingProvider in services/embeddings.ts) |
@@ -71,14 +71,14 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 
 **Feedback:** Text truncation in 3+ forms; embedding calls with identical error handling copy-pasted 8+ times; WAL write/remove pattern duplicated 4+ times (300+ lines).
 
-**Status: Partially done.**
+**Status: ✅ Done (except WAL helper — deferred, see below).**
 
 | Utility | Status |
 |---------|--------|
 | **`truncateText(text, maxLen, suffix?)`** | ✅ Done. Added; used for credential notes and available in `_testing`. |
 | **`truncateForStorage(text, maxChars)`** | ✅ Done. Added; replaces capture truncation at store call sites. |
 | **`safeEmbed(embeddings, text, logWarn?)`** | ✅ Done. Returns `number[] \| null`; used in find-duplicates. |
-| **WAL write/remove helper** | ⏳ Not done. Call sites still call `wal.write` / `wal.remove` directly; WAL is now O(1) append so duplication is less critical. |
+| **WAL write/remove helper** | ⏳ Deferred. Call sites still call `wal.write` / `wal.remove` directly; WAL is now O(1) append so duplication is low-impact (each call is 1 line). Not worth abstracting further. |
 
 ---
 
@@ -119,8 +119,8 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 
 | Smell | Status |
 |-------|--------|
-| **Magic numbers** | ✅ Partially done. Added `REFLECTION_MAX_FACT_LENGTH`, `REFLECTION_MAX_FACTS_PER_CATEGORY`, `CREDENTIAL_NOTES_MAX_CHARS`; used for credential notes. More can be extracted. |
-| **Error swallowing** | ✅ Partially done. Empty catch blocks in vectorDb.delete (tool + supersede) now log with `api.logger.warn`. |
+| **Magic numbers** | ✅ Done. 15+ named constants in `utils/constants.ts`: importance levels (`CLI_STORE_IMPORTANCE`, `BATCH_STORE_IMPORTANCE`, `REFLECTION_IMPORTANCE`), thresholds, temperatures, max chars, `SECONDS_PER_DAY`, `SQLITE_BUSY_TIMEOUT_MS`, etc. |
+| **Error swallowing** | ✅ Done. VectorDB methods log errors internally; remaining empty catches are intentional (file-not-found, LanceDB-row-absent, already-closed). |
 | **78-line prompt inline** | ✅ Done. All LLM prompts in `prompts/*.txt`: memory-classify, reflection, consolidate, category-discovery, category-classify; `utils/prompt-loader.ts` (loadPrompt, fillPrompt) used throughout. |
 | **Inconsistent naming** | ✅ Done. `openaiClient` → `openai`, `db` → `factsDb` in classify/discovery functions. |
 | **Dead imports** | ✅ Done. Removed WALEntry, TTL_DEFAULTS, IDENTITY_FILE_TYPES, TAG_PATTERNS from index. |
