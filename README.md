@@ -1,15 +1,12 @@
 # OpenClaw Hybrid Memory
 
-A **complete, ready-to-deploy memory system** for [OpenClaw](https://openclaw.ai) that combines two community approaches into one unified setup:
+Your OpenClaw agent forgets between sessions. You repeat preferences, decisions, and context—and the agent can't build on past conversations.
 
-- **Structured + vector memory** (SQLite + FTS5 + LanceDB) from [Clawdboss.ai](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)
-- **Hierarchical file memory** (MEMORY.md index + drill-down detail files) from [ucsandman](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System)
-
-This repo packages both into a single deployment flow (the **Hybrid Memory Manager v3.0**) with additional features: auto-capture, auto-recall, TTL-based decay, LLM auto-classification of facts, a backfill script, upgrade helpers, and comprehensive documentation.
+The **Hybrid Memory Manager** gives your agent **durable memory**: it automatically captures what matters (preferences, facts, decisions), recalls it when relevant, and keeps it organized with TTL-based decay and optional credential storage. One deployment flow, one system—structured facts (SQLite + FTS5), semantic search (LanceDB), hierarchical file memory (MEMORY.md + drill-down), session distillation from old logs, and a full CLI to verify, classify, and maintain.
 
 **Repository:** [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory) · **Documentation:** [v3 deployment guide](docs/hybrid-memory-manager-v3.md) · [Quick Start](#quick-start) below
 
-## Quick Start
+## Quick Start (NPM)
 
 ```bash
 openclaw plugins install openclaw-hybrid-memory
@@ -17,7 +14,7 @@ openclaw plugins install openclaw-hybrid-memory
 
 Then set your [embedding API key](#prerequisites), run `openclaw hybrid-mem install` for full defaults, restart the gateway, and run `openclaw hybrid-mem verify [--fix]`.
 
-**Need more detail?** Step-by-step options (including from-source install): [First install (best experience)](#first-install-best-experience). Full reference: [v3 deployment guide](docs/hybrid-memory-manager-v3.md).
+Other options: [Autonomous setup (AI)](#2-autonomous-setup-ai) · [Manual install](#3-manual-install) · [v3 deployment guide](docs/hybrid-memory-manager-v3.md)
 
 ## Prerequisites
 
@@ -29,33 +26,40 @@ Then set your [embedding API key](#prerequisites), run `openclaw hybrid-mem inst
 
 See [v3 §4 and §12](docs/hybrid-memory-manager-v3.md) for config and troubleshooting (invalid key, missing key, env vars).
 
-## First install (best experience)
+## Installation
 
-For a **great setup in one go** (all features, compaction prompts, nightly session-distillation job):
+### 1. NPM (recommended)
 
-**Option A — Before first gateway start (no plugin loaded yet)**  
-1. Copy `extensions/memory-hybrid/` into your OpenClaw extensions directory ([v3 §3](docs/hybrid-memory-manager-v3.md)) and run **`npm install`** inside it.  
-2. From this repo, run **`node scripts/install-hybrid-config.mjs`** (or set `OPENCLAW_HOME` if needed). This writes `~/.openclaw/openclaw.json` with full defaults and the nightly job.  
-3. Edit the config and set **`plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey`** to your OpenAI key (replace `YOUR_OPENAI_API_KEY`).  
-4. Start the gateway, then run **`openclaw hybrid-mem verify [--fix]`**.
+1. **`openclaw plugins install openclaw-hybrid-memory`** — OpenClaw installs the plugin and its deps.
+2. **`openclaw hybrid-mem install`** — Merges full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`. Use `--dry-run` to preview. Preserves your existing API key if already set.
+3. Set **`plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey`** to your OpenAI key (edit the config file or set it before step 2).
+4. **Restart the gateway**, then run **`openclaw hybrid-mem verify [--fix]`** to confirm everything is working.
 
-**Option B — After the plugin is already loaded**  
-1. Run **`openclaw hybrid-mem install`** to merge full defaults and the nightly job into your existing config (use `--dry-run` to preview). Preserves your existing API key if set.  
-2. Restart the gateway and run **`openclaw hybrid-mem verify [--fix]`**.
+### 2. Autonomous setup (AI)
 
-If something fails, error messages point you to **`openclaw hybrid-mem verify [--fix]`** for guidance; **`--fix`** can add missing config keys, the nightly job, and the memory dir. To revert to the default OpenClaw memory: **`openclaw hybrid-mem uninstall`** — OpenClaw works normally again; your data is kept unless you use `--clean-all`.
+Point an OpenClaw agent at **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)**. The agent will autonomously install the plugin, configure it, run backfill if needed, and verify the setup. Best if you prefer to have the AI handle the steps for you.
 
-**Duplicate or “id mismatch” in logs?** Use the plugin **id** in config, not the npm package name: `plugins.slots.memory` = `"openclaw-hybrid-memory"` and `plugins.entries["openclaw-hybrid-memory"]`. Remove any backup extension folders (e.g. `memory-hybrid.bak-*`) from OpenClaw’s extensions directory so only one copy of the plugin loads.
+### 3. Manual install
 
-## Start here: Hybrid Memory Manager v3.0
+Copy `extensions/memory-hybrid/` into your OpenClaw extensions directory and run `npm install` there. Then run **`node scripts/install-hybrid-config.mjs`** (or set `OPENCLAW_HOME`) to write config with defaults, set your API key, start the gateway, and run **`openclaw hybrid-mem verify [--fix]`**. For full control (workspace dirs, bootstrap files, config merge by hand), follow [v3 §3 and §8](docs/hybrid-memory-manager-v3.md).
+
+---
+
+If something fails, **`openclaw hybrid-mem verify [--fix]`** reports issues and can add missing config (embedding block, nightly job, memory dir). To revert to default OpenClaw memory: **`openclaw hybrid-mem uninstall`** — your data is kept unless you use `--clean-all`.
+
+**Duplicate or “id mismatch” in logs?** Use the plugin **id** in config: `plugins.slots.memory` = `"openclaw-hybrid-memory"` and `plugins.entries["openclaw-hybrid-memory"]`. Remove any backup extension folders (e.g. `memory-hybrid.bak-*`) so only one copy loads.
+
+## Docs & reference
 
 | Path | Description |
 |------|-------------|
-| **[docs/hybrid-memory-manager-v3.md](docs/hybrid-memory-manager-v3.md)** | **Full deployment reference:** four-part architecture, plugin install, config, MEMORY.md template, AGENTS.md Memory Protocol, **one deployment flow for any system** (§8) with optional backfill (seed + extract-daily; safe on new systems), verification, troubleshooting, CLI, upgrades. |
-| **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)** | **AI-friendly setup prompt:** point an OpenClaw agent at this file and it will autonomously install, configure, backfill, and verify the full hybrid memory system. Includes sub-agent re-index step. |
-| **[deploy/](deploy/)** | Merge-ready `openclaw.memory-snippet.json` (memory-hybrid + memorySearch, redacted) and deploy README. |
-| **extensions/memory-hybrid/** | memory-hybrid plugin source (required for v3): SQLite+FTS5+LanceDB ([README](extensions/memory-hybrid/README.md)). |
-| **[scripts/](scripts/)** | **Upgrade helpers:** after every OpenClaw upgrade, reinstall LanceDB in the extension dir and restart. Copy `post-upgrade.sh` and `upgrade.sh` to `~/.openclaw/scripts/`; use alias `openclaw-upgrade` for one-command upgrades (v3 §14, [scripts/README.md](scripts/README.md)). **Session distillation:** [scripts/distill-sessions/](scripts/distill-sessions/) — batch fact extraction from conversation logs; see [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md). |
+| **[docs/hybrid-memory-manager-v3.md](docs/hybrid-memory-manager-v3.md)** | Full deployment reference: architecture, config, MEMORY.md template, AGENTS.md Memory Protocol, manual flow (§8), verification, troubleshooting, CLI, upgrades. |
+| **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)** | Autonomous setup: point an OpenClaw agent at this file to install, configure, backfill, and verify (option 2 above). |
+| **[deploy/](deploy/)** | Merge-ready `openclaw.memory-snippet.json` (memory-hybrid + memorySearch) and deploy README. |
+| **extensions/memory-hybrid/** | Plugin source: SQLite+FTS5+LanceDB ([README](extensions/memory-hybrid/README.md)). |
+| **[scripts/](scripts/)** | Upgrade helpers (post-upgrade reinstall, `openclaw-upgrade`). Session distillation: [scripts/distill-sessions/](scripts/distill-sessions/), [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md). |
+
+---
 
 ## Credits & attribution
 
@@ -65,13 +69,13 @@ This project builds on the work of two authors from the OpenClaw community:
 
 **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (February 13, 2026)
 
-The memory-hybrid plugin in `extensions/memory-hybrid/` is based on the plugin architecture described in this article. The original design introduced: SQLite + FTS5 for structured fact storage, LanceDB for semantic vector search, decay tiers with TTL-based expiry, checkpoints, and the dual-backend approach. The full article text and original setup prompts are preserved in **docs/archive/** for credit and historical reference only; do not use those prompts to install — they target an older version. Use the v3 guide or SETUP-AUTONOMOUS.md for installation.
+The memory-hybrid plugin in `extensions/memory-hybrid/` is based on the plugin architecture described in this article. The original design introduced: SQLite + FTS5 for structured fact storage, LanceDB for semantic vector search, decay tiers with TTL-based expiry, checkpoints, and the dual-backend approach. The full article text is in [docs/archive/](docs/archive/) for reference.
 
 ### ucsandman
 
 **[OpenClaw-Hierarchical-Memory-System](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System)**
 
-The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down detail files under `memory/`) originates from ucsandman's system. The original concept introduced: the index-plus-detail-files pattern, token-budget math for bootstrap files, and the directory structure (`memory/people/`, `memory/projects/`, `memory/technical/`, etc.). The original prompt and implementation steps are preserved in [docs/archive/ucsandman-hierarchical-memory-system.md](docs/archive/ucsandman-hierarchical-memory-system.md).
+The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down detail files under `memory/`) originates from ucsandman's system. The original concept introduced: the index-plus-detail-files pattern, token-budget math for bootstrap files, and the directory structure (`memory/people/`, `memory/projects/`, `memory/technical/`, etc.). See [docs/archive/](docs/archive/) for the original material.
 
 ### What this repo adds
 
@@ -109,17 +113,3 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 - Timestamp migration for database consistency across schema versions
 - Pre-compaction memory flush prompts so the model saves to **both** `memory_store` and daily files before context is truncated
 
-## Original source material (archive)
-
-The following are in **docs/archive/** for credit and history. Do not use the setup prompts to install; they target an older plugin version. Use the v3 guide or SETUP-AUTONOMOUS.md instead.
-
-| Path | Description |
-|------|-------------|
-| **[docs/archive/clawdboss-permanent-memory-article.md](docs/archive/clawdboss-permanent-memory-article.md)** | Full text of "Give Your Clawdbot Permanent Memory" by Clawdboss.ai (Feb 13, 2026). |
-| **[docs/archive/ucsandman-hierarchical-memory-system.md](docs/archive/ucsandman-hierarchical-memory-system.md)** | ucsandman's hierarchical memory system prompt and implementation steps. |
-| **[docs/archive/hybrid-hierarchical-memory-guide.md](docs/archive/hybrid-hierarchical-memory-guide.md)** | Earlier v2.0 guide (pre-hybrid, memorySearch + hierarchical files only). |
-| **docs/archive/SETUP-PROMPT-1..4** | Original pasteable setup prompts from the Clawdboss.ai article (historical only). |
-
-**Quick path:** [Quick Start](#quick-start) — install from npm, then configure and verify.
-
-**Manual / from source:** Follow [v3 §8](docs/hybrid-memory-manager-v3.md): (1) workspace + memory dirs + bootstrap files, (2) install memory-hybrid plugin (§3), (3) merge [deploy/openclaw.memory-snippet.json](deploy/openclaw.memory-snippet.json) into `~/.openclaw/openclaw.json`, (4) set API key, (5) restart, (6) `openclaw hybrid-mem verify [--fix]`. Optional backfill: seed script + `openclaw hybrid-mem extract-daily`.

@@ -2,13 +2,14 @@
   "name": "openclaw-hybrid-memory",
   "version": "2026.2.172",
   "type": "module",
-  "description": "Hybrid memory plugin for OpenClaw: SQLite+FTS5 for structured facts, LanceDB for semantic search",
+  "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
     "index.ts",
     "config.ts",
     "versionInfo.ts",
     "openclaw.plugin.json",
-    "package.json"
+    "package.json",
+    "README.md"
   ],
   "repository": {
     "type": "git",
