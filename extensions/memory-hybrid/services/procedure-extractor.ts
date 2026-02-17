@@ -48,7 +48,6 @@ export function parseSessionJsonl(
   let taskIntent = "";
   const steps: ProcedureStep[] = [];
   let lastFailure: string | undefined;
-  const toolUseMap = new Map<string, { name: string; args?: Record<string, unknown> }>();
 
   for (const line of lines) {
     let obj: unknown;
@@ -78,8 +77,6 @@ export function parseSessionJsonl(
         const args = block.input != null && typeof block.input === "object" && !Array.isArray(block.input)
           ? (block.input as Record<string, unknown>)
           : undefined;
-        const id = block.id as string | undefined;
-        if (id) toolUseMap.set(id, { name: block.name, args });
         steps.push({
           tool: block.name,
           args: args as Record<string, unknown> | undefined,
@@ -209,9 +206,9 @@ export async function extractProceduresFromSessions(
     const existing = factsDb.findProcedureByTaskPattern(parsed.taskIntent, 1)[0];
     if (existing) {
       if (parsed.success) {
-        factsDb.recordProcedureSuccess(existing.id);
+        factsDb.recordProcedureSuccess(existing.id, recipeJson);
       } else {
-        factsDb.recordProcedureFailure(existing.id);
+        factsDb.recordProcedureFailure(existing.id, recipeJson);
       }
       proceduresStored++;
     } else {
