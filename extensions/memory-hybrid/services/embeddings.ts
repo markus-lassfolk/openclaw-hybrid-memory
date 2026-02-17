@@ -10,9 +10,13 @@ export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
 }
 
-/** OpenAI-based embedding provider. */
+/** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
+const EMBEDDING_CACHE_MAX = 500;
+
+/** OpenAI-based embedding provider. Optional in-memory cache to avoid redundant API calls. */
 export class Embeddings implements EmbeddingProvider {
   private client: OpenAI;
+  private cache = new Map<string, number[]>();
 
   constructor(
     apiKey: string,
@@ -22,11 +26,21 @@ export class Embeddings implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    const cached = this.cache.get(text);
+    if (cached !== undefined) return cached;
+
     const resp = await this.client.embeddings.create({
       model: this.model,
       input: text,
     });
-    return resp.data[0].embedding;
+    const vector = resp.data[0].embedding;
+
+    if (this.cache.size >= EMBEDDING_CACHE_MAX) {
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey !== undefined) this.cache.delete(firstKey);
+    }
+    this.cache.set(text, vector);
+    return vector;
   }
 }
 
