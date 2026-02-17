@@ -25,7 +25,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 | **WAL** | Append-only NDJSON + compact in pruneStale | ✅ Done |
 | **Code smells** | Named constants (REFLECTION_*, CREDENTIAL_*) | ✅ Done |
 | **Code smells** | Error swallowing (catch blocks log) | ✅ Done |
-| **Architecture** | Split index.ts into modules | 🔄 In progress (WAL, VectorDB, FactsDB, **cli** (first batch), types, utils, services, prompts) |
+| **Architecture** | Split index.ts into modules | ✅ Done (WAL, VectorDB, FactsDB, types, utils, services, prompts, cli — all CLI commands in `cli/register.ts`) |
 | **Architecture** | Embedding provider interface | ✅ Done (EmbeddingProvider in services/embeddings.ts) |
 | **Code smells** | Prompts to external files, dead imports | ✅ Done (prompts in files; WALEntry, TTL_DEFAULTS, IDENTITY_FILE_TYPES, TAG_PATTERNS removed from index) |
 
@@ -49,7 +49,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 
 **Priority:** High (enables all other refactors and reduces merge conflicts).
 
-**Progress:** WAL, VectorDB, FactsDB, types, utils, services, prompts. **CLI:** `cli/register.ts` registers stats, prune, checkpoint, backfill-decay, search, lookup, categories, **store** (runStore), find-duplicates, consolidate, reflect, reflect-rules, reflect-meta, classify (context: runClassify, autoClassifyConfig). extract-daily, install, verify, credentials, distill-window, record-distill, uninstall still in index.
+**Progress:** WAL, VectorDB, FactsDB, types, utils, services, prompts. **CLI:** `cli/register.ts` registers **all** hybrid-mem subcommands: stats, prune, checkpoint, backfill-decay, search, lookup, categories, store, install, verify, distill-window, record-distill, extract-daily, find-duplicates, consolidate, reflect, reflect-rules, reflect-meta, classify, credentials (migrate-to-vault), uninstall. **No CLI commands remain in index.ts.**
 
 ---
 

@@ -39,7 +39,7 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type StoreCliOpts, type StoreCliResult } from "./cli/register.js";
+import { registerHybridMemCli, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { mergeResults } from "./services/merge-results.js";
 import type { MemoryEntry, SearchResult } from "./types/memory.js";
@@ -3691,6 +3691,677 @@ const memoryHybridPlugin = {
           return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : "") };
         }
 
+        function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
+          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const configPath = join(openclawDir, "openclaw.json");
+          mkdirSync(openclawDir, { recursive: true });
+          mkdirSync(join(openclawDir, "memory"), { recursive: true });
+
+          const fullDefaults = {
+            memory: { backend: "builtin" as const, citations: "auto" as const },
+            plugins: {
+              slots: { memory: PLUGIN_ID },
+              entries: {
+                "memory-core": { enabled: true },
+                [PLUGIN_ID]: {
+                  enabled: true,
+                  config: {
+                    embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
+                    autoCapture: true,
+                    autoRecall: true,
+                    captureMaxChars: 5000,
+                    store: { fuzzyDedupe: false },
+                    autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
+                    categories: [] as string[],
+                    credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
+                  },
+                },
+              },
+            },
+            agents: {
+              defaults: {
+                bootstrapMaxChars: 15000,
+                bootstrapTotalMaxChars: 50000,
+                memorySearch: {
+                  enabled: true,
+                  sources: ["memory"],
+                  provider: "openai",
+                  model: "text-embedding-3-small",
+                  sync: { onSessionStart: true, onSearch: true, watch: true },
+                  chunking: { tokens: 500, overlap: 50 },
+                  query: { maxResults: 8, minScore: 0.3, hybrid: { enabled: true } },
+                },
+                compaction: {
+                  mode: "default",
+                  memoryFlush: {
+                    enabled: true,
+                    softThresholdTokens: 4000,
+                    systemPrompt: "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
+                    prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
+                  },
+                },
+                pruning: { ttl: "30m" },
+              },
+            },
+            jobs: [
+              {
+                name: "nightly-memory-sweep",
+                schedule: "0 2 * * *",
+                channel: "system",
+                message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
+                isolated: true,
+                model: "gemini",
+              },
+            ],
+          };
+
+          function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
+            for (const key of Object.keys(source)) {
+              const srcVal = source[key];
+              const tgtVal = target[key];
+              if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
+                deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
+              } else if (key === "jobs" && Array.isArray(srcVal)) {
+                const arr = (Array.isArray(tgtVal) ? [...tgtVal] : []) as unknown[];
+                const hasNightly = arr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                if (!hasNightly) {
+                  const nightly = (srcVal as unknown[]).find((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                  if (nightly) arr.push(nightly);
+                }
+                (target as Record<string, unknown>)[key] = arr;
+              } else if (tgtVal === undefined && !Array.isArray(srcVal)) {
+                (target as Record<string, unknown>)[key] = srcVal;
+              }
+            }
+          }
+
+          let config: Record<string, unknown> = {};
+          if (existsSync(configPath)) {
+            try {
+              config = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+            } catch (e) {
+              return { ok: false, error: `Could not read ${configPath}: ${e}` };
+            }
+          }
+          const existingApiKey = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID] && (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config && ((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>)?.embedding && (((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>).embedding as Record<string, unknown>)?.apiKey;
+          const isRealKey = typeof existingApiKey === "string" && existingApiKey.length >= 10 && existingApiKey !== "YOUR_OPENAI_API_KEY" && existingApiKey !== "<OPENAI_API_KEY>";
+
+          if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
+          if (!(config.agents && typeof config.agents === "object")) config.agents = { defaults: {} };
+          deepMerge(config, fullDefaults as unknown as Record<string, unknown>);
+          if (isRealKey) {
+            const entries = (config.plugins as Record<string, unknown>).entries as Record<string, unknown>;
+            const mh = entries[PLUGIN_ID] as Record<string, unknown>;
+            const cfg = mh?.config as Record<string, unknown>;
+            const emb = cfg?.embedding as Record<string, unknown>;
+            if (emb) emb.apiKey = existingApiKey;
+          }
+          const after = JSON.stringify(config, null, 2);
+
+          if (opts.dryRun) {
+            return { ok: true, configPath, dryRun: true, written: false, configJson: after, pluginId: PLUGIN_ID };
+          }
+          writeFileSync(configPath, after, "utf-8");
+          return { ok: true, configPath, dryRun: false, written: true, pluginId: PLUGIN_ID };
+        }
+
+        async function runVerifyForCli(opts: { fix: boolean; logFile?: string }, sink: VerifyCliSink): Promise<void> {
+          const log = sink.log;
+          const err = sink.error ?? sink.log;
+          const issues: string[] = [];
+          const fixes: string[] = [];
+          let configOk = true;
+          let sqliteOk = false;
+          let lanceOk = false;
+          let embeddingOk = false;
+          const loadBlocking: string[] = [];
+          if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
+            issues.push("embedding.apiKey is missing, placeholder, or too short");
+            loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
+            fixes.push(`LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`);
+            configOk = false;
+          }
+          if (!cfg.embedding.model) {
+            issues.push("embedding.model is missing");
+            loadBlocking.push("embedding.model is missing");
+            fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large" in plugin config');
+            configOk = false;
+          }
+          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const defaultConfigPath = join(openclawDir, "openclaw.json");
+          if (configOk) log("Config: embedding.apiKey and model present");
+          else log("Config: issues found");
+          try {
+            const n = factsDb.count();
+            sqliteOk = true;
+            log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
+          } catch (e) {
+            issues.push(`SQLite: ${String(e)}`);
+            fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
+            log(`SQLite: FAIL — ${String(e)}`);
+          }
+          try {
+            const n = await vectorDb.count();
+            lanceOk = true;
+            log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
+          } catch (e) {
+            issues.push(`LanceDB: ${String(e)}`);
+            fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
+            log(`LanceDB: FAIL — ${String(e)}`);
+          }
+          try {
+            await embeddings.embed("verify test");
+            embeddingOk = true;
+            log("Embedding API: OK");
+          } catch (e) {
+            issues.push(`Embedding API: ${String(e)}`);
+            fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
+            log(`Embedding API: FAIL — ${String(e)}`);
+          }
+          log("\nFeatures:");
+          log(`  autoCapture: ${cfg.autoCapture}`);
+          log(`  autoRecall: ${cfg.autoRecall.enabled}`);
+          log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "off"}`);
+          log(`  credentials: ${cfg.credentials.enabled ? "enabled" : "disabled"}`);
+          log(`  store.fuzzyDedupe: ${cfg.store.fuzzyDedupe}`);
+          let credentialsOk = true;
+          if (cfg.credentials.enabled) {
+            const keyDefined = !!cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16;
+            if (!keyDefined) {
+              issues.push("credentials.enabled but encryption key missing or too short (min 16 chars or env:VAR)");
+              loadBlocking.push("credentials enabled but encryption key missing or too short");
+              fixes.push("LOAD-BLOCKING: Set credentials.encryptionKey to env:OPENCLAW_CRED_KEY and export OPENCLAW_CRED_KEY (min 16 chars), or set a 16+ character secret in plugin config. See docs/CREDENTIALS.md.");
+              credentialsOk = false;
+              log("\nCredentials: enabled — key missing or too short (set OPENCLAW_CRED_KEY or credentials.encryptionKey)");
+            } else if (credentialsDb) {
+              try {
+                const items = credentialsDb.list();
+                if (items.length > 0) {
+                  const first = items[0];
+                  credentialsDb.get(first.service, first.type as CredentialType);
+                }
+                log(`\nCredentials: enabled — key set, vault OK (${items.length} stored)`);
+              } catch (e) {
+                issues.push(`Credentials vault: ${String(e)} (wrong key or corrupted DB)`);
+                fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the same key used when credentials were stored, or disable credentials in config. See docs/CREDENTIALS.md.`);
+                credentialsOk = false;
+                log(`\nCredentials: enabled — vault FAIL — ${String(e)} (check OPENCLAW_CRED_KEY / encryptionKey)`);
+              }
+            } else {
+              log("\nCredentials: enabled — key set (vault not opened in this process)");
+            }
+          } else {
+            log("\nCredentials: disabled");
+          }
+          const memoryDir = dirname(resolvedSqlitePath);
+          const distillLastRunPath = join(memoryDir, ".distill_last_run");
+          if (existsSync(distillLastRunPath)) {
+            try {
+              const line = readFileSync(distillLastRunPath, "utf-8").split("\n")[0]?.trim() || "";
+              log(`\nSession distillation: last run recorded ${line ? `— ${line}` : "(empty file)"}`);
+            } catch {
+              log("\nSession distillation: last run file present but unreadable");
+            }
+          } else {
+            log("\nSession distillation: last run not recorded (optional).");
+            log("  If you use session distillation (extracting facts from old logs): after each run, run: openclaw hybrid-mem record-distill");
+            log("  If you have a nightly distillation cron job: add a final step to that job to run openclaw hybrid-mem record-distill so this is recorded.");
+            log("  If you don't use it, ignore this.");
+          }
+          let nightlySweepDefined = false;
+          let nightlySweepEnabled = true;
+          const cronStorePath = join(openclawDir, "cron", "jobs.json");
+          if (existsSync(cronStorePath)) {
+            try {
+              const raw = readFileSync(cronStorePath, "utf-8");
+              const store = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = store.jobs;
+              if (Array.isArray(jobs)) {
+                const nightly = jobs.find((j: unknown) => {
+                  if (typeof j !== "object" || j === null) return false;
+                  const name = String((j as Record<string, unknown>).name ?? "").toLowerCase();
+                  const pl = (j as Record<string, unknown>).payload as Record<string, unknown> | undefined;
+                  const msg = String(pl?.message ?? (j as Record<string, unknown>).message ?? "").toLowerCase();
+                  return /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name) || /nightly memory distillation|memory distillation pipeline/.test(msg);
+                }) as Record<string, unknown> | undefined;
+                if (nightly) {
+                  nightlySweepDefined = true;
+                  nightlySweepEnabled = nightly.enabled !== false;
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+          if (!nightlySweepDefined && existsSync(defaultConfigPath)) {
+            try {
+              const raw = readFileSync(defaultConfigPath, "utf-8");
+              const root = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = root.jobs;
+              if (Array.isArray(jobs)) {
+                const nightly = jobs.find((j: unknown) => typeof j === "object" && j !== null && (j as Record<string, unknown>).name === "nightly-memory-sweep") as Record<string, unknown> | undefined;
+                if (nightly) {
+                  nightlySweepDefined = true;
+                  nightlySweepEnabled = nightly.enabled !== false;
+                }
+              } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+                const nightly = (jobs as Record<string, unknown>)["nightly-memory-sweep"];
+                if (nightly && typeof nightly === "object") {
+                  nightlySweepDefined = true;
+                  nightlySweepEnabled = (nightly as Record<string, unknown>).enabled !== false;
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+          log("\nOptional / suggested jobs (cron store or openclaw.json):");
+          if (nightlySweepDefined) {
+            log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
+          } else {
+            log("  nightly-memory-sweep (session distillation): not defined");
+            fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
+          }
+          log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
+          if (opts.logFile && existsSync(opts.logFile)) {
+            const content = readFileSync(opts.logFile, "utf-8");
+            const lines = content.split("\n").filter((l) => /memory-hybrid|prune|auto-classify|periodic|failed/.test(l));
+            const errLines = lines.filter((l) => /error|fail|warn/i.test(l));
+            if (errLines.length > 0) {
+              log(`\nRecent log lines mentioning memory-hybrid/errors (last ${errLines.length}):`);
+              errLines.slice(-10).forEach((l) => log(`  ${l.slice(0, 120)}`));
+            } else if (lines.length > 0) {
+              log(`\nLog file: ${lines.length} relevant lines (no errors in sample)`);
+            }
+          } else if (opts.logFile) {
+            log(`\nLog file not found: ${opts.logFile}`);
+          }
+          const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
+          if (allOk) {
+            log("\nAll checks passed.");
+            if (!nightlySweepDefined) {
+              log("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.");
+            }
+          } else {
+            log("\n--- Issues ---");
+            if (loadBlocking.length > 0) {
+              log("Load-blocking (prevent OpenClaw / plugin from loading):");
+              loadBlocking.forEach((i) => log(`  - ${i}`));
+            }
+            const other = issues.filter((i) => !loadBlocking.includes(i));
+            if (other.length > 0) {
+              log(other.length > 0 && loadBlocking.length > 0 ? "Other:" : "Issues:");
+              other.forEach((i) => log(`  - ${i}`));
+            }
+            log("\n--- Fixes for detected issues ---");
+            fixes.forEach((f) => log(`  • ${f}`));
+            log("\nEdit config: " + defaultConfigPath + " (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.");
+          }
+          if (opts.fix) {
+            const applied: string[] = [];
+            if (existsSync(defaultConfigPath)) {
+              try {
+                const raw = readFileSync(defaultConfigPath, "utf-8");
+                const fixConfig = JSON.parse(raw) as Record<string, unknown>;
+                let changed = false;
+                if (!fixConfig.plugins || typeof fixConfig.plugins !== "object") fixConfig.plugins = {};
+                const plugins = fixConfig.plugins as Record<string, unknown>;
+                if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
+                const entries = plugins.entries as Record<string, unknown>;
+                if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = { enabled: true, config: {} };
+                const mh = entries[PLUGIN_ID] as Record<string, unknown>;
+                if (!mh.config || typeof mh.config !== "object") mh.config = {};
+                const cfgFix = mh.config as Record<string, unknown>;
+                if (!cfgFix.embedding || typeof cfgFix.embedding !== "object") cfgFix.embedding = {};
+                const emb = cfgFix.embedding as Record<string, unknown>;
+                const curKey = emb.apiKey;
+                const placeholder = typeof curKey !== "string" || curKey.length < 10 || curKey === "YOUR_OPENAI_API_KEY" || curKey === "<OPENAI_API_KEY>";
+                if (placeholder) {
+                  emb.apiKey = process.env.OPENAI_API_KEY || "YOUR_OPENAI_API_KEY";
+                  emb.model = emb.model || "text-embedding-3-small";
+                  changed = true;
+                  applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
+                }
+                const jobs = Array.isArray(fixConfig.jobs) ? fixConfig.jobs : [];
+                const hasNightly = jobs.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
+                if (!hasNightly) {
+                  jobs.push({
+                    name: "nightly-memory-sweep",
+                    schedule: "0 2 * * *",
+                    channel: "system",
+                    message:
+                      "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
+                    isolated: true,
+                    model: "gemini",
+                  });
+                  (fixConfig as Record<string, unknown>).jobs = jobs;
+                  changed = true;
+                  applied.push("Added nightly-memory-sweep job for session distillation");
+                }
+                const memoryDirPath = dirname(resolvedSqlitePath);
+                if (!existsSync(memoryDirPath)) {
+                  mkdirSync(memoryDirPath, { recursive: true });
+                  applied.push("Created memory directory: " + memoryDirPath);
+                }
+                if (changed) {
+                  writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
+                }
+                if (applied.length > 0) {
+                  log("\n--- Applied fixes ---");
+                  applied.forEach((a) => log("  • " + a));
+                  if (changed) log("Config written: " + defaultConfigPath + ". Restart the gateway and run verify again.");
+                }
+              } catch (e) {
+                log("\nCould not apply fixes to config: " + String(e));
+                const snippet = {
+                  embedding: { apiKey: process.env.OPENAI_API_KEY || "<set your key>", model: "text-embedding-3-small" },
+                  autoCapture: true,
+                  autoRecall: true,
+                  captureMaxChars: 5000,
+                  store: { fuzzyDedupe: false },
+                };
+                log(`Minimal config snippet to merge into plugins.entries["${PLUGIN_ID}"].config:`);
+                log(JSON.stringify(snippet, null, 2));
+              }
+            } else {
+              log("\n--- Fix (--fix) ---");
+              log("Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.");
+            }
+          }
+        }
+
+        const FULL_DISTILL_MAX_DAYS = 90;
+        const INCREMENTAL_MIN_DAYS = 3;
+
+        function runDistillWindowForCli(_opts: { json: boolean }): DistillWindowResult {
+          const memoryDir = dirname(resolvedSqlitePath);
+          const distillLastRunPath = join(memoryDir, ".distill_last_run");
+          const now = new Date();
+          const today = now.toISOString().slice(0, 10);
+          let mode: "full" | "incremental";
+          let startDate: string;
+          const endDate = today;
+          let mtimeDays: number;
+          if (!existsSync(distillLastRunPath)) {
+            mode = "full";
+            const start = new Date(now);
+            start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+            startDate = start.toISOString().slice(0, 10);
+            mtimeDays = FULL_DISTILL_MAX_DAYS;
+          } else {
+            try {
+              const line = readFileSync(distillLastRunPath, "utf-8").split("\n")[0]?.trim() || "";
+              if (!line) {
+                mode = "full";
+                const start = new Date(now);
+                start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+                startDate = start.toISOString().slice(0, 10);
+                mtimeDays = FULL_DISTILL_MAX_DAYS;
+              } else {
+                const lastRun = new Date(line);
+                if (Number.isNaN(lastRun.getTime())) {
+                  mode = "full";
+                  const start = new Date(now);
+                  start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+                  startDate = start.toISOString().slice(0, 10);
+                  mtimeDays = FULL_DISTILL_MAX_DAYS;
+                } else {
+                  mode = "incremental";
+                  const lastRunDate = lastRun.toISOString().slice(0, 10);
+                  const threeDaysAgo = new Date(now);
+                  threeDaysAgo.setDate(threeDaysAgo.getDate() - INCREMENTAL_MIN_DAYS);
+                  const threeDaysAgoStr = threeDaysAgo.toISOString().slice(0, 10);
+                  startDate = lastRunDate < threeDaysAgoStr ? lastRunDate : threeDaysAgoStr;
+                  const start = new Date(startDate);
+                  mtimeDays = Math.ceil((now.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+                  if (mtimeDays < 1) mtimeDays = 1;
+                }
+              }
+            } catch {
+              mode = "full";
+              const start = new Date(now);
+              start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
+              startDate = start.toISOString().slice(0, 10);
+              mtimeDays = FULL_DISTILL_MAX_DAYS;
+            }
+          }
+          return { mode, startDate, endDate, mtimeDays };
+        }
+
+        function runRecordDistillForCli(): RecordDistillResult {
+          const memoryDir = dirname(resolvedSqlitePath);
+          mkdirSync(memoryDir, { recursive: true });
+          const path = join(memoryDir, ".distill_last_run");
+          const ts = new Date().toISOString();
+          writeFileSync(path, ts + "\n", "utf-8");
+          return { path, timestamp: ts };
+        }
+
+        async function runExtractDailyForCli(
+          opts: { days: number; dryRun: boolean },
+          sink: ExtractDailySink,
+        ): Promise<ExtractDailyResult> {
+          const fs = await import("node:fs");
+          const path = await import("node:path");
+          const { homedir: getHomedir } = await import("node:os");
+          const memoryDir = path.join(getHomedir(), ".openclaw", "memory");
+          const daysBack = opts.days;
+          let totalExtracted = 0;
+          let totalStored = 0;
+          for (let d = 0; d < daysBack; d++) {
+            const date = new Date();
+            date.setDate(date.getDate() - d);
+            const dateStr = date.toISOString().split("T")[0];
+            const filePath = path.join(memoryDir, `${dateStr}.md`);
+            if (!fs.existsSync(filePath)) continue;
+            const content = fs.readFileSync(filePath, "utf-8");
+            const lines = content.split("\n").filter((l: string) => l.trim().length > 10);
+            sink.log(`\nScanning ${dateStr} (${lines.length} lines)...`);
+            for (const line of lines) {
+              const trimmed = line.replace(/^[-*#>\s]+/, "").trim();
+              if (trimmed.length < 15 || trimmed.length > 500) continue;
+              const category = detectCategory(trimmed);
+              const extracted = extractStructuredFields(trimmed, category);
+              if (isCredentialLike(trimmed, extracted.entity, extracted.key, extracted.value)) {
+                if (cfg.credentials.enabled && credentialsDb) {
+                  const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value);
+                  if (parsed) {
+                    if (!opts.dryRun) {
+                      credentialsDb.store({
+                        service: parsed.service,
+                        type: parsed.type,
+                        value: parsed.secretValue,
+                        url: parsed.url,
+                        notes: parsed.notes,
+                      });
+                      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+                      const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
+                      const pointerEntry = factsDb.store({
+                        text: pointerText,
+                        category: "technical",
+                        importance: 0.8,
+                        entity: "Credentials",
+                        key: parsed.service,
+                        value: VAULT_POINTER_PREFIX + parsed.service,
+                        source: `daily-scan:${dateStr}`,
+                        sourceDate: sourceDateSec,
+                        tags: ["auth", ...extractTags(pointerText, "Credentials")],
+                      });
+                      try {
+                        const vector = await embeddings.embed(pointerText);
+                        if (!(await vectorDb.hasDuplicate(vector))) {
+                          await vectorDb.store({ text: pointerText, vector, importance: 0.8, category: "technical", id: pointerEntry.id });
+                        }
+                      } catch (err) {
+                        sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+                      }
+                      totalStored++;
+                    } else {
+                      totalExtracted++;
+                    }
+                    continue;
+                  }
+                  continue;
+                }
+              }
+              if (!extracted.entity && !extracted.key && category !== "decision") continue;
+              totalExtracted++;
+              if (opts.dryRun) {
+                sink.log(
+                  `  [${category}] ${extracted.entity || "?"} / ${extracted.key || "?"} = ${
+                    extracted.value || trimmed.slice(0, 60)
+                  }`,
+                );
+                continue;
+              }
+              if (factsDb.hasDuplicate(trimmed)) continue;
+              const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
+              const storePayload = {
+                text: trimmed,
+                category,
+                importance: 0.8,
+                entity: extracted.entity,
+                key: extracted.key,
+                value: extracted.value,
+                source: `daily-scan:${dateStr}` as const,
+                sourceDate: sourceDateSec,
+                tags: extractTags(trimmed, extracted.entity),
+              };
+              let vecForStore: number[] | undefined;
+              if (cfg.store.classifyBeforeWrite) {
+                try {
+                  vecForStore = await embeddings.embed(trimmed);
+                } catch (err) {
+                  sink.warn(`memory-hybrid: extract-daily embedding failed: ${err}`);
+                }
+                if (vecForStore) {
+                  let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vecForStore, 3);
+                  if (similarFacts.length === 0) {
+                    similarFacts = factsDb.findSimilarForClassification(trimmed, extracted.entity, extracted.key, 3);
+                  }
+                  if (similarFacts.length > 0) {
+                    try {
+                      const classification = await classifyMemoryOperation(
+                        trimmed, extracted.entity, extracted.key, similarFacts,
+                        openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", sink,
+                      );
+                      if (classification.action === "NOOP") continue;
+                      if (classification.action === "DELETE" && classification.targetId) {
+                        factsDb.supersede(classification.targetId, null);
+                        continue;
+                      }
+                      if (classification.action === "UPDATE" && classification.targetId) {
+                        const oldFact = factsDb.getById(classification.targetId);
+                        if (oldFact) {
+                          const newEntry = factsDb.store({
+                            ...storePayload,
+                            entity: extracted.entity ?? oldFact.entity,
+                            key: extracted.key ?? oldFact.key,
+                            value: extracted.value ?? oldFact.value,
+                            validFrom: sourceDateSec,
+                            supersedesId: classification.targetId,
+                          });
+                          factsDb.supersede(classification.targetId, newEntry.id);
+                          try {
+                            if (!(await vectorDb.hasDuplicate(vecForStore))) {
+                              await vectorDb.store({ text: trimmed, vector: vecForStore, importance: 0.8, category, id: newEntry.id });
+                            }
+                          } catch (err) {
+                            sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+                          }
+                          totalStored++;
+                          continue;
+                        }
+                      }
+                    } catch (err) {
+                      sink.warn(`memory-hybrid: extract-daily classification failed: ${err}`);
+                    }
+                  }
+                }
+              }
+              const entry = factsDb.store(storePayload);
+              try {
+                const vector = vecForStore ?? await embeddings.embed(trimmed);
+                if (!(await vectorDb.hasDuplicate(vector))) {
+                  await vectorDb.store({ text: trimmed, vector, importance: 0.8, category, id: entry.id });
+                }
+              } catch (err) {
+                sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+              }
+              totalStored++;
+            }
+          }
+          return { totalExtracted, totalStored, daysBack, dryRun: opts.dryRun };
+        }
+
+        async function runMigrateToVaultForCli(): Promise<MigrateToVaultResult | null> {
+          if (!credentialsDb) return null;
+          const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
+          return migrateCredentialsToVault({
+            factsDb,
+            vectorDb,
+            embeddings,
+            credentialsDb,
+            migrationFlagPath,
+            markDone: true,
+          });
+        }
+
+        function runUninstallForCli(opts: { cleanAll: boolean; leaveConfig: boolean }): UninstallCliResult {
+          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const configPath = join(openclawDir, "openclaw.json");
+          const cleaned: string[] = [];
+          let outcome: UninstallCliResult["outcome"];
+          let error = "";
+
+          if (!opts.leaveConfig && existsSync(configPath)) {
+            try {
+              const raw = readFileSync(configPath, "utf-8");
+              const config = JSON.parse(raw) as Record<string, unknown>;
+              if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
+              const plugins = config.plugins as Record<string, unknown>;
+              if (!plugins.slots || typeof plugins.slots !== "object") plugins.slots = {};
+              (plugins.slots as Record<string, string>).memory = "memory-core";
+              if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
+              const entries = plugins.entries as Record<string, unknown>;
+              if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = {};
+              (entries[PLUGIN_ID] as Record<string, boolean>).enabled = false;
+              writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+              outcome = "config_updated";
+            } catch (e) {
+              outcome = "config_error";
+              error = String(e);
+            }
+          } else if (!opts.leaveConfig) {
+            outcome = "config_not_found";
+          } else {
+            outcome = "leave_config";
+          }
+
+          if (opts.cleanAll) {
+            if (existsSync(resolvedSqlitePath)) {
+              try {
+                rmSync(resolvedSqlitePath, { force: true });
+                cleaned.push(resolvedSqlitePath);
+              } catch {
+                // ignore
+              }
+            }
+            if (existsSync(resolvedLancePath)) {
+              try {
+                rmSync(resolvedLancePath, { recursive: true, force: true });
+                cleaned.push(resolvedLancePath);
+              } catch {
+                // ignore
+              }
+            }
+          }
+
+          const base = { pluginId: PLUGIN_ID, cleaned };
+          if (outcome === "config_error") return { ...base, outcome, error };
+          return { ...base, outcome } as UninstallCliResult;
+        }
+
         registerHybridMemCli(mem, {
           factsDb,
           vectorDb,
@@ -3700,6 +4371,13 @@ const memoryHybridPlugin = {
           parseSourceDate,
           getMemoryCategories: () => [...getMemoryCategories()],
           runStore: (opts) => runStoreForCli(opts, api.logger),
+          runInstall: (opts) => Promise.resolve(runInstallForCli(opts)),
+          runVerify: (opts, sink) => runVerifyForCli(opts, sink),
+          runDistillWindow: (opts) => Promise.resolve(runDistillWindowForCli(opts)),
+          runRecordDistill: () => Promise.resolve(runRecordDistillForCli()),
+          runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
+          runMigrateToVault: () => runMigrateToVaultForCli(),
+          runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
           runFindDuplicates: (opts) =>
             runFindDuplicates(factsDb, embeddings, opts, api.logger),
           runConsolidate: (opts) =>
@@ -3731,799 +4409,6 @@ const memoryHybridPlugin = {
           autoClassifyConfig: cfg.autoClassify,
         });
 
-        mem
-          .command("extract-daily")
-          .description("Extract structured facts from daily memory files")
-          .option("--days <n>", "How many days back to scan", "7")
-          .option("--dry-run", "Show extractions without storing")
-          .action(async (opts: { days: string; dryRun?: boolean }) => {
-            const fs = await import("node:fs");
-            const path = await import("node:path");
-            const { homedir: getHomedir } = await import("node:os");
-            const memoryDir = path.join(getHomedir(), ".openclaw", "memory");
-            const daysBack = parseInt(opts.days);
-
-            let totalExtracted = 0;
-            let totalStored = 0;
-
-            for (let d = 0; d < daysBack; d++) {
-              const date = new Date();
-              date.setDate(date.getDate() - d);
-              const dateStr = date.toISOString().split("T")[0];
-              const filePath = path.join(memoryDir, `${dateStr}.md`);
-
-              if (!fs.existsSync(filePath)) continue;
-
-              const content = fs.readFileSync(filePath, "utf-8");
-              const lines = content.split("\n").filter((l: string) => l.trim().length > 10);
-
-              console.log(`\nScanning ${dateStr} (${lines.length} lines)...`);
-
-              for (const line of lines) {
-                const trimmed = line.replace(/^[-*#>\s]+/, "").trim();
-                if (trimmed.length < 15 || trimmed.length > 500) continue;
-
-                const category = detectCategory(trimmed);
-                const extracted = extractStructuredFields(trimmed, category);
-
-                // Dual-mode credentials: vault on → store in vault + pointer only; vault off → store in facts (live behavior).
-                // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
-                if (isCredentialLike(trimmed, extracted.entity, extracted.key, extracted.value)) {
-                  if (cfg.credentials.enabled && credentialsDb) {
-                    const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value);
-                    if (parsed) {
-                      if (!opts.dryRun) {
-                        credentialsDb.store({
-                          service: parsed.service,
-                          type: parsed.type,
-                          value: parsed.secretValue,
-                          url: parsed.url,
-                          notes: parsed.notes,
-                        });
-                        const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-                        const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
-                        const pointerEntry = factsDb.store({
-                          text: pointerText,
-                          category: "technical",
-                          importance: 0.8,
-                          entity: "Credentials",
-                          key: parsed.service,
-                          value: VAULT_POINTER_PREFIX + parsed.service,
-                          source: `daily-scan:${dateStr}`,
-                          sourceDate: sourceDateSec,
-                          tags: ["auth", ...extractTags(pointerText, "Credentials")],
-                        });
-                        try {
-                          const vector = await embeddings.embed(pointerText);
-                          if (!(await vectorDb.hasDuplicate(vector))) {
-                            await vectorDb.store({ text: pointerText, vector, importance: 0.8, category: "technical", id: pointerEntry.id });
-                          }
-                        } catch (err) {
-                          api.logger.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                        }
-                        totalStored++;
-                      } else {
-                        totalExtracted++;
-                      }
-                      continue;
-                    }
-                    /* vault enabled but parse failed: skip this line (do not store credential-like text in facts) */
-                    continue;
-                  }
-                  /* vault disabled: fall through to store in facts */
-                }
-
-                if (!extracted.entity && !extracted.key && category !== "decision") continue;
-
-                totalExtracted++;
-
-                if (opts.dryRun) {
-                  console.log(
-                    `  [${category}] ${extracted.entity || "?"} / ${extracted.key || "?"} = ${
-                      extracted.value || trimmed.slice(0, 60)
-                    }`,
-                  );
-                  continue;
-                }
-
-                if (factsDb.hasDuplicate(trimmed)) continue;
-
-                const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
-                const storePayload = {
-                  text: trimmed,
-                  category,
-                  importance: 0.8,
-                  entity: extracted.entity,
-                  key: extracted.key,
-                  value: extracted.value,
-                  source: `daily-scan:${dateStr}` as const,
-                  sourceDate: sourceDateSec,
-                  tags: extractTags(trimmed, extracted.entity),
-                };
-
-                let vecForStore: number[] | undefined;
-                if (cfg.store.classifyBeforeWrite) {
-                  try {
-                    vecForStore = await embeddings.embed(trimmed);
-                  } catch (err) {
-                    api.logger.warn(`memory-hybrid: extract-daily embedding failed: ${err}`);
-                  }
-                  if (vecForStore) {
-                    let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vecForStore, 3);
-                    if (similarFacts.length === 0) {
-                      similarFacts = factsDb.findSimilarForClassification(trimmed, extracted.entity, extracted.key, 3);
-                    }
-                    if (similarFacts.length > 0) {
-                      try {
-                        const classification = await classifyMemoryOperation(
-                          trimmed, extracted.entity, extracted.key, similarFacts,
-                          openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
-                        );
-                        if (classification.action === "NOOP") continue;
-                        if (classification.action === "DELETE" && classification.targetId) {
-                          factsDb.supersede(classification.targetId, null);
-                          continue;
-                        }
-                        if (classification.action === "UPDATE" && classification.targetId) {
-                          const oldFact = factsDb.getById(classification.targetId);
-                          if (oldFact) {
-                            const newEntry = factsDb.store({
-                              ...storePayload,
-                              entity: extracted.entity ?? oldFact.entity,
-                              key: extracted.key ?? oldFact.key,
-                              value: extracted.value ?? oldFact.value,
-                              validFrom: sourceDateSec,
-                              supersedesId: classification.targetId,
-                            });
-                            factsDb.supersede(classification.targetId, newEntry.id);
-                            try {
-                              if (!(await vectorDb.hasDuplicate(vecForStore))) {
-                                await vectorDb.store({ text: trimmed, vector: vecForStore, importance: 0.8, category, id: newEntry.id });
-                              }
-                            } catch (err) {
-                              api.logger.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                            }
-                            totalStored++;
-                            continue;
-                          }
-                        }
-                      } catch (err) {
-                        api.logger.warn(`memory-hybrid: extract-daily classification failed: ${err}`);
-                      }
-                    }
-                  }
-                }
-
-                const entry = factsDb.store(storePayload);
-                try {
-                  const vector = vecForStore ?? await embeddings.embed(trimmed);
-                  if (!(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text: trimmed, vector, importance: 0.8, category, id: entry.id });
-                  }
-                } catch (err) {
-                  api.logger.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                }
-                totalStored++;
-              }
-            }
-
-            if (opts.dryRun) {
-              console.log(
-                `\nWould extract: ${totalExtracted} facts from last ${daysBack} days`,
-              );
-            } else {
-              console.log(
-                `\nExtracted ${totalStored} new facts (${totalExtracted} candidates, ${
-                  totalExtracted - totalStored
-                } duplicates skipped)`,
-              );
-            }
-          });
-
-        mem
-          .command("install")
-          .description("Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.")
-          .option("--dry-run", "Print what would be merged without writing")
-          .action(async (opts: { dryRun?: boolean }) => {
-            const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
-            const configPath = join(openclawDir, "openclaw.json");
-            mkdirSync(openclawDir, { recursive: true });
-            const memoryDir = join(openclawDir, "memory");
-            mkdirSync(memoryDir, { recursive: true });
-
-            const fullDefaults = {
-              memory: { backend: "builtin" as const, citations: "auto" as const },
-              plugins: {
-                slots: { memory: PLUGIN_ID },
-                entries: {
-                  "memory-core": { enabled: true },
-                  [PLUGIN_ID]: {
-                    enabled: true,
-                    config: {
-                      embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
-                      autoCapture: true,
-                      autoRecall: true,
-                      captureMaxChars: 5000,
-                      store: { fuzzyDedupe: false },
-                      autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
-                      categories: [] as string[],
-                      credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
-                    },
-                  },
-                },
-              },
-              agents: {
-                defaults: {
-                  bootstrapMaxChars: 15000,
-                  bootstrapTotalMaxChars: 50000,
-                  memorySearch: {
-                    enabled: true,
-                    sources: ["memory"],
-                    provider: "openai",
-                    model: "text-embedding-3-small",
-                    sync: { onSessionStart: true, onSearch: true, watch: true },
-                    chunking: { tokens: 500, overlap: 50 },
-                    query: { maxResults: 8, minScore: 0.3, hybrid: { enabled: true } },
-                  },
-                  compaction: {
-                    mode: "default",
-                    memoryFlush: {
-                      enabled: true,
-                      softThresholdTokens: 4000,
-                      systemPrompt: "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
-                      prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
-                    },
-                  },
-                  pruning: { ttl: "30m" },
-                },
-              },
-              jobs: [
-                {
-                  name: "nightly-memory-sweep",
-                  schedule: "0 2 * * *",
-                  channel: "system",
-                  message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
-                  isolated: true,
-                  model: "gemini",
-                },
-              ],
-            };
-
-            function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
-              for (const key of Object.keys(source)) {
-                const srcVal = source[key];
-                const tgtVal = target[key];
-                if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
-                  deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
-                } else if (key === "jobs" && Array.isArray(srcVal)) {
-                  const arr = (Array.isArray(tgtVal) ? [...tgtVal] : []) as unknown[];
-                  const hasNightly = arr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                  if (!hasNightly) {
-                    const nightly = (srcVal as unknown[]).find((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                    if (nightly) arr.push(nightly);
-                  }
-                  (target as Record<string, unknown>)[key] = arr;
-                } else if (tgtVal === undefined && !Array.isArray(srcVal)) {
-                  (target as Record<string, unknown>)[key] = srcVal;
-                }
-              }
-            }
-
-            let config: Record<string, unknown> = {};
-            if (existsSync(configPath)) {
-              try {
-                config = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-              } catch (e) {
-                console.error(`Could not read ${configPath}: ${e}`);
-                return;
-              }
-            }
-            const existingApiKey = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID] && (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config && ((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>)?.embedding && (((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>).embedding as Record<string, unknown>)?.apiKey;
-            const isRealKey = typeof existingApiKey === "string" && existingApiKey.length >= 10 && existingApiKey !== "YOUR_OPENAI_API_KEY" && existingApiKey !== "<OPENAI_API_KEY>";
-
-            if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
-            if (!(config.agents && typeof config.agents === "object")) config.agents = { defaults: {} };
-            deepMerge(config, fullDefaults as unknown as Record<string, unknown>);
-            if (isRealKey) {
-              const entries = (config.plugins as Record<string, unknown>).entries as Record<string, unknown>;
-              const mh = entries[PLUGIN_ID] as Record<string, unknown>;
-              const cfg = mh?.config as Record<string, unknown>;
-              const emb = cfg?.embedding as Record<string, unknown>;
-              if (emb) emb.apiKey = existingApiKey;
-            }
-            const after = JSON.stringify(config, null, 2);
-
-            if (opts.dryRun) {
-              console.log("Would merge into " + configPath + ":");
-              console.log(after);
-              return;
-            }
-            writeFileSync(configPath, after, "utf-8");
-            console.log("Config written: " + configPath);
-            console.log(`Applied: plugins.slots.memory=${PLUGIN_ID}, ${PLUGIN_ID} config (all features), memorySearch, compaction prompts, bootstrap limits, pruning, autoClassify, nightly-memory-sweep job.`);
-            console.log("\nNext steps:");
-            console.log(`  1. Set embedding.apiKey in plugins.entries["${PLUGIN_ID}"].config (or use env:OPENAI_API_KEY in config).`);
-            console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
-            console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
-          });
-
-        mem
-          .command("verify")
-          .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
-          .option("--fix", "Print or apply default config for missing items")
-          .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
-          .action(async (opts: { fix?: boolean; logFile?: string }) => {
-            const issues: string[] = [];
-            const fixes: string[] = [];
-            let configOk = true;
-            let sqliteOk = false;
-            let lanceOk = false;
-            let embeddingOk = false;
-
-            const loadBlocking: string[] = [];
-            if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
-              issues.push("embedding.apiKey is missing, placeholder, or too short");
-              loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
-              fixes.push(`LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`);
-              configOk = false;
-            }
-            if (!cfg.embedding.model) {
-              issues.push("embedding.model is missing");
-              loadBlocking.push("embedding.model is missing");
-              fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large" in plugin config');
-              configOk = false;
-            }
-            const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
-            const defaultConfigPath = join(openclawDir, "openclaw.json");
-            if (configOk) console.log("Config: embedding.apiKey and model present");
-            else console.log("Config: issues found");
-
-            try {
-              const n = factsDb.count();
-              sqliteOk = true;
-              console.log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
-            } catch (e) {
-              issues.push(`SQLite: ${String(e)}`);
-              fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
-              console.log(`SQLite: FAIL — ${String(e)}`);
-            }
-
-            try {
-              const n = await vectorDb.count();
-              lanceOk = true;
-              console.log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
-            } catch (e) {
-              issues.push(`LanceDB: ${String(e)}`);
-              fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
-              console.log(`LanceDB: FAIL — ${String(e)}`);
-            }
-
-            try {
-              await embeddings.embed("verify test");
-              embeddingOk = true;
-              console.log("Embedding API: OK");
-            } catch (e) {
-              issues.push(`Embedding API: ${String(e)}`);
-              fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
-              console.log(`Embedding API: FAIL — ${String(e)}`);
-            }
-
-            // Features summary
-            console.log("\nFeatures:");
-            console.log(`  autoCapture: ${cfg.autoCapture}`);
-            console.log(`  autoRecall: ${cfg.autoRecall.enabled}`);
-            console.log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "off"}`);
-            console.log(`  credentials: ${cfg.credentials.enabled ? "enabled" : "disabled"}`);
-            console.log(`  store.fuzzyDedupe: ${cfg.store.fuzzyDedupe}`);
-
-            // Credentials: enabled?, key defined?, vault accessible?
-            let credentialsOk = true;
-            if (cfg.credentials.enabled) {
-              const keyDefined = !!cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16;
-              if (!keyDefined) {
-                issues.push("credentials.enabled but encryption key missing or too short (min 16 chars or env:VAR)");
-                loadBlocking.push("credentials enabled but encryption key missing or too short");
-                fixes.push("LOAD-BLOCKING: Set credentials.encryptionKey to env:OPENCLAW_CRED_KEY and export OPENCLAW_CRED_KEY (min 16 chars), or set a 16+ character secret in plugin config. See docs/CREDENTIALS.md.");
-                credentialsOk = false;
-                console.log("\nCredentials: enabled — key missing or too short (set OPENCLAW_CRED_KEY or credentials.encryptionKey)");
-              } else if (credentialsDb) {
-                try {
-                  const items = credentialsDb.list();
-                  if (items.length > 0) {
-                    const first = items[0];
-                    credentialsDb.get(first.service, first.type as CredentialType);
-                  }
-                  console.log(`\nCredentials: enabled — key set, vault OK (${items.length} stored)`);
-                } catch (e) {
-                  issues.push(`Credentials vault: ${String(e)} (wrong key or corrupted DB)`);
-                  fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the same key used when credentials were stored, or disable credentials in config. See docs/CREDENTIALS.md.`);
-                  credentialsOk = false;
-                  console.log(`\nCredentials: enabled — vault FAIL — ${String(e)} (check OPENCLAW_CRED_KEY / encryptionKey)`);
-                }
-              } else {
-                console.log("\nCredentials: enabled — key set (vault not opened in this process)");
-              }
-            } else {
-              console.log("\nCredentials: disabled");
-            }
-
-            // Session distillation: last run (optional file)
-            const memoryDir = dirname(resolvedSqlitePath);
-            const distillLastRunPath = join(memoryDir, ".distill_last_run");
-            if (existsSync(distillLastRunPath)) {
-              try {
-                const line = readFileSync(distillLastRunPath, "utf-8").split("\n")[0]?.trim() || "";
-                console.log(`\nSession distillation: last run recorded ${line ? `— ${line}` : "(empty file)"}`);
-              } catch {
-                console.log("\nSession distillation: last run file present but unreadable");
-              }
-            } else {
-              console.log("\nSession distillation: last run not recorded (optional).");
-              console.log("  If you use session distillation (extracting facts from old logs): after each run, run: openclaw hybrid-mem record-distill");
-              console.log("  If you have a nightly distillation cron job: add a final step to that job to run openclaw hybrid-mem record-distill so this is recorded.");
-              console.log("  If you don't use it, ignore this.");
-            }
-
-            // Optional / suggested jobs (e.g. nightly session distillation)
-            // Check OpenClaw cron store first (~/.openclaw/cron/jobs.json), then legacy openclaw.json "jobs"
-            let nightlySweepDefined = false;
-            let nightlySweepEnabled = true;
-            const cronStorePath = join(openclawDir, "cron", "jobs.json");
-            if (existsSync(cronStorePath)) {
-              try {
-                const raw = readFileSync(cronStorePath, "utf-8");
-                const store = JSON.parse(raw) as Record<string, unknown>;
-                const jobs = store.jobs;
-                if (Array.isArray(jobs)) {
-                  const nightly = jobs.find((j: unknown) => {
-                    if (typeof j !== "object" || j === null) return false;
-                    const name = String((j as Record<string, unknown>).name ?? "").toLowerCase();
-                    const pl = (j as Record<string, unknown>).payload as Record<string, unknown> | undefined;
-                    const msg = String(pl?.message ?? (j as Record<string, unknown>).message ?? "").toLowerCase();
-                    return /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name) || /nightly memory distillation|memory distillation pipeline/.test(msg);
-                  }) as Record<string, unknown> | undefined;
-                  if (nightly) {
-                    nightlySweepDefined = true;
-                    nightlySweepEnabled = nightly.enabled !== false;
-                  }
-                }
-              } catch {
-                // ignore parse or read errors
-              }
-            }
-            if (!nightlySweepDefined && existsSync(defaultConfigPath)) {
-              try {
-                const raw = readFileSync(defaultConfigPath, "utf-8");
-                const root = JSON.parse(raw) as Record<string, unknown>;
-                const jobs = root.jobs;
-                if (Array.isArray(jobs)) {
-                  const nightly = jobs.find((j: unknown) => typeof j === "object" && j !== null && (j as Record<string, unknown>).name === "nightly-memory-sweep") as Record<string, unknown> | undefined;
-                  if (nightly) {
-                    nightlySweepDefined = true;
-                    nightlySweepEnabled = nightly.enabled !== false;
-                  }
-                } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
-                  const nightly = (jobs as Record<string, unknown>)["nightly-memory-sweep"];
-                  if (nightly && typeof nightly === "object") {
-                    nightlySweepDefined = true;
-                    nightlySweepEnabled = (nightly as Record<string, unknown>).enabled !== false;
-                  }
-                }
-              } catch {
-                // ignore
-              }
-            }
-            console.log("\nOptional / suggested jobs (cron store or openclaw.json):");
-            if (nightlySweepDefined) {
-              console.log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
-            } else {
-              console.log("  nightly-memory-sweep (session distillation): not defined");
-              fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
-            }
-
-            console.log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
-            if (opts.logFile && existsSync(opts.logFile)) {
-              const content = readFileSync(opts.logFile, "utf-8");
-              const lines = content.split("\n").filter((l) => /memory-hybrid|prune|auto-classify|periodic|failed/.test(l));
-              const errLines = lines.filter((l) => /error|fail|warn/i.test(l));
-              if (errLines.length > 0) {
-                console.log(`\nRecent log lines mentioning memory-hybrid/errors (last ${errLines.length}):`);
-                errLines.slice(-10).forEach((l) => console.log(`  ${l.slice(0, 120)}`));
-              } else if (lines.length > 0) {
-                console.log(`\nLog file: ${lines.length} relevant lines (no errors in sample)`);
-              }
-            } else if (opts.logFile) {
-              console.log(`\nLog file not found: ${opts.logFile}`);
-            }
-
-            const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
-            if (allOk) {
-              console.log("\nAll checks passed.");
-              if (!nightlySweepDefined) {
-                console.log("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.");
-              }
-            } else {
-              console.log("\n--- Issues ---");
-              if (loadBlocking.length > 0) {
-                console.log("Load-blocking (prevent OpenClaw / plugin from loading):");
-                loadBlocking.forEach((i) => console.log(`  - ${i}`));
-              }
-              const other = issues.filter((i) => !loadBlocking.includes(i));
-              if (other.length > 0) {
-                console.log(other.length > 0 && loadBlocking.length > 0 ? "Other:" : "Issues:");
-                other.forEach((i) => console.log(`  - ${i}`));
-              }
-              console.log("\n--- Fixes for detected issues ---");
-              fixes.forEach((f) => console.log(`  • ${f}`));
-              console.log("\nEdit config: " + defaultConfigPath + " (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.");
-            }
-
-            if (opts.fix) {
-              const applied: string[] = [];
-              if (existsSync(defaultConfigPath)) {
-                try {
-                  const raw = readFileSync(defaultConfigPath, "utf-8");
-                  const fixConfig = JSON.parse(raw) as Record<string, unknown>;
-                  let changed = false;
-                  if (!fixConfig.plugins || typeof fixConfig.plugins !== "object") fixConfig.plugins = {};
-                  const plugins = fixConfig.plugins as Record<string, unknown>;
-                  if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
-                  const entries = plugins.entries as Record<string, unknown>;
-                  if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = { enabled: true, config: {} };
-                  const mh = entries[PLUGIN_ID] as Record<string, unknown>;
-                  if (!mh.config || typeof mh.config !== "object") mh.config = {};
-                  const cfg = mh.config as Record<string, unknown>;
-                  if (!cfg.embedding || typeof cfg.embedding !== "object") cfg.embedding = {};
-                  const emb = cfg.embedding as Record<string, unknown>;
-                  const curKey = emb.apiKey;
-                  const placeholder = typeof curKey !== "string" || curKey.length < 10 || curKey === "YOUR_OPENAI_API_KEY" || curKey === "<OPENAI_API_KEY>";
-                  if (placeholder) {
-                    emb.apiKey = process.env.OPENAI_API_KEY || "YOUR_OPENAI_API_KEY";
-                    emb.model = emb.model || "text-embedding-3-small";
-                    changed = true;
-                    applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
-                  }
-                  // Add nightly-memory-sweep job if missing (same as install), so upgrade/snippet-only users get it without running full install.
-                  const jobs = Array.isArray(fixConfig.jobs) ? fixConfig.jobs : [];
-                  const hasNightly = jobs.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                  if (!hasNightly) {
-                    jobs.push({
-                      name: "nightly-memory-sweep",
-                      schedule: "0 2 * * *",
-                      channel: "system",
-                      message:
-                        "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
-                      isolated: true,
-                      model: "gemini",
-                    });
-                    (fixConfig as Record<string, unknown>).jobs = jobs;
-                    changed = true;
-                    applied.push("Added nightly-memory-sweep job for session distillation");
-                  }
-                  const memoryDirPath = dirname(resolvedSqlitePath);
-                  if (!existsSync(memoryDirPath)) {
-                    mkdirSync(memoryDirPath, { recursive: true });
-                    applied.push("Created memory directory: " + memoryDirPath);
-                  }
-                  if (changed) {
-                    writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
-                  }
-                  if (applied.length > 0) {
-                    console.log("\n--- Applied fixes ---");
-                    applied.forEach((a) => console.log("  • " + a));
-                    if (changed) console.log("Config written: " + defaultConfigPath + ". Restart the gateway and run verify again.");
-                  }
-                } catch (e) {
-                  console.log("\nCould not apply fixes to config: " + String(e));
-                  const snippet = {
-                    embedding: { apiKey: process.env.OPENAI_API_KEY || "<set your key>", model: "text-embedding-3-small" },
-                    autoCapture: true,
-                    autoRecall: true,
-                    captureMaxChars: 5000,
-                    store: { fuzzyDedupe: false },
-                  };
-                  console.log(`Minimal config snippet to merge into plugins.entries["${PLUGIN_ID}"].config:`);
-                  console.log(JSON.stringify(snippet, null, 2));
-                }
-              } else {
-                console.log("\n--- Fix (--fix) ---");
-                console.log("Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.");
-              }
-            }
-          });
-
-        const cred = mem
-          .command("credentials")
-          .description("Credentials vault commands");
-        cred
-          .command("migrate-to-vault")
-          .description("Move credential facts from memory into vault and redact originals (idempotent)")
-          .action(async () => {
-            if (!credentialsDb) {
-              console.error("Credentials vault is disabled. Enable it in plugin config (credentials.encryptionKey) and restart.");
-              return;
-            }
-            const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
-            const result = await migrateCredentialsToVault({
-              factsDb,
-              vectorDb,
-              embeddings,
-              credentialsDb,
-              migrationFlagPath,
-              markDone: true,
-            });
-            console.log(`Migrated: ${result.migrated}, skipped: ${result.skipped}`);
-            if (result.errors.length > 0) {
-              console.error("Errors:");
-              result.errors.forEach((e) => console.error(`  - ${e}`));
-            }
-          });
-
-        /** Full distillation: max days of history to process when .distill_last_run is missing (avoids unbounded first run). */
-        const FULL_DISTILL_MAX_DAYS = 90;
-        /** Incremental: process at least this many days when last run exists (overlap window). */
-        const INCREMENTAL_MIN_DAYS = 3;
-
-        mem
-          .command("distill-window")
-          .description("Print the session distillation window (full or incremental). Use at start of a distillation job to decide what to process; end the job with record-distill.")
-          .option("--json", "Output machine-readable JSON only (mode, startDate, endDate, mtimeDays)")
-          .action(async (opts: { json?: boolean }) => {
-            const memoryDir = dirname(resolvedSqlitePath);
-            const distillLastRunPath = join(memoryDir, ".distill_last_run");
-            const now = new Date();
-            const today = now.toISOString().slice(0, 10);
-
-            let mode: "full" | "incremental";
-            let startDate: string;
-            let endDate: string = today;
-            let mtimeDays: number;
-
-            if (!existsSync(distillLastRunPath)) {
-              mode = "full";
-              const start = new Date(now);
-              start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-              startDate = start.toISOString().slice(0, 10);
-              mtimeDays = FULL_DISTILL_MAX_DAYS;
-            } else {
-              try {
-                const line = readFileSync(distillLastRunPath, "utf-8").split("\n")[0]?.trim() || "";
-                if (!line) {
-                  mode = "full";
-                  const start = new Date(now);
-                  start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-                  startDate = start.toISOString().slice(0, 10);
-                  mtimeDays = FULL_DISTILL_MAX_DAYS;
-                } else {
-                  const lastRun = new Date(line);
-                  if (Number.isNaN(lastRun.getTime())) {
-                    mode = "full";
-                    const start = new Date(now);
-                    start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-                    startDate = start.toISOString().slice(0, 10);
-                    mtimeDays = FULL_DISTILL_MAX_DAYS;
-                  } else {
-                    mode = "incremental";
-                    const lastRunDate = lastRun.toISOString().slice(0, 10);
-                    const threeDaysAgo = new Date(now);
-                    threeDaysAgo.setDate(threeDaysAgo.getDate() - INCREMENTAL_MIN_DAYS);
-                    const threeDaysAgoStr = threeDaysAgo.toISOString().slice(0, 10);
-                    startDate = lastRunDate < threeDaysAgoStr ? lastRunDate : threeDaysAgoStr;
-                    const start = new Date(startDate);
-                    mtimeDays = Math.ceil((now.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
-                    if (mtimeDays < 1) mtimeDays = 1;
-                  }
-                }
-              } catch {
-                mode = "full";
-                const start = new Date(now);
-                start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-                startDate = start.toISOString().slice(0, 10);
-                mtimeDays = FULL_DISTILL_MAX_DAYS;
-              }
-            }
-
-            if (opts.json) {
-              console.log(JSON.stringify({ mode, startDate, endDate, mtimeDays }));
-              return;
-            }
-            console.log(`Distill window: ${mode}`);
-            console.log(`  startDate: ${startDate}`);
-            console.log(`  endDate: ${endDate}`);
-            console.log(`  mtimeDays: ${mtimeDays} (use find ... -mtime -${mtimeDays} for session files)`);
-            console.log("Process sessions from that window; then run: openclaw hybrid-mem record-distill");
-          });
-
-        mem
-          .command("record-distill")
-          .description("Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)")
-          .action(async () => {
-            const memoryDir = dirname(resolvedSqlitePath);
-            mkdirSync(memoryDir, { recursive: true });
-            const path = join(memoryDir, ".distill_last_run");
-            const ts = new Date().toISOString();
-            writeFileSync(path, ts + "\n", "utf-8");
-            console.log(`Recorded distillation run: ${ts}`);
-            console.log(`Written to ${path}. Run 'openclaw hybrid-mem verify' to see it.`);
-          });
-
-        mem
-          .command("uninstall")
-          .description("Revert to OpenClaw default memory (memory-core). Safe: OpenClaw works normally; your data is kept unless you use --clean-all.")
-          .option("--clean-all", "Remove SQLite and LanceDB data (irreversible)")
-          .option("--force-cleanup", "Same as --clean-all")
-          .option("--leave-config", "Do not modify openclaw.json; only print instructions")
-          .action(async (opts: { cleanAll?: boolean; forceCleanup?: boolean; leaveConfig?: boolean }) => {
-            const doClean = !!opts.cleanAll || !!opts.forceCleanup;
-            const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
-            const configPath = join(openclawDir, "openclaw.json");
-
-            if (!opts.leaveConfig && existsSync(configPath)) {
-              try {
-                const raw = readFileSync(configPath, "utf-8");
-                const config = JSON.parse(raw) as Record<string, unknown>;
-                if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
-                const plugins = config.plugins as Record<string, unknown>;
-                if (!plugins.slots || typeof plugins.slots !== "object") plugins.slots = {};
-                (plugins.slots as Record<string, string>).memory = "memory-core";
-                if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
-                const entries = plugins.entries as Record<string, unknown>;
-                if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") {
-                  entries[PLUGIN_ID] = {};
-                }
-                (entries[PLUGIN_ID] as Record<string, boolean>).enabled = false;
-                writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
-                console.log(`Config updated: plugins.slots.memory = "memory-core", ${PLUGIN_ID} disabled.`);
-                console.log("OpenClaw will use the default memory manager. Restart the gateway. Your hybrid data is kept unless you run with --clean-all.");
-              } catch (e) {
-                console.error(`Could not update config (${configPath}): ${e}`);
-                console.log("Apply these changes manually:");
-                console.log("  1. Set plugins.slots.memory to \"memory-core\"");
-                console.log(`  2. Set plugins.entries["${PLUGIN_ID}"].enabled to false`);
-                console.log("  3. Restart the gateway.");
-              }
-            } else if (!opts.leaveConfig) {
-              console.log(`Config file not found at ${configPath}. Apply these changes manually:`);
-              console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
-              console.log("  2. Set plugins.slots.memory to \"memory-core\".");
-              console.log(`  3. Set plugins.entries["${PLUGIN_ID}"].enabled to false.`);
-              console.log("  4. Restart the gateway.");
-            } else {
-              console.log("To use the default OpenClaw memory manager instead of hybrid:");
-              console.log("  1. Open your OpenClaw config (e.g. ~/.openclaw/openclaw.json).");
-              console.log("  2. Set plugins.slots.memory to \"memory-core\".");
-              console.log(`  3. Set plugins.entries["${PLUGIN_ID}"].enabled to false.`);
-              console.log("  4. Restart the gateway.");
-            }
-
-            if (!doClean) {
-              console.log("\nMemory data (SQLite and LanceDB) was left in place. To remove it: openclaw hybrid-mem uninstall --clean-all");
-              return;
-            }
-            console.log("\nRemoving hybrid-memory data...");
-            const toRemove: string[] = [];
-            if (existsSync(resolvedSqlitePath)) {
-              try {
-                rmSync(resolvedSqlitePath, { force: true });
-                toRemove.push(resolvedSqlitePath);
-              } catch (e) {
-                console.error(`Failed to remove SQLite file: ${e}`);
-              }
-            }
-            if (existsSync(resolvedLancePath)) {
-              try {
-                rmSync(resolvedLancePath, { recursive: true, force: true });
-                toRemove.push(resolvedLancePath);
-              } catch (e) {
-                console.error(`Failed to remove LanceDB dir: ${e}`);
-              }
-            }
-            if (toRemove.length > 0) {
-              console.log("Removed: " + toRemove.join(", "));
-            } else {
-              console.log("No hybrid data files found at configured paths.");
-            }
-          });
       },
       { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );

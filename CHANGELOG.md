@@ -33,6 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **CLI (fourth batch):** consolidate, reflect, reflect-rules, reflect-meta moved to `cli/register.ts`; context extended with runConsolidate, runReflection, runReflectionRules, runReflectionMeta, reflectionConfig.
 - **CLI (fifth batch):** classify moved to `cli/register.ts`; added `runClassifyForCli` in index, context extended with runClassify, autoClassifyConfig.
 - **CLI (sixth batch):** store moved to `cli/register.ts`; added `runStoreForCli` in index, `StoreCliOpts`/`StoreCliResult` and runStore in context.
+- **CLI (seventh batch):** install moved to `cli/register.ts`; added `runInstallForCli` in index, `InstallCliResult` and runInstall in context.
+- **CLI (eighth batch):** verify moved to `cli/register.ts`; added `runVerifyForCli` with VerifyCliSink, runVerify in context.
+- **CLI (ninth batch):** distill-window and record-distill moved to `cli/register.ts`; added `runDistillWindowForCli`, `runRecordDistillForCli`, DistillWindowResult, RecordDistillResult, runDistillWindow, runRecordDistill in context.
+- **CLI (final batch):** extract-daily, credentials (migrate-to-vault), uninstall moved to `cli/register.ts`. All CLI commands now registered via `registerHybridMemCli`. No CLI command blocks remain in index.ts.
 
 ### Added
 
