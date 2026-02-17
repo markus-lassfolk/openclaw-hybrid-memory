@@ -261,6 +261,8 @@ This is **zero LLM cost** — graph traversal uses only SQLite queries. It finds
 
 When a new fact contradicts or updates an old one:
 
+→ Full guide: [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md)
+
 ### Automatic (classify-before-write)
 
 If `store.classifyBeforeWrite` is enabled:
@@ -353,6 +355,9 @@ The most sophisticated level: asks an LLM whether the new fact is truly new (ADD
 - [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — Runtime flow overview
 - [FEATURES.md](FEATURES.md) — Categories, decay, auto-classify
 - [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph-based spreading activation (full spec)
+- [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) — Conflicting memories (classify-before-write, supersession, bi-temporal)
+- [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md) — Automatic category discovery
+- [DYNAMIC-DERIVED-DATA.md](DYNAMIC-DERIVED-DATA.md) — Tags, categories, decay, and other derived data (index)
 - [CONFIGURATION.md](CONFIGURATION.md) — All config options for tuning
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System design and workspace layout
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
