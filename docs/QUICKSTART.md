@@ -20,15 +20,23 @@ Get the memory-hybrid plugin running in 10 minutes. For full configuration optio
 
 ## 1. Install the plugin
 
-Copy `extensions/memory-hybrid/` from this repo into your OpenClaw extensions directory:
+**Recommended (NPM):** OpenClaw installs the plugin into `~/.openclaw/extensions` and runs `npm install` (including a `postinstall` that rebuilds `better-sqlite3`). If you ever see "duplicate plugin id detected", run once: `./scripts/use-npm-only.sh` from this repo so only the NPM copy is used.
 
-- **Linux:** `/usr/lib/node_modules/openclaw/extensions/memory-hybrid/` (or `~/.npm-global/lib/node_modules/openclaw/extensions/memory-hybrid/`)
+```bash
+openclaw plugins install openclaw-hybrid-memory
+```
+
+If the installer shows a warning about "dangerous code patterns" or "credential harvesting", it is a false positive — the plugin only uses your API key with OpenAI’s embedding API. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#install-warning-dangerous-code-patterns--credential-harvesting).
+
+**Manual (copy from repo):** Copy `extensions/memory-hybrid/` into your OpenClaw extensions directory:
+
+- **Linux:** `~/.npm-global/lib/node_modules/openclaw/extensions/memory-hybrid/` or `/usr/lib/node_modules/openclaw/extensions/memory-hybrid/`
 - **Windows:** `%APPDATA%\npm\node_modules\openclaw\extensions\memory-hybrid\`
 
 Then install dependencies **in the extension directory**:
 
 ```bash
-cd /usr/lib/node_modules/openclaw/extensions/memory-hybrid
+cd <path-to-extensions>/memory-hybrid
 npm install
 ```
 
@@ -39,7 +47,7 @@ node -e "let p=require('./package.json'); delete p.devDependencies; require('fs'
 npm install
 ```
 
-If `better-sqlite3` fails to compile, install the C++ build toolchain (Linux: `build-essential`, `python3`; Windows: Visual Studio Build Tools 2022 with "Desktop development with C++").
+If `better-sqlite3` fails to compile, install the C++ build toolchain (Linux: `build-essential`, `python3`; Windows: Visual Studio Build Tools 2022 with "Desktop development with C++"). The published package runs `npm rebuild better-sqlite3` in a postinstall step.
 
 ---
 

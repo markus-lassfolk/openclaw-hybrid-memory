@@ -3859,7 +3859,7 @@ const memoryHybridPlugin = {
         }
 
         function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
-          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const openclawDir = join(homedir(), ".openclaw");
           const configPath = join(openclawDir, "openclaw.json");
           mkdirSync(openclawDir, { recursive: true });
           mkdirSync(join(openclawDir, "memory"), { recursive: true });
@@ -3996,7 +3996,7 @@ const memoryHybridPlugin = {
             fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large" in plugin config');
             configOk = false;
           }
-          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const openclawDir = join(homedir(), ".openclaw");
           const defaultConfigPath = join(openclawDir, "openclaw.json");
           if (configOk) log("Config: embedding.apiKey and model present");
           else log("Config: issues found");
@@ -4215,10 +4215,10 @@ const memoryHybridPlugin = {
                 const curKey = emb.apiKey;
                 const placeholder = typeof curKey !== "string" || curKey.length < 10 || curKey === "YOUR_OPENAI_API_KEY" || curKey === "<OPENAI_API_KEY>";
                 if (placeholder) {
-                  emb.apiKey = process.env.OPENAI_API_KEY || "YOUR_OPENAI_API_KEY";
+                  emb.apiKey = "YOUR_OPENAI_API_KEY";
                   emb.model = emb.model || "text-embedding-3-small";
                   changed = true;
-                  applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
+                  applied.push("Set embedding.apiKey and model (use your key or ${OPENAI_API_KEY} in config)");
                 }
                 const jobs = Array.isArray(fixConfig.jobs) ? fixConfig.jobs : [];
                 const jobDefs = [
@@ -4249,7 +4249,7 @@ const memoryHybridPlugin = {
               } catch (e) {
                 log("\nCould not apply fixes to config: " + String(e));
                 const snippet = {
-                  embedding: { apiKey: process.env.OPENAI_API_KEY || "<set your key>", model: "text-embedding-3-small" },
+                  embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },
                   autoCapture: true,
                   autoRecall: true,
                   captureMaxChars: 5000,
@@ -4503,7 +4503,7 @@ const memoryHybridPlugin = {
         }
 
         function runUninstallForCli(opts: { cleanAll: boolean; leaveConfig: boolean }): UninstallCliResult {
-          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const openclawDir = join(homedir(), ".openclaw");
           const configPath = join(openclawDir, "openclaw.json");
           const cleaned: string[] = [];
           let outcome: UninstallCliResult["outcome"];
