@@ -1,3 +1,9 @@
+---
+layout: default
+title: Examples & Recipes
+parent: Getting Started
+nav_order: 4
+---
 # Examples & Recipes
 
 Real-world patterns for getting the most out of hybrid memory.

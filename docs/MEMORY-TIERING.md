@@ -1,3 +1,9 @@
+---
+layout: default
+title: Memory Tiering (FR-004)
+parent: Features
+nav_order: 14
+---
 # Memory Tiering (FR-004) — Hot / Warm / Cold
 
 Dynamic memory tiering reduces retrieval cost and token usage by separating memories into three tiers. Only HOT and WARM are searched by default; COLD is archived and retrieved only when explicitly requested.

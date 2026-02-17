@@ -1,3 +1,9 @@
+---
+layout: default
+title: Features Overview
+parent: Features
+nav_order: 1
+---
 # Features — Categories, Decay, Tags, and Auto-Classify
 
 Detailed reference for the memory-hybrid plugin's classification, decay, tagging, and LLM auto-classify features.

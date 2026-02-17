@@ -1,3 +1,9 @@
+---
+layout: default
+title: Conflicting Memories
+parent: Features
+nav_order: 7
+---
 # Conflicting and Contradictory Memories
 
 How the plugin handles facts that contradict or update existing ones: **classify-before-write** (ADD/UPDATE/DELETE/NOOP), **supersession**, and **bi-temporal** queries.

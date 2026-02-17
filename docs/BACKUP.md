@@ -1,3 +1,9 @@
+---
+layout: default
+title: Backup
+parent: Operations & Maintenance
+nav_order: 6
+---
 # Backing Up the Memory Solution
 
 What to back up, where it lives, and how to restore. Use this before major upgrades, before running uninstall with `--clean-all`, or for regular disaster recovery.

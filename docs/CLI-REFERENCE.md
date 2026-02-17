@@ -1,3 +1,9 @@
+---
+layout: default
+title: CLI Reference
+parent: Operations & Maintenance
+nav_order: 1
+---
 # CLI Reference — memory-hybrid
 
 All commands are available via `openclaw hybrid-mem <command>`.

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Persona Proposals
+parent: Features
+nav_order: 12
+---
 # Persona Proposals
 
 **Agent self-evolution with human approval** — the agent can propose changes to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns; a human reviews and approves or rejects via CLI. No identity file is ever modified by the agent automatically.

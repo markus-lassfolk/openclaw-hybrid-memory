@@ -1,3 +1,9 @@
+---
+layout: default
+title: Feedback Roadmap
+parent: Analysis & Planning
+nav_order: 2
+---
 # Feedback roadmap: scalability, performance, and stability
 
 This document captures post–PR #15 feedback and maps it to concrete actions. Use it to plan work on `dev` (or feature branches) and track progress.

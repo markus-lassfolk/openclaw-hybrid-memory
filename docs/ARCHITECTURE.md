@@ -1,3 +1,9 @@
+---
+layout: default
+title: Architecture
+parent: Architecture & Internals
+nav_order: 1
+---
 # Architecture — Hybrid Memory System
 
 Overview of the four-part memory architecture, workspace layout, and bootstrap file design.

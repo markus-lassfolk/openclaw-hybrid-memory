@@ -1,3 +1,9 @@
+---
+layout: default
+title: Deep Dive
+parent: Architecture & Internals
+nav_order: 4
+---
 # Deep Dive — Storage, Search, Tags, Links, and Context
 
 How facts are stored, searched, linked, and injected — the internals explained.

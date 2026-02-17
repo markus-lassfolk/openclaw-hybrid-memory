@@ -1,3 +1,9 @@
+---
+layout: default
+title: Session Distillation
+parent: Features
+nav_order: 3
+---
 # Session Distillation Pipeline
 
 **Extract durable knowledge from historical OpenClaw conversation logs**

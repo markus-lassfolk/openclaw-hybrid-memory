@@ -1,3 +1,9 @@
+---
+layout: default
+title: Configuration
+parent: Getting Started
+nav_order: 3
+---
 # Configuration Reference
 
 All settings live in `~/.openclaw/openclaw.json`. Merge these into your existing config. Replace placeholders; do **not** commit real API keys to git.
