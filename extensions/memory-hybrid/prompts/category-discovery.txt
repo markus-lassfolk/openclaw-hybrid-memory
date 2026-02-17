@@ -1,0 +1,4 @@
+For each fact below, assign a short category label (1–2 words) that describes its topic or type. Use the same label for facts about the same topic. Output only a JSON array of strings, one label per fact in the same order. No explanation.
+
+Facts:
+{{facts}}

@@ -10,7 +10,6 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
@@ -28,1038 +27,40 @@ import {
   type MemoryCategory,
   DECAY_CLASSES,
   type DecayClass,
-  TTL_DEFAULTS,
   type HybridMemoryConfig,
   hybridConfigSchema,
   vectorDimsForModel,
   CREDENTIAL_TYPES,
   type CredentialType,
   PROPOSAL_STATUSES,
-  IDENTITY_FILE_TYPES,
   type IdentityFileType,
 } from "./config.js";
 import { versionInfo } from "./versionInfo.js";
-
-// ============================================================================
-// Types
-// ============================================================================
-
-type MemoryEntry = {
-  id: string;
-  text: string;
-  category: MemoryCategory;
-  importance: number;
-  entity: string | null;
-  key: string | null;
-  value: string | null;
-  source: string;
-  createdAt: number;
-  /** When the fact originated (e.g. session date for distilled facts). Unix seconds. Null = use createdAt. */
-  sourceDate?: number | null;
-  decayClass: DecayClass;
-  expiresAt: number | null;
-  lastConfirmedAt: number;
-  confidence: number;
-  /** Short summary for long facts; used in injection when useSummaryInInjection (4.3) */
-  summary?: string | null;
-  /** Topic tags for sharper retrieval (FR-001); e.g. nibe, zigbee, auth */
-  tags?: string[] | null;
-  /** FR-005: Number of times this fact has been retrieved via search/recall */
-  recallCount?: number;
-  /** FR-005: Last time this fact was accessed (unix seconds) */
-  lastAccessed?: number | null;
-  /** FR-008/010: When this fact was superseded by a newer version (unix seconds; null = current) */
-  supersededAt?: number | null;
-  /** FR-008/010: ID of the fact that superseded this one */
-  supersededBy?: string | null;
-};
-
-type SearchResult = {
-  entry: MemoryEntry;
-  score: number;
-  backend: "sqlite" | "lancedb";
-};
-
-// ============================================================================
-// SQLite + FTS5 Backend
-// ============================================================================
-
-/** Normalize text for fuzzy dedupe (2.3): trim, collapse whitespace, lowercase. */
-function normalizeTextForDedupe(text: string): string {
-  return text.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function normalizedHash(text: string): string {
-  return createHash("sha256").update(normalizeTextForDedupe(text)).digest("hex");
-}
-
-/** Tag patterns: [tag, regex]. Order matters; first match wins. */
-const TAG_PATTERNS: Array<[string, RegExp]> = [
-  ["nibe", /\bnibe\b/i],
-  ["zigbee", /\bzigbee\b/i],
-  ["z-wave", /\bz-?wave\b/i],
-  ["auth", /\bauth(entication|orization)?\b/i],
-  ["homeassistant", /\bhome[- ]?assistant\b/i],
-  ["openclaw", /\bopenclaw\b/i],
-  ["postgres", /\bpostgres(ql)?\b/i],
-  ["sqlite", /\bsqlite\b/i],
-  ["lancedb", /\blancedb\b/i],
-  ["api", /\bapi\s+(key|endpoint|url)\b/i],
-  ["docker", /\bdocker\b/i],
-  ["kubernetes", /\bkubernetes|k8s\b/i],
-  ["ha", /\bha\b/i],
-];
-
-/** Extract topic tags from text (FR-001). Returns lowercase, deduplicated tags. */
-function extractTags(text: string, entity?: string | null): string[] {
-  const combined = [text, entity].filter(Boolean).join(" ").toLowerCase();
-  const seen = new Set<string>();
-  for (const [tag, re] of TAG_PATTERNS) {
-    if (re.test(combined) && !seen.has(tag)) {
-      seen.add(tag);
-    }
-  }
-  return [...seen];
-}
-
-/** Serialize tags for SQLite storage (comma-separated). */
-function serializeTags(tags: string[]): string | null {
-  if (tags.length === 0) return null;
-  return tags.join(",");
-}
-
-/** Parse tags from SQLite (comma-separated). */
-function parseTags(s: string | null | undefined): string[] {
-  if (!s || typeof s !== "string") return [];
-  return s
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-}
-
-/** Check if tags string contains tag (comma-separated, exact match). */
-function tagsContains(tagsStr: string | null | undefined, tag: string): boolean {
-  if (!tagsStr) return false;
-  const tagLower = tag.toLowerCase().trim();
-  return parseTags(tagsStr).includes(tagLower);
-}
-
-/** Parse sourceDate from ISO-8601 (YYYY-MM-DD) or Unix timestamp (seconds). Date strings are interpreted as UTC midnight for consistent ordering across timezones. Returns null if invalid. */
-function parseSourceDate(v: string | number | null | undefined): number | null {
-  if (v == null) return null;
-  if (typeof v === "number") return v > 0 ? v : null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}:\d{2})?/.exec(s);
-  if (iso) {
-    const [, y, m, d] = iso;
-    const ms = Date.UTC(parseInt(y!, 10), parseInt(m!, 10) - 1, parseInt(d!, 10));
-    return isNaN(ms) ? null : Math.floor(ms / 1000);
-  }
-  const n = parseInt(s, 10);
-  return !isNaN(n) && n > 0 ? n : null;
-}
-
-class FactsDB {
-  private db: Database.Database;
-  private readonly dbPath: string;
-  private readonly fuzzyDedupe: boolean;
-  private supersededTextsCache: Set<string> | null = null;
-  private supersededTextsCacheTime = 0;
-  private readonly SUPERSEDED_CACHE_TTL_MS = 60_000;
-
-  constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
-    this.dbPath = dbPath;
-    this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.applyPragmas();
-
-    // Create main table
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS facts (
-        id TEXT PRIMARY KEY,
-        text TEXT NOT NULL,
-        category TEXT NOT NULL DEFAULT 'other',
-        importance REAL NOT NULL DEFAULT 0.7,
-        entity TEXT,
-        key TEXT,
-        value TEXT,
-        source TEXT NOT NULL DEFAULT 'conversation',
-        created_at INTEGER NOT NULL
-      )
-    `);
-
-    // Create FTS5 virtual table for full-text search
-    this.liveDb.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
-        text,
-        category,
-        entity,
-        key,
-        value,
-        content=facts,
-        content_rowid=rowid,
-        tokenize='porter unicode61'
-      )
-    `);
-
-    // Triggers to keep FTS in sync
-    this.liveDb.exec(`
-      CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
-        INSERT INTO facts_fts(rowid, text, category, entity, key, value)
-        VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.key, old.value);
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.key, old.value);
-        INSERT INTO facts_fts(rowid, text, category, entity, key, value)
-        VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
-      END
-    `);
-
-    // Index for common queries
-    this.liveDb.exec(`
-      CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category);
-      CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
-      CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
-    `);
-
-    // ---- TTL/Decay migration ----
-    this.migrateDecayColumns();
-
-    // ---- Fix ms/s unit mismatch from earlier versions ----
-    this.migrateTimestampUnits();
-
-    // ---- Summary column for chunked long facts (4.3) ----
-    this.migrateSummaryColumn();
-
-    // ---- Normalized hash for fuzzy dedupe (2.3) ----
-    this.migrateNormalizedHash();
-
-    // ---- Source date for provenance (FR-003) ----
-    this.migrateSourceDateColumn();
-
-    // ---- Tags for topic filtering (FR-001) ----
-    this.migrateTagsColumn();
-
-    // ---- Access tracking for dynamic salience (FR-005) ----
-    this.migrateAccessTracking();
-
-    // ---- Supersession columns for contradiction resolution (FR-008/010) ----
-    this.migrateSupersessionColumns();
-  }
-
-  private migrateTagsColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === "tags")) return;
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`,
-    );
-  }
-
-  /** FR-005: Add recall_count and last_accessed for dynamic salience scoring. */
-  private migrateAccessTracking(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    const colNames = new Set(cols.map((c) => c.name));
-    if (colNames.has("recall_count")) return;
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0`);
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_accessed INTEGER`);
-    this.liveDb.exec(`UPDATE facts SET last_accessed = last_confirmed_at WHERE last_accessed IS NULL`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_last_accessed ON facts(last_accessed) WHERE last_accessed IS NOT NULL`,
-    );
-  }
-
-  /** FR-008/010: Add superseded_at and superseded_by for contradiction resolution. */
-  private migrateSupersessionColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    const colNames = new Set(cols.map((c) => c.name));
-    if (colNames.has("superseded_at")) return;
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN superseded_at INTEGER`);
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN superseded_by TEXT`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_superseded ON facts(superseded_at) WHERE superseded_at IS NOT NULL`,
-    );
-  }
-
-  private migrateSourceDateColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === "source_date")) return;
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
-    this.liveDb.exec(`UPDATE facts SET source_date = created_at WHERE source_date IS NULL`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_source_date ON facts(source_date) WHERE source_date IS NOT NULL`,
-    );
-  }
-
-  private migrateNormalizedHash(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    if (!cols.some((c) => c.name === "normalized_hash")) {
-      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
-      this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
-    }
-    const rows = this.liveDb
-      .prepare(`SELECT id, text FROM facts WHERE normalized_hash IS NULL`)
-      .all() as Array<{ id: string; text: string }>;
-    if (rows.length === 0) return;
-    const stmt = this.liveDb.prepare(`UPDATE facts SET normalized_hash = ? WHERE id = ?`);
-    for (const row of rows) {
-      stmt.run(normalizedHash(row.text), row.id);
-    }
-  }
-
-  private migrateSummaryColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === "summary")) return;
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN summary TEXT`);
-  }
-
-  /** Re-apply connection pragmas (used on initial open and auto-reopen). */
-  private applyPragmas(): void {
-    this.liveDb.pragma("journal_mode = WAL");
-    this.liveDb.pragma("busy_timeout = 5000");
-    this.liveDb.pragma("synchronous = NORMAL");
-    this.liveDb.pragma("wal_autocheckpoint = 1000");
-  }
-
-  private migrateDecayColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    const colNames = new Set(cols.map((c) => c.name));
-
-    if (colNames.has("decay_class")) return;
-
-    this.liveDb.exec(`
-      ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable';
-      ALTER TABLE facts ADD COLUMN expires_at INTEGER;
-      ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER;
-      ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
-    `);
-
-    this.liveDb.exec(`
-      CREATE INDEX IF NOT EXISTS idx_facts_expires ON facts(expires_at)
-        WHERE expires_at IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS idx_facts_decay ON facts(decay_class);
-    `);
-
-    this.liveDb.exec(`
-      UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL;
-    `);
-  }
-
-  /**
-   * Fix timestamp unit mismatch from earlier versions that stored created_at
-   * (and potentially last_confirmed_at via the decay migration) in milliseconds
-   * while expires_at used seconds.  Any value > 10 000 000 000 is certainly
-   * milliseconds — that threshold in seconds is the year 2286.
-   */
-  private migrateTimestampUnits(): void {
-    const MS_THRESHOLD = 10_000_000_000;
-
-    const { cnt } = this.liveDb
-      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE created_at > ?`)
-      .get(MS_THRESHOLD) as { cnt: number };
-
-    if (cnt === 0) return;
-
-    this.liveDb.exec(`
-      UPDATE facts
-      SET created_at = created_at / 1000
-      WHERE created_at > ${MS_THRESHOLD}
-    `);
-
-    // last_confirmed_at may have been seeded from ms-based created_at
-    // by the migrateDecayColumns migration (created_at → last_confirmed_at).
-    this.liveDb.exec(`
-      UPDATE facts
-      SET last_confirmed_at = last_confirmed_at / 1000
-      WHERE last_confirmed_at IS NOT NULL
-        AND last_confirmed_at > ${MS_THRESHOLD}
-    `);
-  }
-
-  store(
-    entry: Omit<MemoryEntry, "id" | "createdAt" | "decayClass" | "expiresAt" | "lastConfirmedAt" | "confidence"> & {
-      decayClass?: DecayClass;
-      expiresAt?: number | null;
-      confidence?: number;
-      summary?: string | null;
-      sourceDate?: number | null;
-      tags?: string[] | null;
-    },
-  ): MemoryEntry {
-    if (this.fuzzyDedupe) {
-      const existingId = this.getDuplicateIdByNormalizedHash(entry.text);
-      if (existingId) {
-        const existing = this.getById(existingId);
-        if (existing) return existing;
-      }
-    }
-
-    const id = randomUUID();
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    const decayClass =
-      entry.decayClass ||
-      classifyDecay(entry.entity, entry.key, entry.value, entry.text);
-    const expiresAt =
-      entry.expiresAt !== undefined
-        ? entry.expiresAt
-        : calculateExpiry(decayClass, nowSec);
-    const confidence = entry.confidence ?? 1.0;
-    const summary = entry.summary ?? null;
-    const normHash = normalizedHash(entry.text);
-    const sourceDate = entry.sourceDate ?? null;
-    const tags = entry.tags ?? null;
-    const tagsStr = tags ? serializeTags(tags) : null;
-
-    this.liveDb
-      .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        entry.text,
-        entry.category,
-        entry.importance,
-        entry.entity,
-        entry.key,
-        entry.value,
-        entry.source,
-        nowSec,
-        decayClass,
-        expiresAt,
-        nowSec,
-        confidence,
-        summary,
-        normHash,
-        sourceDate,
-        tagsStr,
-      );
-
-    return {
-      ...entry,
-      id,
-      createdAt: nowSec,
-      decayClass,
-      expiresAt,
-      lastConfirmedAt: nowSec,
-      confidence,
-      summary: summary ?? undefined,
-      sourceDate,
-      tags: tags ?? undefined,
-    };
-  }
-
-  /** FR-005: Update recall_count and last_accessed for facts (public for progressive disclosure). */
-  refreshAccessedFacts(ids: string[]): void {
-    if (ids.length === 0) return;
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    const stmtDecay = this.liveDb.prepare(`
-      UPDATE facts
-      SET last_confirmed_at = @now,
-          expires_at = CASE decay_class
-            WHEN 'stable' THEN @now + @stableTtl
-            WHEN 'active' THEN @now + @activeTtl
-            ELSE expires_at
-          END
-      WHERE id = @id
-        AND decay_class IN ('stable', 'active')
-    `);
-
-    // FR-005: Track access count and timestamp for dynamic salience scoring
-    const stmtAccess = this.liveDb.prepare(`
-      UPDATE facts
-      SET recall_count = recall_count + 1,
-          last_accessed = @now
-      WHERE id = @id
-    `);
-
-    const tx = this.liveDb.transaction(() => {
-      for (const id of ids) {
-        stmtDecay.run({
-          now: nowSec,
-          stableTtl: TTL_DEFAULTS.stable,
-          activeTtl: TTL_DEFAULTS.active,
-          id,
-        });
-        stmtAccess.run({ now: nowSec, id });
-      }
-    });
-    tx();
-  }
-
-  search(
-    query: string,
-    limit = 5,
-    options: { includeExpired?: boolean; tag?: string; includeSuperseded?: boolean } = {},
-  ): SearchResult[] {
-    const { includeExpired = false, tag, includeSuperseded = false } = options;
-
-    const safeQuery = query
-      .replace(/['"]/g, "")
-      .split(/\s+/)
-      .filter((w) => w.length > 1)
-      .map((w) => `"${w}"`)
-      .join(" OR ");
-
-    if (!safeQuery) return [];
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    const expiryFilter = includeExpired
-      ? ""
-      : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
-    const supersededFilter = includeSuperseded
-      ? ""
-      : "AND f.superseded_at IS NULL";
-    const tagFilter =
-      tag && tag.trim()
-        ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern"
-        : "";
-    const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
-
-    const rows = this.liveDb
-      .prepare(
-        `SELECT f.*, rank,
-           CASE
-             WHEN f.expires_at IS NULL THEN 1.0
-             WHEN f.expires_at <= @now THEN 0.0
-             ELSE MIN(1.0, CAST(f.expires_at - @now AS REAL) / CAST(@decay_window AS REAL))
-           END AS freshness
-         FROM facts f
-         JOIN facts_fts fts ON f.rowid = fts.rowid
-         WHERE facts_fts MATCH @query
-           ${expiryFilter}
-           ${supersededFilter}
-           ${tagFilter}
-         ORDER BY rank
-         LIMIT @limit`,
-      )
-      .all({
-        query: safeQuery,
-        now: nowSec,
-        limit: limit * 2,
-        decay_window: 7 * 24 * 3600,
-        ...(tagPattern ? { tagPattern } : {}),
-      }) as Array<Record<string, unknown>>;
-
-    if (rows.length === 0) return [];
-
-    const minRank = Math.min(...rows.map((r) => r.rank as number));
-    const maxRank = Math.max(...rows.map((r) => r.rank as number));
-    const range = maxRank - minRank || 1;
-
-    const results = rows.map((row) => {
-      const bm25Score = 1 - ((row.rank as number) - minRank) / range || 0.8;
-      const freshness = (row.freshness as number) || 1.0;
-      const confidence = (row.confidence as number) || 1.0;
-      const composite = bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15;
-
-      return {
-        entry: {
-          id: row.id as string,
-          text: row.text as string,
-          category: row.category as MemoryCategory,
-          importance: row.importance as number,
-          entity: (row.entity as string) || null,
-          key: (row.key as string) || null,
-          value: (row.value as string) || null,
-          source: row.source as string,
-          createdAt: row.created_at as number,
-          sourceDate: (row.source_date as number) ?? undefined,
-          tags: parseTags(row.tags as string | null),
-          decayClass: (row.decay_class as DecayClass) || "stable",
-          expiresAt: (row.expires_at as number) || null,
-          lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-          confidence,
-          summary: (row.summary as string) || undefined,
-          recallCount: (row.recall_count as number) || 0,
-          lastAccessed: (row.last_accessed as number) || null,
-          supersededAt: (row.superseded_at as number) || null,
-          supersededBy: (row.superseded_by as string) || null,
-        },
-        score: composite,
-        backend: "sqlite" as const,
-      };
-    });
-
-    results.sort((a, b) => {
-      const s = b.score - a.score;
-      if (s !== 0) return s;
-      const da = a.entry.sourceDate ?? a.entry.createdAt;
-      const db = b.entry.sourceDate ?? b.entry.createdAt;
-      return db - da;
-    });
-    const topResults = results.slice(0, limit);
-
-    this.refreshAccessedFacts(topResults.map((r) => r.entry.id));
-
-    return topResults;
-  }
-
-  lookup(entity: string, key?: string, tag?: string): SearchResult[] {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const tagFilter =
-      tag && tag.trim()
-        ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?"
-        : "";
-    const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
-
-    const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
-
-    const params = key
-      ? tagParam !== null
-        ? [entity, key, nowSec, tagParam]
-        : [entity, key, nowSec]
-      : tagParam !== null
-        ? [entity, nowSec, tagParam]
-        : [entity, nowSec];
-    const rows = this.liveDb.prepare(base).all(...params) as Array<
-      Record<string, unknown>
-    >;
-
-    const results = rows.map((row) => ({
-      entry: {
-        id: row.id as string,
-        text: row.text as string,
-        category: row.category as MemoryCategory,
-        importance: row.importance as number,
-        entity: (row.entity as string) || null,
-        key: (row.key as string) || null,
-        value: (row.value as string) || null,
-        source: row.source as string,
-        createdAt: row.created_at as number,
-        sourceDate: (row.source_date as number) ?? undefined,
-        tags: parseTags(row.tags as string | null),
-        decayClass: (row.decay_class as DecayClass) || "stable",
-        expiresAt: (row.expires_at as number) || null,
-        lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-        confidence: (row.confidence as number) || 1.0,
-        summary: (row.summary as string) || undefined,
-        recallCount: (row.recall_count as number) || 0,
-        lastAccessed: (row.last_accessed as number) || null,
-        supersededAt: (row.superseded_at as number) || null,
-        supersededBy: (row.superseded_by as string) || null,
-      },
-      score: (row.confidence as number) || 1.0,
-      backend: "sqlite" as const,
-    }));
-
-    this.refreshAccessedFacts(results.map((r) => r.entry.id));
-
-    return results;
-  }
-
-  delete(id: string): boolean {
-    const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
-    return result.changes > 0;
-  }
-
-  /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
-  hasDuplicate(text: string): boolean {
-    const exact = this.liveDb
-      .prepare(`SELECT id FROM facts WHERE text = ? LIMIT 1`)
-      .get(text);
-    if (exact) return true;
-    if (this.fuzzyDedupe && this.getDuplicateIdByNormalizedHash(text) !== null) return true;
-    return false;
-  }
-
-  /** Id of an existing fact with same normalized text, or null. Used when store.fuzzyDedupe is true. */
-  private getDuplicateIdByNormalizedHash(text: string): string | null {
-    const hash = normalizedHash(text);
-    const row = this.liveDb
-      .prepare(`SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1`)
-      .get(hash) as { id: string } | undefined;
-    return row?.id ?? null;
-  }
-
-  /** FR-008/010: Mark a fact as superseded by a new fact. */
-  supersede(oldId: string, newId: string | null): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const result = this.liveDb
-      .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
-      .run(nowSec, newId, oldId);
-    if (result.changes > 0) {
-      this.invalidateSupersededCache();
-    }
-    return result.changes > 0;
-  }
-
-
-  /** FR-008: Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
-  findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const results: MemoryEntry[] = [];
-
-    // Priority 1: exact entity+key match (most likely an UPDATE)
-    if (entity && key) {
-      const rows = this.liveDb
-        .prepare(
-          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
-        )
-        .all(entity, key, nowSec, limit) as Array<Record<string, unknown>>;
-      for (const row of rows) {
-        results.push(this.rowToEntry(row));
-      }
-    }
-
-    // Priority 2: same entity, different key
-    if (entity && results.length < limit) {
-      const remaining = limit - results.length;
-      const seenIds = new Set(results.map((r) => r.id));
-      const rows = this.liveDb
-        .prepare(
-          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
-        )
-        .all(entity, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
-      for (const row of rows) {
-        const entry = this.rowToEntry(row);
-        if (!seenIds.has(entry.id)) {
-          results.push(entry);
-          seenIds.add(entry.id);
-          if (results.length >= limit) break;
-        }
-      }
-    }
-
-    // Priority 3: FTS text match
-    if (results.length < limit) {
-      const remaining = limit - results.length;
-      const seenIds = new Set(results.map((r) => r.id));
-      const words = text
-        .replace(/['"]/g, "")
-        .split(/\s+/)
-        .filter((w) => w.length > 2)
-        .slice(0, 5)
-        .map((w) => `"${w}"`)
-        .join(" OR ");
-      if (words) {
-        try {
-          const rows = this.liveDb
-            .prepare(
-              `SELECT f.* FROM facts f JOIN facts_fts fts ON f.rowid = fts.rowid WHERE facts_fts MATCH ? AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?) LIMIT ?`
-            )
-            .all(words, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
-          for (const row of rows) {
-            const entry = this.rowToEntry(row);
-            if (!seenIds.has(entry.id)) {
-              results.push(entry);
-              seenIds.add(entry.id);
-              if (results.length >= limit) break;
-            }
-          }
-        } catch {
-          // FTS query can fail on unusual input; ignore
-        }
-      }
-    }
-
-    return results.slice(0, limit);
-  }
-
-  /** Convert a raw SQLite row to MemoryEntry. */
-  private rowToEntry(row: Record<string, unknown>): MemoryEntry {
-    return {
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-      recallCount: (row.recall_count as number) || 0,
-      lastAccessed: (row.last_accessed as number) || null,
-      supersededAt: (row.superseded_at as number) || null,
-      supersededBy: (row.superseded_by as string) || null,
-    };
-  }
-
-  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
-  getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const rows = this.liveDb
-      .prepare(
-        `SELECT id, text, category, entity, key FROM facts
-         WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`,
-      )
-      .all(nowSec, limit) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as string,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-    }));
-  }
-
-  /** Get one fact by id (for merge category). Returns null if not found. */
-  getById(id: string): MemoryEntry | null {
-    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    return this.rowToEntry(row);
-  }
-
-  /** Get all non-expired, non-superseded facts (for reflection). */
-  getAll(): MemoryEntry[] {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const rows = this.liveDb
-      .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL ORDER BY created_at DESC`)
-      .all(nowSec) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
-  }
-
-  /** Get texts of superseded facts (for filtering LanceDB results). Cached for 1 minute to avoid repeated queries. */
-  getSupersededTexts(): Set<string> {
-    const now = Date.now();
-    if (this.supersededTextsCache && (now - this.supersededTextsCacheTime) < this.SUPERSEDED_CACHE_TTL_MS) {
-      return this.supersededTextsCache;
-    }
-    
-    const rows = this.liveDb
-      .prepare(`SELECT text FROM facts WHERE superseded_at IS NOT NULL`)
-      .all() as Array<{ text: string }>;
-    this.supersededTextsCache = new Set(rows.map((r) => r.text.toLowerCase()));
-    this.supersededTextsCacheTime = now;
-    return this.supersededTextsCache;
-  }
-  
-  /** Invalidate superseded texts cache (called after supersede operations). */
-  private invalidateSupersededCache(): void {
-    this.supersededTextsCache = null;
-  }
-
-  count(): number {
-    const row = this.liveDb
-      .prepare(`SELECT COUNT(*) as cnt FROM facts`)
-      .get() as Record<string, number>;
-    return row.cnt;
-  }
-
-  pruneExpired(): number {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
-      .run(nowSec);
-    return result.changes;
-  }
-
-  decayConfidence(): number {
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    this.liveDb
-      .prepare(
-        `UPDATE facts
-         SET confidence = confidence * 0.5
-         WHERE expires_at IS NOT NULL
-           AND expires_at > @now
-           AND last_confirmed_at IS NOT NULL
-           AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
-           AND confidence > 0.1`,
-      )
-      .run({ now: nowSec });
-
-    const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
-      .run();
-    return result.changes;
-  }
-
-  confirmFact(id: string): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.liveDb
-      .prepare(`SELECT decay_class FROM facts WHERE id = ?`)
-      .get(id) as { decay_class: DecayClass } | undefined;
-    if (!row) return false;
-
-    const newExpiry = calculateExpiry(row.decay_class, nowSec);
-    this.liveDb
-      .prepare(
-        `UPDATE facts SET confidence = 1.0, last_confirmed_at = ?, expires_at = ? WHERE id = ?`,
-      )
-      .run(nowSec, newExpiry, id);
-    return true;
-  }
-
-  saveCheckpoint(context: {
-    intent: string;
-    state: string;
-    expectedOutcome?: string;
-    workingFiles?: string[];
-  }): string {
-    const data = JSON.stringify({
-      ...context,
-      savedAt: new Date().toISOString(),
-    });
-
-    return this.store({
-      text: data,
-      category: "other" as MemoryCategory,
-      importance: 0.9,
-      entity: "system",
-      key: `checkpoint:${Date.now()}`,
-      value: context.intent.slice(0, 100),
-      source: "checkpoint",
-      decayClass: "checkpoint",
-    }).id;
-  }
-
-  restoreCheckpoint(): {
-    id: string;
-    intent: string;
-    state: string;
-    expectedOutcome?: string;
-    workingFiles?: string[];
-    savedAt: string;
-  } | null {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.liveDb
-      .prepare(
-        `SELECT id, text FROM facts
-         WHERE entity = 'system' AND key LIKE 'checkpoint:%'
-           AND (expires_at IS NULL OR expires_at > ?)
-         ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get(nowSec) as { id: string; text: string } | undefined;
-
-    if (!row) return null;
-    try {
-      return { id: row.id, ...JSON.parse(row.text) };
-    } catch {
-      return null;
-    }
-  }
-
-  statsBreakdown(): Record<string, number> {
-    const rows = this.liveDb
-      .prepare(
-        `SELECT decay_class, COUNT(*) as cnt FROM facts GROUP BY decay_class`,
-      )
-      .all() as Array<{ decay_class: string; cnt: number }>;
-
-    const stats: Record<string, number> = {};
-    for (const row of rows) {
-      stats[row.decay_class || "unknown"] = row.cnt;
-    }
-    return stats;
-  }
-
-  countExpired(): number {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.liveDb
-      .prepare(
-        `SELECT COUNT(*) as cnt FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`,
-      )
-      .get(nowSec) as { cnt: number };
-    return row.cnt;
-  }
-
-  backfillDecayClasses(): Record<string, number> {
-    const rows = this.liveDb
-      .prepare(`SELECT rowid, entity, key, value, text FROM facts WHERE decay_class = 'stable'`)
-      .all() as Array<{ rowid: number; entity: string; key: string; value: string; text: string }>;
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    const update = this.liveDb.prepare(
-      `UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?`,
-    );
-
-    const counts: Record<string, number> = {};
-    const tx = this.liveDb.transaction(() => {
-      for (const row of rows) {
-        const dc = classifyDecay(row.entity, row.key, row.value, row.text);
-        if (dc === "stable") continue;
-        const exp = calculateExpiry(dc, nowSec);
-        update.run(dc, exp, row.rowid);
-        counts[dc] = (counts[dc] || 0) + 1;
-      }
-    });
-    tx();
-    return counts;
-  }
-
-  getByCategory(category: string): MemoryEntry[] {
-    const rows = this.liveDb
-      .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
-      .all(category) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-      recallCount: (row.recall_count as number) || 0,
-      lastAccessed: (row.last_accessed as number) || null,
-      supersededAt: (row.superseded_at as number) || null,
-      supersededBy: (row.superseded_by as string) || null,
-    }));
-  }
-
-  updateCategory(id: string, category: string): boolean {
-    const result = this.liveDb
-      .prepare("UPDATE facts SET category = ? WHERE id = ?")
-      .run(category, id);
-    return result.changes > 0;
-  }
-
-  /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
-  private get liveDb(): Database.Database {
-    if (!this.db.open) {
-      this.db = new Database(this.dbPath);
-      this.applyPragmas();
-    }
-    return this.db;
-  }
-
-  close(): void {
-    try { this.db.close(); } catch { /* already closed */ }
-  }
-}
+import { WriteAheadLog } from "./backends/wal.js";
+import { VectorDB } from "./backends/vector-db.js";
+import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
+import { registerHybridMemCli } from "./cli/register.js";
+import { Embeddings, safeEmbed } from "./services/embeddings.js";
+import { mergeResults } from "./services/merge-results.js";
+import type { MemoryEntry, SearchResult } from "./types/memory.js";
+import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
+import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay } from "./utils/text.js";
+import {
+  REFLECTION_MAX_FACT_LENGTH,
+  REFLECTION_MAX_FACTS_PER_CATEGORY,
+  CREDENTIAL_NOTES_MAX_CHARS,
+} from "./utils/constants.js";
+import {
+  normalizeTextForDedupe,
+  normalizedHash,
+  TAG_PATTERNS,
+  extractTags,
+  serializeTags,
+  parseTags,
+  tagsContains,
+} from "./utils/tags.js";
+import { parseSourceDate } from "./utils/dates.js";
+import { calculateExpiry, classifyDecay } from "./utils/decay.js";
 
 // ============================================================================
 // Credentials Store (opt-in, encrypted)
@@ -1111,9 +112,7 @@ class CredentialsDB {
     this.key = deriveKey(encryptionKey);
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-
+    this.applyPragmas();
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS credentials (
         service TEXT NOT NULL,
@@ -1132,6 +131,20 @@ class CredentialsDB {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+  }
+
+  /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
+  private get liveDb(): Database.Database {
+    if (!this.db.open) {
+      this.db = new Database(this.dbPath);
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   store(entry: {
     service: string;
     type: CredentialType;
@@ -1142,7 +155,7 @@ class CredentialsDB {
   }): CredentialEntry {
     const now = Math.floor(Date.now() / 1000);
     const encrypted = encryptValue(entry.value, this.key);
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1177,8 +190,8 @@ class CredentialsDB {
 
   get(service: string, type?: CredentialType): CredentialEntry | null {
     const row = type
-      ? (this.db.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as Record<string, unknown> | undefined)
-      : (this.db.prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1").get(service) as Record<string, unknown> | undefined);
+      ? (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as Record<string, unknown> | undefined)
+      : (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1").get(service) as Record<string, unknown> | undefined);
     if (!row) return null;
     const buf = row.value as Buffer;
     const value = decryptValue(buf, this.key);
@@ -1195,7 +208,7 @@ class CredentialsDB {
   }
 
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
-    const rows = this.db.prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type").all() as Array<{
+    const rows = this.liveDb.prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type").all() as Array<{
       service: string;
       type: string;
       url: string | null;
@@ -1206,10 +219,10 @@ class CredentialsDB {
 
   delete(service: string, type?: CredentialType): boolean {
     if (type) {
-      const r = this.db.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, type);
+      const r = this.liveDb.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, type);
       return r.changes > 0;
     }
-    const r = this.db.prepare("DELETE FROM credentials WHERE service = ?").run(service);
+    const r = this.liveDb.prepare("DELETE FROM credentials WHERE service = ?").run(service);
     return r.changes > 0;
   }
 
@@ -1414,333 +427,6 @@ class ProposalsDB {
 }
 
 // ============================================================================
-// Write-Ahead Log (WAL) for Crash Resilience
-// ============================================================================
-
-type WALEntry = {
-  id: string;
-  timestamp: number;
-  operation: "store" | "delete" | "update";
-  data: {
-    text: string;
-    category?: string;
-    importance?: number;
-    entity?: string | null;
-    key?: string | null;
-    value?: string | null;
-    source?: string;
-    decayClass?: DecayClass;
-    summary?: string | null;
-    tags?: string[];
-    vector?: number[];
-  };
-};
-
-/**
- * Write-Ahead Log (WAL) for crash resilience.
- *
- * Before committing memory operations to SQLite/LanceDB, we write them to a
- * WAL file. If the agent crashes during generation, the WAL is replayed on
- * startup to ensure no data loss.
- */
-class WriteAheadLog {
-  private walPath: string;
-  private maxAge: number;
-
-  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
-    this.walPath = walPath;
-    this.maxAge = maxAge;
-    mkdirSync(dirname(walPath), { recursive: true });
-  }
-
-  /**
-   * Write a pending memory operation to the WAL.
-   * This is a synchronous operation to ensure durability before proceeding.
-   */
-  write(entry: WALEntry): void {
-    try {
-      const entries = this.readAll();
-      entries.push(entry);
-      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
-    } catch (err) {
-      throw new Error(`WAL write failed: ${err}`);
-    }
-  }
-
-  /**
-   * Read all pending operations from the WAL.
-   */
-  readAll(): WALEntry[] {
-    try {
-      if (!existsSync(this.walPath)) {
-        return [];
-      }
-      const content = readFileSync(this.walPath, "utf-8");
-      if (!content.trim()) {
-        return [];
-      }
-      const entries = JSON.parse(content) as WALEntry[];
-      return Array.isArray(entries) ? entries : [];
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Remove a specific entry from the WAL after successful commit.
-   */
-  remove(id: string): void {
-    try {
-      const entries = this.readAll();
-      const filtered = entries.filter((e) => e.id !== id);
-      if (filtered.length === 0) {
-        this.clear();
-      } else {
-        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
-      }
-    } catch (err) {
-      throw new Error(`WAL remove failed: ${err}`);
-    }
-  }
-
-  /**
-   * Clear the entire WAL file.
-   */
-  clear(): void {
-    try {
-      if (existsSync(this.walPath)) {
-        rmSync(this.walPath, { force: true });
-      }
-    } catch (err) {
-      throw new Error(`WAL clear failed: ${err}`);
-    }
-  }
-
-  /**
-   * Get entries that are not stale (within maxAge).
-   */
-  getValidEntries(): WALEntry[] {
-    const entries = this.readAll();
-    const now = Date.now();
-    return entries.filter((e) => now - e.timestamp < this.maxAge);
-  }
-
-  /**
-   * Remove stale entries from the WAL.
-   */
-  pruneStale(): number {
-    const entries = this.readAll();
-    const now = Date.now();
-    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
-    const pruned = entries.length - valid.length;
-
-    if (pruned > 0) {
-      if (valid.length === 0) {
-        this.clear();
-      } else {
-        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
-      }
-    }
-
-    return pruned;
-  }
-}
-
-// ============================================================================
-// LanceDB Backend
-// ============================================================================
-
-const LANCE_TABLE = "memories";
-
-class VectorDB {
-  private db: lancedb.Connection | null = null;
-  private table: lancedb.Table | null = null;
-  private initPromise: Promise<void> | null = null;
-
-  constructor(
-    private readonly dbPath: string,
-    private readonly vectorDim: number,
-  ) {}
-
-  private async ensureInitialized(): Promise<void> {
-    if (this.table) return;
-    if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInitialize();
-    return this.initPromise;
-  }
-
-  private async doInitialize(): Promise<void> {
-    this.db = await lancedb.connect(this.dbPath);
-    const tables = await this.db.tableNames();
-
-    if (tables.includes(LANCE_TABLE)) {
-      this.table = await this.db.openTable(LANCE_TABLE);
-    } else {
-      this.table = await this.db.createTable(LANCE_TABLE, [
-        {
-          id: "__schema__",
-          text: "",
-          vector: new Array(this.vectorDim).fill(0),
-          importance: 0,
-          category: "other",
-          createdAt: 0,
-        },
-      ]);
-      await this.table.delete('id = "__schema__"');
-    }
-  }
-
-  async store(entry: {
-    text: string;
-    vector: number[];
-    importance: number;
-    category: string;
-  }): Promise<string> {
-    await this.ensureInitialized();
-    const id = randomUUID();
-    await this.table!.add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
-    return id;
-  }
-
-  async search(
-    vector: number[],
-    limit = 5,
-    minScore = 0.3,
-  ): Promise<SearchResult[]> {
-    await this.ensureInitialized();
-
-    const results = await this.table!.vectorSearch(vector).limit(limit).toArray();
-
-    return results
-      .map((row) => {
-        const distance = row._distance ?? 0;
-        const score = 1 / (1 + distance);
-        return {
-          entry: {
-            id: row.id as string,
-            text: row.text as string,
-            category: row.category as MemoryCategory,
-            importance: row.importance as number,
-            entity: null,
-            key: null,
-            value: null,
-            source: "conversation",
-            createdAt: (row.createdAt as number) > 10_000_000_000
-              ? Math.floor((row.createdAt as number) / 1000)
-              : (row.createdAt as number),
-            decayClass: "stable" as DecayClass,
-            expiresAt: null,
-            lastConfirmedAt: 0,
-            confidence: 1.0,
-          },
-          score,
-          backend: "lancedb" as const,
-        };
-      })
-      .filter((r) => r.score >= minScore);
-  }
-
-  async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
-    await this.ensureInitialized();
-    const results = await this.table!.vectorSearch(vector).limit(1).toArray();
-    if (results.length === 0) return false;
-    const score = 1 / (1 + (results[0]._distance ?? 0));
-    return score >= threshold;
-  }
-
-  async delete(id: string): Promise<boolean> {
-    await this.ensureInitialized();
-    const uuidRegex =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(id)) throw new Error(`Invalid ID: ${id}`);
-    await this.table!.delete(`id = '${id}'`);
-    return true;
-  }
-
-  async count(): Promise<number> {
-    await this.ensureInitialized();
-    return this.table!.countRows();
-  }
-}
-
-// ============================================================================
-// Embeddings
-// ============================================================================
-
-class Embeddings {
-  private client: OpenAI;
-  constructor(
-    apiKey: string,
-    private model: string,
-  ) {
-    this.client = new OpenAI({ apiKey });
-  }
-
-  async embed(text: string): Promise<number[]> {
-    const resp = await this.client.embeddings.create({
-      model: this.model,
-      input: text,
-    });
-    return resp.data[0].embedding;
-  }
-}
-
-// ============================================================================
-// Token estimate (for auto-recall cap)
-// ============================================================================
-
-/** Rough token count (OpenAI-style: ~4 chars per token for English). */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
-// ============================================================================
-// Merge & Deduplicate
-// ============================================================================
-
-function mergeResults(
-  sqliteResults: SearchResult[],
-  lanceResults: SearchResult[],
-  limit: number,
-  factsDb?: FactsDB,
-): SearchResult[] {
-  const seen = new Set<string>();
-  const merged: SearchResult[] = [];
-
-  for (const r of sqliteResults) {
-    if (!seen.has(r.entry.id)) {
-      seen.add(r.entry.id);
-      merged.push(r);
-    }
-  }
-
-  // Build a set of superseded fact texts for filtering LanceDB results
-  const supersededTexts = factsDb ? factsDb.getSupersededTexts() : new Set<string>();
-
-  for (const r of lanceResults) {
-    // Skip if this text matches a superseded fact
-    const isSuperseded = supersededTexts.has(r.entry.text.toLowerCase());
-    const isDupe = merged.some(
-      (m) =>
-        m.entry.id === r.entry.id ||
-        m.entry.text.toLowerCase() === r.entry.text.toLowerCase(),
-    );
-    if (!isDupe && !isSuperseded) {
-      merged.push(r);
-    }
-  }
-
-  merged.sort((a, b) => {
-    const s = b.score - a.score;
-    if (s !== 0) return s;
-    const da = a.entry.sourceDate ?? a.entry.createdAt;
-    const db = b.entry.sourceDate ?? b.entry.createdAt;
-    return db - da;
-  });
-  return merged.slice(0, limit);
-}
-
-// ============================================================================
 // FR-008: Memory Operation Classification (ADD/UPDATE/DELETE/NOOP)
 // ============================================================================
 
@@ -1778,25 +464,13 @@ async function classifyMemoryOperation(
     )
     .join("\n");
 
-  const prompt = `You are a memory classifier. A new fact is being stored. Compare it against existing facts and decide what to do.
-
-New fact: "${candidateText.slice(0, 500)}"${candidateEntity ? `\nEntity: ${candidateEntity}` : ""}${candidateKey ? `\nKey: ${candidateKey}` : ""}
-
-Existing similar facts:
-${existingLines}
-
-Classify as one of:
-- ADD: The new fact is genuinely new information not covered by any existing fact.
-- UPDATE <id>: The new fact supersedes or updates an existing fact (e.g., a preference changed, a value was corrected). Specify which existing fact id it replaces.
-- DELETE <id>: The new fact explicitly retracts or negates an existing fact (e.g., "I no longer use X"). Specify which fact to invalidate.
-- NOOP: The new fact is already adequately captured by existing facts. No action needed.
-
-Respond with exactly one line in this format: ACTION [id] | reason
-Examples:
-  ADD | this is new information about the user's work setup
-  UPDATE abc-123 | user changed their preferred IDE from VS Code to Cursor
-  DELETE def-456 | user explicitly stated they no longer use Docker
-  NOOP | this preference is already stored as fact #2`;
+  const template = loadPrompt("memory-classify");
+  const prompt = fillPrompt(template, {
+    NEW_FACT: candidateText.slice(0, 500),
+    ENTITY_LINE: candidateEntity ? `\nEntity: ${candidateEntity}` : "",
+    KEY_LINE: candidateKey ? `\nKey: ${candidateKey}` : "",
+    EXISTING_FACTS: existingLines,
+  });
 
   try {
     const resp = await openai.chat.completions.create({
@@ -1835,51 +509,21 @@ Examples:
   }
 }
 
-// ============================================================================
-// Decay Classification & TTL
-// ============================================================================
-
-function calculateExpiry(
-  decayClass: DecayClass,
-  fromTimestamp = Math.floor(Date.now() / 1000),
-): number | null {
-  const ttl = TTL_DEFAULTS[decayClass];
-  return ttl ? fromTimestamp + ttl : null;
-}
-
-function classifyDecay(
-  entity: string | null,
-  key: string | null,
-  value: string | null,
-  text: string,
-): DecayClass {
-  const keyLower = (key || "").toLowerCase();
-  const textLower = text.toLowerCase();
-
-  const permanentKeys = [
-    "name", "email", "api_key", "api_endpoint", "architecture",
-    "decision", "birthday", "born", "phone", "language", "location",
-  ];
-  if (permanentKeys.some((k) => keyLower.includes(k))) return "permanent";
-  if (/\b(decided|architecture|always use|never use)\b/i.test(textLower))
-    return "permanent";
-
-  if (entity === "decision" || entity === "convention") return "permanent";
-
-  const sessionKeys = ["current_file", "temp", "debug", "working_on_right_now"];
-  if (sessionKeys.some((k) => keyLower.includes(k))) return "session";
-  if (/\b(currently debugging|right now|this session)\b/i.test(textLower))
-    return "session";
-
-  const activeKeys = ["task", "todo", "wip", "branch", "sprint", "blocker"];
-  if (activeKeys.some((k) => keyLower.includes(k))) return "active";
-  if (/\b(working on|need to|todo|blocker|sprint)\b/i.test(textLower))
-    return "active";
-
-  if (keyLower.includes("checkpoint") || keyLower.includes("preflight"))
-    return "checkpoint";
-
-  return "stable";
+/** FR-008: Get top-N existing facts by embedding similarity. Resolves vector search ids via factsDb (filters superseded). Falls back to empty array on vector search failure. */
+async function findSimilarByEmbedding(
+  vectorDb: VectorDB,
+  factsDb: { getById(id: string): MemoryEntry | null },
+  vector: number[],
+  limit: number,
+  minScore = 0.3,
+): Promise<MemoryEntry[]> {
+  const results = await vectorDb.search(vector, limit, minScore);
+  const entries: MemoryEntry[] = [];
+  for (const r of results) {
+    const entry = factsDb.getById(r.entry.id);
+    if (entry && entry.supersededAt == null) entries.push(entry);
+  }
+  return entries;
 }
 
 // ============================================================================
@@ -2074,7 +718,7 @@ function tryParseCredentialForVault(
     service: serviceSlug,
     type: typeFromPattern,
     secretValue,
-    notes: text.length <= 500 ? text : text.slice(0, 497) + "...",
+    notes: text.length <= CREDENTIAL_NOTES_MAX_CHARS ? text : truncateText(text, CREDENTIAL_NOTES_MAX_CHARS - 3, "..."),
   };
 }
 
@@ -2144,7 +788,7 @@ async function migrateCredentialsToVault(opts: {
       }
       const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
       const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
-      factsDb.store({
+      const pointerEntry = factsDb.store({
         text: pointerText,
         category: "technical" as MemoryCategory,
         importance: 0.8,
@@ -2163,6 +807,7 @@ async function migrateCredentialsToVault(opts: {
             vector,
             importance: 0.8,
             category: "technical",
+            id: pointerEntry.id,
           });
         }
       } catch (e) {
@@ -2329,7 +974,8 @@ async function runConsolidate(
   let deleted = 0;
   for (const clusterIds of clusters) {
     const texts = clusterIds.map((id) => idToFact.get(id)!.text);
-    const prompt = `You are a memory consolidator. Merge the following facts into one concise fact. Preserve key information. Output only the merged fact, no explanation.\n\n${texts.map((t, i) => `${i + 1}. ${t}`).join("\n")}`;
+    const factsList = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
+    const prompt = fillPrompt(loadPrompt("consolidate"), { facts_list: factsList });
     let mergedText: string;
     try {
       const resp = await openai.chat.completions.create({
@@ -2373,7 +1019,7 @@ async function runConsolidate(
     });
     try {
       const vector = await embeddings.embed(mergedText);
-      await vectorDb.store({ text: mergedText, vector, importance: 0.8, category });
+      await vectorDb.store({ text: mergedText, vector, importance: 0.8, category, id: entry.id });
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
     }
@@ -2385,6 +1031,407 @@ async function runConsolidate(
   }
 
   return { clustersFound: clusters.length, merged, deleted };
+}
+
+const REFLECTION_PATTERN_MIN_CHARS = 20;
+const REFLECTION_PATTERN_MAX_CHARS = 500;
+const REFLECTION_DEDUPE_THRESHOLD = 0.85;
+/** Rules: short one-liners (FR-011 optional Rules layer). */
+const REFLECTION_RULE_MIN_CHARS = 10;
+const REFLECTION_RULE_MAX_CHARS = 120;
+/** Meta-patterns: 1-2 sentences (FR-011 optional Reflection on reflections). */
+const REFLECTION_META_MIN_CHARS = 20;
+const REFLECTION_META_MAX_CHARS = 300;
+const REFLECTION_MAX_PATTERNS_FOR_RULES = 50;
+const REFLECTION_MAX_PATTERNS_FOR_META = 30;
+
+function normalizeVector(v: number[]): number[] {
+  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+  return v.map((x) => x / norm);
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  return a.reduce((s, x, i) => s + x * b[i], 0);
+}
+
+/**
+ * FR-011: Run reflection — gather recent facts, call LLM to extract patterns, dedupe, store.
+ */
+async function runReflection(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: Embeddings,
+  openai: OpenAI,
+  config: { defaultWindow: number; minObservations: number },
+  opts: { window: number; dryRun: boolean; model: string },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }> {
+  const windowDays = Math.min(90, Math.max(1, opts.window));
+  const windowStartSec = Math.floor(Date.now() / 1000) - windowDays * 86400;
+
+  const allFacts = factsDb.getAll();
+  const recentFacts = allFacts.filter((f) => {
+    const ts = f.sourceDate ?? f.createdAt;
+    return ts >= windowStartSec && f.category !== "pattern" && f.category !== "rule";
+  });
+
+  if (recentFacts.length < config.minObservations) {
+    logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
+  }
+
+  // Group by category, cap length and count
+  const byCategory = new Map<string, MemoryEntry[]>();
+  for (const f of recentFacts) {
+    const cat = f.category;
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    const arr = byCategory.get(cat)!;
+    if (arr.length >= REFLECTION_MAX_FACTS_PER_CATEGORY) continue;
+    arr.push(f);
+  }
+
+  const factLines: string[] = [];
+  for (const [cat, entries] of byCategory) {
+    for (const e of entries) {
+      const text = e.text.slice(0, REFLECTION_MAX_FACT_LENGTH).trim();
+      if (text.length < 10) continue;
+      factLines.push(`[${cat}] ${text}`);
+    }
+  }
+  const factsBlock = factLines.join("\n");
+  const prompt = fillPrompt(loadPrompt("reflection"), { window: String(windowDays), facts: factsBlock });
+
+  let rawResponse: string;
+  try {
+    const resp = await openai.chat.completions.create({
+      model: opts.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 1500,
+    });
+    rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
+  } catch (err) {
+    logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
+  }
+
+  const patterns: string[] = [];
+  for (const line of rawResponse.split(/\n/)) {
+    const m = line.match(/^\s*PATTERN:\s*(.+)/);
+    if (!m) continue;
+    const text = m[1].trim();
+    if (text.length >= REFLECTION_PATTERN_MIN_CHARS && text.length <= REFLECTION_PATTERN_MAX_CHARS) {
+      patterns.push(text);
+    }
+  }
+
+  // Deduplicate within batch (first occurrence wins)
+  const seenInBatch = new Set<string>();
+  const uniqueNewPatterns: string[] = [];
+  for (const p of patterns) {
+    const key = p.toLowerCase().replace(/\s+/g, " ");
+    if (seenInBatch.has(key)) continue;
+    seenInBatch.add(key);
+    uniqueNewPatterns.push(p);
+  }
+
+  if (uniqueNewPatterns.length === 0) {
+    logger.info(`memory-hybrid: reflection — 0 patterns extracted from LLM`);
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: 0, window: windowDays };
+  }
+
+  // Existing patterns (non-superseded, still valid) for dedupe
+  const nowSec = Math.floor(Date.now() / 1000);
+  const existingPatternFacts = factsDb.getByCategory("pattern").filter(
+    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  );
+  let existingVectors: number[][] = [];
+  if (existingPatternFacts.length > 0) {
+    for (let i = 0; i < existingPatternFacts.length; i += 20) {
+      const batch = existingPatternFacts.slice(i, i + 20);
+      for (const f of batch) {
+        try {
+          const vec = await embeddings.embed(f.text);
+          existingVectors.push(normalizeVector(vec));
+        } catch {
+          existingVectors.push([]);
+        }
+      }
+      if (i + 20 < existingPatternFacts.length) await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  let stored = 0;
+  for (const patternText of uniqueNewPatterns) {
+    const vec = await embeddings.embed(patternText);
+    const normVec = normalizeVector(vec);
+    let isDuplicate = false;
+    for (const ev of existingVectors) {
+      if (ev.length === 0) continue;
+      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    if (isDuplicate) continue;
+
+    if (opts.dryRun) {
+      logger.info(`memory-hybrid: reflection [dry-run] would store: ${patternText.slice(0, 60)}...`);
+      stored++;
+      continue;
+    }
+
+    const entry = factsDb.store({
+      text: patternText,
+      category: "pattern" as MemoryCategory,
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+      decayClass: "permanent",
+      tags: ["reflection", "pattern"],
+    });
+    try {
+      await vectorDb.store({
+        text: patternText,
+        vector: vec,
+        importance: 0.9,
+        category: "pattern",
+        id: entry.id,
+      });
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
+    }
+    existingVectors.push(normVec);
+    stored++;
+  }
+
+  return {
+    factsAnalyzed: recentFacts.length,
+    patternsExtracted: patterns.length,
+    patternsStored: stored,
+    window: windowDays,
+  };
+}
+
+/**
+ * FR-011 optional: Rules layer — synthesize patterns into actionable one-line rules (category "rule").
+ */
+async function runReflectionRules(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: Embeddings,
+  openai: OpenAI,
+  opts: { dryRun: boolean; model: string },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ rulesExtracted: number; rulesStored: number }> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const patternFacts = factsDb.getByCategory("pattern").filter(
+    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  );
+  const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_RULES).map((f) => f.text);
+  if (patterns.length < 2) {
+    logger.info(`memory-hybrid: reflect-rules — need at least 2 patterns, have ${patterns.length}`);
+    return { rulesExtracted: 0, rulesStored: 0 };
+  }
+  const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
+  const prompt = fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock });
+  let rawResponse: string;
+  try {
+    const resp = await openai.chat.completions.create({
+      model: opts.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 800,
+    });
+    rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
+  } catch (err) {
+    logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
+    return { rulesExtracted: 0, rulesStored: 0 };
+  }
+  const rules: string[] = [];
+  for (const line of rawResponse.split(/\n/)) {
+    const m = line.match(/^\s*RULE:\s*(.+)/);
+    if (!m) continue;
+    const text = m[1].trim();
+    if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) rules.push(text);
+  }
+  const seenInBatch = new Set<string>();
+  const uniqueRules: string[] = [];
+  for (const r of rules) {
+    const key = r.toLowerCase().replace(/\s+/g, " ");
+    if (seenInBatch.has(key)) continue;
+    seenInBatch.add(key);
+    uniqueRules.push(r);
+  }
+  if (uniqueRules.length === 0) {
+    logger.info("memory-hybrid: reflect-rules — 0 rules extracted from LLM");
+    return { rulesExtracted: rules.length, rulesStored: 0 };
+  }
+  const existingRuleFacts = factsDb.getByCategory("rule").filter(
+    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  );
+  let existingVectors: number[][] = [];
+  for (let i = 0; i < existingRuleFacts.length; i += 20) {
+    const batch = existingRuleFacts.slice(i, i + 20);
+    for (const f of batch) {
+      try {
+        existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
+      } catch {
+        existingVectors.push([]);
+      }
+    }
+    if (i + 20 < existingRuleFacts.length) await new Promise((r) => setTimeout(r, 200));
+  }
+  let stored = 0;
+  for (const ruleText of uniqueRules) {
+    const vec = await embeddings.embed(ruleText);
+    const normVec = normalizeVector(vec);
+    let isDuplicate = false;
+    for (const ev of existingVectors) {
+      if (ev.length === 0) continue;
+      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    if (isDuplicate) continue;
+    if (opts.dryRun) {
+      logger.info(`memory-hybrid: reflect-rules [dry-run] would store: ${ruleText.slice(0, 50)}...`);
+      stored++;
+      continue;
+    }
+    const entry = factsDb.store({
+      text: ruleText,
+      category: "rule" as MemoryCategory,
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+      decayClass: "permanent",
+      tags: ["reflection", "rule"],
+    });
+    try {
+      await vectorDb.store({ text: ruleText, vector: vec, importance: 0.9, category: "rule", id: entry.id });
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
+    }
+    existingVectors.push(normVec);
+    stored++;
+  }
+  return { rulesExtracted: rules.length, rulesStored: stored };
+}
+
+/**
+ * FR-011 optional: Reflection on reflections — synthesize patterns into 1-3 meta-patterns (stored as pattern + meta tag).
+ */
+async function runReflectionMeta(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: Embeddings,
+  openai: OpenAI,
+  opts: { dryRun: boolean; model: string },
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ metaExtracted: number; metaStored: number }> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const patternFacts = factsDb.getByCategory("pattern").filter(
+    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  );
+  const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_META).map((f) => f.text);
+  if (patterns.length < 3) {
+    logger.info(`memory-hybrid: reflect-meta — need at least 3 patterns, have ${patterns.length}`);
+    return { metaExtracted: 0, metaStored: 0 };
+  }
+  const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
+  const prompt = fillPrompt(loadPrompt("reflection-meta"), { patterns: patternsBlock });
+  let rawResponse: string;
+  try {
+    const resp = await openai.chat.completions.create({
+      model: opts.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 500,
+    });
+    rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
+  } catch (err) {
+    logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
+    return { metaExtracted: 0, metaStored: 0 };
+  }
+  const metas: string[] = [];
+  for (const line of rawResponse.split(/\n/)) {
+    const m = line.match(/^\s*META:\s*(.+)/);
+    if (!m) continue;
+    const text = m[1].trim();
+    if (text.length >= REFLECTION_META_MIN_CHARS && text.length <= REFLECTION_META_MAX_CHARS) metas.push(text);
+  }
+  const seenInBatch = new Set<string>();
+  const uniqueMetas: string[] = [];
+  for (const x of metas) {
+    const key = x.toLowerCase().replace(/\s+/g, " ");
+    if (seenInBatch.has(key)) continue;
+    seenInBatch.add(key);
+    uniqueMetas.push(x);
+  }
+  if (uniqueMetas.length === 0) {
+    logger.info("memory-hybrid: reflect-meta — 0 meta-patterns extracted from LLM");
+    return { metaExtracted: metas.length, metaStored: 0 };
+  }
+  const existingMetaFacts = factsDb.getByCategory("pattern").filter(
+    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && (f.tags?.includes("meta") === true),
+  );
+  let existingVectors: number[][] = [];
+  for (let i = 0; i < existingMetaFacts.length; i += 20) {
+    const batch = existingMetaFacts.slice(i, i + 20);
+    for (const f of batch) {
+      try {
+        existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
+      } catch {
+        existingVectors.push([]);
+      }
+    }
+    if (i + 20 < existingMetaFacts.length) await new Promise((r) => setTimeout(r, 200));
+  }
+  let stored = 0;
+  for (const metaText of uniqueMetas) {
+    const vec = await embeddings.embed(metaText);
+    const normVec = normalizeVector(vec);
+    let isDuplicate = false;
+    for (const ev of existingVectors) {
+      if (ev.length === 0) continue;
+      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    if (isDuplicate) continue;
+    if (opts.dryRun) {
+      logger.info(`memory-hybrid: reflect-meta [dry-run] would store: ${metaText.slice(0, 50)}...`);
+      stored++;
+      continue;
+    }
+    const entry = factsDb.store({
+      text: metaText,
+      category: "pattern" as MemoryCategory,
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+      decayClass: "permanent",
+      tags: ["reflection", "pattern", "meta"],
+    });
+    try {
+      await vectorDb.store({ text: metaText, vector: vec, importance: 0.9, category: "pattern", id: entry.id });
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);
+    }
+    existingVectors.push(normVec);
+    stored++;
+  }
+  return { metaExtracted: metas.length, metaStored: stored };
 }
 
 /**
@@ -2420,34 +1467,30 @@ async function runFindDuplicates(
     const batch = ids.slice(i, i + 20);
     for (const id of batch) {
       const f = idToFact.get(id)!;
-      try {
-        const vec = await embeddings.embed(f.text);
-        vectors.push(vec);
-      } catch (err) {
-        logger.warn(`memory-hybrid: find-duplicates embed failed for ${id}: ${err}`);
-        vectors.push([]);
-      }
+      const vec = await safeEmbed(embeddings, f.text, (msg) => logger.warn(msg));
+      vectors.push(vec ?? []);
     }
     if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
   }
 
+  const idToIndex = new Map(ids.map((id, idx) => [id, idx]));
   const pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }> = [];
+  const searchLimit = Math.min(100, ids.length);
+
+  // Use LanceDB vector search (indexed) instead of O(n²) pairwise loop
   for (let i = 0; i < ids.length; i++) {
     const vi = vectors[i];
     if (vi.length === 0) continue;
-    for (let j = i + 1; j < ids.length; j++) {
-      const vj = vectors[j];
-      if (vj.length === 0) continue;
-      const score = vi.reduce((s, v, k) => s + v * vj[k], 0);
-      if (score >= opts.threshold) {
-        const idA = ids[i];
-        const idB = ids[j];
+    const results = await vectorDb.search(vi, searchLimit, opts.threshold);
+    for (const r of results) {
+      const j = idToIndex.get(r.entry.id);
+      if (j !== undefined && j > i) {
         pairs.push({
-          idA,
-          idB,
-          score,
-          textA: idToFact.get(idA)!.text,
-          textB: idToFact.get(idB)!.text,
+          idA: ids[i],
+          idB: ids[j],
+          score: r.score,
+          textA: idToFact.get(ids[i])!.text,
+          textB: idToFact.get(ids[j])!.text,
         });
       }
     }
@@ -2501,12 +1544,12 @@ async function discoverCategoriesFromOther(
   for (let i = 0; i < others.length; i += DISCOVERY_BATCH_SIZE) {
     const batch = others.slice(i, i + DISCOVERY_BATCH_SIZE);
     const factLines = batch.map((f, idx) => `${idx + 1}. ${f.text.slice(0, 280)}`).join("\n");
-    const prompt = `For each fact below, assign a short category label (1–2 words) that describes its topic or type. Use the same label for facts about the same topic. Output only a JSON array of strings, one label per fact in the same order. No explanation.`;
+    const prompt = fillPrompt(loadPrompt("category-discovery"), { facts: factLines });
 
     try {
       const resp = await openai.chat.completions.create({
         model: config.model,
-        messages: [{ role: "user", content: `${prompt}\n\nFacts:\n${factLines}` }],
+        messages: [{ role: "user", content: prompt }],
         temperature: 0,
         max_tokens: batch.length * 24,
       });
@@ -2680,6 +1723,9 @@ let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
 
+/** FR-009: Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
+let lastProgressiveIndexIds: string[] = [];
+
 const PLUGIN_ID = "openclaw-hybrid-memory";
 
 const memoryHybridPlugin = {
@@ -2692,6 +1738,39 @@ const memoryHybridPlugin = {
   versionInfo,
 
   register(api: ClawdbotPluginApi) {
+    // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
+    // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
+    if (typeof factsDb?.close === "function") {
+      try {
+        factsDb.close();
+      } catch {
+        // ignore
+      }
+    }
+    if (typeof vectorDb?.close === "function") {
+      try {
+        vectorDb.close();
+      } catch {
+        // ignore
+      }
+    }
+    if (credentialsDb) {
+      try {
+        credentialsDb.close();
+      } catch {
+        // ignore
+      }
+      credentialsDb = null;
+    }
+    if (proposalsDb) {
+      try {
+        proposalsDb.close();
+      } catch {
+        // ignore
+      }
+      proposalsDb = null;
+    }
+
     cfg = hybridConfigSchema.parse(api.pluginConfig);
     resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
     resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
@@ -2699,6 +1778,7 @@ const memoryHybridPlugin = {
 
     factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
     vectorDb = new VectorDB(resolvedLancePath, vectorDim);
+    vectorDb.setLogger(api.logger);
     embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
     openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
@@ -2806,7 +1886,17 @@ const memoryHybridPlugin = {
         description:
           "Search through long-term memories using both structured (exact) and semantic (fuzzy) search.",
         parameters: Type.Object({
-          query: Type.String({ description: "Search query" }),
+          query: Type.Optional(
+            Type.String({
+              description: "Search query (omit when using id to fetch a specific memory)",
+            }),
+          ),
+          id: Type.Optional(
+            Type.Union([Type.String(), Type.Number()], {
+              description:
+                "Fetch a specific memory: fact id (UUID string) or 1-based index from the last progressive index (e.g. 1 for first listed memory).",
+            }),
+          ),
           limit: Type.Optional(
             Type.Number({ description: "Max results (default: 5)" }),
           ),
@@ -2820,21 +1910,114 @@ const memoryHybridPlugin = {
               description: "Optional: filter by topic tag (e.g. nibe, zigbee)",
             }),
           ),
+          includeSuperseded: Type.Optional(
+            Type.Boolean({
+              description: "FR-010: Include superseded (historical) facts in results. Default: only current facts.",
+            }),
+          ),
+          asOf: Type.Optional(
+            Type.String({
+              description: "FR-010: Point-in-time query: ISO date (YYYY-MM-DD) or epoch seconds. Return only facts valid at that time.",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
-            query,
+            query: queryParam,
+            id: idParam,
             limit = 5,
             entity,
             tag,
-          } = params as { query: string; limit?: number; entity?: string; tag?: string };
+            includeSuperseded = false,
+            asOf: asOfParam,
+          } = params as {
+            query?: string;
+            id?: string | number;
+            limit?: number;
+            entity?: string;
+            tag?: string;
+            includeSuperseded?: boolean;
+            asOf?: string;
+          };
+          const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
 
-          let sqliteResults: SearchResult[] = [];
-          if (entity) {
-            sqliteResults = factsDb.lookup(entity, undefined, tag);
+          // FR-009: Fetch by id (fact id or 1-based index from last progressive index)
+          if (idParam !== undefined && idParam !== null && idParam !== "") {
+            let factId: string | null = null;
+            if (typeof idParam === "number") {
+              const idx = Math.floor(idParam);
+              if (idx >= 1 && idx <= lastProgressiveIndexIds.length) {
+                factId = lastProgressiveIndexIds[idx - 1] ?? null;
+              }
+            } else if (typeof idParam === "string" && idParam.trim().length > 0) {
+              factId = idParam.trim();
+            }
+            if (factId) {
+              const entry = factsDb.getById(factId);
+              if (entry) {
+                const text = `[${entry.category}] ${entry.text}`;
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Memory (id: ${entry.id}):\n\n${text}`,
+                    },
+                  ],
+                  details: {
+                    count: 1,
+                    memories: [
+                      {
+                        id: entry.id,
+                        text: entry.text,
+                        category: entry.category,
+                        entity: entry.entity,
+                        importance: entry.importance,
+                        score: 1,
+                        backend: "sqlite" as const,
+                        tags: entry.tags?.length ? entry.tags : undefined,
+                        sourceDate: entry.sourceDate
+                          ? new Date(entry.sourceDate * 1000).toISOString().slice(0, 10)
+                          : undefined,
+                      },
+                    ],
+                  },
+                };
+              }
+            }
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    typeof idParam === "number"
+                      ? `No memory at index ${idParam}. Use a number between 1 and ${lastProgressiveIndexIds.length} from the index, or provide a fact id.`
+                      : `No memory found with id: ${idParam}.`,
+                },
+              ],
+              details: { count: 0 },
+            };
           }
 
-          const ftsResults = factsDb.search(query, limit, { tag });
+          const query = typeof queryParam === "string" && queryParam.trim().length > 0 ? queryParam.trim() : null;
+          if (!query) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Provide a search query or an id (fact id or index from the memory index) to recall memories.",
+                },
+              ],
+              details: { count: 0 },
+            };
+          }
+
+          const recallOpts = { tag, includeSuperseded, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+          let sqliteResults: SearchResult[] = [];
+          if (entity) {
+            sqliteResults = factsDb.lookup(entity, undefined, tag, recallOpts);
+          }
+
+          const ftsResults = factsDb.search(query, limit, recallOpts);
           sqliteResults = [...sqliteResults, ...ftsResults];
 
           let lanceResults: SearchResult[] = [];
@@ -2847,7 +2030,26 @@ const memoryHybridPlugin = {
             }
           }
 
-          const results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
+          let results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
+
+          // FR-007: Graph traversal — expand results with connected facts when enabled
+          if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
+            const initialIds = new Set(results.map((r) => r.entry.id));
+            const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
+            const extraIds = connectedIds.filter((id) => !initialIds.has(id));
+            for (const id of extraIds) {
+              const entry = factsDb.getById(id);
+              if (entry) {
+                results.push({
+                  entry,
+                  score: 0.45,
+                  backend: "sqlite",
+                });
+              }
+            }
+            results.sort((a, b) => b.score - a.score);
+            results = results.slice(0, limit);
+          }
 
           if (results.length === 0) {
             return {
@@ -2928,6 +2130,11 @@ const memoryHybridPlugin = {
               description: "Topic tags for sharper retrieval (e.g. nibe, zigbee). Auto-inferred if omitted.",
             }),
           ),
+          supersedes: Type.Optional(
+            Type.String({
+              description: "FR-010: Fact id this one supersedes (replaces). Marks the old fact as superseded and links the new one.",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
@@ -2939,6 +2146,7 @@ const memoryHybridPlugin = {
             value: paramValue,
             decayClass: paramDecayClass,
             tags: paramTags,
+            supersedes,
           } = params as {
             text: string;
             importance?: number;
@@ -2948,12 +2156,11 @@ const memoryHybridPlugin = {
             value?: string;
             decayClass?: DecayClass;
             tags?: string[];
+            supersedes?: string;
           };
 
           let textToStore = text;
-          if (textToStore.length > cfg.captureMaxChars) {
-            textToStore = textToStore.slice(0, cfg.captureMaxChars).trim() + " [truncated]";
-          }
+          textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
 
           if (factsDb.hasDuplicate(textToStore)) {
             return {
@@ -3002,6 +2209,7 @@ const memoryHybridPlugin = {
                     vector,
                     importance,
                     category: "technical",
+                    id: pointerEntry.id,
                   });
                 }
               } catch (err) {
@@ -3042,9 +2250,12 @@ const memoryHybridPlugin = {
             api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
           }
 
-          // FR-008: Classify the operation before storing
-          if (cfg.store.classifyBeforeWrite) {
-            const similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
+          // FR-008: Classify the operation before storing (use embedding similarity per issue #8)
+          if (cfg.store.classifyBeforeWrite && vector) {
+            let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+            if (similarFacts.length === 0) {
+              similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
+            }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
                 textToStore, entity, key, similarFacts, openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
@@ -3095,7 +2306,8 @@ const memoryHybridPlugin = {
                     }
                   }
 
-                  // Store the new version and supersede the old one
+                  // Store the new version and supersede the old one (FR-010: bi-temporal)
+                  const nowSec = Math.floor(Date.now() / 1000);
                   const newEntry = factsDb.store({
                     text: textToStore,
                     category: category as MemoryCategory,
@@ -3107,13 +2319,15 @@ const memoryHybridPlugin = {
                     decayClass: paramDecayClass ?? oldFact.decayClass,
                     summary,
                     tags,
+                    validFrom: nowSec,
+                    supersedesId: classification.targetId,
                   });
                   factsDb.supersede(classification.targetId, newEntry.id);
 
                   const finalImportance = Math.max(importance, oldFact.importance);
                   try {
                     if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                      await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category });
+                      await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
                     }
                   } catch (err) {
                     api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -3173,7 +2387,8 @@ const memoryHybridPlugin = {
             }
           }
 
-          // Now commit to actual storage
+          // Now commit to actual storage (FR-010: optional supersedes for manual supersession)
+          const nowSec = Math.floor(Date.now() / 1000);
           const entry = factsDb.store({
             text: textToStore,
             category: category as MemoryCategory,
@@ -3185,7 +2400,13 @@ const memoryHybridPlugin = {
             decayClass: paramDecayClass,
             summary,
             tags,
+            ...(supersedes?.trim()
+              ? { validFrom: nowSec, supersedesId: supersedes.trim() }
+              : {}),
           });
+          if (supersedes?.trim()) {
+            factsDb.supersede(supersedes.trim(), entry.id);
+          }
 
           try {
             if (vector && !(await vectorDb.hasDuplicate(vector))) {
@@ -3194,6 +2415,7 @@ const memoryHybridPlugin = {
                 vector,
                 importance,
                 category,
+                id: entry.id,
               });
             }
           } catch (err) {
@@ -3209,14 +2431,42 @@ const memoryHybridPlugin = {
             }
           }
 
+          // FR-007: Auto-link to similar facts when enabled
+          let autoLinked = 0;
+          if (cfg.graph.enabled && cfg.graph.autoLink) {
+            const similar = factsDb.findSimilarForClassification(
+              textToStore,
+              entity ?? null,
+              key ?? null,
+              cfg.graph.autoLinkLimit,
+            );
+            for (const s of similar) {
+              if (s.id === entry.id) continue;
+              factsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
+              autoLinked++;
+            }
+          }
+
+          const storedMsg =
+            `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]` +
+            (supersedes?.trim() ? " (supersedes previous fact)" : "") +
+            (autoLinked > 0 ? ` (linked to ${autoLinked} related fact${autoLinked === 1 ? "" : "s"})` : "");
+
           return {
             content: [
               {
                 type: "text",
-                text: `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]`,
+                text: storedMsg,
               },
             ],
-            details: { action: "created", id: entry.id, backend: "both", decayClass: entry.decayClass },
+            details: {
+              action: supersedes?.trim() ? "updated" : "created",
+              id: entry.id,
+              backend: "both",
+              decayClass: entry.decayClass,
+              ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
+              ...(autoLinked > 0 ? { autoLinked } : {}),
+            },
           };
         },
       },
@@ -3247,7 +2497,9 @@ const memoryHybridPlugin = {
             let lanceDeleted = false;
             try {
               lanceDeleted = await vectorDb.delete(memoryId);
-            } catch {}
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
+            }
 
             return {
               content: [
@@ -3266,7 +2518,9 @@ const memoryHybridPlugin = {
             try {
               const vector = await embeddings.embed(query);
               lanceResults = await vectorDb.search(vector, 5, 0.7);
-            } catch {}
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
+            }
 
             const results = mergeResults(sqlResults, lanceResults, 5, factsDb);
 
@@ -3284,7 +2538,9 @@ const memoryHybridPlugin = {
               factsDb.delete(id);
               try {
                 await vectorDb.delete(id);
-              } catch {}
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: LanceDB delete during supersede failed: ${err}`);
+              }
               return {
                 content: [
                   {
@@ -3330,6 +2586,108 @@ const memoryHybridPlugin = {
       },
       { name: "memory_forget" },
     );
+
+    // FR-007: Graph tools (when graph enabled)
+    if (cfg.graph.enabled) {
+      api.registerTool(
+        {
+          name: "memory_link",
+          label: "Memory Link",
+          description:
+            "Create a typed relationship between two memories. Link types: SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON.",
+          parameters: Type.Object({
+            sourceFact: Type.String({ description: "ID of the source fact" }),
+            targetFact: Type.String({ description: "ID of the target fact" }),
+            linkType: stringEnum(MEMORY_LINK_TYPES as unknown as readonly string[]),
+            strength: Type.Optional(
+              Type.Number({ description: "Link strength 0.0-1.0 (default 1.0)" }),
+            ),
+          }),
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
+            const { sourceFact, targetFact, linkType, strength = 1.0 } = params as {
+              sourceFact: string;
+              targetFact: string;
+              linkType: MemoryLinkType;
+              strength?: number;
+            };
+            const src = factsDb.getById(sourceFact);
+            const tgt = factsDb.getById(targetFact);
+            if (!src) {
+              return {
+                content: [{ type: "text", text: `Source fact not found: ${sourceFact}` }],
+                details: { error: "source_not_found", id: sourceFact },
+              };
+            }
+            if (!tgt) {
+              return {
+                content: [{ type: "text", text: `Target fact not found: ${targetFact}` }],
+                details: { error: "target_not_found", id: targetFact },
+              };
+            }
+            const linkId = factsDb.createLink(sourceFact, targetFact, linkType, strength);
+            const msg = `Created ${linkType} link from "${src.text.slice(0, 50)}${src.text.length > 50 ? "…" : ""}" to "${tgt.text.slice(0, 50)}${tgt.text.length > 50 ? "…" : ""}" (strength: ${strength})`;
+            return {
+              content: [{ type: "text", text: msg }],
+              details: { linkId, sourceFact, targetFact, linkType, strength },
+            };
+          },
+        },
+        { name: "memory_link" },
+      );
+
+      api.registerTool(
+        {
+          name: "memory_graph",
+          label: "Memory Graph",
+          description: "Explore connections from a memory: show direct links and optionally traverse up to depth 3.",
+          parameters: Type.Object({
+            factId: Type.String({ description: "ID of the fact to explore" }),
+            depth: Type.Optional(
+              Type.Number({ description: "Max hops to traverse (default 2, max 3)" }),
+            ),
+          }),
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
+            const { factId, depth = 2 } = params as { factId: string; depth?: number };
+            const fact = factsDb.getById(factId);
+            if (!fact) {
+              return {
+                content: [{ type: "text", text: `Fact not found: ${factId}` }],
+                details: { error: "not_found", id: factId },
+              };
+            }
+            const maxD = Math.min(3, Math.max(1, depth));
+            const out = factsDb.getLinksFrom(factId);
+            const in_ = factsDb.getLinksTo(factId);
+            const lines: string[] = [
+              `Fact: "${fact.text.slice(0, 80)}${fact.text.length > 80 ? "…" : ""}"`,
+              "",
+              "Direct links:",
+            ];
+            for (const l of out) {
+              const t = factsDb.getById(l.targetFactId);
+              lines.push(`  → [${l.linkType}] ${t ? t.text.slice(0, 60) + (t.text.length > 60 ? "…" : "") : l.targetFactId} (strength: ${l.strength.toFixed(2)})`);
+            }
+            for (const l of in_) {
+              const s = factsDb.getById(l.sourceFactId);
+              lines.push(`  ← [${l.linkType}] ${s ? s.text.slice(0, 60) + (s.text.length > 60 ? "…" : "") : l.sourceFactId} (strength: ${l.strength.toFixed(2)})`);
+            }
+            const connectedIds = factsDb.getConnectedFactIds([factId], maxD);
+            lines.push("");
+            lines.push(`Total connected facts (depth ${maxD}): ${connectedIds.length}`);
+            return {
+              content: [{ type: "text", text: lines.join("\n") }],
+              details: {
+                factId,
+                outbound: out.length,
+                inbound: in_.length,
+                connectedCount: connectedIds.length,
+              },
+            };
+          },
+        },
+        { name: "memory_graph" },
+      );
+    }
 
     // Credential tools (opt-in)
     if (cfg.credentials.enabled && credentialsDb) {
@@ -3598,6 +2956,140 @@ const memoryHybridPlugin = {
         },
       },
       { name: "memory_prune" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_reflect",
+        label: "Memory Reflect",
+        description:
+          "FR-011: Run reflection on recent facts to synthesize behavioral patterns. Analyzes facts from the last N days, sends to LLM to extract patterns, stores new patterns (permanent, high importance) for better agent alignment.",
+        parameters: Type.Object({
+          window: Type.Optional(
+            Type.Number({
+              description: "Time window in days (1–90, default from config)",
+              minimum: 1,
+              maximum: 90,
+            }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const reflectionCfg = cfg.reflection;
+          if (!reflectionCfg.enabled) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Reflection is disabled. Enable reflection.enabled in plugin config to use memory_reflect.",
+                },
+              ],
+              details: { error: "reflection_disabled" },
+            };
+          }
+          const window = Math.min(
+            90,
+            Math.max(1, typeof params.window === "number" ? params.window : reflectionCfg.defaultWindow),
+          );
+          const result = await runReflection(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openaiClient,
+            { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
+            { window, dryRun: false, model: reflectionCfg.model },
+            api.logger,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days).`,
+              },
+            ],
+            details: {
+              factsAnalyzed: result.factsAnalyzed,
+              patternsExtracted: result.patternsExtracted,
+              patternsStored: result.patternsStored,
+              window: result.window,
+            },
+          };
+        },
+      },
+      { name: "memory_reflect" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_reflect_rules",
+        label: "Memory Reflect Rules",
+        description:
+          "FR-011 optional: Synthesize existing behavioral patterns into actionable one-line rules (category rule). Run after memory_reflect when you have enough patterns.",
+        parameters: Type.Object({}),
+        async execute() {
+          const reflectionCfg = cfg.reflection;
+          if (!reflectionCfg.enabled) {
+            return {
+              content: [{ type: "text", text: "Reflection is disabled. Enable reflection.enabled in plugin config." }],
+              details: { error: "reflection_disabled" },
+            };
+          }
+          const result = await runReflectionRules(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openaiClient,
+            { dryRun: false, model: reflectionCfg.model },
+            api.logger,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Rules synthesis: ${result.rulesExtracted} rules extracted, ${result.rulesStored} stored.`,
+              },
+            ],
+            details: { rulesExtracted: result.rulesExtracted, rulesStored: result.rulesStored },
+          };
+        },
+      },
+      { name: "memory_reflect_rules" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_reflect_meta",
+        label: "Memory Reflect Meta",
+        description:
+          "FR-011 optional: Synthesize existing patterns into 1-3 higher-level meta-patterns (working style, principles). Run after memory_reflect when you have enough patterns.",
+        parameters: Type.Object({}),
+        async execute() {
+          const reflectionCfg = cfg.reflection;
+          if (!reflectionCfg.enabled) {
+            return {
+              content: [{ type: "text", text: "Reflection is disabled. Enable reflection.enabled in plugin config." }],
+              details: { error: "reflection_disabled" },
+            };
+          }
+          const result = await runReflectionMeta(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openaiClient,
+            { dryRun: false, model: reflectionCfg.model },
+            api.logger,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Meta-pattern synthesis: ${result.metaExtracted} extracted, ${result.metaStored} stored.`,
+              },
+            ],
+            details: { metaExtracted: result.metaExtracted, metaStored: result.metaStored },
+          };
+        },
+      },
+      { name: "memory_reflect_meta" },
     );
 
     // ========================================================================
@@ -4018,97 +3510,7 @@ const memoryHybridPlugin = {
         const mem = program.command("hybrid-mem")
           .description("Hybrid memory plugin commands");
 
-        mem
-          .command("stats")
-          .description("Show memory statistics with decay breakdown")
-          .action(async () => {
-            const sqlCount = factsDb.count();
-            const lanceCount = await vectorDb.count();
-            const breakdown = factsDb.statsBreakdown();
-            const expired = factsDb.countExpired();
-
-            console.log(`memory-hybrid ${versionInfo.pluginVersion} (memory-manager ${versionInfo.memoryManagerVersion}, schema ${versionInfo.schemaVersion})`);
-            console.log(`SQLite facts:    ${sqlCount}`);
-            console.log(`LanceDB vectors: ${lanceCount}`);
-            console.log(`Total: ${sqlCount + lanceCount} (with overlap)`);
-            console.log(`\nBy decay class:`);
-            for (const [cls, cnt] of Object.entries(breakdown)) {
-              console.log(`  ${cls.padEnd(12)} ${cnt}`);
-            }
-            if (expired > 0) {
-              console.log(`\nExpired (pending prune): ${expired}`);
-            }
-          });
-
-        mem
-          .command("prune")
-          .description("Remove expired facts and decay aging confidence")
-          .option("--hard", "Only hard-delete expired facts")
-          .option("--soft", "Only soft-decay confidence")
-          .option("--dry-run", "Show what would be pruned without deleting")
-          .action(async (opts: { dryRun?: boolean; hard?: boolean; soft?: boolean }) => {
-            if (opts.dryRun) {
-              const expired = factsDb.countExpired();
-              console.log(`Would prune: ${expired} expired facts`);
-              return;
-            }
-            let hardPruned = 0;
-            let softPruned = 0;
-            if (opts.hard) {
-              hardPruned = factsDb.pruneExpired();
-            } else if (opts.soft) {
-              softPruned = factsDb.decayConfidence();
-            } else {
-              hardPruned = factsDb.pruneExpired();
-              softPruned = factsDb.decayConfidence();
-            }
-            console.log(`Hard-pruned: ${hardPruned} expired`);
-            console.log(`Soft-pruned: ${softPruned} low-confidence`);
-          });
-
-        mem
-          .command("checkpoint")
-          .description("Save or restore a pre-flight checkpoint")
-          .argument("<action>", "save or restore")
-          .option("--intent <text>", "Intent for save")
-          .option("--state <text>", "State for save")
-          .action(async (action: string, opts: { intent?: string; state?: string }) => {
-            if (action === "save") {
-              if (!opts.intent || !opts.state) {
-                console.error("--intent and --state required for save");
-                return;
-              }
-              const id = factsDb.saveCheckpoint({
-                intent: opts.intent,
-                state: opts.state,
-              });
-              console.log(`Checkpoint saved: ${id}`);
-            } else if (action === "restore") {
-              const cp = factsDb.restoreCheckpoint();
-              if (!cp) {
-                console.log("No active checkpoint.");
-                return;
-              }
-              console.log(JSON.stringify(cp, null, 2));
-            } else {
-              console.error('Usage: checkpoint <save|restore>');
-            }
-          });
-
-        mem
-          .command("backfill-decay")
-          .description("Re-classify existing facts with auto-detected decay classes")
-          .action(async () => {
-            const counts = factsDb.backfillDecayClasses();
-            if (Object.keys(counts).length === 0) {
-              console.log("All facts already properly classified.");
-            } else {
-              console.log("Reclassified:");
-              for (const [cls, cnt] of Object.entries(counts)) {
-                console.log(`  ${cls}: ${cnt}`);
-              }
-            }
-          });
+        registerHybridMemCli(mem, { factsDb, vectorDb, versionInfo });
 
         mem
           .command("extract-daily")
@@ -4161,7 +3563,7 @@ const memoryHybridPlugin = {
                         });
                         const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
                         const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
-                        factsDb.store({
+                        const pointerEntry = factsDb.store({
                           text: pointerText,
                           category: "technical",
                           importance: 0.8,
@@ -4175,7 +3577,7 @@ const memoryHybridPlugin = {
                         try {
                           const vector = await embeddings.embed(pointerText);
                           if (!(await vectorDb.hasDuplicate(vector))) {
-                            await vectorDb.store({ text: pointerText, vector, importance: 0.8, category: "technical" });
+                            await vectorDb.store({ text: pointerText, vector, importance: 0.8, category: "technical", id: pointerEntry.id });
                           }
                         } catch (err) {
                           api.logger.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -4207,17 +3609,81 @@ const memoryHybridPlugin = {
 
                 if (factsDb.hasDuplicate(trimmed)) continue;
 
-                factsDb.store({
+                const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
+                const storePayload = {
                   text: trimmed,
                   category,
                   importance: 0.8,
                   entity: extracted.entity,
                   key: extracted.key,
                   value: extracted.value,
-                  source: `daily-scan:${dateStr}`,
-                  sourceDate: Math.floor(new Date(dateStr).getTime() / 1000),
+                  source: `daily-scan:${dateStr}` as const,
+                  sourceDate: sourceDateSec,
                   tags: extractTags(trimmed, extracted.entity),
-                });
+                };
+
+                let vecForStore: number[] | undefined;
+                if (cfg.store.classifyBeforeWrite) {
+                  try {
+                    vecForStore = await embeddings.embed(trimmed);
+                  } catch (err) {
+                    api.logger.warn(`memory-hybrid: extract-daily embedding failed: ${err}`);
+                  }
+                  if (vecForStore) {
+                    let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vecForStore, 3);
+                    if (similarFacts.length === 0) {
+                      similarFacts = factsDb.findSimilarForClassification(trimmed, extracted.entity, extracted.key, 3);
+                    }
+                    if (similarFacts.length > 0) {
+                      try {
+                        const classification = await classifyMemoryOperation(
+                          trimmed, extracted.entity, extracted.key, similarFacts,
+                          openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
+                        );
+                        if (classification.action === "NOOP") continue;
+                        if (classification.action === "DELETE" && classification.targetId) {
+                          factsDb.supersede(classification.targetId, null);
+                          continue;
+                        }
+                        if (classification.action === "UPDATE" && classification.targetId) {
+                          const oldFact = factsDb.getById(classification.targetId);
+                          if (oldFact) {
+                            const newEntry = factsDb.store({
+                              ...storePayload,
+                              entity: extracted.entity ?? oldFact.entity,
+                              key: extracted.key ?? oldFact.key,
+                              value: extracted.value ?? oldFact.value,
+                              validFrom: sourceDateSec,
+                              supersedesId: classification.targetId,
+                            });
+                            factsDb.supersede(classification.targetId, newEntry.id);
+                            try {
+                              if (!(await vectorDb.hasDuplicate(vecForStore))) {
+                                await vectorDb.store({ text: trimmed, vector: vecForStore, importance: 0.8, category, id: newEntry.id });
+                              }
+                            } catch (err) {
+                              api.logger.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+                            }
+                            totalStored++;
+                            continue;
+                          }
+                        }
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: extract-daily classification failed: ${err}`);
+                      }
+                    }
+                  }
+                }
+
+                const entry = factsDb.store(storePayload);
+                try {
+                  const vector = vecForStore ?? await embeddings.embed(trimmed);
+                  if (!(await vectorDb.hasDuplicate(vector))) {
+                    await vectorDb.store({ text: trimmed, vector, importance: 0.8, category, id: entry.id });
+                  }
+                } catch (err) {
+                  api.logger.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+                }
                 totalStored++;
               }
             }
@@ -4241,14 +3707,22 @@ const memoryHybridPlugin = {
           .argument("<query>", "Search query")
           .option("--limit <n>", "Max results", "5")
           .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-          .action(async (query: string, opts: { limit?: string; tag?: string }) => {
+          .option("--as-of <date>", "FR-010: Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
+          .option("--include-superseded", "FR-010: Include superseded (historical) facts")
+          .action(async (query: string, opts: { limit?: string; tag?: string; asOf?: string; includeSuperseded?: boolean }) => {
             const limit = parseInt(opts.limit || "5");
             const tag = opts.tag?.trim();
-            const sqlResults = factsDb.search(query, limit, { tag });
+            const asOfSec = opts.asOf != null && opts.asOf !== "" ? parseSourceDate(opts.asOf) : undefined;
+            const searchOpts = { tag, includeSuperseded: opts.includeSuperseded === true, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+            const sqlResults = factsDb.search(query, limit, searchOpts);
             let lanceResults: SearchResult[] = [];
             if (!tag) {
-              const vector = await embeddings.embed(query);
-              lanceResults = await vectorDb.search(vector, limit, 0.3);
+              try {
+                const vector = await embeddings.embed(query);
+                lanceResults = await vectorDb.search(vector, limit, 0.3);
+              } catch (err) {
+                console.warn(`memory-hybrid: vector search failed: ${err}`);
+              }
             }
             const merged = mergeResults(sqlResults, lanceResults, limit, factsDb);
 
@@ -4273,8 +3747,12 @@ const memoryHybridPlugin = {
           .argument("<entity>", "Entity name")
           .option("--key <key>", "Optional key filter")
           .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-          .action(async (entity: string, opts: { key?: string; tag?: string }) => {
-            const results = factsDb.lookup(entity, opts.key, opts.tag?.trim());
+          .option("--as-of <date>", "FR-010: Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
+          .option("--include-superseded", "FR-010: Include superseded (historical) facts")
+          .action(async (entity: string, opts: { key?: string; tag?: string; asOf?: string; includeSuperseded?: boolean }) => {
+            const asOfSec = opts.asOf != null && opts.asOf !== "" ? parseSourceDate(opts.asOf) : undefined;
+            const lookupOpts = { includeSuperseded: opts.includeSuperseded === true, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+            const results = factsDb.lookup(entity, opts.key, opts.tag?.trim(), lookupOpts);
             const output = results.map((r) => ({
               id: r.entry.id,
               text: r.entry.text,
@@ -4344,7 +3822,7 @@ const memoryHybridPlugin = {
                 try {
                   const vector = await embeddings.embed(pointerText);
                   if (!(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text: pointerText, vector, importance: 0.7, category: "technical" });
+                    await vectorDb.store({ text: pointerText, vector, importance: 0.7, category: "technical", id: pointerEntry.id });
                   }
                 } catch (err) {
                   api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -4362,9 +3840,74 @@ const memoryHybridPlugin = {
             const tags = opts.tags
               ? opts.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
               : undefined;
+            const category = (opts.category ?? "other") as MemoryCategory;
+
+            // FR-008: Classify before store when enabled (same as memory_store tool)
+            if (cfg.store.classifyBeforeWrite) {
+              let vector: number[] | undefined;
+              try {
+                vector = await embeddings.embed(text);
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: CLI store embedding failed: ${err}`);
+              }
+              if (vector) {
+                let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+                if (similarFacts.length === 0) {
+                  similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5);
+                }
+                if (similarFacts.length > 0) {
+                  try {
+                    const classification = await classifyMemoryOperation(
+                      text, entity, key, similarFacts, openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
+                    );
+                    if (classification.action === "NOOP") {
+                      console.log(`Already known: ${classification.reason}`);
+                      return;
+                    }
+                    if (classification.action === "DELETE" && classification.targetId) {
+                      factsDb.supersede(classification.targetId, null);
+                      console.log(`Retracted fact ${classification.targetId}: ${classification.reason}`);
+                      return;
+                    }
+                    if (classification.action === "UPDATE" && classification.targetId) {
+                      const oldFact = factsDb.getById(classification.targetId);
+                      if (oldFact) {
+                        const nowSec = Math.floor(Date.now() / 1000);
+                        const newEntry = factsDb.store({
+                          text,
+                          category,
+                          importance: 0.7,
+                          entity: entity ?? oldFact.entity,
+                          key: opts.key ?? extracted.key ?? oldFact.key ?? null,
+                          value: opts.value ?? extracted.value ?? oldFact.value ?? null,
+                          source: "cli",
+                          sourceDate,
+                          tags: tags ?? extractTags(text, entity),
+                          validFrom: sourceDate ?? nowSec,
+                          supersedesId: classification.targetId,
+                        });
+                        factsDb.supersede(classification.targetId, newEntry.id);
+                        try {
+                          if (!(await vectorDb.hasDuplicate(vector))) {
+                            await vectorDb.store({ text, vector, importance: 0.7, category, id: newEntry.id });
+                          }
+                        } catch (err) {
+                          api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                        }
+                        console.log(`Updated: superseded ${classification.targetId} with ${newEntry.id}. ${classification.reason}`);
+                        return;
+                      }
+                    }
+                  } catch (err) {
+                    api.logger.warn(`memory-hybrid: CLI store classification failed: ${err}`);
+                  }
+                }
+              }
+            }
+
             const entry = factsDb.store({
               text,
-              category: (opts.category ?? "other") as MemoryCategory,
+              category,
               importance: 0.7,
               entity,
               key: opts.key ?? extracted.key ?? null,
@@ -4376,7 +3919,7 @@ const memoryHybridPlugin = {
             try {
               const vector = await embeddings.embed(text);
               if (!(await vectorDb.hasDuplicate(vector))) {
-                await vectorDb.store({ text, vector, importance: 0.7, category: opts.category ?? "other" });
+                await vectorDb.store({ text, vector, importance: 0.7, category: opts.category ?? "other", id: entry.id });
               }
             } catch (err) {
               api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -4533,6 +4076,83 @@ const memoryHybridPlugin = {
             console.log(`Clusters found: ${result.clustersFound}`);
             console.log(`Merged: ${result.merged}`);
             console.log(`Deleted: ${result.deleted}${opts.dryRun ? " (dry run)" : ""}`);
+          });
+
+        mem
+          .command("reflect")
+          .description("FR-011: Analyze recent facts, extract behavioral patterns, store as pattern-category facts")
+          .option("--window <days>", "Time window in days (default: config or 14)", "14")
+          .option("--dry-run", "Show extracted patterns without storing")
+          .option("--model <model>", "LLM for reflection (default: config or gpt-4o-mini)", "gpt-4o-mini")
+          .option("--force", "Run even if reflection is disabled in config")
+          .action(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
+            const reflectionCfg = cfg.reflection;
+            if (!opts.force && !reflectionCfg.enabled) {
+              console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
+              return;
+            }
+            const window = Math.min(90, Math.max(1, parseInt(opts.window || String(reflectionCfg.defaultWindow)) || 14));
+            const result = await runReflection(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openaiClient,
+              { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
+              { window, dryRun: !!opts.dryRun, model: opts.model || reflectionCfg.model },
+              api.logger,
+            );
+            console.log(`Facts analyzed: ${result.factsAnalyzed}`);
+            console.log(`Patterns extracted: ${result.patternsExtracted}`);
+            console.log(`Patterns stored: ${result.patternsStored}${opts.dryRun ? " (dry run)" : ""}`);
+            console.log(`Window: ${result.window} days`);
+          });
+
+        mem
+          .command("reflect-rules")
+          .description("FR-011 optional: Synthesize patterns into actionable one-line rules (category rule)")
+          .option("--dry-run", "Show extracted rules without storing")
+          .option("--model <model>", "LLM (default: config or gpt-4o-mini)", "gpt-4o-mini")
+          .option("--force", "Run even if reflection is disabled in config")
+          .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
+            const reflectionCfg = cfg.reflection;
+            if (!opts.force && !reflectionCfg.enabled) {
+              console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
+              return;
+            }
+            const result = await runReflectionRules(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openaiClient,
+              { dryRun: !!opts.dryRun, model: opts.model || reflectionCfg.model },
+              api.logger,
+            );
+            console.log(`Rules extracted: ${result.rulesExtracted}`);
+            console.log(`Rules stored: ${result.rulesStored}${opts.dryRun ? " (dry run)" : ""}`);
+          });
+
+        mem
+          .command("reflect-meta")
+          .description("FR-011 optional: Synthesize patterns into 1-3 higher-level meta-patterns")
+          .option("--dry-run", "Show extracted meta-patterns without storing")
+          .option("--model <model>", "LLM (default: config or gpt-4o-mini)", "gpt-4o-mini")
+          .option("--force", "Run even if reflection is disabled in config")
+          .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
+            const reflectionCfg = cfg.reflection;
+            if (!opts.force && !reflectionCfg.enabled) {
+              console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
+              return;
+            }
+            const result = await runReflectionMeta(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openaiClient,
+              { dryRun: !!opts.dryRun, model: opts.model || reflectionCfg.model },
+              api.logger,
+            );
+            console.log(`Meta-patterns extracted: ${result.metaExtracted}`);
+            console.log(`Meta-patterns stored: ${result.metaStored}${opts.dryRun ? " (dry run)" : ""}`);
           });
 
         mem
@@ -5140,7 +4760,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -5153,9 +4773,12 @@ const memoryHybridPlugin = {
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
-          // FR-009: Use wider candidate pool for progressive disclosure
-          const isProgressive = cfg.autoRecall.injectionFormat === "progressive";
-          const searchLimit = isProgressive ? Math.max(cfg.autoRecall.limit, 15) : cfg.autoRecall.limit;
+          // FR-009: Use configurable candidate pool for progressive disclosure
+          const fmt = cfg.autoRecall.injectionFormat;
+          const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
+          const searchLimit = isProgressive
+            ? (cfg.autoRecall.progressiveMaxCandidates ?? Math.max(cfg.autoRecall.limit, 15))
+            : cfg.autoRecall.limit;
           const { minScore } = cfg.autoRecall;
           const limit = searchLimit;
           const ftsResults = factsDb.search(e.prompt, limit);
@@ -5244,35 +4867,130 @@ const memoryHybridPlugin = {
           } = cfg.autoRecall;
 
           // FR-009: Progressive disclosure — inject a lightweight index, let the agent decide what to fetch
-          if (injectionFormat === "progressive") {
-            const totalTokens = candidates.reduce((sum, r) => {
-              const t = r.entry.summary || r.entry.text;
-              return sum + estimateTokens(t);
-            }, 0);
-            const indexHeader = `<relevant-memories format="index">\nAvailable memories (${candidates.length} matches, ~${totalTokens} tokens total):\n`;
-            const indexFooter = `\n→ Use memory_recall("query") or memory_recall with an entity/key to fetch full details.\n</relevant-memories>`;
-            let indexTokens = estimateTokens(indexHeader + indexFooter);
-            const indexLines: string[] = [];
+          const indexCap = cfg.autoRecall.progressiveIndexMaxTokens ?? maxTokens;
+          const groupByCategory = cfg.autoRecall.progressiveGroupByCategory === true;
 
-            for (let i = 0; i < candidates.length; i++) {
-              const r = candidates[i];
+          function buildProgressiveIndex(
+            list: typeof candidates,
+            cap: number,
+            startPosition: number,
+          ): { lines: string[]; ids: string[]; usedTokens: number } {
+            const totalTokens = list.reduce((sum, r) => {
+              const t = r.entry.summary || r.entry.text;
+              return sum + estimateTokensForDisplay(t);
+            }, 0);
+            const header = `Available memories (${list.length} matches, ~${totalTokens} tokens total):\n`;
+            let usedTokens = estimateTokens(header);
+            const indexEntries: { line: string; id: string; category: string; position: number }[] = [];
+            for (let i = 0; i < list.length; i++) {
+              const r = list[i];
               const title = r.entry.key
                 ? `${r.entry.entity ? r.entry.entity + ": " : ""}${r.entry.key}`
                 : (r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : ""));
-              const tokenCost = estimateTokens(r.entry.summary || r.entry.text);
-              const line = `  ${i + 1}. [${r.entry.category}] ${title} (${tokenCost} tok)`;
+              const tokenCost = estimateTokensForDisplay(r.entry.summary || r.entry.text);
+              const pos = startPosition + indexEntries.length + 1;
+              const line = `  ${pos}. [${r.entry.category}] ${title} (${tokenCost} tok)`;
               const lineTokens = estimateTokens(line + "\n");
-              if (indexTokens + lineTokens > maxTokens) break;
-              indexLines.push(line);
-              indexTokens += lineTokens;
+              if (usedTokens + lineTokens > cap) break;
+              indexEntries.push({ line, id: r.entry.id, category: r.entry.category, position: pos });
+              usedTokens += lineTokens;
             }
+            const ids = indexEntries.map((e) => e.id);
+            let lines: string[];
+            if (groupByCategory) {
+              const byCat = new Map<string, typeof indexEntries>();
+              for (const e of indexEntries) {
+                const arr = byCat.get(e.category) ?? [];
+                arr.push(e);
+                byCat.set(e.category, arr);
+              }
+              const sortedCats = [...byCat.keys()].sort();
+              lines = [];
+              for (const cat of sortedCats) {
+                const entries = byCat.get(cat)!;
+                lines.push(`  ${cat} (${entries.length}):`);
+                for (const e of entries) {
+                  lines.push(e.line.replace(/^\s+\d+\./, "    -"));
+                }
+              }
+            } else {
+              lines = indexEntries.map((e) => e.line);
+            }
+            return { lines, ids, usedTokens };
+          }
 
+          if (injectionFormat === "progressive_hybrid") {
+            // Hybrid: pinned (permanent or high recall count) in full, rest as index
+            const pinnedRecallThreshold = cfg.autoRecall.progressivePinnedRecallCount ?? 3;
+            const pinned: SearchResult[] = [];
+            const rest: SearchResult[] = [];
+            for (const r of candidates) {
+              const recallCount = r.entry.recallCount ?? 0;
+              if (
+                r.entry.decayClass === "permanent" ||
+                recallCount >= pinnedRecallThreshold
+              ) {
+                pinned.push(r);
+              } else {
+                rest.push(r);
+              }
+            }
+            const pinnedHeader = "<relevant-memories format=\"progressive_hybrid\">\n";
+            const pinnedPart: string[] = [];
+            let pinnedTokens = estimateTokens(pinnedHeader);
+            const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
+            for (const r of pinned) {
+              let text =
+                useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
+              if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
+                text = text.slice(0, maxPerMemoryChars).trim() + "…";
+              }
+              const line = `- [${r.backend}/${r.entry.category}] ${text}`;
+              const lineTokens = estimateTokens(line + "\n");
+              if (pinnedTokens + lineTokens > pinnedBudget) break;
+              pinnedPart.push(line);
+              pinnedTokens += lineTokens;
+            }
+            const indexIntro = pinnedPart.length > 0
+              ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
+              : `<relevant-memories format="index">\nAvailable memories (${rest.length} matches):\n`;
+            const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
+            const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
+            const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(
+              rest,
+              Math.max(100, indexBudget),
+              1,
+            );
+            lastProgressiveIndexIds = indexIds;
+            if (pinnedPart.length > 0) {
+              factsDb.refreshAccessedFacts(pinned.map((r) => r.entry.id));
+            }
+            if (indexIds.length > 0) {
+              factsDb.refreshAccessedFacts(indexIds);
+            }
+            const indexContent = indexLines.join("\n");
+            const fullContent =
+              pinnedPart.length > 0
+                ? `${pinnedHeader}${pinnedPart.join("\n")}${indexIntro}${indexContent}${indexFooter}`
+                : `${indexIntro}${indexContent}${indexFooter}`;
+            api.logger.info?.(
+              `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
+            );
+            return { prependContext: fullContent };
+          }
+
+          if (injectionFormat === "progressive") {
+            const indexHeader = `<relevant-memories format="index">\n`;
+            const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
+            const { lines: indexLines, ids: indexIds, usedTokens: indexTokens } = buildProgressiveIndex(
+              candidates,
+              indexCap - estimateTokens(indexHeader + indexFooter),
+              1,
+            );
             if (indexLines.length === 0) return;
-
-            // Track access for the memories included in the index
-            const includedIds = candidates.slice(0, indexLines.length).map((r) => r.entry.id);
+            lastProgressiveIndexIds = indexIds;
+            const includedIds = indexIds;
             factsDb.refreshAccessedFacts(includedIds);
-
             const indexContent = indexLines.join("\n");
             api.logger.info?.(
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
@@ -5410,9 +5128,7 @@ const memoryHybridPlugin = {
           let stored = 0;
           for (const text of toCapture.slice(0, 3)) {
             let textToStore = text;
-            if (textToStore.length > cfg.captureMaxChars) {
-              textToStore = textToStore.slice(0, cfg.captureMaxChars).trim() + " [truncated]";
-            }
+            textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
 
             // Heuristic classification only — "other" facts are reclassified
             // by the daily auto-classify timer (no LLM calls on the hot path)
@@ -5427,11 +5143,22 @@ const memoryHybridPlugin = {
                 ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
                 : undefined;
 
-            // FR-008: Classify before auto-capture to avoid stale duplicates
-            if (cfg.store.classifyBeforeWrite) {
-              const similarFacts = factsDb.findSimilarForClassification(
-                textToStore, extracted.entity, extracted.key, 3,
-              );
+            // Generate vector once (used for FR-008 classification by embedding similarity and for storage)
+            let vector: number[] | undefined;
+            try {
+              vector = await embeddings.embed(textToStore);
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+            }
+
+            // FR-008: Classify before auto-capture using embedding similarity (issue #8)
+            if (cfg.store.classifyBeforeWrite && vector) {
+              let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 3);
+              if (similarFacts.length === 0) {
+                similarFacts = factsDb.findSimilarForClassification(
+                  textToStore, extracted.entity, extracted.key, 3,
+                );
+              }
               if (similarFacts.length > 0) {
                 try {
                   const classification = await classifyMemoryOperation(
@@ -5448,14 +5175,7 @@ const memoryHybridPlugin = {
                     const oldFact = factsDb.getById(classification.targetId);
                     if (oldFact) {
                       const finalImportance = Math.max(0.7, oldFact.importance);
-                      
-                      // Generate vector first
-                      let vector: number[] | undefined;
-                      try {
-                        vector = await embeddings.embed(textToStore);
-                      } catch (err) {
-                        api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
-                      }
+                      // vector already computed above for classification
 
                       // WAL: Write pending UPDATE operation
                       const walEntryId = randomUUID();
@@ -5484,6 +5204,7 @@ const memoryHybridPlugin = {
                         }
                       }
 
+                      const nowSec = Math.floor(Date.now() / 1000);
                       const newEntry = factsDb.store({
                         text: textToStore,
                         category,
@@ -5495,11 +5216,13 @@ const memoryHybridPlugin = {
                         decayClass: oldFact.decayClass,
                         summary,
                         tags: extractTags(textToStore, extracted.entity),
+                        validFrom: nowSec,
+                        supersedesId: classification.targetId,
                       });
                       factsDb.supersede(classification.targetId, newEntry.id);
                       try {
                         if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                          await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category });
+                          await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
                         }
                       } catch (err) {
                         api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
@@ -5529,15 +5252,7 @@ const memoryHybridPlugin = {
               }
             }
 
-            // Generate vector first (needed for WAL)
-            let vector: number[] | undefined;
-            try {
-              vector = await embeddings.embed(textToStore);
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
-            }
-
-            // WAL: Write pending operation before committing to storage
+            // WAL: Write pending operation before committing to storage (vector already computed above)
             const walEntryId = randomUUID();
             if (wal) {
               try {
@@ -5564,7 +5279,7 @@ const memoryHybridPlugin = {
             }
 
             // Now commit to actual storage (include tags to match WAL entry)
-            factsDb.store({
+            const storedEntry = factsDb.store({
               text: textToStore,
               category,
               importance: 0.7,
@@ -5578,7 +5293,7 @@ const memoryHybridPlugin = {
 
             try {
               if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                await vectorDb.store({ text: textToStore, vector, importance: 0.7, category });
+                await vectorDb.store({ text: textToStore, vector, importance: 0.7, category, id: storedEntry.id });
               }
             } catch (err) {
               api.logger.warn(
@@ -5711,7 +5426,7 @@ const memoryHybridPlugin = {
                   // Check if already stored (idempotency)
                   if (!factsDb.hasDuplicate(text)) {
                     // Store to SQLite
-                    factsDb.store({
+                    const stored = factsDb.store({
                       text,
                       category: (category as MemoryCategory) || "other",
                       importance: importance ?? 0.7,
@@ -5724,13 +5439,14 @@ const memoryHybridPlugin = {
                       tags,
                     });
 
-                    // Store to LanceDB (async, best effort)
+                    // Store to LanceDB (async, best effort) with same fact id for FR-008
                     if (entry.data.vector) {
                       void vectorDb.store({
                         text,
                         vector: entry.data.vector,
                         importance: importance ?? 0.7,
                         category: category || "other",
+                        id: stored.id,
                       }).catch((err) => {
                         api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
                       });
@@ -5814,6 +5530,7 @@ const memoryHybridPlugin = {
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
         if (proposalsPruneTimer) { clearInterval(proposalsPruneTimer); proposalsPruneTimer = null; }
         factsDb.close();
+        vectorDb.close();
         if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }
         if (proposalsDb) { proposalsDb.close(); proposalsDb = null; }
         api.logger.info("memory-hybrid: stopped");
@@ -5827,12 +5544,15 @@ export const _testing = {
   // Utility functions
   normalizeTextForDedupe,
   normalizedHash,
+  truncateText,
+  truncateForStorage,
   extractTags,
   serializeTags,
   parseTags,
   tagsContains,
   parseSourceDate,
   estimateTokens,
+  estimateTokensForDisplay,
   classifyDecay,
   calculateExpiry,
   extractStructuredFields,
@@ -5846,6 +5566,7 @@ export const _testing = {
   unionFind,
   getRoot,
   mergeResults,
+  safeEmbed,
   // Encryption primitives (used by CredentialsDB)
   deriveKey,
   encryptValue,
@@ -5857,6 +5578,8 @@ export const _testing = {
   VectorDB,
   Embeddings,
   WriteAheadLog,
+  // FR-008 classification (for tests)
+  findSimilarByEmbedding,
 };
 
 export { versionInfo } from "./versionInfo.js";

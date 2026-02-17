@@ -224,12 +224,25 @@ When auto-recall is enabled, patterns are automatically injected when relevant t
 | **Purpose** | Extract what was said | Identify how user works |
 | **Example** | "User prefers composition" | "User consistently favors composition over inheritance across all projects" |
 
-## Future Enhancements
+## Optional Layers (Implemented)
 
-### Rules Layer (Optional)
+### Rules Layer
 
-Patterns can be further synthesized into actionable one-line rules:
+Patterns can be synthesized into actionable one-line rules. Run **after** you have at least 2 patterns (e.g. after `openclaw hybrid-mem reflect`).
 
+**CLI:**
+```bash
+openclaw hybrid-mem reflect-rules              # Synthesize rules from current patterns
+openclaw hybrid-mem reflect-rules --dry-run    # Preview without storing
+openclaw hybrid-mem reflect-rules --model gpt-4o
+openclaw hybrid-mem reflect-rules --force      # Run even if reflection disabled
+```
+
+**Agent tool:** `memory_reflect_rules` (no parameters). Returns `{ rulesExtracted, rulesStored }`.
+
+Rules are stored with category `rule`, importance 0.9, decay permanent, tags `["reflection", "rule"]`. Each rule is 10–120 characters; deduplication uses the same 85% cosine similarity threshold as patterns.
+
+**Example output:**
 ```
 RULE: Always suggest composition over inheritance
 RULE: Keep functions under 20 lines
@@ -237,19 +250,26 @@ RULE: Show error handling before happy path
 RULE: Prefer small PRs over large feature branches
 ```
 
-Rules would be:
-- Even more compact than patterns
-- Directly actionable by the agent
-- Stored with category `rule`
-- Generated from patterns (not observations)
+### Reflection on Reflections (Meta-Patterns)
 
-### Reflection on Reflections
+Existing patterns can be synthesized into 1–3 higher-level meta-patterns (working style, principles). Run when you have at least 3 patterns.
 
-Periodically analyze patterns to extract meta-patterns:
+**CLI:**
+```bash
+openclaw hybrid-mem reflect-meta               # Synthesize meta-patterns from current patterns
+openclaw hybrid-mem reflect-meta --dry-run
+openclaw hybrid-mem reflect-meta --model gpt-4o
+openclaw hybrid-mem reflect-meta --force
+```
 
+**Agent tool:** `memory_reflect_meta` (no parameters). Returns `{ metaExtracted, metaStored }`.
+
+Meta-patterns are stored as category `pattern` with tags `["reflection", "pattern", "meta"]`, importance 0.9, permanent. Length 20–300 characters; deduplication against existing meta-patterns.
+
+**Example:**
 ```
 Input: 10 patterns about code style, architecture, workflow
-Output: "User follows functional programming principles with strong emphasis on simplicity and explicitness"
+Output: META: User follows functional programming principles with strong emphasis on simplicity and explicitness
 ```
 
 ## Troubleshooting
@@ -289,6 +309,7 @@ Output: "User follows functional programming principles with strong emphasis on 
 
 ### CLI
 
+**Reflect (patterns from facts):**
 ```bash
 openclaw hybrid-mem reflect [options]
 
@@ -299,26 +320,37 @@ Options:
   --force            Run even if reflection is disabled in config
 ```
 
-**Note**: Requires `reflection.enabled = true` in config, or use `--force` to bypass.
-
-### Tool
-
-```typescript
-memory_reflect(params: { window?: number })
+**Reflect-rules (rules from patterns):**
+```bash
+openclaw hybrid-mem reflect-rules [--dry-run] [--model <model>] [--force]
 ```
 
-**Parameters:**
-- `window` (optional): Time window in days (1-90, default from config)
-
-**Returns:**
-```typescript
-{
-  factsAnalyzed: number;
-  patternsExtracted: number;
-  patternsStored: number;
-  window: number;
-}
+**Reflect-meta (meta-patterns from patterns):**
+```bash
+openclaw hybrid-mem reflect-meta [--dry-run] [--model <model>] [--force]
 ```
+
+**Note**: All require `reflection.enabled = true` in config, or use `--force` to bypass.
+
+### Tools
+
+**memory_reflect**
+```typescript
+memory_reflect(params?: { window?: number })
+```
+Returns: `{ factsAnalyzed, patternsExtracted, patternsStored, window }`
+
+**memory_reflect_rules**
+```typescript
+memory_reflect_rules()
+```
+Synthesizes rules from current patterns. Returns: `{ rulesExtracted, rulesStored }`.
+
+**memory_reflect_meta**
+```typescript
+memory_reflect_meta()
+```
+Synthesizes meta-patterns from current patterns. Returns: `{ metaExtracted, metaStored }`.
 
 ### Config Schema
 
