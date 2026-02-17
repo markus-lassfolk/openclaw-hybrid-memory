@@ -1,6 +1,6 @@
 # OpenClaw memory-hybrid plugin
 
-Your OpenClaw agent forgets after each session. This plugin gives it **lasting memory**: structured facts (SQLite + FTS5) and semantic search (LanceDB), with auto-capture, auto-recall, TTL-based decay, LLM auto-classification, and an optional credential vault. One install, one config—then your agent remembers preferences, decisions, and context across conversations.
+Your OpenClaw agent forgets after each session. This plugin gives it **lasting memory**: structured facts (SQLite + FTS5) and semantic search (LanceDB), with auto-capture, auto-recall, TTL-based decay, LLM auto-classification, graph-based spreading activation for zero-LLM recall, and an optional credential vault. One install, one config—then your agent remembers preferences, decisions, and context across conversations.
 
 Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw-hybrid-memory) v3 deployment.
 
