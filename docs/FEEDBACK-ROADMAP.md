@@ -49,7 +49,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 
 **Priority:** High (enables all other refactors and reduces merge conflicts).
 
-**Progress:** WAL, VectorDB, FactsDB, types, utils, services, prompts. **CLI (first batch):** `cli/register.ts` registers stats, prune, checkpoint, backfill-decay; index calls `registerHybridMemCli(mem, { factsDb, vectorDb, versionInfo })`. Remaining commands (extract-daily, search, store, etc.) still in index; can be moved in further iterations.
+**Progress:** WAL, VectorDB, FactsDB, types, utils, services, prompts. **CLI:** `cli/register.ts` registers stats, prune, checkpoint, backfill-decay, search, lookup, categories, **store** (runStore), find-duplicates, consolidate, reflect, reflect-rules, reflect-meta, classify (context: runClassify, autoClassifyConfig). extract-daily, install, verify, credentials, distill-window, record-distill, uninstall still in index.
 
 ---
 

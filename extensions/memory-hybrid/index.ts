@@ -39,7 +39,7 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli } from "./cli/register.js";
+import { registerHybridMemCli, type StoreCliOpts, type StoreCliResult } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { mergeResults } from "./services/merge-results.js";
 import type { MemoryEntry, SearchResult } from "./types/memory.js";
@@ -1644,6 +1644,45 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
   } catch {
     return new Map();
   }
+}
+
+/**
+ * Run classify command: optional discovery, then batch classify with limit and dryRun.
+ * Used by CLI; returns counts and optional breakdown for printing.
+ */
+async function runClassifyForCli(
+  db: FactsDB,
+  openai: OpenAI,
+  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  opts: { dryRun: boolean; limit: number; model?: string },
+  discoveredPath: string,
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<{ reclassified: number; total: number; breakdown?: Record<string, number> }> {
+  const classifyModel = opts.model || config.model;
+  const categories = getMemoryCategories();
+  let others = db.getByCategory("other").slice(0, opts.limit);
+  if (others.length === 0) {
+    return { reclassified: 0, total: 0 };
+  }
+
+  if (!opts.dryRun && config.suggestCategories && others.length >= MIN_OTHER_FOR_DISCOVERY) {
+    await discoverCategoriesFromOther(db, openai, { ...config, model: classifyModel }, logger, discoveredPath);
+    others = db.getByCategory("other").slice(0, opts.limit);
+  }
+
+  let totalReclassified = 0;
+  for (let i = 0; i < others.length; i += config.batchSize) {
+    const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
+    const results = await classifyBatch(openai, classifyModel, batch, categories);
+    for (const [id, newCat] of results) {
+      if (!opts.dryRun) db.updateCategory(id, newCat);
+      totalReclassified++;
+    }
+    if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
+  }
+
+  const breakdown = !opts.dryRun ? db.statsBreakdown() : undefined;
+  return { reclassified: totalReclassified, total: others.length, breakdown };
 }
 
 /**
@@ -3523,7 +3562,174 @@ const memoryHybridPlugin = {
         const mem = program.command("hybrid-mem")
           .description("Hybrid memory plugin commands");
 
-        registerHybridMemCli(mem, { factsDb, vectorDb, versionInfo });
+        async function runStoreForCli(opts: StoreCliOpts, log: { warn: (m: string) => void }): Promise<StoreCliResult> {
+          const text = opts.text;
+          if (factsDb.hasDuplicate(text)) return { outcome: "duplicate" };
+          const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
+          const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
+          const entity = opts.entity ?? extracted.entity ?? null;
+          const key = opts.key ?? extracted.key ?? null;
+          const value = opts.value ?? extracted.value ?? null;
+
+          if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
+            const parsed = tryParseCredentialForVault(text, entity, key, value);
+            if (parsed) {
+              credentialsDb.store({
+                service: parsed.service,
+                type: parsed.type,
+                value: parsed.secretValue,
+                url: parsed.url,
+                notes: parsed.notes,
+              });
+              const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+              const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+              const pointerEntry = factsDb.store({
+                text: pointerText,
+                category: "technical" as MemoryCategory,
+                importance: 0.7,
+                entity: "Credentials",
+                key: parsed.service,
+                value: pointerValue,
+                source: "cli",
+                sourceDate,
+                tags: ["auth", ...extractTags(pointerText, "Credentials")],
+              });
+              try {
+                const vector = await embeddings.embed(pointerText);
+                if (!(await vectorDb.hasDuplicate(vector))) {
+                  await vectorDb.store({ text: pointerText, vector, importance: 0.7, category: "technical", id: pointerEntry.id });
+                }
+              } catch (err) {
+                log.warn(`memory-hybrid: vector store failed: ${err}`);
+              }
+              return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
+            }
+            return { outcome: "credential_parse_error" };
+          }
+
+          const tags = opts.tags
+            ? opts.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
+            : undefined;
+          const category = (opts.category ?? "other") as MemoryCategory;
+
+          if (cfg.store.classifyBeforeWrite) {
+            let vector: number[] | undefined;
+            try {
+              vector = await embeddings.embed(text);
+            } catch (err) {
+              log.warn(`memory-hybrid: CLI store embedding failed: ${err}`);
+            }
+            if (vector) {
+              let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+              if (similarFacts.length === 0) {
+                similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5);
+              }
+              if (similarFacts.length > 0) {
+                try {
+                  const classification = await classifyMemoryOperation(
+                    text, entity, key, similarFacts, openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", log,
+                  );
+                  if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
+                  if (classification.action === "DELETE" && classification.targetId) {
+                    factsDb.supersede(classification.targetId, null);
+                    return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
+                  }
+                  if (classification.action === "UPDATE" && classification.targetId) {
+                    const oldFact = factsDb.getById(classification.targetId);
+                    if (oldFact) {
+                      const nowSec = Math.floor(Date.now() / 1000);
+                      const newEntry = factsDb.store({
+                        text,
+                        category,
+                        importance: 0.7,
+                        entity: entity ?? oldFact.entity,
+                        key: opts.key ?? extracted.key ?? oldFact.key ?? null,
+                        value: opts.value ?? extracted.value ?? oldFact.value ?? null,
+                        source: "cli",
+                        sourceDate,
+                        tags: tags ?? extractTags(text, entity),
+                        validFrom: sourceDate ?? nowSec,
+                        supersedesId: classification.targetId,
+                      });
+                      factsDb.supersede(classification.targetId, newEntry.id);
+                      try {
+                        if (!(await vectorDb.hasDuplicate(vector))) {
+                          await vectorDb.store({ text, vector, importance: 0.7, category, id: newEntry.id });
+                        }
+                      } catch (err) {
+                        log.warn(`memory-hybrid: vector store failed: ${err}`);
+                      }
+                      return { outcome: "updated", id: newEntry.id, supersededId: classification.targetId, reason: classification.reason ?? "" };
+                    }
+                  }
+                } catch (err) {
+                  log.warn(`memory-hybrid: CLI store classification failed: ${err}`);
+                }
+              }
+            }
+          }
+
+          const entry = factsDb.store({
+            text,
+            category,
+            importance: 0.7,
+            entity,
+            key: opts.key ?? extracted.key ?? null,
+            value: opts.value ?? extracted.value ?? null,
+            source: "cli",
+            sourceDate,
+            tags: tags ?? extractTags(text, entity),
+          });
+          try {
+            const vector = await embeddings.embed(text);
+            if (!(await vectorDb.hasDuplicate(vector))) {
+              await vectorDb.store({ text, vector, importance: 0.7, category: opts.category ?? "other", id: entry.id });
+            }
+          } catch (err) {
+            log.warn(`memory-hybrid: vector store failed: ${err}`);
+          }
+          return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : "") };
+        }
+
+        registerHybridMemCli(mem, {
+          factsDb,
+          vectorDb,
+          versionInfo,
+          embeddings,
+          mergeResults,
+          parseSourceDate,
+          getMemoryCategories: () => [...getMemoryCategories()],
+          runStore: (opts) => runStoreForCli(opts, api.logger),
+          runFindDuplicates: (opts) =>
+            runFindDuplicates(factsDb, embeddings, opts, api.logger),
+          runConsolidate: (opts) =>
+            runConsolidate(factsDb, vectorDb, embeddings, openaiClient, opts, api.logger),
+          runReflection: (opts) =>
+            runReflection(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openaiClient,
+              { defaultWindow: cfg.reflection.defaultWindow, minObservations: cfg.reflection.minObservations },
+              opts,
+              api.logger,
+            ),
+          runReflectionRules: (opts) =>
+            runReflectionRules(factsDb, vectorDb, embeddings, openaiClient, opts, api.logger),
+          runReflectionMeta: (opts) =>
+            runReflectionMeta(factsDb, vectorDb, embeddings, openaiClient, opts, api.logger),
+          reflectionConfig: cfg.reflection,
+          runClassify: (opts) =>
+            runClassifyForCli(
+              factsDb,
+              openaiClient,
+              cfg.autoClassify,
+              opts,
+              join(dirname(resolvedSqlitePath), ".discovered-categories.json"),
+              { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) },
+            ),
+          autoClassifyConfig: cfg.autoClassify,
+        });
 
         mem
           .command("extract-daily")
@@ -3712,460 +3918,6 @@ const memoryHybridPlugin = {
                 } duplicates skipped)`,
               );
             }
-          });
-
-        mem
-          .command("search")
-          .description("Search memories across both backends")
-          .argument("<query>", "Search query")
-          .option("--limit <n>", "Max results", "5")
-          .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-          .option("--as-of <date>", "FR-010: Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
-          .option("--include-superseded", "FR-010: Include superseded (historical) facts")
-          .action(async (query: string, opts: { limit?: string; tag?: string; asOf?: string; includeSuperseded?: boolean }) => {
-            const limit = parseInt(opts.limit || "5");
-            const tag = opts.tag?.trim();
-            const asOfSec = opts.asOf != null && opts.asOf !== "" ? parseSourceDate(opts.asOf) : undefined;
-            const searchOpts = { tag, includeSuperseded: opts.includeSuperseded === true, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
-            const sqlResults = factsDb.search(query, limit, searchOpts);
-            let lanceResults: SearchResult[] = [];
-            if (!tag) {
-              try {
-                const vector = await embeddings.embed(query);
-                lanceResults = await vectorDb.search(vector, limit, 0.3);
-              } catch (err) {
-                console.warn(`memory-hybrid: vector search failed: ${err}`);
-              }
-            }
-            const merged = mergeResults(sqlResults, lanceResults, limit, factsDb);
-
-            const output = merged.map((r) => ({
-              id: r.entry.id,
-              text: r.entry.text,
-              category: r.entry.category,
-              entity: r.entry.entity,
-              score: r.score,
-              backend: r.backend,
-              tags: r.entry.tags?.length ? r.entry.tags : undefined,
-              sourceDate: r.entry.sourceDate
-                ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
-                : undefined,
-            }));
-            console.log(JSON.stringify(output, null, 2));
-          });
-
-        mem
-          .command("lookup")
-          .description("Exact entity lookup in SQLite")
-          .argument("<entity>", "Entity name")
-          .option("--key <key>", "Optional key filter")
-          .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-          .option("--as-of <date>", "FR-010: Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
-          .option("--include-superseded", "FR-010: Include superseded (historical) facts")
-          .action(async (entity: string, opts: { key?: string; tag?: string; asOf?: string; includeSuperseded?: boolean }) => {
-            const asOfSec = opts.asOf != null && opts.asOf !== "" ? parseSourceDate(opts.asOf) : undefined;
-            const lookupOpts = { includeSuperseded: opts.includeSuperseded === true, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
-            const results = factsDb.lookup(entity, opts.key, opts.tag?.trim(), lookupOpts);
-            const output = results.map((r) => ({
-              id: r.entry.id,
-              text: r.entry.text,
-              entity: r.entry.entity,
-              key: r.entry.key,
-              value: r.entry.value,
-              tags: r.entry.tags?.length ? r.entry.tags : undefined,
-              sourceDate: r.entry.sourceDate
-                ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
-                : undefined,
-            }));
-            console.log(JSON.stringify(output, null, 2));
-          });
-
-        mem
-          .command("store")
-          .description("Store a fact (for scripts; agents use memory_store tool)")
-          .requiredOption("--text <text>", "Fact text")
-          .option("--category <cat>", "Category", "other")
-          .option("--entity <entity>", "Entity name")
-          .option("--key <key>", "Structured key")
-          .option("--value <value>", "Structured value")
-          .option("--source-date <date>", "When fact originated (ISO-8601, e.g. 2026-01-15)")
-          .option("--tags <tags>", "Comma-separated topic tags (e.g. nibe,zigbee); auto-inferred if omitted")
-          .action(async (opts: { text: string; category?: string; entity?: string; key?: string; value?: string; sourceDate?: string; tags?: string }) => {
-            const text = opts.text;
-            if (!text || text.length < 2) {
-              console.error("--text is required and must be at least 2 characters");
-              process.exitCode = 1;
-              return;
-            }
-            if (factsDb.hasDuplicate(text)) {
-              console.log("Similar memory already exists.");
-              return;
-            }
-            const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
-            const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
-            const entity = opts.entity ?? extracted.entity ?? null;
-            const key = opts.key ?? extracted.key ?? null;
-            const value = opts.value ?? extracted.value ?? null;
-
-            // Dual-mode: vault enabled and credential-like → vault + pointer; else store in memory.
-            // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
-            if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
-              const parsed = tryParseCredentialForVault(text, entity, key, value);
-              if (parsed) {
-                credentialsDb.store({
-                  service: parsed.service,
-                  type: parsed.type,
-                  value: parsed.secretValue,
-                  url: parsed.url,
-                  notes: parsed.notes,
-                });
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-                const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
-                const pointerEntry = factsDb.store({
-                  text: pointerText,
-                  category: "technical" as MemoryCategory,
-                  importance: 0.7,
-                  entity: "Credentials",
-                  key: parsed.service,
-                  value: pointerValue,
-                  source: "cli",
-                  sourceDate,
-                  tags: ["auth", ...extractTags(pointerText, "Credentials")],
-                });
-                try {
-                  const vector = await embeddings.embed(pointerText);
-                  if (!(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text: pointerText, vector, importance: 0.7, category: "technical", id: pointerEntry.id });
-                  }
-                } catch (err) {
-                  api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
-                }
-                console.log(`Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer [id: ${pointerEntry.id}].`);
-                return;
-              }
-              console.error(
-                "Credential-like content detected but could not be parsed as a structured credential; not stored (vault is enabled).",
-              );
-              process.exitCode = 1;
-              return;
-            }
-
-            const tags = opts.tags
-              ? opts.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
-              : undefined;
-            const category = (opts.category ?? "other") as MemoryCategory;
-
-            // FR-008: Classify before store when enabled (same as memory_store tool)
-            if (cfg.store.classifyBeforeWrite) {
-              let vector: number[] | undefined;
-              try {
-                vector = await embeddings.embed(text);
-              } catch (err) {
-                api.logger.warn(`memory-hybrid: CLI store embedding failed: ${err}`);
-              }
-              if (vector) {
-                let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
-                if (similarFacts.length === 0) {
-                  similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5);
-                }
-                if (similarFacts.length > 0) {
-                  try {
-                    const classification = await classifyMemoryOperation(
-                      text, entity, key, similarFacts, openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
-                    );
-                    if (classification.action === "NOOP") {
-                      console.log(`Already known: ${classification.reason}`);
-                      return;
-                    }
-                    if (classification.action === "DELETE" && classification.targetId) {
-                      factsDb.supersede(classification.targetId, null);
-                      console.log(`Retracted fact ${classification.targetId}: ${classification.reason}`);
-                      return;
-                    }
-                    if (classification.action === "UPDATE" && classification.targetId) {
-                      const oldFact = factsDb.getById(classification.targetId);
-                      if (oldFact) {
-                        const nowSec = Math.floor(Date.now() / 1000);
-                        const newEntry = factsDb.store({
-                          text,
-                          category,
-                          importance: 0.7,
-                          entity: entity ?? oldFact.entity,
-                          key: opts.key ?? extracted.key ?? oldFact.key ?? null,
-                          value: opts.value ?? extracted.value ?? oldFact.value ?? null,
-                          source: "cli",
-                          sourceDate,
-                          tags: tags ?? extractTags(text, entity),
-                          validFrom: sourceDate ?? nowSec,
-                          supersedesId: classification.targetId,
-                        });
-                        factsDb.supersede(classification.targetId, newEntry.id);
-                        try {
-                          if (!(await vectorDb.hasDuplicate(vector))) {
-                            await vectorDb.store({ text, vector, importance: 0.7, category, id: newEntry.id });
-                          }
-                        } catch (err) {
-                          api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
-                        }
-                        console.log(`Updated: superseded ${classification.targetId} with ${newEntry.id}. ${classification.reason}`);
-                        return;
-                      }
-                    }
-                  } catch (err) {
-                    api.logger.warn(`memory-hybrid: CLI store classification failed: ${err}`);
-                  }
-                }
-              }
-            }
-
-            const entry = factsDb.store({
-              text,
-              category,
-              importance: 0.7,
-              entity,
-              key: opts.key ?? extracted.key ?? null,
-              value: opts.value ?? extracted.value ?? null,
-              source: "cli",
-              sourceDate,
-              tags: tags ?? extractTags(text, entity),
-            });
-            try {
-              const vector = await embeddings.embed(text);
-              if (!(await vectorDb.hasDuplicate(vector))) {
-                await vectorDb.store({ text, vector, importance: 0.7, category: opts.category ?? "other", id: entry.id });
-              }
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
-            }
-            console.log(`Stored: "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}" [id: ${entry.id}]`);
-          });
-
-        mem
-          .command("classify")
-          .description("Auto-classify 'other' facts using LLM (uses autoClassify config). Runs category discovery first when enabled.")
-          .option("--dry-run", "Show classifications without applying")
-          .option("--limit <n>", "Max facts to classify", "500")
-          .option("--model <model>", "Override LLM model")
-          .action(async (opts: { dryRun?: boolean; limit?: string; model?: string }) => {
-            const classifyModel = opts.model || cfg.autoClassify.model;
-            const limit = parseInt(opts.limit || "500");
-            const logger = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
-
-            console.log(`Auto-classify config:`);
-            console.log(`  Model: ${classifyModel}`);
-            console.log(`  Batch size: ${cfg.autoClassify.batchSize}`);
-            console.log(`  Suggest categories: ${cfg.autoClassify.suggestCategories !== false}`);
-            console.log(`  Categories: ${getMemoryCategories().join(", ")}`);
-            console.log(`  Limit: ${limit}`);
-            console.log(`  Dry run: ${!!opts.dryRun}\n`);
-
-            let others = factsDb.getByCategory("other").slice(0, limit);
-            if (others.length === 0) {
-              console.log("No 'other' facts to classify.");
-              return;
-            }
-
-            // Run category discovery first (when not dry-run and enough "other" facts)
-            if (!opts.dryRun && cfg.autoClassify.suggestCategories && others.length >= MIN_OTHER_FOR_DISCOVERY) {
-              const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
-              await discoverCategoriesFromOther(
-                factsDb,
-                openaiClient,
-                { ...cfg.autoClassify, model: classifyModel },
-                logger,
-                discoveredPath,
-              );
-              others = factsDb.getByCategory("other").slice(0, limit);
-            }
-
-            console.log(`Classifying ${others.length} "other" facts\n`);
-
-            let totalReclassified = 0;
-
-            for (let i = 0; i < others.length; i += cfg.autoClassify.batchSize) {
-              const batch = others.slice(i, i + cfg.autoClassify.batchSize).map((e) => ({
-                id: e.id,
-                text: e.text,
-              }));
-
-              const results = await classifyBatch(
-                openaiClient,
-                classifyModel,
-                batch,
-                getMemoryCategories(),
-              );
-
-              for (const [id, newCat] of results) {
-                const fact = batch.find((f) => f.id === id);
-                if (opts.dryRun) {
-                  console.log(`  [${newCat}] ${fact?.text?.slice(0, 80)}...`);
-                } else {
-                  factsDb.updateCategory(id, newCat);
-                }
-                totalReclassified++;
-              }
-
-              process.stdout.write(`  Processed ${Math.min(i + cfg.autoClassify.batchSize, others.length)}/${others.length}\r`);
-
-              if (i + cfg.autoClassify.batchSize < others.length) {
-                await new Promise((r) => setTimeout(r, 500));
-              }
-            }
-
-            console.log(`\n\nResult: ${totalReclassified}/${others.length} reclassified${opts.dryRun ? " (dry run)" : ""}`);
-
-            // Show updated stats
-            if (!opts.dryRun) {
-              const breakdown = factsDb.statsBreakdown();
-              console.log("\nUpdated category breakdown:");
-              for (const [cat, count] of Object.entries(breakdown)) {
-                console.log(`  ${cat}: ${count}`);
-              }
-            }
-          });
-
-        mem
-          .command("categories")
-          .description("List all configured memory categories")
-          .action(() => {
-            const cats = getMemoryCategories();
-            console.log(`Memory categories (${cats.length}):`);
-            for (const cat of cats) {
-              const count = factsDb.getByCategory(cat).length;
-              console.log(`  ${cat}: ${count} facts`);
-            }
-          });
-
-        mem
-          .command("find-duplicates")
-          .description("Report pairs of facts with embedding similarity ≥ threshold (2.2); no merge")
-          .option("--threshold <n>", "Similarity threshold 0–1 (default 0.92)", "0.92")
-          .option("--include-structured", "Include identifier-like facts (IP, email, etc.); default is to skip")
-          .option("--limit <n>", "Max facts to consider (default 300)", "300")
-          .action(async (opts: { threshold?: string; includeStructured?: boolean; limit?: string }) => {
-            const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.92")));
-            const limit = Math.min(500, Math.max(10, parseInt(opts.limit || "300")));
-            const result = await runFindDuplicates(
-              factsDb,
-              embeddings,
-              { threshold, includeStructured: !!opts.includeStructured, limit },
-              api.logger,
-            );
-            console.log(`Candidates: ${result.candidatesCount} (skipped identifier-like: ${result.skippedStructured})`);
-            console.log(`Pairs with similarity ≥ ${threshold}: ${result.pairs.length}`);
-            const trim = (s: string, max: number) => (s.length <= max ? s : s.slice(0, max) + "…");
-            for (const p of result.pairs) {
-              console.log(`  ${p.idA} <-> ${p.idB} (${p.score.toFixed(3)})`);
-              console.log(`    A: ${trim(p.textA, 80)}`);
-              console.log(`    B: ${trim(p.textB, 80)}`);
-            }
-          });
-
-        mem
-          .command("consolidate")
-          .description("Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster (2.4)")
-          .option("--threshold <n>", "Cosine similarity threshold 0–1 (default 0.96; higher = fewer merges)", "0.96")
-          .option("--include-structured", "Include identifier-like facts (IP, email, etc.); default is to skip")
-          .option("--dry-run", "Report clusters and would-merge only; do not store or delete")
-          .option("--limit <n>", "Max facts to consider (default 300)", "300")
-          .option("--model <model>", "LLM for merge (default gpt-4o-mini)", "gpt-4o-mini")
-          .action(async (opts: { threshold?: string; includeStructured?: boolean; dryRun?: boolean; limit?: string; model?: string }) => {
-            const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.96")));
-            const limit = Math.min(500, Math.max(10, parseInt(opts.limit || "300")));
-            const result = await runConsolidate(
-              factsDb,
-              vectorDb,
-              embeddings,
-              openaiClient,
-              {
-                threshold,
-                includeStructured: !!opts.includeStructured,
-                dryRun: !!opts.dryRun,
-                limit,
-                model: opts.model || "gpt-4o-mini",
-              },
-              api.logger,
-            );
-            console.log(`Clusters found: ${result.clustersFound}`);
-            console.log(`Merged: ${result.merged}`);
-            console.log(`Deleted: ${result.deleted}${opts.dryRun ? " (dry run)" : ""}`);
-          });
-
-        mem
-          .command("reflect")
-          .description("FR-011: Analyze recent facts, extract behavioral patterns, store as pattern-category facts")
-          .option("--window <days>", "Time window in days (default: config or 14)", "14")
-          .option("--dry-run", "Show extracted patterns without storing")
-          .option("--model <model>", "LLM for reflection (default: config or gpt-4o-mini)", "gpt-4o-mini")
-          .option("--force", "Run even if reflection is disabled in config")
-          .action(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
-            const reflectionCfg = cfg.reflection;
-            if (!opts.force && !reflectionCfg.enabled) {
-              console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
-              return;
-            }
-            const window = Math.min(90, Math.max(1, parseInt(opts.window || String(reflectionCfg.defaultWindow)) || 14));
-            const result = await runReflection(
-              factsDb,
-              vectorDb,
-              embeddings,
-              openaiClient,
-              { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
-              { window, dryRun: !!opts.dryRun, model: opts.model || reflectionCfg.model },
-              api.logger,
-            );
-            console.log(`Facts analyzed: ${result.factsAnalyzed}`);
-            console.log(`Patterns extracted: ${result.patternsExtracted}`);
-            console.log(`Patterns stored: ${result.patternsStored}${opts.dryRun ? " (dry run)" : ""}`);
-            console.log(`Window: ${result.window} days`);
-          });
-
-        mem
-          .command("reflect-rules")
-          .description("FR-011 optional: Synthesize patterns into actionable one-line rules (category rule)")
-          .option("--dry-run", "Show extracted rules without storing")
-          .option("--model <model>", "LLM (default: config or gpt-4o-mini)", "gpt-4o-mini")
-          .option("--force", "Run even if reflection is disabled in config")
-          .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
-            const reflectionCfg = cfg.reflection;
-            if (!opts.force && !reflectionCfg.enabled) {
-              console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
-              return;
-            }
-            const result = await runReflectionRules(
-              factsDb,
-              vectorDb,
-              embeddings,
-              openaiClient,
-              { dryRun: !!opts.dryRun, model: opts.model || reflectionCfg.model },
-              api.logger,
-            );
-            console.log(`Rules extracted: ${result.rulesExtracted}`);
-            console.log(`Rules stored: ${result.rulesStored}${opts.dryRun ? " (dry run)" : ""}`);
-          });
-
-        mem
-          .command("reflect-meta")
-          .description("FR-011 optional: Synthesize patterns into 1-3 higher-level meta-patterns")
-          .option("--dry-run", "Show extracted meta-patterns without storing")
-          .option("--model <model>", "LLM (default: config or gpt-4o-mini)", "gpt-4o-mini")
-          .option("--force", "Run even if reflection is disabled in config")
-          .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
-            const reflectionCfg = cfg.reflection;
-            if (!opts.force && !reflectionCfg.enabled) {
-              console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
-              return;
-            }
-            const result = await runReflectionMeta(
-              factsDb,
-              vectorDb,
-              embeddings,
-              openaiClient,
-              { dryRun: !!opts.dryRun, model: opts.model || reflectionCfg.model },
-              api.logger,
-            );
-            console.log(`Meta-patterns extracted: ${result.metaExtracted}`);
-            console.log(`Meta-patterns stored: ${result.metaStored}${opts.dryRun ? " (dry run)" : ""}`);
           });
 
         mem
