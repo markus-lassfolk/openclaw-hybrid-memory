@@ -29,8 +29,8 @@ export type AutoClassifyConfig = {
   minFactsForNewCategory?: number;
 };
 
-/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
-export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
+/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index */
+export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive";
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
@@ -60,29 +60,10 @@ export type AutoRecallConfig = {
 /** Store options: fuzzy dedupe (2.3) uses normalized-text hash to skip near-duplicate facts. */
 export type StoreConfig = {
   fuzzyDedupe: boolean;
-};
-
-/** Credential types supported by the credentials store */
-export const CREDENTIAL_TYPES = [
-  "token",
-  "password",
-  "api_key",
-  "ssh",
-  "bearer",
-  "other",
-] as const;
-export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
-
-/** Opt-in credentials: structured, encrypted storage for API keys, tokens, etc. */
-export type CredentialsConfig = {
-  enabled: boolean;
-  store: "sqlite";
-  /** Encryption key: "env:VAR_NAME" resolves from env, or raw string (not recommended) */
-  encryptionKey: string;
-  /** When enabled, detect credential patterns in conversation and prompt to store (default false) */
-  autoDetect?: boolean;
-  /** Days before expiry to warn (default 7) */
-  expiryWarningDays?: number;
+  /** FR-008: When true, classify incoming facts as ADD/UPDATE/DELETE/NOOP before storing (default true). Uses a cheap LLM call. */
+  classifyBeforeWrite: boolean;
+  /** FR-008: Model to use for memory operation classification (default: same as autoClassify.model). */
+  classifyModel: string;
 };
 
 /** Write-Ahead Log (WAL) configuration for crash resilience */
@@ -120,6 +101,51 @@ export type PersonaProposalsConfig = {
   validationModel: string;
 };
 
+/** Graph-based spreading activation (FR-007): auto-linking and traversal settings */
+export type GraphConfig = {
+  enabled: boolean;
+  autoLink: boolean;            // Auto-create RELATED_TO links during storage
+  autoLinkMinScore: number;     // Min similarity score for auto-linking (default 0.7)
+  autoLinkLimit: number;        // Max similar facts to link per storage (default 3)
+  maxTraversalDepth: number;    // Max hops for graph traversal in recall (default 2)
+  useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
+};
+
+/** Reflection: analyze facts to extract behavioral patterns and meta-insights */
+export type ReflectionConfig = {
+  enabled: boolean;
+  /** Model for reflection analysis (default gpt-4o-mini) */
+  model: string;
+  /** Default time window in days for reflection (default 14) */
+  defaultWindow: number;
+  /** Minimum observations required to generate a pattern (default 2) */
+  minObservations: number;
+};
+
+/** Credential types supported by the credentials store */
+export const CREDENTIAL_TYPES = [
+  "token",
+  "password",
+  "api_key",
+  "ssh",
+  "bearer",
+  "other",
+] as const;
+export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
+
+/** Opt-in credentials: structured, encrypted storage for API keys, tokens, etc. */
+export type CredentialsConfig = {
+  enabled: boolean;
+  store: "sqlite";
+  /** Encryption key: "env:VAR_NAME" resolves from env, or raw string (not recommended) */
+  encryptionKey: string;
+  /** When enabled, detect credential patterns in conversation and prompt to store (default false) */
+  autoDetect?: boolean;
+  /** Days before expiry to warn (default 7) */
+  expiryWarningDays?: number;
+};
+
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -138,10 +164,14 @@ export type HybridMemoryConfig = {
   store: StoreConfig;
   /** Opt-in credential management: structured, encrypted storage (default: disabled) */
   credentials: CredentialsConfig;
+  /** Graph-based spreading activation (FR-007): auto-linking and graph traversal */
+  graph: GraphConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
+  /** Reflection: analyze facts to extract behavioral patterns (FR-011) */
+  reflection: ReflectionConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -150,6 +180,8 @@ export const DEFAULT_MEMORY_CATEGORIES = [
   "fact",
   "decision",
   "entity",
+  "pattern",
+  "rule",
   "other",
 ] as const;
 
@@ -239,7 +271,7 @@ export const hybridConfigSchema = {
 
     // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars?, injectionFormat? }
     const arRaw = cfg.autoRecall;
-    const VALID_FORMATS = ["full", "short", "minimal"] as const;
+    const VALID_FORMATS = ["full", "short", "minimal", "progressive"] as const;
     let autoRecall: AutoRecallConfig;
     if (typeof arRaw === "object" && arRaw !== null && !Array.isArray(arRaw)) {
       const ar = arRaw as Record<string, unknown>;
@@ -311,6 +343,8 @@ export const hybridConfigSchema = {
     const storeRaw = cfg.store as Record<string, unknown> | undefined;
     const store: StoreConfig = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
+      classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
+      classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : "gpt-4o-mini",
     };
 
     // Parse WAL config (enabled by default for crash resilience)
@@ -362,6 +396,23 @@ export const hybridConfigSchema = {
       };
     }
 
+    // Parse graph config (FR-007)
+    const graphRaw = cfg.graph as Record<string, unknown> | undefined;
+    const graph: GraphConfig = {
+      enabled: graphRaw?.enabled !== false,
+      autoLink: graphRaw?.autoLink === true,
+      autoLinkMinScore: typeof graphRaw?.autoLinkMinScore === "number" && graphRaw.autoLinkMinScore >= 0 && graphRaw.autoLinkMinScore <= 1
+        ? graphRaw.autoLinkMinScore
+        : 0.7,
+      autoLinkLimit: typeof graphRaw?.autoLinkLimit === "number" && graphRaw.autoLinkLimit > 0
+        ? Math.floor(graphRaw.autoLinkLimit)
+        : 3,
+      maxTraversalDepth: typeof graphRaw?.maxTraversalDepth === "number" && graphRaw.maxTraversalDepth > 0
+        ? Math.floor(graphRaw.maxTraversalDepth)
+        : 2,
+      useInRecall: graphRaw?.useInRecall !== false,
+    };
+
     // Parse persona proposals config (opt-in, disabled by default)
     const proposalsRaw = cfg.personaProposals as Record<string, unknown> | undefined;
     const personaProposals: PersonaProposalsConfig = {
@@ -393,6 +444,19 @@ export const hybridConfigSchema = {
         : "gpt-4o-mini",
     };
 
+    // Parse reflection config (FR-011)
+    const reflRaw = cfg.reflection as Record<string, unknown> | undefined;
+    const reflection: ReflectionConfig = {
+      enabled: reflRaw?.enabled === true,
+      model: typeof reflRaw?.model === "string" ? reflRaw.model : "gpt-4o-mini",
+      defaultWindow: typeof reflRaw?.defaultWindow === "number" && reflRaw.defaultWindow > 0
+        ? Math.floor(reflRaw.defaultWindow)
+        : 14,
+      minObservations: typeof reflRaw?.minObservations === "number" && reflRaw.minObservations >= 1
+        ? Math.floor(reflRaw.minObservations)
+        : 2,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -410,8 +474,10 @@ export const hybridConfigSchema = {
       autoClassify,
       store,
       credentials,
+      graph,
       wal,
       personaProposals,
+      reflection,
     };
   },
 };
