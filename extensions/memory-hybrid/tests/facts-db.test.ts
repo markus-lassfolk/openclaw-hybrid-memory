@@ -820,6 +820,37 @@ describe("FactsDB.statsBreakdown", () => {
   });
 });
 
+describe("FactsDB.statsBreakdownByTier", () => {
+  it("groups by tier (hot/warm/cold)", () => {
+    const a = db.store({ text: "Hot fact", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test" });
+    const b = db.store({ text: "Warm fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.setTier(a.id, "hot");
+    db.setTier(b.id, "cold");
+    const stats = db.statsBreakdownByTier();
+    expect(stats.hot).toBe(1);
+    expect(stats.cold).toBe(1);
+    expect(stats.warm).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("FactsDB.statsBreakdownBySource", () => {
+  it("groups by source", () => {
+    db.store({ text: "From conversation", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "conversation" });
+    db.store({ text: "From CLI", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "cli" });
+    const stats = db.statsBreakdownBySource();
+    expect(stats.conversation).toBeGreaterThanOrEqual(1);
+    expect(stats.cli).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("FactsDB.estimateStoredTokens", () => {
+  it("returns positive token estimate for stored facts", () => {
+    db.store({ text: "A short fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const tokens = db.estimateStoredTokens();
+    expect(tokens).toBeGreaterThan(0);
+  });
+});
+
 describe("FactsDB.getByCategory", () => {
   it("returns facts of specific category", () => {
     db.store({ text: "A preference", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });

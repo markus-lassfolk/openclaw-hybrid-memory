@@ -14,7 +14,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 
 | Command | Purpose |
 |---------|---------|
-| `stats` | Show fact count (SQLite) and vector count (LanceDB), version info, decay breakdown. |
+| `stats [--efficiency]` | Show fact count (SQLite) and vector count (LanceDB), version info, decay breakdown. `--efficiency` adds tier/source breakdown, token estimates, and token-savings note. |
 | `compact` | **(FR-004)** Run tier compaction: completed tasks → COLD, inactive preferences → WARM, active blockers → HOT. Prints hot/warm/cold counts. |
 | `store --text <text> [options]` | Store a fact (for scripts; agents use `memory_store`). |
 | `lookup <entity> [--key <key>] [--tag <tag>] [--as-of <date>] [--include-superseded]` | Exact lookup in SQLite. **(FR-010)** `--as-of` = point-in-time (ISO or epoch); `--include-superseded` = include historical facts. |
@@ -54,6 +54,24 @@ openclaw hybrid-mem store --text <text> [--category <cat>] [--entity <e>] [--key
 - `--scope-target`: Required when scope is `user`, `agent`, or `session` — the userId, agentId, or sessionId.
 - `--supersedes`: Fact id this one supersedes (replaces).
 - **(FR-008)** When `store.classifyBeforeWrite` is true in config, `store` runs ADD/UPDATE/DELETE/NOOP classification against similar facts before writing.
+
+---
+
+## Stats and efficiency
+
+`openclaw hybrid-mem stats` shows fact counts, LanceDB vectors, and decay breakdown.
+
+Add `--efficiency` for an extended view:
+
+```
+openclaw hybrid-mem stats --efficiency
+```
+
+This adds:
+- **By tier (hot/warm/cold):** Fact counts and estimated tokens per tier
+- **By source:** How facts were added (conversation, cli, distillation, reflection, auto-capture, etc.)
+- **Estimated tokens in memory:** Total token size of stored facts (same heuristic as auto-recall)
+- **Token savings note:** Explains that providers can cache injected memories; Cache Read is typically 90%+ cheaper than Input. Compare your provider dashboard (Input vs Cache Read) to see actual savings — many users see 90–97% reduction.
 
 ---
 
