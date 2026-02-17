@@ -61,6 +61,14 @@ type MemoryEntry = {
   summary?: string | null;
   /** Topic tags for sharper retrieval (FR-001); e.g. nibe, zigbee, auth */
   tags?: string[] | null;
+  /** FR-005: Number of times this fact has been retrieved via search/recall */
+  recallCount?: number;
+  /** FR-005: Last time this fact was accessed (unix seconds) */
+  lastAccessed?: number | null;
+  /** FR-008/010: When this fact was superseded by a newer version (unix seconds; null = current) */
+  supersededAt?: number | null;
+  /** FR-008/010: ID of the fact that superseded this one */
+  supersededBy?: string | null;
 };
 
 type SearchResult = {
@@ -234,6 +242,12 @@ class FactsDB {
 
     // ---- Tags for topic filtering (FR-001) ----
     this.migrateTagsColumn();
+
+    // ---- Access tracking for dynamic salience (FR-005) ----
+    this.migrateAccessTracking();
+
+    // ---- Supersession columns for contradiction resolution (FR-008/010) ----
+    this.migrateSupersessionColumns();
   }
 
   private migrateTagsColumn(): void {
@@ -244,6 +258,35 @@ class FactsDB {
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`,
+    );
+  }
+
+  /** FR-005: Add recall_count and last_accessed for dynamic salience scoring. */
+  private migrateAccessTracking(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("recall_count")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_accessed INTEGER`);
+    this.liveDb.exec(`UPDATE facts SET last_accessed = last_confirmed_at WHERE last_accessed IS NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_last_accessed ON facts(last_accessed) WHERE last_accessed IS NOT NULL`,
+    );
+  }
+
+  /** FR-008/010: Add superseded_at and superseded_by for contradiction resolution. */
+  private migrateSupersessionColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("superseded_at")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN superseded_at INTEGER`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN superseded_by TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_superseded ON facts(superseded_at) WHERE superseded_at IS NOT NULL`,
     );
   }
 
@@ -428,7 +471,7 @@ class FactsDB {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const stmt = this.liveDb.prepare(`
+    const stmtDecay = this.liveDb.prepare(`
       UPDATE facts
       SET last_confirmed_at = @now,
           expires_at = CASE decay_class
@@ -440,14 +483,23 @@ class FactsDB {
         AND decay_class IN ('stable', 'active')
     `);
 
+    // FR-005: Track access count and timestamp for dynamic salience scoring
+    const stmtAccess = this.liveDb.prepare(`
+      UPDATE facts
+      SET recall_count = recall_count + 1,
+          last_accessed = @now
+      WHERE id = @id
+    `);
+
     const tx = this.liveDb.transaction(() => {
       for (const id of ids) {
-        stmt.run({
+        stmtDecay.run({
           now: nowSec,
           stableTtl: TTL_DEFAULTS.stable,
           activeTtl: TTL_DEFAULTS.active,
           id,
         });
+        stmtAccess.run({ now: nowSec, id });
       }
     });
     tx();
@@ -456,9 +508,9 @@ class FactsDB {
   search(
     query: string,
     limit = 5,
-    options: { includeExpired?: boolean; tag?: string } = {},
+    options: { includeExpired?: boolean; tag?: string; includeSuperseded?: boolean } = {},
   ): SearchResult[] {
-    const { includeExpired = false, tag } = options;
+    const { includeExpired = false, tag, includeSuperseded = false } = options;
 
     const safeQuery = query
       .replace(/['"]/g, "")
@@ -473,6 +525,9 @@ class FactsDB {
     const expiryFilter = includeExpired
       ? ""
       : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
+    const supersededFilter = includeSuperseded
+      ? ""
+      : "AND f.superseded_at IS NULL";
     const tagFilter =
       tag && tag.trim()
         ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern"
@@ -491,6 +546,7 @@ class FactsDB {
          JOIN facts_fts fts ON f.rowid = fts.rowid
          WHERE facts_fts MATCH @query
            ${expiryFilter}
+           ${supersededFilter}
            ${tagFilter}
          ORDER BY rank
          LIMIT @limit`,
@@ -533,6 +589,10 @@ class FactsDB {
           lastConfirmedAt: (row.last_confirmed_at as number) || 0,
           confidence,
           summary: (row.summary as string) || undefined,
+          recallCount: (row.recall_count as number) || 0,
+          lastAccessed: (row.last_accessed as number) || null,
+          supersededAt: (row.superseded_at as number) || null,
+          supersededBy: (row.superseded_by as string) || null,
         },
         score: composite,
         backend: "sqlite" as const,
@@ -562,8 +622,8 @@ class FactsDB {
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
 
     const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
 
     const params = key
       ? tagParam !== null
@@ -594,6 +654,10 @@ class FactsDB {
         lastConfirmedAt: (row.last_confirmed_at as number) || 0,
         confidence: (row.confidence as number) || 1.0,
         summary: (row.summary as string) || undefined,
+        recallCount: (row.recall_count as number) || 0,
+        lastAccessed: (row.last_accessed as number) || null,
+        supersededAt: (row.superseded_at as number) || null,
+        supersededBy: (row.superseded_by as string) || null,
       },
       score: (row.confidence as number) || 1.0,
       backend: "sqlite" as const,
@@ -626,6 +690,149 @@ class FactsDB {
       .prepare(`SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1`)
       .get(hash) as { id: string } | undefined;
     return row?.id ?? null;
+  }
+
+  /** FR-008/010: Mark a fact as superseded by a new fact. */
+  supersede(oldId: string, newId: string): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const result = this.liveDb
+      .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
+      .run(nowSec, newId, oldId);
+    return result.changes > 0;
+  }
+
+  /** FR-008: Update an existing fact's text/value in-place (for UPDATE classification). */
+  updateFact(id: string, fields: { text?: string; value?: string; importance?: number; summary?: string | null }): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const sets: string[] = [];
+    const params: unknown[] = [];
+
+    if (fields.text !== undefined) {
+      sets.push("text = ?");
+      params.push(fields.text);
+      sets.push("normalized_hash = ?");
+      params.push(normalizedHash(fields.text));
+    }
+    if (fields.value !== undefined) {
+      sets.push("value = ?");
+      params.push(fields.value);
+    }
+    if (fields.importance !== undefined) {
+      sets.push("importance = ?");
+      params.push(fields.importance);
+    }
+    if (fields.summary !== undefined) {
+      sets.push("summary = ?");
+      params.push(fields.summary);
+    }
+    sets.push("last_confirmed_at = ?");
+    params.push(nowSec);
+    sets.push("confidence = 1.0");
+
+    if (sets.length === 0) return false;
+    params.push(id);
+    const result = this.liveDb
+      .prepare(`UPDATE facts SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...params);
+    return result.changes > 0;
+  }
+
+  /** FR-008: Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
+  findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const normText = normalizeTextForDedupe(text);
+    const results: MemoryEntry[] = [];
+
+    // Priority 1: exact entity+key match (most likely an UPDATE)
+    if (entity && key) {
+      const rows = this.liveDb
+        .prepare(
+          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(entity, key, nowSec, limit) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        results.push(this.rowToEntry(row));
+      }
+    }
+
+    // Priority 2: same entity, different key
+    if (entity && results.length < limit) {
+      const remaining = limit - results.length;
+      const seenIds = new Set(results.map((r) => r.id));
+      const rows = this.liveDb
+        .prepare(
+          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(entity, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const entry = this.rowToEntry(row);
+        if (!seenIds.has(entry.id)) {
+          results.push(entry);
+          seenIds.add(entry.id);
+          if (results.length >= limit) break;
+        }
+      }
+    }
+
+    // Priority 3: FTS text match
+    if (results.length < limit) {
+      const remaining = limit - results.length;
+      const seenIds = new Set(results.map((r) => r.id));
+      const words = text
+        .replace(/['"]/g, "")
+        .split(/\s+/)
+        .filter((w) => w.length > 2)
+        .slice(0, 5)
+        .map((w) => `"${w}"`)
+        .join(" OR ");
+      if (words) {
+        try {
+          const rows = this.liveDb
+            .prepare(
+              `SELECT f.* FROM facts f JOIN facts_fts fts ON f.rowid = fts.rowid WHERE facts_fts MATCH ? AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?) LIMIT ?`
+            )
+            .all(words, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
+          for (const row of rows) {
+            const entry = this.rowToEntry(row);
+            if (!seenIds.has(entry.id)) {
+              results.push(entry);
+              seenIds.add(entry.id);
+              if (results.length >= limit) break;
+            }
+          }
+        } catch {
+          // FTS query can fail on unusual input; ignore
+        }
+      }
+    }
+
+    return results.slice(0, limit);
+  }
+
+  /** Convert a raw SQLite row to MemoryEntry. */
+  private rowToEntry(row: Record<string, unknown>): MemoryEntry {
+    return {
+      id: row.id as string,
+      text: row.text as string,
+      category: row.category as MemoryCategory,
+      importance: row.importance as number,
+      entity: (row.entity as string) || null,
+      key: (row.key as string) || null,
+      value: (row.value as string) || null,
+      source: row.source as string,
+      createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
+      decayClass: (row.decay_class as DecayClass) || "stable",
+      expiresAt: (row.expires_at as number) || null,
+      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
+      confidence: (row.confidence as number) || 1.0,
+      summary: (row.summary as string) || undefined,
+      recallCount: (row.recall_count as number) || 0,
+      lastAccessed: (row.last_accessed as number) || null,
+      supersededAt: (row.superseded_at as number) || null,
+      supersededBy: (row.superseded_by as string) || null,
+    };
   }
 
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
@@ -667,6 +874,10 @@ class FactsDB {
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
       confidence: (row.confidence as number) || 1.0,
       summary: (row.summary as string) || undefined,
+      recallCount: (row.recall_count as number) || 0,
+      lastAccessed: (row.last_accessed as number) || null,
+      supersededAt: (row.superseded_at as number) || null,
+      supersededBy: (row.superseded_by as string) || null,
     };
   }
 
@@ -840,6 +1051,10 @@ class FactsDB {
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
       confidence: (row.confidence as number) || 1.0,
       summary: (row.summary as string) || undefined,
+      recallCount: (row.recall_count as number) || 0,
+      lastAccessed: (row.last_accessed as number) || null,
+      supersededAt: (row.superseded_at as number) || null,
+      supersededBy: (row.superseded_by as string) || null,
     }));
   }
 
@@ -1207,6 +1422,98 @@ function mergeResults(
     return db - da;
   });
   return merged.slice(0, limit);
+}
+
+// ============================================================================
+// FR-008: Memory Operation Classification (ADD/UPDATE/DELETE/NOOP)
+// ============================================================================
+
+type MemoryClassification = {
+  action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
+  targetId?: string;
+  reason: string;
+  /** For UPDATE: the updated text to store (only if LLM suggests a merge) */
+  updatedText?: string;
+};
+
+/**
+ * FR-008: Classify an incoming fact against existing similar facts.
+ * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
+ * Falls back to ADD on error.
+ */
+async function classifyMemoryOperation(
+  candidateText: string,
+  candidateEntity: string | null,
+  candidateKey: string | null,
+  existingFacts: MemoryEntry[],
+  openai: OpenAI,
+  model: string,
+  logger: { warn: (msg: string) => void },
+): Promise<MemoryClassification> {
+  if (existingFacts.length === 0) {
+    return { action: "ADD", reason: "no similar facts found" };
+  }
+
+  const existingLines = existingFacts
+    .slice(0, 5)
+    .map(
+      (f, i) =>
+        `${i + 1}. [id=${f.id}] ${f.category}${f.entity ? ` | entity: ${f.entity}` : ""}${f.key ? ` | key: ${f.key}` : ""}: ${f.text.slice(0, 300)}`,
+    )
+    .join("\n");
+
+  const prompt = `You are a memory classifier. A new fact is being stored. Compare it against existing facts and decide what to do.
+
+New fact: "${candidateText.slice(0, 500)}"${candidateEntity ? `\nEntity: ${candidateEntity}` : ""}${candidateKey ? `\nKey: ${candidateKey}` : ""}
+
+Existing similar facts:
+${existingLines}
+
+Classify as one of:
+- ADD: The new fact is genuinely new information not covered by any existing fact.
+- UPDATE <id>: The new fact supersedes or updates an existing fact (e.g., a preference changed, a value was corrected). Specify which existing fact id it replaces.
+- DELETE <id>: The new fact explicitly retracts or negates an existing fact (e.g., "I no longer use X"). Specify which fact to invalidate.
+- NOOP: The new fact is already adequately captured by existing facts. No action needed.
+
+Respond with exactly one line in this format: ACTION [id] | reason
+Examples:
+  ADD | this is new information about the user's work setup
+  UPDATE abc-123 | user changed their preferred IDE from VS Code to Cursor
+  DELETE def-456 | user explicitly stated they no longer use Docker
+  NOOP | this preference is already stored as fact #2`;
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+      max_tokens: 100,
+    });
+    const content = (resp.choices[0]?.message?.content ?? "").trim();
+
+    // Parse: "ACTION [id] | reason"
+    const match = content.match(/^(ADD|UPDATE|DELETE|NOOP)\s*([a-f0-9-]*)\s*\|\s*(.+)$/i);
+    if (!match) {
+      return { action: "ADD", reason: `unparseable LLM response: ${content.slice(0, 80)}` };
+    }
+
+    const action = match[1].toUpperCase() as MemoryClassification["action"];
+    const targetId = match[2]?.trim() || undefined;
+    const reason = match[3].trim();
+
+    // Validate targetId if UPDATE or DELETE
+    if ((action === "UPDATE" || action === "DELETE") && targetId) {
+      const validTarget = existingFacts.find((f) => f.id === targetId);
+      if (!validTarget) {
+        return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
+      }
+    }
+
+    return { action, targetId, reason };
+  } catch (err) {
+    logger.warn(`memory-hybrid: classify operation failed: ${err}`);
+    return { action: "ADD", reason: "classification failed; defaulting to ADD" };
+  }
 }
 
 // ============================================================================
@@ -2389,6 +2696,74 @@ const memoryHybridPlugin = {
             summaryThreshold > 0 && textToStore.length > summaryThreshold
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
+
+          // FR-008: Classify the operation before storing
+          if (cfg.store.classifyBeforeWrite) {
+            const similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
+            if (similarFacts.length > 0) {
+              const classification = await classifyMemoryOperation(
+                textToStore, entity, key, similarFacts, openaiClient, cfg.store.classifyModel, api.logger,
+              );
+
+              if (classification.action === "NOOP") {
+                return {
+                  content: [{ type: "text", text: `Already known: ${classification.reason}` }],
+                  details: { action: "noop", reason: classification.reason },
+                };
+              }
+
+              if (classification.action === "DELETE" && classification.targetId) {
+                factsDb.supersede(classification.targetId, "deleted");
+                return {
+                  content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
+                  details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
+                };
+              }
+
+              if (classification.action === "UPDATE" && classification.targetId) {
+                const oldFact = factsDb.getById(classification.targetId);
+                if (oldFact) {
+                  // Store the new version and supersede the old one
+                  const newEntry = factsDb.store({
+                    text: textToStore,
+                    category: category as MemoryCategory,
+                    importance: Math.max(importance, oldFact.importance),
+                    entity: entity || oldFact.entity,
+                    key: key || oldFact.key,
+                    value: value || oldFact.value,
+                    source: "conversation",
+                    decayClass: paramDecayClass ?? oldFact.decayClass,
+                    summary,
+                    tags,
+                  });
+                  factsDb.supersede(classification.targetId, newEntry.id);
+
+                  try {
+                    const vector = await embeddings.embed(textToStore);
+                    if (!(await vectorDb.hasDuplicate(vector))) {
+                      await vectorDb.store({ text: textToStore, vector, importance, category });
+                    }
+                  } catch (err) {
+                    api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                  }
+
+                  api.logger.info?.(
+                    `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
+                  );
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: `Updated: superseded old fact with "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${newEntry.decayClass}] (reason: ${classification.reason})`,
+                      },
+                    ],
+                    details: { action: "updated", id: newEntry.id, superseded: classification.targetId, reason: classification.reason, backend: "both", decayClass: newEntry.decayClass },
+                  };
+                }
+              }
+              // action === "ADD" falls through to normal store
+            }
+          }
 
           const entry = factsDb.store({
             text: textToStore,
@@ -3952,7 +4327,11 @@ const memoryHybridPlugin = {
         if (!event.prompt || event.prompt.length < 5) return;
 
         try {
-          const { limit, minScore } = cfg.autoRecall;
+          // FR-009: Use wider candidate pool for progressive disclosure
+          const isProgressive = cfg.autoRecall.injectionFormat === "progressive";
+          const searchLimit = isProgressive ? Math.max(cfg.autoRecall.limit, 15) : cfg.autoRecall.limit;
+          const { minScore } = cfg.autoRecall;
+          const limit = searchLimit;
           const ftsResults = factsDb.search(event.prompt, limit);
           let lanceResults: SearchResult[] = [];
           try {
@@ -3992,7 +4371,7 @@ const memoryHybridPlugin = {
 
           if (candidates.length === 0) return;
 
-          if (cfg.autoRecall.preferLongTerm || cfg.autoRecall.useImportanceRecency) {
+          {
             const nowSec = Math.floor(Date.now() / 1000);
             const NINETY_DAYS_SEC = 90 * 24 * 3600;
             const boosted = candidates.map((r) => {
@@ -4018,6 +4397,11 @@ const memoryHybridPlugin = {
                         );
                 s *= importanceFactor * recencyFactor;
               }
+              // FR-005: Access-count salience boost — frequently recalled facts score higher
+              const recallCount = r.entry.recallCount ?? 0;
+              if (recallCount > 0) {
+                s *= 1 + 0.1 * Math.log(recallCount + 1);
+              }
               return { ...r, score: s };
             });
             boosted.sort((a, b) => b.score - a.score);
@@ -4032,6 +4416,42 @@ const memoryHybridPlugin = {
             summarizeWhenOverBudget,
             summarizeModel,
           } = cfg.autoRecall;
+
+          // FR-009: Progressive disclosure — inject a lightweight index, let the agent decide what to fetch
+          if (injectionFormat === "progressive") {
+            const totalTokens = candidates.reduce((sum, r) => {
+              const t = r.entry.summary || r.entry.text;
+              return sum + estimateTokens(t);
+            }, 0);
+            const indexHeader = `<relevant-memories format="index">\nAvailable memories (${candidates.length} matches, ~${totalTokens} tokens total):\n`;
+            const indexFooter = `\n→ Use memory_recall("query") or memory_recall with an entity/key to fetch full details.\n</relevant-memories>`;
+            let indexTokens = estimateTokens(indexHeader + indexFooter);
+            const indexLines: string[] = [];
+
+            for (let i = 0; i < candidates.length; i++) {
+              const r = candidates[i];
+              const title = r.entry.key
+                ? `${r.entry.entity ? r.entry.entity + ": " : ""}${r.entry.key}`
+                : (r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : ""));
+              const tokenCost = estimateTokens(r.entry.summary || r.entry.text);
+              const line = `  ${i + 1}. [${r.entry.category}] ${title} (${tokenCost} tok)`;
+              const lineTokens = estimateTokens(line + "\n");
+              if (indexTokens + lineTokens > maxTokens) break;
+              indexLines.push(line);
+              indexTokens += lineTokens;
+            }
+
+            if (indexLines.length === 0) return;
+
+            const indexContent = indexLines.join("\n");
+            api.logger.info?.(
+              `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
+            );
+            return {
+              prependContext: `${indexHeader}${indexContent}${indexFooter}`,
+            };
+          }
+
           const header = "<relevant-memories>\nThe following memories may be relevant:\n";
           const footer = "\n</relevant-memories>";
           let usedTokens = estimateTokens(header + footer);
@@ -4175,6 +4595,60 @@ const memoryHybridPlugin = {
               summaryThreshold > 0 && textToStore.length > summaryThreshold
                 ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
                 : undefined;
+
+            // FR-008: Classify before auto-capture to avoid stale duplicates
+            if (cfg.store.classifyBeforeWrite) {
+              const similarFacts = factsDb.findSimilarForClassification(
+                textToStore, extracted.entity, extracted.key, 3,
+              );
+              if (similarFacts.length > 0) {
+                try {
+                  const classification = await classifyMemoryOperation(
+                    textToStore, extracted.entity, extracted.key, similarFacts,
+                    openaiClient, cfg.store.classifyModel, api.logger,
+                  );
+                  if (classification.action === "NOOP") continue;
+                  if (classification.action === "DELETE" && classification.targetId) {
+                    factsDb.supersede(classification.targetId, "deleted");
+                    api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
+                    continue;
+                  }
+                  if (classification.action === "UPDATE" && classification.targetId) {
+                    const oldFact = factsDb.getById(classification.targetId);
+                    if (oldFact) {
+                      const newEntry = factsDb.store({
+                        text: textToStore,
+                        category,
+                        importance: Math.max(0.7, oldFact.importance),
+                        entity: extracted.entity || oldFact.entity,
+                        key: extracted.key || oldFact.key,
+                        value: extracted.value || oldFact.value,
+                        source: "auto-capture",
+                        summary,
+                      });
+                      factsDb.supersede(classification.targetId, newEntry.id);
+                      try {
+                        const vector = await embeddings.embed(textToStore);
+                        if (!(await vectorDb.hasDuplicate(vector))) {
+                          await vectorDb.store({ text: textToStore, vector, importance: 0.7, category });
+                        }
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
+                      }
+                      api.logger.info?.(
+                        `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
+                      );
+                      stored++;
+                      continue;
+                    }
+                  }
+                  // ADD: fall through to normal store
+                } catch (err) {
+                  api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
+                  // fall through to normal store on error
+                }
+              }
+            }
 
             factsDb.store({
               text: textToStore,

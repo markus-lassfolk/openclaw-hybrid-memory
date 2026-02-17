@@ -29,8 +29,8 @@ export type AutoClassifyConfig = {
   minFactsForNewCategory?: number;
 };
 
-/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
-export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
+/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = index-only (FR-009) */
+export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive";
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
@@ -60,6 +60,10 @@ export type AutoRecallConfig = {
 /** Store options: fuzzy dedupe (2.3) uses normalized-text hash to skip near-duplicate facts. */
 export type StoreConfig = {
   fuzzyDedupe: boolean;
+  /** FR-008: When true, classify incoming facts as ADD/UPDATE/DELETE/NOOP before storing (default true). Uses a cheap LLM call. */
+  classifyBeforeWrite: boolean;
+  /** FR-008: Model to use for memory operation classification (default: same as autoClassify.model). */
+  classifyModel: string;
 };
 
 /** Credential types supported by the credentials store */
@@ -200,7 +204,7 @@ export const hybridConfigSchema = {
 
     // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars?, injectionFormat? }
     const arRaw = cfg.autoRecall;
-    const VALID_FORMATS = ["full", "short", "minimal"] as const;
+    const VALID_FORMATS = ["full", "short", "minimal", "progressive"] as const;
     let autoRecall: AutoRecallConfig;
     if (typeof arRaw === "object" && arRaw !== null && !Array.isArray(arRaw)) {
       const ar = arRaw as Record<string, unknown>;
@@ -272,6 +276,8 @@ export const hybridConfigSchema = {
     const storeRaw = cfg.store as Record<string, unknown> | undefined;
     const store: StoreConfig = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
+      classifyBeforeWrite: storeRaw?.classifyBeforeWrite !== false,
+      classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : autoClassify.model,
     };
 
     // Parse credentials config (opt-in). Enable automatically when a valid encryption key is set.
