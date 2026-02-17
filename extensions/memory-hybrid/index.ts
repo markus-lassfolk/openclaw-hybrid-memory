@@ -3356,7 +3356,7 @@ const memoryHybridPlugin = {
               };
             }
 
-            // Evidence check
+            // Evidence validation: check count and content quality
             if (evidenceSessions.length < cfg.personaProposals.minSessionEvidence) {
               return {
                 content: [
@@ -3366,6 +3366,34 @@ const memoryHybridPlugin = {
                   },
                 ],
                 details: { error: "insufficient_evidence", provided: evidenceSessions.length, minRequired: cfg.personaProposals.minSessionEvidence },
+              };
+            }
+
+            // Validate evidence session content (non-empty, unique)
+            const invalidSessions = evidenceSessions.filter(s => typeof s !== "string" || s.trim().length === 0);
+            if (invalidSessions.length > 0) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Evidence sessions must be non-empty strings. Found ${invalidSessions.length} invalid entries.`,
+                  },
+                ],
+                details: { error: "invalid_evidence_sessions", invalidCount: invalidSessions.length },
+              };
+            }
+
+            // Check for duplicate evidence sessions (without trimming to preserve exact matches)
+            const uniqueSessions = new Set(evidenceSessions);
+            if (uniqueSessions.size !== evidenceSessions.length) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Evidence sessions must be unique. Found ${evidenceSessions.length - uniqueSessions.size} duplicate(s).`,
+                  },
+                ],
+                details: { error: "duplicate_evidence_sessions", duplicateCount: evidenceSessions.length - uniqueSessions.size },
               };
             }
 
@@ -3571,11 +3599,13 @@ const memoryHybridPlugin = {
               // Apply change (simple append strategy)
               // TODO: Future enhancement - use cfg.personaProposals.validationModel for:
               //   - Smart diff application (parse existing structure, insert intelligently)
-              //   - Content validation (check for dangerous patterns)
+              //   - Advanced content validation (semantic checks, pattern detection)
               //   - Merge conflict resolution
+              // NOTE: validationModel config is reserved for this future enhancement
               const timestamp = new Date().toISOString();
               const safeObservation = escapeHtmlComment(proposal.observation);
-              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
+              const safeSuggestedChange = escapeHtmlComment(proposal.suggestedChange);
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${safeSuggestedChange}\n`;
               writeFileSync(targetPath, original + changeBlock);
 
               auditProposal("applied", proposalId, {
@@ -5276,6 +5306,10 @@ export const _testing = {
   unionFind,
   getRoot,
   mergeResults,
+  // Crypto functions (for credentials-db.test.ts)
+  deriveKey,
+  encryptValue,
+  decryptValue,
   // Classes for testing
   FactsDB,
   CredentialsDB,
