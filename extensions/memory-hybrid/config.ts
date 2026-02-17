@@ -29,8 +29,8 @@ export type AutoClassifyConfig = {
   minFactsForNewCategory?: number;
 };
 
-/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index */
-export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive";
+/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
+export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
@@ -271,7 +271,7 @@ export const hybridConfigSchema = {
 
     // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars?, injectionFormat? }
     const arRaw = cfg.autoRecall;
-    const VALID_FORMATS = ["full", "short", "minimal", "progressive"] as const;
+    const VALID_FORMATS = ["full", "short", "minimal"] as const;
     let autoRecall: AutoRecallConfig;
     if (typeof arRaw === "object" && arRaw !== null && !Array.isArray(arRaw)) {
       const ar = arRaw as Record<string, unknown>;

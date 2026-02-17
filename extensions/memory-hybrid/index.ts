@@ -2015,8 +2015,7 @@ async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
+      const score = vi.reduce((s, v, k) => s + v * vj[k], 0);
       if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }
@@ -2146,8 +2145,7 @@ async function runFindDuplicates(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
+      const score = vi.reduce((s, v, k) => s + v * vj[k], 0);
       if (score >= opts.threshold) {
         const idA = ids[i];
         const idB = ids[j];
@@ -3215,7 +3213,7 @@ const memoryHybridPlugin = {
     if (cfg.personaProposals.enabled && proposalsDb) {
       // Shared helper: audit trail logging (used by both tools and CLI commands)
       const auditProposal = (action: string, proposalId: string, details?: any, logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }) => {
-        const auditDir = join(dirname(resolvedSqlitePath), "memory", "decisions");
+        const auditDir = join(dirname(resolvedSqlitePath), "decisions");
         mkdirSync(auditDir, { recursive: true });
         const timestamp = new Date().toISOString();
         const entry = {
@@ -3604,8 +3602,7 @@ const memoryHybridPlugin = {
               // NOTE: validationModel config is reserved for this future enhancement
               const timestamp = new Date().toISOString();
               const safeObservation = escapeHtmlComment(proposal.observation);
-              const safeSuggestedChange = escapeHtmlComment(proposal.suggestedChange);
-              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${safeSuggestedChange}\n`;
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
               writeFileSync(targetPath, original + changeBlock);
 
               auditProposal("applied", proposalId, {

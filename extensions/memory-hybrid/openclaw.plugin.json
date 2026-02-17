@@ -335,6 +335,30 @@
           "validationModel": { "type": "string", "description": "LLM model for validation (default: gpt-4o-mini)" }
         },
         "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
+      },
+      "graph": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable graph-based spreading activation for zero-LLM recall (FR-007)" },
+          "autoLink": { "type": "boolean", "description": "Auto-create RELATED_TO links to similar facts when storing (default: false)" },
+          "autoLinkMinScore": { "type": "number", "minimum": 0, "maximum": 1, "description": "Min similarity score for auto-linking (default: 0.7)" },
+          "autoLinkLimit": { "type": "number", "description": "Max similar facts to link per storage (default: 3)" },
+          "maxTraversalDepth": { "type": "number", "description": "Max hops for graph traversal in recall (default: 2)" },
+          "useInRecall": { "type": "boolean", "description": "Enable graph traversal in memory_recall (default: true)" }
+        },
+        "description": "Graph-based spreading activation (FR-007): auto-linking and graph traversal"
+      },
+      "reflection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable reflection layer to analyze facts and extract behavioral patterns (FR-011)" },
+          "model": { "type": "string", "description": "Model for reflection analysis (default: gpt-4o-mini)" },
+          "defaultWindow": { "type": "number", "description": "Default time window in days for reflection analysis (default: 14)" },
+          "minObservations": { "type": "number", "description": "Minimum observations required to generate a pattern (default: 2)" }
+        },
+        "description": "Reflection: analyze facts to extract behavioral patterns (FR-011)"
       }
     },
     "required": ["embedding"]
