@@ -14,7 +14,7 @@ import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync, openSync, writeSync, closeSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -76,6 +76,139 @@ type SearchResult = {
   score: number;
   backend: "sqlite" | "lancedb";
 };
+
+type WALEntry = {
+  id: string;
+  timestamp: number;
+  operation: "store" | "delete" | "update";
+  data: {
+    text: string;
+    category?: string;
+    importance?: number;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    source?: string;
+    decayClass?: DecayClass;
+    summary?: string | null;
+    tags?: string[];
+    vector?: number[];
+  };
+};
+
+// ============================================================================
+// Write-Ahead Log (WAL) for Crash Resilience
+// ============================================================================
+
+/**
+ * Write-Ahead Log (WAL) for crash resilience.
+ * 
+ * Before committing memory operations to SQLite/LanceDB, we write them to a
+ * WAL file. If the agent crashes during generation, the WAL is replayed on
+ * startup to ensure no data loss.
+ */
+class WriteAheadLog {
+  private walPath: string;
+  private maxAge: number;
+
+  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
+    this.walPath = walPath;
+    this.maxAge = maxAge;
+    mkdirSync(dirname(walPath), { recursive: true });
+  }
+
+  /**
+   * Write a pending memory operation to the WAL.
+   * This is a synchronous operation to ensure durability before proceeding.
+   */
+  write(entry: WALEntry): void {
+    try {
+      const entries = this.readAll();
+      entries.push(entry);
+      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+    } catch (err) {
+      throw new Error(`WAL write failed: ${err}`);
+    }
+  }
+
+  /**
+   * Read all pending operations from the WAL.
+   */
+  readAll(): WALEntry[] {
+    try {
+      if (!existsSync(this.walPath)) {
+        return [];
+      }
+      const content = readFileSync(this.walPath, "utf-8");
+      if (!content.trim()) {
+        return [];
+      }
+      const entries = JSON.parse(content) as WALEntry[];
+      return Array.isArray(entries) ? entries : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Remove a specific entry from the WAL after successful commit.
+   */
+  remove(id: string): void {
+    try {
+      const entries = this.readAll();
+      const filtered = entries.filter((e) => e.id !== id);
+      if (filtered.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+      }
+    } catch (err) {
+      throw new Error(`WAL remove failed: ${err}`);
+    }
+  }
+
+  /**
+   * Clear the entire WAL file.
+   */
+  clear(): void {
+    try {
+      if (existsSync(this.walPath)) {
+        rmSync(this.walPath, { force: true });
+      }
+    } catch (err) {
+      throw new Error(`WAL clear failed: ${err}`);
+    }
+  }
+
+  /**
+   * Get entries that are not stale (within maxAge).
+   */
+  getValidEntries(): WALEntry[] {
+    const entries = this.readAll();
+    const now = Date.now();
+    return entries.filter((e) => now - e.timestamp < this.maxAge);
+  }
+
+  /**
+   * Remove stale entries from the WAL.
+   */
+  pruneStale(): number {
+    const entries = this.readAll();
+    const now = Date.now();
+    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+    const pruned = entries.length - valid.length;
+    
+    if (pruned > 0) {
+      if (valid.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
+      }
+    }
+    
+    return pruned;
+  }
+}
 
 // ============================================================================
 // SQLite + FTS5 Backend
@@ -155,158 +288,6 @@ function parseSourceDate(v: string | number | null | undefined): number | null {
   }
   const n = parseInt(s, 10);
   return !isNaN(n) && n > 0 ? n : null;
-}
-
-// ============================================================================
-// Write-Ahead Log (WAL) for Crash Resilience
-// ============================================================================
-
-type WALEntry = {
-  id: string;
-  timestamp: number;
-  operation: "store" | "delete" | "update";
-  data: {
-    text: string;
-    category?: string;
-    importance?: number;
-    entity?: string | null;
-    key?: string | null;
-    value?: string | null;
-    source?: string;
-    decayClass?: DecayClass;
-    summary?: string | null;
-    tags?: string[];
-    vector?: number[];
-  };
-};
-
-/**
- * Write-Ahead Log for crash resilience.
- * 
- * Note: This implementation uses synchronous file I/O for simplicity and assumes
- * single-threaded operation. In high-throughput scenarios with concurrent memory
- * operations, consider implementing a write queue or mutex to serialize WAL writes
- * and prevent potential race conditions that could corrupt the newline-delimited
- * JSON format.
- */
-class WriteAheadLog {
-  private walPath: string;
-  private maxAge: number;
-  private logger?: { warn: (msg: string) => void };
-
-  constructor(walPath: string, maxAge: number = 300000, logger?: { warn: (msg: string) => void }) {
-    this.walPath = walPath;
-    this.maxAge = maxAge;
-    this.logger = logger;
-    mkdirSync(dirname(walPath), { recursive: true });
-    
-    // Initialize WAL file if it doesn't exist
-    if (!existsSync(walPath)) {
-      writeFileSync(walPath, "", "utf-8");
-    }
-  }
-
-  write(entry: WALEntry): void {
-    // Append entry as newline-delimited JSON for O(1) writes
-    const line = JSON.stringify(entry) + "\n";
-    let fd: number | undefined;
-    try {
-      fd = openSync(this.walPath, "a");
-      writeSync(fd, line);
-    } catch (err) {
-      this.logger?.warn(`memory-hybrid: WAL append failed for entry ${entry.id} (${err}), falling back to read-modify-write`);
-      // Fallback to less efficient method if append fails
-      const entries = this.readAll();
-      entries.push(entry);
-      this.writeAll(entries);
-    } finally {
-      if (fd !== undefined) {
-        try {
-          closeSync(fd);
-        } catch {
-          // Swallow close errors to avoid masking the original error or fallback behavior
-        }
-      }
-    }
-  }
-
-  /**
-   * Remove a WAL entry by ID.
-   * 
-   * Note: This is an O(n) operation that reads the entire WAL, filters entries,
-   * and rewrites the file. This is acceptable because:
-   * 1. WAL entries are short-lived (pruned after maxAge, default 5 minutes)
-   * 2. Removes happen after successful commits, not on the critical write path
-   * 3. The pruneStale() operation periodically cleans up the WAL
-   * 
-   * For high-throughput scenarios, consider using tombstone markers instead of
-   * immediate removal, deferring cleanup to pruneStale().
-   */
-  remove(id: string): void {
-    // Read all entries, filter out the one to remove, and rewrite
-    const entries = this.readAll();
-    const filtered = entries.filter((e) => e.id !== id);
-    this.writeAll(filtered);
-  }
-
-  readAll(): WALEntry[] {
-    try {
-      const content = readFileSync(this.walPath, "utf-8");
-      if (!content.trim()) return [];
-      
-      // Support both newline-delimited JSON and legacy JSON array format
-      if (content.trim().startsWith("[")) {
-        // Legacy JSON array format
-        return JSON.parse(content) as WALEntry[];
-      } else {
-        // Newline-delimited JSON format - parse each line individually to skip malformed entries
-        const lines = content
-          .split("\n")
-          .filter((line) => line.trim().length > 0);
-        const entries: WALEntry[] = [];
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          try {
-            const parsed = JSON.parse(line) as WALEntry;
-            entries.push(parsed);
-          } catch (parseErr) {
-            this.logger?.warn(
-              `memory-hybrid: WAL read skipped malformed JSON line ${i} (${parseErr})`
-            );
-          }
-        }
-        return entries;
-      }
-    } catch (err) {
-      this.logger?.warn(`memory-hybrid: WAL read failed (${err}), returning empty array`);
-      return [];
-    }
-  }
-
-  private writeAll(entries: WALEntry[]): void {
-    // Write as newline-delimited JSON; write empty string when there are no entries
-    if (entries.length === 0) {
-      writeFileSync(this.walPath, "", "utf-8");
-      return;
-    }
-    const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
-    writeFileSync(this.walPath, content, "utf-8");
-  }
-
-  pruneStale(): number {
-    const now = Date.now();
-    const entries = this.readAll();
-    const fresh = entries.filter((e) => now - e.timestamp < this.maxAge);
-    const pruned = entries.length - fresh.length;
-    if (pruned > 0) {
-      this.writeAll(fresh);
-    }
-    return pruned;
-  }
-
-  clear(): void {
-    writeFileSync(this.walPath, "", "utf-8");
-  }
 }
 
 class FactsDB {
@@ -622,7 +603,8 @@ class FactsDB {
     };
   }
 
-  private refreshAccessedFacts(ids: string[]): void {
+  /** FR-005: Update recall count and last accessed timestamp for salience boosting. */
+  refreshAccessedFacts(ids: string[]): void {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
@@ -847,12 +829,12 @@ class FactsDB {
     return row?.id ?? null;
   }
 
-  /** FR-008/010: Mark a fact as superseded by a new fact. For deletions, pass null as supersedingId. */
-  supersede(oldId: string, supersedingId: string | null): boolean {
+  /** FR-008/010: Mark a fact as superseded by a new fact. */
+  supersede(oldId: string, newId: string | null): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
     const result = this.liveDb
       .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
-      .run(nowSec, supersedingId, oldId);
+      .run(nowSec, newId, oldId);
     if (result.changes > 0) {
       this.invalidateSupersededCache();
     }
@@ -1637,10 +1619,10 @@ Examples:
     const targetId = match[2]?.trim() || undefined;
     const reason = match[3].trim();
 
-    // Validate targetId if UPDATE or DELETE
+    // Validate targetId if UPDATE or DELETE - must have a valid targetId
     if (action === "UPDATE" || action === "DELETE") {
       if (!targetId) {
-        return { action: "ADD", reason: `${action} requires a targetId; treating as ADD` };
+        return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
       }
       const validTarget = existingFacts.find((f) => f.id === targetId);
       if (!validTarget) {
@@ -2341,9 +2323,10 @@ async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
-      if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
+      // Cosine similarity = dot product for unit vectors
+      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (cosineSim >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }
 
@@ -2472,15 +2455,16 @@ async function runFindDuplicates(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
-      if (score >= opts.threshold) {
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
+      // Cosine similarity = dot product for unit vectors
+      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (cosineSim >= opts.threshold) {
         const idA = ids[i];
         const idB = ids[j];
         pairs.push({
           idA,
           idB,
-          score,
+          score: cosineSim,
           textA: idToFact.get(idA)!.text,
           textB: idToFact.get(idB)!.text,
         });
@@ -2743,6 +2727,14 @@ const memoryHybridPlugin = {
       credentialsDb = null;
     }
 
+    if (cfg.wal.enabled) {
+      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
+      wal = new WriteAheadLog(walPath, cfg.wal.maxAge);
+      api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
+    } else {
+      wal = null;
+    }
+
     // Load previously discovered categories so they remain available after restart
     const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
     if (existsSync(discoveredPath)) {
@@ -2755,26 +2747,6 @@ const memoryHybridPlugin = {
       } catch {
         // ignore invalid or missing file
       }
-    }
-
-    // Initialize WAL (Write-Ahead Log) for crash resilience
-    if (cfg.wal.enabled) {
-      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
-      const maxAge = cfg.wal.maxAge || 300000; // 5 minutes default
-      wal = new WriteAheadLog(api.resolvePath(walPath), maxAge, api.logger);
-      api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
-      
-      // Prune stale entries on startup
-      const pruned = wal.pruneStale();
-      if (pruned > 0) {
-        api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
-      }
-      
-      // Note: WAL recovery logic will be implemented in a future enhancement.
-      // The current implementation provides the WAL infrastructure and write/cleanup operations.
-      // Recovery would replay uncommitted operations from the WAL on startup after a crash.
-    } else {
-      wal = null;
     }
 
     api.logger.info(
@@ -3094,32 +3066,7 @@ const memoryHybridPlugin = {
               }
 
               if (classification.action === "DELETE" && classification.targetId) {
-                // WAL: Write pending DELETE operation
-                const walEntryId = randomUUID();
-                if (wal) {
-                  try {
-                    wal.write({
-                      id: walEntryId,
-                      timestamp: Date.now(),
-                      operation: "delete",
-                      data: { targetId: classification.targetId },
-                    });
-                  } catch (err) {
-                    api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
-                  }
-                }
-
                 factsDb.supersede(classification.targetId, null);
-
-                // Remove from WAL after successful commit
-                if (wal) {
-                  try {
-                    wal.remove(walEntryId);
-                  } catch (err) {
-                    api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
-                  }
-                }
-
                 return {
                   content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
                   details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
@@ -5006,6 +4953,10 @@ const memoryHybridPlugin = {
 
             if (indexLines.length === 0) return;
 
+            // Track access for the memories included in the index
+            const includedIds = candidates.slice(0, indexLines.length).map((r) => r.entry.id);
+            factsDb.refreshAccessedFacts(includedIds);
+
             const indexContent = indexLines.join("\n");
             api.logger.info?.(
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
@@ -5172,32 +5123,7 @@ const memoryHybridPlugin = {
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
-                    // WAL: Write pending DELETE operation
-                    const walEntryId = randomUUID();
-                    if (wal) {
-                      try {
-                        wal.write({
-                          id: walEntryId,
-                          timestamp: Date.now(),
-                          operation: "delete",
-                          data: { targetId: classification.targetId },
-                        });
-                      } catch (err) {
-                        api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
-                      }
-                    }
-
                     factsDb.supersede(classification.targetId, null);
-
-                    // Remove from WAL after successful commit
-                    if (wal) {
-                      try {
-                        wal.remove(walEntryId);
-                      } catch (err) {
-                        api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
-                      }
-                    }
-
                     api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                     continue;
                   }
@@ -5447,6 +5373,71 @@ const memoryHybridPlugin = {
         if (expired > 0) {
           const pruned = factsDb.pruneExpired();
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
+        }
+
+        // WAL Recovery: replay uncommitted operations from previous session
+        if (wal) {
+          const pendingEntries = wal.getValidEntries();
+          if (pendingEntries.length > 0) {
+            api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
+            let recovered = 0;
+            let failed = 0;
+
+            for (const entry of pendingEntries) {
+              try {
+                if (entry.operation === "store" || entry.operation === "update") {
+                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                  
+                  // Check if already stored (idempotency)
+                  if (!factsDb.hasDuplicate(text)) {
+                    // Store to SQLite
+                    factsDb.store({
+                      text,
+                      category: (category as MemoryCategory) || "other",
+                      importance: importance || 0.7,
+                      entity: entity || null,
+                      key: key || null,
+                      value: value || null,
+                      source: source || "wal-recovery",
+                      decayClass,
+                      summary,
+                      tags,
+                    });
+
+                    // Store to LanceDB (async, best effort)
+                    if (entry.data.vector) {
+                      void vectorDb.store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance || 0.7,
+                        category: category || "other",
+                      }).catch((err) => {
+                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                      });
+                    }
+
+                    recovered++;
+                  }
+                }
+                
+                // Remove successfully processed entry
+                wal.remove(entry.id);
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
+                failed++;
+              }
+            }
+
+            if (recovered > 0 || failed > 0) {
+              api.logger.info(`memory-hybrid: WAL recovery complete — ${recovered} recovered, ${failed} failed`);
+            }
+            
+            // Prune any remaining stale entries
+            const pruned = wal.pruneStale();
+            if (pruned > 0) {
+              api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
+            }
+          }
         }
 
         pruneTimer = setInterval(() => {
