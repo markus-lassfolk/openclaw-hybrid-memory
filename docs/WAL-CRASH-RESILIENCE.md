@@ -29,7 +29,7 @@ The WAL implementation follows a **pre-flight commit** pattern:
 ```typescript
 type WALEntry = {
   id: string;              // Unique identifier for this operation
-  timestamp: number;       // Unix timestamp (ms) when operation was logged
+  timestamp: number;       // Unix timestamp (ms) when ready to commit (after embedding)
   operation: "store" | "delete" | "update";
   data: {
     text: string;
@@ -42,7 +42,7 @@ type WALEntry = {
     decayClass?: DecayClass;
     summary?: string | null;
     tags?: string[];
-    vector?: number[];     // Pre-computed embedding for faster recovery
+    vector?: number[];     // Computed embedding (included if generation succeeded)
   };
 };
 ```
@@ -114,8 +114,8 @@ Control how long WAL entries are considered valid (default: 5 minutes):
 ### Normal Operation
 
 1. User/agent triggers memory storage (via `memory_store` tool or auto-capture)
-2. System generates embedding vector
-3. **WAL write** (synchronous, durable)
+2. System generates embedding vector (async, may fail or be slow)
+3. **WAL write** (synchronous, durable) - timestamp captured here
 4. Commit to SQLite (synchronous)
 5. Commit to LanceDB (async)
 6. **WAL cleanup** (remove committed entry)
@@ -123,13 +123,13 @@ Control how long WAL entries are considered valid (default: 5 minutes):
 ### Crash Scenario
 
 1. User/agent triggers memory storage
-2. System generates embedding vector
-3. **WAL write** (synchronous, durable) ✓
+2. System generates embedding vector (async, may fail or be slow)
+3. **WAL write** (synchronous, durable) ✓ - timestamp captured after embedding completes
 4. Commit to SQLite starts...
 5. **CRASH** (agent timeout, kill signal, system failure)
 6. On next startup:
    - WAL recovery detects uncommitted entry
-   - Replays the operation
+   - Replays the operation (vector already computed)
    - Memory is restored
 
 ### Idempotency
@@ -144,14 +144,14 @@ The recovery process is idempotent:
 
 ### Write Path
 
-- **Synchronous WAL write**: ~1-5ms per operation (local file I/O)
-- **Minimal overhead**: Single JSON append operation
+- **Synchronous WAL write**: ~1-5ms per operation (local file I/O with atomic rename)
+- **Minimal overhead**: JSON array rewrite per operation (atomic temp file + rename for crash safety)
 - **No network calls**: WAL is purely local
 
 ### Startup
 
 - **Recovery check**: ~10-50ms for typical WAL sizes (<100 entries)
-- **Replay**: Only uncommitted operations are replayed
+- **Replay**: Only uncommitted operations are replayed (with embedding regeneration if needed)
 - **Pruning**: Stale entries are automatically removed
 
 ### Storage
@@ -227,9 +227,11 @@ This is **not** the same as SQLite's built-in WAL mode (though they serve simila
 
 The Memory WAL protects against:
 
-- Crashes during embedding generation (before SQLite write)
+- Crashes during storage operations (WAL is written after embedding generation but before storage commits)
 - Crashes during LanceDB write (after SQLite write)
-- Crashes during multi-step operations (e.g., credential vault + memory pointer)
+- Crashes during multi-step operations (though credentials vault is currently not WAL-protected)
+
+**Note on timing**: The WAL timestamp is captured AFTER embedding generation completes. This prevents slow embedding operations from causing WAL entries to age out and be pruned before they can be committed. If embedding fails, no WAL entry is created (since there's nothing to commit).
 
 ## Limitations
 
@@ -251,7 +253,7 @@ Potential improvements for future versions:
 ## Related Features
 
 - **Auto-capture**: Automatically protected by WAL
-- **Credentials vault**: Credential storage operations are also WAL-protected
+- **Credentials vault**: Currently not WAL-protected; credentials are stored via a separate mechanism that returns early in the memory_store path
 - **Session distillation**: Bulk imports can use WAL for resilience
 
 ## Troubleshooting
