@@ -56,6 +56,9 @@ export type RecordDistillResult = { path: string; timestamp: string };
 export type ExtractDailyResult = { totalExtracted: number; totalStored: number; daysBack: number; dryRun: boolean };
 export type ExtractDailySink = { log: (s: string) => void; warn: (s: string) => void };
 
+export type BackfillCliResult = { stored: number; skipped: number; candidates: number; files: number; dryRun: boolean };
+export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => void };
+
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
 export type UninstallCliResult =
@@ -78,6 +81,7 @@ export type HybridMemCliContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (opts: { days: number; dryRun: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
+  runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runFindDuplicates: (opts: {
@@ -135,6 +139,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runDistillWindow,
     runRecordDistill,
     runExtractDaily,
+    runBackfill,
     runMigrateToVault,
     runUninstall,
     runFindDuplicates,
@@ -452,7 +457,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         return;
       }
       console.log("Config written: " + result.configPath);
-      console.log(`Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, pruning, autoClassify, nightly-memory-sweep job.`);
+      console.log(`Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify. Add cron jobs via 'openclaw cron add' if needed (see docs/SESSION-DISTILLATION.md).`);
       console.log("\nNext steps:");
       console.log(`  1. Set embedding.apiKey in plugins.entries["${result.pluginId}"].config (or use env:OPENAI_API_KEY in config).`);
       console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
@@ -515,6 +520,28 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           `\nExtracted ${result.totalStored} new facts (${result.totalExtracted} candidates, ${
             result.totalExtracted - result.totalStored
           } duplicates skipped)`,
+        );
+      }
+    });
+
+  mem
+    .command("backfill")
+    .description("Index MEMORY.md and memory/**/*.md into SQLite + LanceDB (fast bulk import)")
+    .option("--dry-run", "Show what would be indexed without storing")
+    .option("--workspace <path>", "Workspace root (default: OPENCLAW_WORKSPACE or ~/.openclaw/workspace)")
+    .option("--limit <n>", "Max facts to store (0 = no limit)", "0")
+    .action(async (opts: { dryRun?: boolean; workspace?: string; limit?: string }) => {
+      const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
+      const limit = Math.max(0, parseInt(opts.limit || "0") || 0);
+      const result = await runBackfill(
+        { dryRun: !!opts.dryRun, workspace: opts.workspace?.trim() || undefined, limit: limit > 0 ? limit : undefined },
+        sink,
+      );
+      if (result.dryRun) {
+        console.log(`\nWould index ${result.candidates} facts from ${result.files} files`);
+      } else {
+        console.log(
+          `\nBackfill done: ${result.stored} new facts stored, ${result.skipped} duplicates skipped (${result.candidates} candidates from ${result.files} files)`,
         );
       }
     });
