@@ -61,6 +61,9 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 | [Graph Memory](GRAPH-MEMORY) | Graph-based fact linking and spreading activation |
 | [WAL Crash Resilience](WAL-CRASH-RESILIENCE) | Write-ahead log design and recovery |
 | [Reflection Layer](REFLECTION) | Pattern synthesis from accumulated facts |
+| [Conflicting Memories](CONFLICTING-MEMORIES) | Classify-before-write, supersession, bi-temporal |
+| [Automatic Categories](AUTOMATIC-CATEGORIES) | Category discovery from "other" facts |
+| [Dynamic Derived Data](DYNAMIC-DERIVED-DATA) | Index: tags, categories, decay, and other derived data |
 
 ### Operations & maintenance
 

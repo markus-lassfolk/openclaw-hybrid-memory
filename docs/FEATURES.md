@@ -16,6 +16,9 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Session distillation** | [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) | Extracting facts from session logs |
 | **Credentials** | [CREDENTIALS.md](CREDENTIALS.md) | Opt-in encrypted credential vault |
 | **WAL** | [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) | Write-ahead log for crash resilience |
+| **Conflicting memories** | [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) | Classify-before-write (ADD/UPDATE/DELETE/NOOP), supersession, bi-temporal |
+| **Automatic categories** | [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md) | Category discovery from "other" facts (LLM labels, threshold, .discovered-categories.json) |
+| **Dynamic derived data** | [DYNAMIC-DERIVED-DATA.md](DYNAMIC-DERIVED-DATA.md) | Index: tags, categories, decay, entity/key/value, conflicting memories |
 
 ---
 
@@ -48,6 +51,8 @@ Once registered, custom categories are available in `memory_store`, the LLM auto
 ### Category discovery
 
 When `autoClassify.suggestCategories` is `true` (default), the auto-classify job groups "other" facts by free-form topic labels. Any label with at least `minFactsForNewCategory` facts (default 10) becomes a new category. Discovered categories are persisted to `~/.openclaw/memory/.discovered-categories.json`.
+
+→ Full detail: [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md)
 
 ---
 
@@ -197,3 +202,6 @@ Facts can have optional **tags** for topic filtering. When `tags` are omitted, t
 - [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph-based spreading activation (fact linking)
 - [CREDENTIALS.md](CREDENTIALS.md) — Credential vault (opt-in encrypted store)
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Extracting facts from session logs
+- [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) — Conflicting/contradictory memories (classify-before-write, supersession)
+- [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md) — Automatic category discovery
+- [DYNAMIC-DERIVED-DATA.md](DYNAMIC-DERIVED-DATA.md) — Overview of tags, categories, decay, and other derived data

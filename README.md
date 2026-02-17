@@ -128,6 +128,9 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 | [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) | Persona proposals: agent self-evolution with human approval |
 | [AUTO-TAGGING.md](docs/AUTO-TAGGING.md) | Auto-tagging: patterns, storage, tag-filtered search and recall |
 | [DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md) | Decay classes, TTLs, refresh-on-access, hard/soft prune |
+| [CONFLICTING-MEMORIES.md](docs/CONFLICTING-MEMORIES.md) | Conflicting memories: classify-before-write, supersession, bi-temporal |
+| [AUTOMATIC-CATEGORIES.md](docs/AUTOMATIC-CATEGORIES.md) | Automatic category discovery from "other" facts |
+| [DYNAMIC-DERIVED-DATA.md](docs/DYNAMIC-DERIVED-DATA.md) | Index of dynamic/derived data: tags, categories, decay, supersession |
 
 ### Specialized
 
