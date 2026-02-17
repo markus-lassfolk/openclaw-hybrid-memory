@@ -5736,8 +5736,8 @@ const memoryHybridPlugin = {
                       });
                     }
 
-                  recovered++;
-                }
+                    recovered++;
+                  }
               } else {
                 // Known but unhandled operation type (e.g., "delete")
                 api.logger.warn(`memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`);
