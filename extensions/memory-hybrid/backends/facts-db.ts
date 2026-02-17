@@ -1053,31 +1053,7 @@ export class FactsDB {
     const rows = this.liveDb
       .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
       .all(category) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-      recallCount: (row.recall_count as number) || 0,
-      lastAccessed: (row.last_accessed as number) || null,
-      supersededAt: (row.superseded_at as number) || null,
-      supersededBy: (row.superseded_by as string) || null,
-      validFrom: (row.valid_from as number) || null,
-      validUntil: (row.valid_until as number) || null,
-      supersedesId: (row.supersedes_id as string) || null,
-    }));
+    return rows.map((row) => this.rowToEntry(row));
   }
 
   updateCategory(id: string, category: string): boolean {

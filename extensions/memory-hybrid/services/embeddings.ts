@@ -27,7 +27,11 @@ export class Embeddings implements EmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     const cached = this.cache.get(text);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      this.cache.delete(text);
+      this.cache.set(text, cached);
+      return cached;
+    }
 
     const resp = await this.client.embeddings.create({
       model: this.model,
