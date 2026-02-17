@@ -77,6 +77,139 @@ type SearchResult = {
   backend: "sqlite" | "lancedb";
 };
 
+type WALEntry = {
+  id: string;
+  timestamp: number;
+  operation: "store" | "delete" | "update";
+  data: {
+    text: string;
+    category?: string;
+    importance?: number;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    source?: string;
+    decayClass?: DecayClass;
+    summary?: string | null;
+    tags?: string[];
+    vector?: number[];
+  };
+};
+
+// ============================================================================
+// Write-Ahead Log (WAL) for Crash Resilience
+// ============================================================================
+
+/**
+ * Write-Ahead Log (WAL) for crash resilience.
+ * 
+ * Before committing memory operations to SQLite/LanceDB, we write them to a
+ * WAL file. If the agent crashes during generation, the WAL is replayed on
+ * startup to ensure no data loss.
+ */
+class WriteAheadLog {
+  private walPath: string;
+  private maxAge: number;
+
+  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
+    this.walPath = walPath;
+    this.maxAge = maxAge;
+    mkdirSync(dirname(walPath), { recursive: true });
+  }
+
+  /**
+   * Write a pending memory operation to the WAL.
+   * This is a synchronous operation to ensure durability before proceeding.
+   */
+  write(entry: WALEntry): void {
+    try {
+      const entries = this.readAll();
+      entries.push(entry);
+      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+    } catch (err) {
+      throw new Error(`WAL write failed: ${err}`);
+    }
+  }
+
+  /**
+   * Read all pending operations from the WAL.
+   */
+  readAll(): WALEntry[] {
+    try {
+      if (!existsSync(this.walPath)) {
+        return [];
+      }
+      const content = readFileSync(this.walPath, "utf-8");
+      if (!content.trim()) {
+        return [];
+      }
+      const entries = JSON.parse(content) as WALEntry[];
+      return Array.isArray(entries) ? entries : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Remove a specific entry from the WAL after successful commit.
+   */
+  remove(id: string): void {
+    try {
+      const entries = this.readAll();
+      const filtered = entries.filter((e) => e.id !== id);
+      if (filtered.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+      }
+    } catch (err) {
+      throw new Error(`WAL remove failed: ${err}`);
+    }
+  }
+
+  /**
+   * Clear the entire WAL file.
+   */
+  clear(): void {
+    try {
+      if (existsSync(this.walPath)) {
+        rmSync(this.walPath, { force: true });
+      }
+    } catch (err) {
+      throw new Error(`WAL clear failed: ${err}`);
+    }
+  }
+
+  /**
+   * Get entries that are not stale (within maxAge).
+   */
+  getValidEntries(): WALEntry[] {
+    const entries = this.readAll();
+    const now = Date.now();
+    return entries.filter((e) => now - e.timestamp < this.maxAge);
+  }
+
+  /**
+   * Remove stale entries from the WAL.
+   */
+  pruneStale(): number {
+    const entries = this.readAll();
+    const now = Date.now();
+    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+    const pruned = entries.length - valid.length;
+    
+    if (pruned > 0) {
+      if (valid.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
+      }
+    }
+    
+    return pruned;
+  }
+}
+
 // ============================================================================
 // SQLite + FTS5 Backend
 // ============================================================================
@@ -2559,6 +2692,7 @@ let vectorDb: VectorDB;
 let embeddings: Embeddings;
 let openaiClient: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
+let wal: WriteAheadLog | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -2591,6 +2725,14 @@ const memoryHybridPlugin = {
       api.logger.info(`memory-hybrid: credentials store enabled (${credPath})`);
     } else {
       credentialsDb = null;
+    }
+
+    if (cfg.wal.enabled) {
+      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
+      wal = new WriteAheadLog(walPath, cfg.wal.maxAge);
+      api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
+    } else {
+      wal = null;
     }
 
     // Load previously discovered categories so they remain available after restart
@@ -5231,6 +5373,71 @@ const memoryHybridPlugin = {
         if (expired > 0) {
           const pruned = factsDb.pruneExpired();
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
+        }
+
+        // WAL Recovery: replay uncommitted operations from previous session
+        if (wal) {
+          const pendingEntries = wal.getValidEntries();
+          if (pendingEntries.length > 0) {
+            api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
+            let recovered = 0;
+            let failed = 0;
+
+            for (const entry of pendingEntries) {
+              try {
+                if (entry.operation === "store" || entry.operation === "update") {
+                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                  
+                  // Check if already stored (idempotency)
+                  if (!factsDb.hasDuplicate(text)) {
+                    // Store to SQLite
+                    factsDb.store({
+                      text,
+                      category: (category as MemoryCategory) || "other",
+                      importance: importance || 0.7,
+                      entity: entity || null,
+                      key: key || null,
+                      value: value || null,
+                      source: source || "wal-recovery",
+                      decayClass,
+                      summary,
+                      tags,
+                    });
+
+                    // Store to LanceDB (async, best effort)
+                    if (entry.data.vector) {
+                      void vectorDb.store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance || 0.7,
+                        category: category || "other",
+                      }).catch((err) => {
+                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                      });
+                    }
+
+                    recovered++;
+                  }
+                }
+                
+                // Remove successfully processed entry
+                wal.remove(entry.id);
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
+                failed++;
+              }
+            }
+
+            if (recovered > 0 || failed > 0) {
+              api.logger.info(`memory-hybrid: WAL recovery complete — ${recovered} recovered, ${failed} failed`);
+            }
+            
+            // Prune any remaining stale entries
+            const pruned = wal.pruneStale();
+            if (pruned > 0) {
+              api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
+            }
+          }
         }
 
         pruneTimer = setInterval(() => {
