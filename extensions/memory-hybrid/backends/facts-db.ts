@@ -993,11 +993,11 @@ export class FactsDB {
     if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
       const scope = entry.scope ?? "global";
       if (scope === "global") return entry;
-      const target = entry.scopeTarget ?? "";
+      const target = entry.scopeTarget ?? null;
       const matches =
-        (scope === "user" && scopeFilter.userId === target) ||
-        (scope === "agent" && scopeFilter.agentId === target) ||
-        (scope === "session" && scopeFilter.sessionId === target);
+        (scope === "user" && (scopeFilter.userId ?? null) === target) ||
+        (scope === "agent" && (scopeFilter.agentId ?? null) === target) ||
+        (scope === "session" && (scopeFilter.sessionId ?? null) === target);
       if (!matches) return null;
     }
     return entry;
