@@ -382,9 +382,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
   mem
     .command("reflect")
     .description("FR-011: Analyze recent facts, extract behavioral patterns, store as pattern-category facts")
-    .option("--window <days>", "Time window in days (default: config or 14)", "14")
+    .option("--window <days>", "Time window in days (default: config or 14)")
     .option("--dry-run", "Show extracted patterns without storing")
-    .option("--model <model>", "LLM for reflection (default: config or gpt-4o-mini)", "gpt-4o-mini")
+    .option("--model <model>", "LLM for reflection (default: config or gpt-4o-mini)")
     .option("--force", "Run even if reflection is disabled in config")
     .action(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
       if (!opts.force && !reflectionConfig.enabled) {
@@ -407,7 +407,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .command("reflect-rules")
     .description("FR-011 optional: Synthesize patterns into actionable one-line rules (category rule)")
     .option("--dry-run", "Show extracted rules without storing")
-    .option("--model <model>", "LLM (default: config or gpt-4o-mini)", "gpt-4o-mini")
+    .option("--model <model>", "LLM (default: config or gpt-4o-mini)")
     .option("--force", "Run even if reflection is disabled in config")
     .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
       if (!opts.force && !reflectionConfig.enabled) {
@@ -426,7 +426,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .command("reflect-meta")
     .description("FR-011 optional: Synthesize patterns into 1-3 higher-level meta-patterns")
     .option("--dry-run", "Show extracted meta-patterns without storing")
-    .option("--model <model>", "LLM (default: config or gpt-4o-mini)", "gpt-4o-mini")
+    .option("--model <model>", "LLM (default: config or gpt-4o-mini)")
     .option("--force", "Run even if reflection is disabled in config")
     .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
       if (!opts.force && !reflectionConfig.enabled) {
