@@ -1,3 +1,9 @@
+---
+layout: default
+title: Troubleshooting
+parent: Operations & Maintenance
+nav_order: 8
+---
 # Troubleshooting
 
 Common issues, causes, and fixes for the memory-hybrid plugin.

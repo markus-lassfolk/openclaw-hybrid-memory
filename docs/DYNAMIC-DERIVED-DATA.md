@@ -1,3 +1,9 @@
+---
+layout: default
+title: Dynamic Derived Data
+parent: Features
+nav_order: 9
+---
 # Dynamic and Derived Data
 
 Many fields on a fact are **not** typed in by the user — they are **derived at runtime** from the fact text, entity, config, or background jobs. This doc is an index to where each kind of derived data is defined and documented.

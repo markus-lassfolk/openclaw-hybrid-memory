@@ -1,3 +1,9 @@
+---
+layout: default
+title: Autonomous Setup
+parent: Getting Started
+nav_order: 2
+---
 # Autonomous Hybrid Memory Setup
 
 **For:** An OpenClaw agent setting up the full hybrid memory system on itself.

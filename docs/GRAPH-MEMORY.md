@@ -1,3 +1,9 @@
+---
+layout: default
+title: Graph-Based Spreading Activation (FR-007)
+parent: Features
+nav_order: 4
+---
 # Graph-Based Spreading Activation (FR-007)
 
 ## Overview

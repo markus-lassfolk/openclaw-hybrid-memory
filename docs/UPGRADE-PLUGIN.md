@@ -1,3 +1,9 @@
+---
+layout: default
+title: Upgrade Plugin
+parent: Operations & Maintenance
+nav_order: 5
+---
 # Upgrading the Hybrid Memory Plugin
 
 When a **new version of the openclaw-hybrid-memory plugin** is released, this is what to do and what to think about.

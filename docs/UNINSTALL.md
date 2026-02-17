@@ -1,3 +1,9 @@
+---
+layout: default
+title: Uninstall
+parent: Operations & Maintenance
+nav_order: 3
+---
 # Uninstalling the Hybrid Memory Solution
 
 How to revert to OpenClaw’s default memory (memory-core) and optionally remove all hybrid memory data.

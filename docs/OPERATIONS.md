@@ -1,3 +1,9 @@
+---
+layout: default
+title: Operations
+parent: Operations & Maintenance
+nav_order: 2
+---
 # Operations — Background Jobs, Scripts, Cron, and Upgrades
 
 Everything that runs automatically or needs periodic attention.

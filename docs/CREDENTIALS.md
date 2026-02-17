@@ -1,3 +1,9 @@
+---
+layout: default
+title: Credential Vault
+parent: Features
+nav_order: 2
+---
 # Credential Management (Opt-in)
 
 The hybrid-memory plugin supports an **opt-in credential store** for structured, encrypted storage of API keys, tokens, passwords, and other authentication data.

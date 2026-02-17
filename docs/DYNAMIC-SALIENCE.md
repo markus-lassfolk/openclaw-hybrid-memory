@@ -1,3 +1,9 @@
+---
+layout: default
+title: Dynamic Salience (FR-005)
+parent: Features
+nav_order: 15
+---
 # Dynamic Salience Scoring (FR-005)
 
 ## Overview
