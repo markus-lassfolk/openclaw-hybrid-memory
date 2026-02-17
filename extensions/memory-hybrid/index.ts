@@ -2016,17 +2016,17 @@ const memoryHybridPlugin = {
           ),
           userId: Type.Optional(
             Type.String({
-              description: "FR-006: Include user-private memories for this user (multi-user environments).",
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include user-private memories for this user.",
             }),
           ),
           agentId: Type.Optional(
             Type.String({
-              description: "FR-006: Include agent-specific memories for this agent.",
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include agent-specific memories for this agent.",
             }),
           ),
           sessionId: Type.Optional(
             Type.String({
-              description: "FR-006: Include session-scoped memories for this session.",
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include session-scoped memories for this session.",
             }),
           ),
         }),
@@ -2057,6 +2057,13 @@ const memoryHybridPlugin = {
             sessionId?: string;
           };
           const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
+          
+          // FR-006: Scope filtering
+          // ⚠️ SECURITY WARNING: userId/agentId/sessionId are caller-controlled parameters.
+          // In multi-tenant production environments, these should be derived from authenticated
+          // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
+          // Accepting arbitrary scope filters allows users to access other users' private memories.
+          // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
           const scopeFilter: ScopeFilter | undefined =
             userId || agentId || sessionId
               ? { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null }
