@@ -49,7 +49,40 @@ This is a **false positive**. The plugin only uses your OpenAI API key to call O
 | `hybrid-mem stats` still 0 after seed | Seed used wrong paths or schema | Point seed at same DB paths as plugin |
 | `npm install` fails ("openclaw": "workspace:*") | devDependencies reference workspace protocols | Remove devDependencies: `node -e "let p=require('./package.json'); delete p.devDependencies; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2))"` then `npm install` |
 | "duplicate plugin id detected" / two copies of memory-hybrid | Plugin exists in both global openclaw and ~/.openclaw/extensions | Use NPM only: run `./scripts/use-npm-only.sh` (from this repo) to remove the global copy. Then use `openclaw plugins install openclaw-hybrid-memory` for upgrades. See [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md#using-npm-only-recommended). |
-| Could not locate bindings file (better_sqlite3.node) | Native module not built after install | In the extension dir (`~/.openclaw/extensions/openclaw-hybrid-memory` or global path) run `npm install` then `npm rebuild better-sqlite3`. Restart gateway. The published package includes a `postinstall` that runs rebuild; if it still fails, ensure build tools (e.g. `build-essential`, `python3`) are installed. |
+| Could not locate bindings file (better_sqlite3.node) | Native module not built after install | Run `openclaw hybrid-mem verify --fix` to rebuild native modules automatically. Or manually: `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3` (and `npm rebuild @lancedb/lancedb` if LanceDB fails). Restart gateway. The published package includes a `postinstall` that runs rebuild; if it still fails, ensure build tools (e.g. `build-essential`, `python3`) are installed. |
+| "Unrecognized keys: autoCapture, autoRecall, embedding" | Config keys placed at wrong nesting level | Move those keys under `config`. Correct structure: `plugins.entries["openclaw-hybrid-memory"]` = `{ enabled: true, config: { autoCapture, autoRecall, embedding, ... } }`. See [Config nesting](#config-nesting) below. |
+
+---
+
+## Config nesting
+
+If you see an error like **"Unrecognized keys: autoCapture, autoRecall, embedding"**, the plugin config is at the wrong nesting level.
+
+**Wrong** (keys directly under the plugin entry):
+
+```json
+"openclaw-hybrid-memory": {
+  "enabled": true,
+  "autoCapture": true,
+  "autoRecall": true,
+  "embedding": { "apiKey": "...", "model": "text-embedding-3-small" }
+}
+```
+
+**Correct** (keys nested under `config`):
+
+```json
+"openclaw-hybrid-memory": {
+  "enabled": true,
+  "config": {
+    "autoCapture": true,
+    "autoRecall": true,
+    "embedding": { "apiKey": "...", "model": "text-embedding-3-small" }
+  }
+}
+```
+
+Move `autoCapture`, `autoRecall`, `embedding`, and any other plugin settings into `plugins.entries["openclaw-hybrid-memory"].config`. See [CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 

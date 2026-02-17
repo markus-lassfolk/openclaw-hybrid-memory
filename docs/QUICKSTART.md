@@ -98,6 +98,8 @@ Then verify everything is working:
 openclaw hybrid-mem verify
 ```
 
+If SQLite or LanceDB show native bindings errors, run `openclaw hybrid-mem verify --fix` to rebuild them, then restart the gateway.
+
 You should see:
 
 ```

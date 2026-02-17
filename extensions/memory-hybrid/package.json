@@ -44,7 +44,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "postinstall": "npm rebuild better-sqlite3 2>/dev/null || true"
+    "postinstall": "npm rebuild better-sqlite3 2>/dev/null || true && npm rebuild @lancedb/lancedb 2>/dev/null || true",
+    "verify:publish": "node scripts/verify-publish.cjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

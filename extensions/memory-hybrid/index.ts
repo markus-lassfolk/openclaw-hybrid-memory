@@ -13,9 +13,10 @@ import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { stringEnum } from "openclaw/plugin-sdk";
@@ -40,7 +41,7 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
@@ -3907,19 +3908,8 @@ const memoryHybridPlugin = {
                     prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
                   },
                 },
-                pruning: { ttl: "30m" },
               },
             },
-            jobs: [
-              {
-                name: "nightly-memory-sweep",
-                schedule: "0 2 * * *",
-                channel: "system",
-                message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
-                isolated: true,
-                model: "gemini",
-              },
-            ],
           };
 
           function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
@@ -3928,16 +3918,6 @@ const memoryHybridPlugin = {
               const tgtVal = target[key];
               if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
                 deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
-              } else if (key === "jobs" && Array.isArray(srcVal)) {
-                const arr = (Array.isArray(tgtVal) ? [...tgtVal] : []) as unknown[];
-                const jobNames = (j: unknown) => (j as Record<string, unknown>)?.name as string;
-                for (const def of ["nightly-memory-sweep", "weekly-reflection"]) {
-                  if (!arr.some((j: unknown) => jobNames(j) === def)) {
-                    const job = (srcVal as unknown[]).find((j: unknown) => jobNames(j) === def);
-                    if (job) arr.push(job);
-                  }
-                }
-                (target as Record<string, unknown>)[key] = arr;
               } else if (tgtVal === undefined && !Array.isArray(srcVal)) {
                 (target as Record<string, unknown>)[key] = srcVal;
               }
@@ -4000,23 +3980,40 @@ const memoryHybridPlugin = {
           const defaultConfigPath = join(openclawDir, "openclaw.json");
           if (configOk) log("Config: embedding.apiKey and model present");
           else log("Config: issues found");
+          const extDir = dirname(fileURLToPath(import.meta.url));
+          const isBindingsError = (msg: string) =>
+            /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(msg);
+          let sqliteBindingsFailed = false;
+          let lanceBindingsFailed = false;
           try {
             const n = factsDb.count();
             sqliteOk = true;
             log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
           } catch (e) {
-            issues.push(`SQLite: ${String(e)}`);
-            fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
-            log(`SQLite: FAIL — ${String(e)}`);
+            const msg = String(e);
+            issues.push(`SQLite: ${msg}`);
+            if (isBindingsError(msg)) {
+              sqliteBindingsFailed = true;
+              fixes.push(`Native module (better-sqlite3) needs rebuild. Run: cd ${extDir} && npm rebuild better-sqlite3`);
+            } else {
+              fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
+            }
+            log(`SQLite: FAIL — ${msg}`);
           }
           try {
             const n = await vectorDb.count();
             lanceOk = true;
             log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
           } catch (e) {
-            issues.push(`LanceDB: ${String(e)}`);
-            fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
-            log(`LanceDB: FAIL — ${String(e)}`);
+            const msg = String(e);
+            issues.push(`LanceDB: ${msg}`);
+            if (isBindingsError(msg)) {
+              lanceBindingsFailed = true;
+              fixes.push(`Native module (@lancedb/lancedb) needs rebuild. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
+            } else {
+              fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
+            }
+            log(`LanceDB: FAIL — ${msg}`);
           }
           try {
             await embeddings.embed("verify test");
@@ -4197,6 +4194,21 @@ const memoryHybridPlugin = {
           }
           if (opts.fix) {
             const applied: string[] = [];
+            if (sqliteBindingsFailed || lanceBindingsFailed) {
+              const { spawnSync } = await import("node:child_process");
+              const pkgs = [
+                ...(sqliteBindingsFailed ? ["better-sqlite3"] : []),
+                ...(lanceBindingsFailed ? ["@lancedb/lancedb"] : []),
+              ];
+              for (const pkg of pkgs) {
+                const r = spawnSync("npm", ["rebuild", pkg], { cwd: extDir, shell: true });
+                if (r.status === 0) {
+                  applied.push(`Rebuilt native module: ${pkg}`);
+                } else {
+                  log(`Rebuild ${pkg} failed (exit ${r.status}). Run manually: cd ${extDir} && npm rebuild ${pkg}`);
+                }
+              }
+            }
             if (existsSync(defaultConfigPath)) {
               try {
                 const raw = readFileSync(defaultConfigPath, "utf-8");
@@ -4220,19 +4232,6 @@ const memoryHybridPlugin = {
                   changed = true;
                   applied.push("Set embedding.apiKey and model (use your key or ${OPENAI_API_KEY} in config)");
                 }
-                const jobs = Array.isArray(fixConfig.jobs) ? fixConfig.jobs : [];
-                const jobDefs = [
-                  { name: "nightly-memory-sweep", schedule: "0 2 * * *", channel: "system", message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log", isolated: true, model: "gemini" },
-                  { name: "weekly-reflection", schedule: "0 3 * * 0", channel: "system", message: "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.", isolated: true, model: "gemini" },
-                ];
-                for (const def of jobDefs) {
-                  if (!jobs.some((j: unknown) => (j as Record<string, unknown>)?.name === def.name)) {
-                    jobs.push(def);
-                    changed = true;
-                    applied.push(def.name === "nightly-memory-sweep" ? "Added nightly-memory-sweep job for session distillation" : "Added weekly-reflection job for pattern synthesis (FR-011)");
-                  }
-                }
-                if (changed) (fixConfig as Record<string, unknown>).jobs = jobs;
                 const memoryDirPath = dirname(resolvedSqlitePath);
                 if (!existsSync(memoryDirPath)) {
                   mkdirSync(memoryDirPath, { recursive: true });
@@ -4489,6 +4488,157 @@ const memoryHybridPlugin = {
           return { totalExtracted, totalStored, daysBack, dryRun: opts.dryRun };
         }
 
+        function gatherBackfillFiles(workspaceRoot: string): Array<{ path: string; label: string }> {
+          const memoryDir = join(workspaceRoot, "memory");
+          const memoryMd = join(workspaceRoot, "MEMORY.md");
+          const out: Array<{ path: string; label: string }> = [];
+          if (existsSync(memoryMd)) out.push({ path: memoryMd, label: "MEMORY.md" });
+          if (!existsSync(memoryDir)) return out;
+          function walk(dir: string, rel = "memory"): void {
+            const entries = readdirSync(dir, { withFileTypes: true });
+            for (const e of entries) {
+              const full = join(dir, e.name);
+              const relPath = join(rel, e.name);
+              if (e.isDirectory()) walk(full, relPath);
+              else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
+            }
+          }
+          walk(memoryDir);
+          return out;
+        }
+
+        function extractBackfillFact(line: string): { text: string; category: string; entity: string | null; key: string | null; value: string; source_date: string | null } | null {
+          let t = line.replace(/^[-*#>\s]+/, "").trim();
+          const datePrefix = /^\[(\d{4}-\d{2}-\d{2})\]\s*/;
+          let source_date: string | null = null;
+          const match = t.match(datePrefix);
+          if (match) {
+            source_date = match[1];
+            t = t.slice(match[0].length).trim();
+          }
+          if (t.length < 10 || t.length > 500) return null;
+          const lower = t.toLowerCase();
+          if (/\b(api[_-]?key|password|secret|token)\s*[:=]/i.test(t)) return null;
+          if (/^(see\s|---|```|\s*$)/.test(t) || t.split(/\s+/).length < 2) return null;
+
+          let entity: string | null = null;
+          let key: string | null = null;
+          let value: string;
+          let category = "other";
+
+          const decisionMatch = t.match(
+            /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i
+          );
+          if (decisionMatch) {
+            entity = "decision";
+            key = decisionMatch[1].trim().slice(0, 100);
+            value = (decisionMatch[2] || "no rationale").trim();
+            category = "decision";
+          } else {
+            const ruleMatch = t.match(/(?:always|never)\s+(.+?)\.?$/i);
+            if (ruleMatch) {
+              entity = "convention";
+              key = ruleMatch[1].trim().slice(0, 100);
+              value = lower.includes("never") ? "never" : "always";
+              category = "preference";
+            } else {
+              const possessiveMatch = t.match(
+                /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/
+              );
+              if (possessiveMatch) {
+                entity = possessiveMatch[1] || "user";
+                key = possessiveMatch[2].trim();
+                value = possessiveMatch[3].trim();
+                category = "fact";
+              } else {
+                const preferMatch = t.match(
+                  /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/
+                );
+                if (preferMatch) {
+                  entity = "user";
+                  key = preferMatch[1];
+                  value = preferMatch[2].trim();
+                  category = "preference";
+                } else {
+                  value = t.slice(0, 200);
+                }
+              }
+            }
+          }
+          return { text: t, category, entity, key, value, source_date };
+        }
+
+        async function runBackfillForCli(
+          opts: { dryRun: boolean; workspace?: string; limit?: number },
+          sink: BackfillCliSink,
+        ): Promise<BackfillCliResult> {
+          const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          const files = gatherBackfillFiles(workspaceRoot);
+          if (files.length === 0) {
+            sink.log(`No MEMORY.md or memory/**/*.md under ${workspaceRoot}`);
+            return { stored: 0, skipped: 0, candidates: 0, files: 0, dryRun: opts.dryRun };
+          }
+          const allCandidates: Array<{ text: string; category: string; entity: string | null; key: string | null; value: string; source_date: string | null; source: string }> = [];
+          for (const { path: filePath, label } of files) {
+            const content = readFileSync(filePath, "utf-8");
+            const lines = content.split("\n");
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("#")) continue;
+              const fact = extractBackfillFact(trimmed);
+              if (fact) allCandidates.push({ ...fact, source: label });
+            }
+          }
+          if (opts.dryRun) {
+            sink.log(`Would process ${allCandidates.length} facts from ${files.length} files under ${workspaceRoot}`);
+            return { stored: 0, skipped: 0, candidates: allCandidates.length, files: files.length, dryRun: true };
+          }
+          const limit = opts.limit ?? 0;
+          let stored = 0;
+          let skipped = 0;
+          const sourceDateSec = (s: string | null) => {
+            if (!s || typeof s !== "string") return null;
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+            if (!m) return null;
+            const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+            const sec = Math.floor(ms / 1000);
+            return isNaN(sec) ? null : sec;
+          };
+          for (const fact of allCandidates) {
+            if (limit > 0 && stored >= limit) break;
+            if (factsDb.hasDuplicate(fact.text)) {
+              skipped++;
+              continue;
+            }
+            const entry = factsDb.store({
+              text: fact.text,
+              category: fact.category as MemoryCategory,
+              importance: 0.8,
+              entity: fact.entity,
+              key: fact.key,
+              value: fact.value,
+              source: `backfill:${fact.source}`,
+              sourceDate: sourceDateSec(fact.source_date),
+            });
+            try {
+              const vector = await embeddings.embed(fact.text);
+              if (!(await vectorDb.hasDuplicate(vector))) {
+                await vectorDb.store({
+                  text: fact.text,
+                  vector,
+                  importance: 0.8,
+                  category: fact.category,
+                  id: entry.id,
+                });
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: backfill vector store failed for "${fact.text.slice(0, 50)}...": ${err}`);
+            }
+            stored++;
+          }
+          return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: false };
+        }
+
         async function runMigrateToVaultForCli(): Promise<MigrateToVaultResult | null> {
           if (!credentialsDb) return null;
           const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
@@ -4571,6 +4721,7 @@ const memoryHybridPlugin = {
           runDistillWindow: (opts) => Promise.resolve(runDistillWindowForCli(opts)),
           runRecordDistill: () => Promise.resolve(runRecordDistillForCli()),
           runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
+          runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
           runFindDuplicates: (opts) =>
@@ -4613,7 +4764,7 @@ const memoryHybridPlugin = {
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
