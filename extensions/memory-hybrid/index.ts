@@ -40,8 +40,10 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
+import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
+import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults } from "./services/merge-results.js";
 import type { MemoryEntry, SearchResult } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
@@ -2191,6 +2193,86 @@ const memoryHybridPlugin = {
 
     api.registerTool(
       {
+        name: "memory_recall_procedures",
+        label: "Recall Procedures",
+        description:
+          "Search for learned procedures (positive: what worked; negative: known failures) matching a task description.",
+        parameters: Type.Object({
+          taskDescription: Type.String({
+            description: "What you are trying to do (e.g. 'check Moltbook', 'HA health checks')",
+          }),
+          limit: Type.Optional(
+            Type.Number({ description: "Max procedures to return (default: 5)" }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { taskDescription, limit = 5 } = params as {
+            taskDescription: string;
+            limit?: number;
+          };
+          const q = typeof taskDescription === "string" && taskDescription.trim().length > 0
+            ? taskDescription.trim()
+            : null;
+          if (!q) {
+            return {
+              content: [{ type: "text" as const, text: "Provide a task description to recall procedures." }],
+              details: { count: 0 },
+            };
+          }
+          const procedures = factsDb.searchProcedures(q, limit);
+          const negatives = factsDb.getNegativeProceduresMatching(q, 3);
+          const lines: string[] = [];
+          const positiveList = procedures.filter((p) => p.procedureType === "positive");
+          if (positiveList.length > 0) {
+            lines.push("Last time this worked:");
+            for (const p of positiveList) {
+              let recipe: unknown;
+              try {
+                recipe = JSON.parse(p.recipeJson);
+              } catch {
+                recipe = [];
+              }
+              const steps = Array.isArray(recipe)
+                ? (recipe as Array<{ tool?: string; args?: Record<string, unknown> }>).map(
+                    (s) => s.tool + (s.args && Object.keys(s.args).length > 0 ? `(${JSON.stringify(s.args).slice(0, 80)}…)` : ""),
+                  ).join(" → ")
+                : p.recipeJson.slice(0, 200);
+              lines.push(`- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x)`);
+            }
+          }
+          if (negatives.length > 0) {
+            lines.push("");
+            lines.push("⚠️ Known issues (avoid):");
+            for (const p of negatives) {
+              let recipe: unknown;
+              try {
+                recipe = JSON.parse(p.recipeJson);
+              } catch {
+                recipe = [];
+              }
+              const steps = Array.isArray(recipe)
+                ? (recipe as Array<{ tool?: string }>).map((s) => s.tool).filter(Boolean).join(" → ")
+                : "";
+              lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}`);
+            }
+          }
+          if (lines.length === 0) {
+            return {
+              content: [{ type: "text" as const, text: "No procedures found for this task." }],
+              details: { count: 0 },
+            };
+          }
+          return {
+            content: [{ type: "text" as const, text: lines.join("\n") }],
+            details: { count: positiveList.length + negatives.length, procedures: positiveList.length, warnings: negatives.length },
+          };
+        },
+      },
+      { name: "memory_recall_procedures" },
+    );
+
+    api.registerTool(
+      {
         name: "memory_store",
         label: "Memory Store",
         description:
@@ -4126,6 +4208,51 @@ const memoryHybridPlugin = {
           return { path, timestamp: ts };
         }
 
+        async function runExtractProceduresForCli(
+          opts: { sessionDir?: string; days?: number; dryRun: boolean },
+        ): Promise<ExtractProceduresResult> {
+          const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
+          let filePaths: string[] | undefined;
+          if (opts.days != null && opts.days > 0) {
+            const fs = await import("node:fs");
+            const pathMod = await import("node:path");
+            if (!fs.existsSync(sessionDir)) {
+              return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
+            }
+            const cutoff = Date.now() - opts.days * 24 * 60 * 60 * 1000;
+            const files = fs.readdirSync(sessionDir);
+            filePaths = files
+              .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
+              .map((f) => pathMod.join(sessionDir, f))
+              .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+          }
+          return extractProceduresFromSessions(
+            factsDb,
+            {
+              sessionDir: filePaths ? undefined : sessionDir,
+              filePaths,
+              minSteps: cfg.procedures.minSteps,
+              dryRun: opts.dryRun,
+            },
+            { info: (s) => api.logger.info?.(s) ?? console.log(s), warn: (s) => api.logger.warn?.(s) ?? console.warn(s) },
+          );
+        }
+
+        async function runGenerateAutoSkillsForCli(
+          opts: { dryRun: boolean },
+        ): Promise<GenerateAutoSkillsResult> {
+          return generateAutoSkills(
+            factsDb,
+            {
+              skillsAutoPath: cfg.procedures.skillsAutoPath,
+              validationThreshold: cfg.procedures.validationThreshold,
+              skillTTLDays: cfg.procedures.skillTTLDays,
+              dryRun: opts.dryRun,
+            },
+            { info: (s) => api.logger.info?.(s) ?? console.log(s), warn: (s) => api.logger.warn?.(s) ?? console.warn(s) },
+          );
+        }
+
         async function runExtractDailyForCli(
           opts: { days: number; dryRun: boolean },
           sink: ExtractDailySink,
@@ -4365,6 +4492,8 @@ const memoryHybridPlugin = {
           runDistillWindow: (opts) => Promise.resolve(runDistillWindowForCli(opts)),
           runRecordDistill: () => Promise.resolve(runRecordDistillForCli()),
           runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
+          runExtractProcedures: (opts) => runExtractProceduresForCli(opts),
+          runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
           runFindDuplicates: (opts) =>
@@ -4399,7 +4528,7 @@ const memoryHybridPlugin = {
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -4412,6 +4541,36 @@ const memoryHybridPlugin = {
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
+          // Procedural memory: inject relevant procedures and negative warnings (issue #23)
+          let procedureBlock = "";
+          if (cfg.procedures.enabled) {
+            const procs = factsDb.searchProcedures(e.prompt, 3);
+            const negs = factsDb.getNegativeProceduresMatching(e.prompt, 2);
+            const procLines: string[] = [];
+            const positiveList = procs.filter((p) => p.procedureType === "positive");
+            if (positiveList.length > 0) {
+              procLines.push("Last time this worked:");
+              for (const p of positiveList.slice(0, 2)) {
+                try {
+                  const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>).map((s) => s.tool).filter(Boolean).join(" → ");
+                  procLines.push(`- ${p.taskPattern.slice(0, 60)}…: ${steps}`);
+                } catch {
+                  procLines.push(`- ${p.taskPattern.slice(0, 80)}`);
+                }
+              }
+            }
+            if (negs.length > 0) {
+              procLines.push("⚠️ Known issue (avoid):");
+              for (const n of negs.slice(0, 2)) {
+                procLines.push(`- ${n.taskPattern.slice(0, 70)}…`);
+              }
+            }
+            if (procLines.length > 0) {
+              procedureBlock = "<relevant-procedures>\n" + procLines.join("\n") + "\n</relevant-procedures>";
+            }
+          }
+          const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
+
           // FR-009: Use configurable candidate pool for progressive disclosure
           const fmt = cfg.autoRecall.injectionFormat;
           const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -4616,7 +4775,7 @@ const memoryHybridPlugin = {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: fullContent };
+            return { prependContext: withProcedures(fullContent) };
           }
 
           if (injectionFormat === "progressive") {
@@ -4636,7 +4795,7 @@ const memoryHybridPlugin = {
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
             );
             return {
-              prependContext: `${indexHeader}${indexContent}${indexFooter}`,
+              prependContext: withProcedures(`${indexHeader}${indexContent}${indexFooter}`),
             };
           }
 
@@ -4716,7 +4875,7 @@ const memoryHybridPlugin = {
           }
 
           return {
-            prependContext: `${header}${memoryContext}${footer}`,
+            prependContext: withProcedures(`${header}${memoryContext}${footer}`),
           };
         } catch (err) {
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);

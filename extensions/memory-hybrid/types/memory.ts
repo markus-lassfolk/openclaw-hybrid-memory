@@ -31,6 +31,36 @@ export type MemoryEntry = {
   validUntil?: number | null;
   /** FR-010: Id of the fact this one supersedes (replaces). */
   supersedesId?: string | null;
+  /** Procedural memory (issue #23): fact is a procedure summary. */
+  procedureType?: "positive" | "negative" | null;
+  successCount?: number;
+  lastValidated?: number | null;
+  sourceSessions?: string | null;
+};
+
+/** One step in a procedure recipe. */
+export type ProcedureStep = {
+  tool: string;
+  args?: Record<string, unknown>;
+  summary?: string;
+};
+
+/** Stored procedure (procedures table). */
+export type ProcedureEntry = {
+  id: string;
+  taskPattern: string;
+  recipeJson: string;
+  procedureType: "positive" | "negative";
+  successCount: number;
+  failureCount: number;
+  lastValidated: number | null;
+  lastFailed: number | null;
+  confidence: number;
+  ttlDays: number;
+  promotedToSkill: number;
+  skillPath: string | null;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type SearchResult = {

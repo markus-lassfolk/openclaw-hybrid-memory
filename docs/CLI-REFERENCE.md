@@ -27,6 +27,8 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
 | `record-distill` | Record that session distillation was run (timestamp for `verify`). |
+| `extract-procedures [--dir path] [--days N] [--dry-run]` | Extract tool-call procedures from session JSONL; store positive/negative procedures. |
+| `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
 
@@ -87,3 +89,4 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 - [REFLECTION.md](REFLECTION.md) — Reflection layer (`reflect`, `reflect-rules`, `reflect-meta`)
 - [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault (`credentials migrate-to-vault`)
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation (`distill-window`, `record-distill`)
+- [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) — Procedural memory (`extract-procedures`, `generate-auto-skills`)
