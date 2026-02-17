@@ -210,6 +210,7 @@ At typical usage (~50 turns/day), expect **~$0.003/day** for embeddings. Auto-cl
 
 ## Related docs
 
+- [DEEP-DIVE.md](DEEP-DIVE.md) — Storage internals, search algorithms, tags, links, deduplication
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System design and workspace layout
 - [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify
 - [CONFIGURATION.md](CONFIGURATION.md) — Tune auto-recall, auto-capture, token budgets

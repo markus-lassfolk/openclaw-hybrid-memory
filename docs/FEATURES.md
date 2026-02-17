@@ -193,6 +193,7 @@ Facts can have optional **tags** for topic filtering, inferred at write time via
 
 ## Related docs
 
+- [DEEP-DIVE.md](DEEP-DIVE.md) — Storage internals, search algorithms, tags, links, deduplication
 - [CONFIGURATION.md](CONFIGURATION.md) — Config reference for all features
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System design overview
