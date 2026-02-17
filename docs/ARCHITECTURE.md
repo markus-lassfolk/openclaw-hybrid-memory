@@ -140,6 +140,8 @@ Status emojis: 🟢 active, 🟡 paused, 🔵 completed. Keep the index under ~3
 
 ## Related docs
 
+- [DEEP-DIVE.md](DEEP-DIVE.md) — Storage internals, search algorithms, tags, links, deduplication
+- [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — Runtime flow (auto-recall, auto-capture)
 - [QUICKSTART.md](QUICKSTART.md) — Installation and first run
 - [CONFIGURATION.md](CONFIGURATION.md) — All config options
 - [MEMORY-PROTOCOL.md](MEMORY-PROTOCOL.md) — AGENTS.md paste-ready block

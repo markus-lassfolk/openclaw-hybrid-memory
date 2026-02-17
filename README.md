@@ -95,6 +95,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 |----------|-------------|
 | **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, verify — get running in 10 minutes |
 | **[HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)** | What happens each turn: auto-recall, auto-capture, background jobs, costs |
+| **[DEEP-DIVE.md](docs/DEEP-DIVE.md)** | Storage internals, search algorithms, tags, links, supersession, deduplication |
 | **[EXAMPLES.md](docs/EXAMPLES.md)** | Real-world recipes: project setup, tuning, tags, backfilling, maintenance routines |
 | **[FAQ.md](docs/FAQ.md)** | Common questions: cost, providers, backups, resets, troubleshooting quick answers |
 
