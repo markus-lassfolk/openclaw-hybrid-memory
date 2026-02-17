@@ -57,7 +57,7 @@ export function computeDynamicSalience(
     const nowSec = Math.floor(Date.now() / 1000);
     const lastAccess = entry.lastAccessed ?? entry.lastConfirmedAt ?? entry.createdAt;
     const daysSinceAccess = (nowSec - lastAccess) / SECONDS_PER_DAY;
-    // decay = 1 / (1 + days / halfLife) — reciprocal decay
+    // decay = 1 / (1 + days / halfLife) — reciprocal decay (not exponential)
     // At halfLife days: factor = 0.5
     const decayFactor = 1 / (1 + daysSinceAccess / halfLifeDays);
     s *= decayFactor;
