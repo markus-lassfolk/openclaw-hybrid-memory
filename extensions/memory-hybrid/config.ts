@@ -93,8 +93,6 @@ export type PersonaProposalsConfig = {
   proposalTTLDays: number;
   /** Require minimum session evidence count (default: 10) */
   minSessionEvidence: number;
-  /** LLM model for proposal validation/formatting (default: gpt-4o-mini). Reserved for future use: smart diff application, content validation, merge conflict resolution. */
-  validationModel: string;
 };
 
 /** Graph-based spreading activation (FR-007): auto-linking and traversal settings */
@@ -421,9 +419,6 @@ export const hybridConfigSchema = {
       minSessionEvidence: typeof proposalsRaw?.minSessionEvidence === "number" && proposalsRaw.minSessionEvidence > 0
         ? Math.floor(proposalsRaw.minSessionEvidence)
         : 10,
-      validationModel: typeof proposalsRaw?.validationModel === "string"
-        ? proposalsRaw.validationModel
-        : "gpt-4o-mini",
     };
 
     return {

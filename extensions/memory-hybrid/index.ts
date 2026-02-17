@@ -3590,11 +3590,7 @@ const memoryHybridPlugin = {
               };
 
               // Apply change (simple append strategy)
-              // TODO: Future enhancement - use cfg.personaProposals.validationModel for:
-              //   - Smart diff application (parse existing structure, insert intelligently)
-              //   - Advanced content validation (semantic checks, pattern detection)
-              //   - Merge conflict resolution
-              // NOTE: validationModel config is reserved for this future enhancement
+              // TODO: Future enhancement - use LLM for smart diff application, content validation, merge conflict resolution
               const timestamp = new Date().toISOString();
               const safeObservation = escapeHtmlComment(proposal.observation);
               const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
@@ -5197,6 +5193,41 @@ const memoryHybridPlugin = {
 
                     recovered++;
                   }
+                } else if (entry.operation === "update") {
+                  // Legacy "update" entries from prior versions: treat as store
+                  api.logger.warn(`memory-hybrid: WAL recovery found legacy "update" operation (entry ${entry.id}), treating as store`);
+                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                  
+                  if (!factsDb.hasDuplicate(text)) {
+                    factsDb.store({
+                      text,
+                      category: (category as MemoryCategory) || "other",
+                      importance: importance ?? 0.7,
+                      entity: entity || null,
+                      key: key || null,
+                      value: value || null,
+                      source: source || "wal-recovery",
+                      decayClass,
+                      summary,
+                      tags,
+                    });
+
+                    if (entry.data.vector) {
+                      void vectorDb.store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance ?? 0.7,
+                        category: category || "other",
+                      }).catch((err) => {
+                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                      });
+                    }
+
+                    recovered++;
+                  }
+                } else {
+                  // Unrecognized operation type
+                  api.logger.warn(`memory-hybrid: WAL recovery found unrecognized operation "${entry.operation}" (entry ${entry.id}), discarding`);
                 }
                 
                 // Remove successfully processed entry
