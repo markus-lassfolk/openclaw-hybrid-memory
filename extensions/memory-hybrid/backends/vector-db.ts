@@ -162,6 +162,9 @@ export class VectorDB {
   close(): void {
     this.closed = true;
     this.table = null;
+    if (this.db) {
+      this.db.close();
+    }
     this.db = null;
     this.initPromise = null;
   }
