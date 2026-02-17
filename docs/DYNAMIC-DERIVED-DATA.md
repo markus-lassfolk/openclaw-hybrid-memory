@@ -1,3 +1,9 @@
+---
+layout: default
+title: Dynamic Derived Data
+parent: Features
+nav_order: 9
+---
 # Dynamic and Derived Data
 
 Many fields on a fact are **not** typed in by the user — they are **derived at runtime** from the fact text, entity, config, or background jobs. This doc is an index to where each kind of derived data is defined and documented.
@@ -27,6 +33,7 @@ Categories can also be **discovered** over time from "other" facts (new category
 | **Decay class** | Heuristic (classifyDecay) from entity/key/text: permanent, stable, active, session, checkpoint. Determines TTL and refresh-on-access. | [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) |
 | **Entity / key / value** | Structured extraction (extractStructuredFields) from text: e.g. "X's Y is Z", "decided X because Y", email/phone. | [FEATURES.md](FEATURES.md#structured-field-extraction) |
 | **Conflicting memories** | Classify-before-write (ADD/UPDATE/DELETE/NOOP); supersession (supersedes_id, valid_from, valid_until). | [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) |
+| **Dynamic salience (FR-005)** | Access boost (recall_count), time decay (last_accessed), Hebbian RELATED_TO links on co-recall. | [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) |
 
 ---
 
@@ -37,6 +44,7 @@ Categories can also be **discovered** over time from "other" facts (new category
 - **Decay class** — Stored on the fact; drives expiry and confidence decay. See [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md).
 - **Entity/key/value** — Stored on the fact; used for lookup (e.g. by entity or entity+key) and for decay heuristics. See [FEATURES.md](FEATURES.md).
 - **Supersession** — Stored as supersedes_id / superseded_at / valid_from / valid_until; used to hide superseded facts in default search and to support point-in-time queries. See [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md).
+- **Dynamic salience** — recall_count and last_accessed drive access boost and time decay in search/lookup scores; co-recalled facts get RELATED_TO links (Hebbian). See [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md).
 
 ---
 
@@ -48,3 +56,4 @@ Categories can also be **discovered** over time from "other" facts (new category
 - [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) — Decay class and TTL
 - [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) — Contradiction handling and supersession
 - [DEEP-DIVE.md](DEEP-DIVE.md) — Storage and search internals
+- [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) — Access-based importance (FR-005)

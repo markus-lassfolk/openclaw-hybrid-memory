@@ -1,3 +1,9 @@
+---
+layout: default
+title: Auto-Tagging
+parent: Features
+nav_order: 11
+---
 # Auto-Tagging
 
 Facts can carry **topic tags** for filtering. When you don’t pass tags explicitly, the plugin **infers tags from the fact text (and optional entity)** using regex patterns. Tag-filtered queries then restrict results to facts that have a given tag.

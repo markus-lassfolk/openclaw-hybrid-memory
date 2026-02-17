@@ -1,3 +1,9 @@
+---
+layout: default
+title: Maintenance
+parent: Operations & Maintenance
+nav_order: 7
+---
 # Maintenance — File Hygiene, Reviews, and Upgrades
 
 How to keep the memory system healthy over time.

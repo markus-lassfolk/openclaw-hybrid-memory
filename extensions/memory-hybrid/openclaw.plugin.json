@@ -91,7 +91,7 @@
     },
     "autoRecall.progressiveIndexMaxTokens": {
       "label": "Progressive index max tokens",
-      "help": "Token cap for the index block in progressive mode (default: same as maxTokens)"
+      "help": "Token cap for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid)"
     },
     "autoRecall.progressiveGroupByCategory": {
       "label": "Progressive group by category",
@@ -129,6 +129,15 @@
     "store.fuzzyDedupe": {
       "label": "Store fuzzy dedupe",
       "help": "Skip storing when normalized text (trim, collapse whitespace, lowercase) matches an existing fact (2.3)"
+    },
+    "store.classifyBeforeWrite": {
+      "label": "Classify before write (FR-008)",
+      "help": "Classify each new fact as ADD/UPDATE/DELETE/NOOP against similar facts before storing; reduces duplicates and contradictions"
+    },
+    "store.classifyModel": {
+      "label": "Classification model",
+      "placeholder": "gpt-4o-mini",
+      "help": "Chat model for memory operation classification (default: gpt-4o-mini)"
     },
     "credentials.enabled": {
       "label": "Credentials",

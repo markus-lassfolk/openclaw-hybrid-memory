@@ -42,10 +42,11 @@ import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
 import { registerHybridMemCli, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
-import { mergeResults } from "./services/merge-results.js";
-import type { MemoryEntry, SearchResult } from "./types/memory.js";
+import { mergeResults, filterByScope } from "./services/merge-results.js";
+import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
+import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
-import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay } from "./utils/text.js";
+import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "./utils/text.js";
 import {
   REFLECTION_MAX_FACT_LENGTH,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
@@ -76,6 +77,7 @@ import {
 } from "./utils/tags.js";
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
+import { computeDynamicSalience } from "./utils/salience.js";
 
 // ============================================================================
 // Credentials Store (opt-in, encrypted)
@@ -454,6 +456,36 @@ type MemoryClassification = {
 };
 
 /**
+ * FR-008: Parse LLM classification response into MemoryClassification.
+ * Format: "ACTION [id] | reason". Exported for tests.
+ */
+function parseClassificationResponse(
+  content: string,
+  existingFacts: MemoryEntry[],
+): MemoryClassification {
+  const match = content.match(/^(ADD|UPDATE|DELETE|NOOP)\s*([a-f0-9-]*)\s*\|\s*(.+)$/i);
+  if (!match) {
+    return { action: "ADD", reason: `unparseable LLM response: ${content.slice(0, 80)}` };
+  }
+
+  const action = match[1].toUpperCase() as MemoryClassification["action"];
+  const targetId = match[2]?.trim() || undefined;
+  const reason = match[3].trim();
+
+  if (action === "UPDATE" || action === "DELETE") {
+    if (!targetId) {
+      return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
+    }
+    const validTarget = existingFacts.find((f) => f.id === targetId);
+    if (!validTarget) {
+      return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
+    }
+  }
+
+  return { action, targetId, reason };
+}
+
+/**
  * FR-008: Classify an incoming fact against existing similar facts.
  * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
  * Falls back to ADD on error.
@@ -495,29 +527,7 @@ async function classifyMemoryOperation(
       max_tokens: 100,
     });
     const content = (resp.choices[0]?.message?.content ?? "").trim();
-
-    // Parse: "ACTION [id] | reason"
-    const match = content.match(/^(ADD|UPDATE|DELETE|NOOP)\s*([a-f0-9-]*)\s*\|\s*(.+)$/i);
-    if (!match) {
-      return { action: "ADD", reason: `unparseable LLM response: ${content.slice(0, 80)}` };
-    }
-
-    const action = match[1].toUpperCase() as MemoryClassification["action"];
-    const targetId = match[2]?.trim() || undefined;
-    const reason = match[3].trim();
-
-    // Validate targetId if UPDATE or DELETE - must have a valid targetId
-    if (action === "UPDATE" || action === "DELETE") {
-      if (!targetId) {
-        return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
-      }
-      const validTarget = existingFacts.find((f) => f.id === targetId);
-      if (!validTarget) {
-        return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
-      }
-    }
-
-    return { action, targetId, reason };
+    return parseClassificationResponse(content, existingFacts);
   } catch (err) {
     logger.warn(`memory-hybrid: classify operation failed: ${err}`);
     return { action: "ADD", reason: "classification failed; defaulting to ADD" };
@@ -1069,6 +1079,28 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return a.reduce((s, x, i) => s + x * b[i], 0);
 }
 
+/** FR-011: Parse PATTERN: lines from reflection LLM response. Exported for tests. */
+function parsePatternsFromReflectionResponse(rawResponse: string): string[] {
+  const patterns: string[] = [];
+  for (const line of rawResponse.split(/\n/)) {
+    const m = line.match(/^\s*PATTERN:\s*(.+)/);
+    if (!m) continue;
+    const text = m[1].trim();
+    if (text.length >= REFLECTION_PATTERN_MIN_CHARS && text.length <= REFLECTION_PATTERN_MAX_CHARS) {
+      patterns.push(text);
+    }
+  }
+  const seenInBatch = new Set<string>();
+  const unique: string[] = [];
+  for (const p of patterns) {
+    const key = p.toLowerCase().replace(/\s+/g, " ");
+    if (seenInBatch.has(key)) continue;
+    seenInBatch.add(key);
+    unique.push(p);
+  }
+  return unique;
+}
+
 /**
  * FR-011: Run reflection — gather recent facts, call LLM to extract patterns, dedupe, store.
  */
@@ -1082,13 +1114,7 @@ async function runReflection(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }> {
   const windowDays = Math.min(90, Math.max(1, opts.window));
-  const windowStartSec = Math.floor(Date.now() / 1000) - windowDays * SECONDS_PER_DAY;
-
-  const allFacts = factsDb.getAll();
-  const recentFacts = allFacts.filter((f) => {
-    const ts = f.sourceDate ?? f.createdAt;
-    return ts >= windowStartSec && f.category !== "pattern" && f.category !== "rule";
-  });
+  const recentFacts = factsDb.getRecentFacts(windowDays);
 
   if (recentFacts.length < config.minObservations) {
     logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
@@ -1130,29 +1156,11 @@ async function runReflection(
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
-  const patterns: string[] = [];
-  for (const line of rawResponse.split(/\n/)) {
-    const m = line.match(/^\s*PATTERN:\s*(.+)/);
-    if (!m) continue;
-    const text = m[1].trim();
-    if (text.length >= REFLECTION_PATTERN_MIN_CHARS && text.length <= REFLECTION_PATTERN_MAX_CHARS) {
-      patterns.push(text);
-    }
-  }
-
-  // Deduplicate within batch (first occurrence wins)
-  const seenInBatch = new Set<string>();
-  const uniqueNewPatterns: string[] = [];
-  for (const p of patterns) {
-    const key = p.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
-    seenInBatch.add(key);
-    uniqueNewPatterns.push(p);
-  }
+  const uniqueNewPatterns = parsePatternsFromReflectionResponse(rawResponse);
 
   if (uniqueNewPatterns.length === 0) {
     logger.info(`memory-hybrid: reflection — 0 patterns extracted from LLM`);
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: 0, window: windowDays };
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
   // Existing patterns (non-superseded, still valid) for dedupe
@@ -1224,7 +1232,7 @@ async function runReflection(
 
   return {
     factsAnalyzed: recentFacts.length,
-    patternsExtracted: patterns.length,
+    patternsExtracted: uniqueNewPatterns.length,
     patternsStored: stored,
     window: windowDays,
   };
@@ -2006,6 +2014,26 @@ const memoryHybridPlugin = {
               description: "FR-010: Point-in-time query: ISO date (YYYY-MM-DD) or epoch seconds. Return only facts valid at that time.",
             }),
           ),
+          userId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include user-private memories for this user.",
+            }),
+          ),
+          agentId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include agent-specific memories for this agent.",
+            }),
+          ),
+          sessionId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include session-scoped memories for this session.",
+            }),
+          ),
+          includeCold: Type.Optional(
+            Type.Boolean({
+              description: "FR-004: Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
@@ -2016,6 +2044,10 @@ const memoryHybridPlugin = {
             tag,
             includeSuperseded = false,
             asOf: asOfParam,
+            includeCold = false,
+            userId,
+            agentId,
+            sessionId,
           } = params as {
             query?: string;
             id?: string | number;
@@ -2024,8 +2056,23 @@ const memoryHybridPlugin = {
             tag?: string;
             includeSuperseded?: boolean;
             asOf?: string;
+            includeCold?: boolean;
+            userId?: string;
+            agentId?: string;
+            sessionId?: string;
           };
           const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
+          
+          // FR-006: Scope filtering
+          // ⚠️ SECURITY WARNING: userId/agentId/sessionId are caller-controlled parameters.
+          // In multi-tenant production environments, these should be derived from authenticated
+          // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
+          // Accepting arbitrary scope filters allows users to access other users' private memories.
+          // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
+          const scopeFilter: ScopeFilter | undefined =
+            userId || agentId || sessionId
+              ? { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null }
+              : undefined;
 
           // FR-009: Fetch by id (fact id or 1-based index from last progressive index)
           if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -2049,8 +2096,11 @@ const memoryHybridPlugin = {
               }
             }
             if (factId) {
-              const entry = factsDb.getById(factId);
+              const getByIdOpts = { asOf: asOfSec, scopeFilter };
+              const entry = factsDb.getById(factId, asOfSec != null || scopeFilter ? getByIdOpts : undefined);
               if (entry) {
+                // FR-005: Access boost — update recall_count and last_accessed on fetch by id
+                factsDb.refreshAccessedFacts([entry.id]);
                 const text = `[${entry.category}] ${entry.text}`;
                 return {
                   content: [
@@ -2107,7 +2157,14 @@ const memoryHybridPlugin = {
             };
           }
 
-          const recallOpts = { tag, includeSuperseded, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+          const tierFilter: "warm" | "all" = includeCold ? "all" : "warm";
+          const recallOpts = {
+            tag,
+            includeSuperseded,
+            tierFilter,
+            scopeFilter,
+            ...(asOfSec != null ? { asOf: asOfSec } : {}),
+          };
           let sqliteResults: SearchResult[] = [];
           if (entity) {
             sqliteResults = factsDb.lookup(entity, undefined, tag, recallOpts);
@@ -2120,7 +2177,8 @@ const memoryHybridPlugin = {
           if (!tag) {
             try {
               const vector = await embeddings.embed(query);
-              lanceResults = await vectorDb.search(vector, limit, 0.3);
+              lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
+              lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
             } catch (err) {
               api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
             }
@@ -2128,13 +2186,34 @@ const memoryHybridPlugin = {
 
           let results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
 
+          // FR-004: Exclude COLD tier when includeCold is false (Lance results may include cold facts)
+          if (!includeCold && results.length > 0) {
+            const filtered: SearchResult[] = [];
+            for (const r of results) {
+              const full = factsDb.getById(r.entry.id);
+              if (full && full.tier !== "cold") filtered.push({ ...r, entry: full });
+            }
+            results = filtered.slice(0, limit);
+          }
+
+          // FR-010: When asOf is set, filter so only facts valid at that time (Lance results lack temporal filter)
+          if (asOfSec != null && results.length > 0) {
+            const filtered: SearchResult[] = [];
+            for (const r of results) {
+              const full = factsDb.getById(r.entry.id, { asOf: asOfSec });
+              if (full) filtered.push({ ...r, entry: full });
+            }
+            results = filtered.slice(0, limit);
+          }
+
           // FR-007: Graph traversal — expand results with connected facts when enabled
           if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
             const initialIds = new Set(results.map((r) => r.entry.id));
             const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
             const extraIds = connectedIds.filter((id) => !initialIds.has(id));
+            const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
             for (const id of extraIds) {
-              const entry = factsDb.getById(id);
+              const entry = factsDb.getById(id, getByIdOpts);
               if (entry) {
                 results.push({
                   entry,
@@ -2231,6 +2310,15 @@ const memoryHybridPlugin = {
               description: "FR-010: Fact id this one supersedes (replaces). Marks the old fact as superseded and links the new one.",
             }),
           ),
+          scope: Type.Optional(
+            stringEnum(MEMORY_SCOPES as unknown as readonly string[]),
+          ),
+          scopeTarget: Type.Optional(
+            Type.String({
+              description:
+                "FR-006: Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
@@ -2243,6 +2331,8 @@ const memoryHybridPlugin = {
             decayClass: paramDecayClass,
             tags: paramTags,
             supersedes,
+            scope: paramScope,
+            scopeTarget: paramScopeTarget,
           } = params as {
             text: string;
             importance?: number;
@@ -2253,6 +2343,8 @@ const memoryHybridPlugin = {
             decayClass?: DecayClass;
             tags?: string[];
             supersedes?: string;
+            scope?: "global" | "user" | "agent" | "session";
+            scopeTarget?: string;
           };
 
           let textToStore = text;
@@ -2435,7 +2527,23 @@ const memoryHybridPlugin = {
             source: "conversation", decayClass: paramDecayClass, summary, tags, vector,
           }, api.logger);
 
-          // Now commit to actual storage (FR-010: optional supersedes for manual supersession)
+          // Now commit to actual storage (FR-010: optional supersedes for manual supersession; FR-006: scope)
+          const scope = paramScope ?? "global";
+          const scopeTarget =
+            scope === "global"
+              ? null
+              : (paramScopeTarget?.trim() ?? null);
+          if (scope !== "global" && !scopeTarget) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId).`,
+                },
+              ],
+              details: { error: "scope_target_required" },
+            };
+          }
           const nowSec = Math.floor(Date.now() / 1000);
           const entry = factsDb.store({
             text: textToStore,
@@ -2448,6 +2556,8 @@ const memoryHybridPlugin = {
             decayClass: paramDecayClass,
             summary,
             tags,
+            scope,
+            scopeTarget,
             ...(supersedes?.trim()
               ? { validFrom: nowSec, supersedesId: supersedes.trim() }
               : {}),
@@ -2512,6 +2622,66 @@ const memoryHybridPlugin = {
         },
       },
       { name: "memory_store" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_promote",
+        label: "Memory Promote",
+        description:
+          "FR-006: Promote a session-scoped memory to global or agent scope (so it persists after session end).",
+        parameters: Type.Object({
+          memoryId: Type.String({ description: "Fact id to promote" }),
+          scope: Type.Union([
+            Type.Literal("global"),
+            Type.Literal("agent"),
+          ], {
+            description: "New scope: global (available to all) or agent (this agent only).",
+          }),
+          scopeTarget: Type.Optional(
+            Type.String({
+              description: "Required when scope is agent: agent identifier.",
+            }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { memoryId, scope, scopeTarget } = params as {
+            memoryId: string;
+            scope: "global" | "agent";
+            scopeTarget?: string;
+          };
+          const entry = factsDb.getById(memoryId);
+          if (!entry) {
+            return {
+              content: [{ type: "text", text: `No memory found with id: ${memoryId}.` }],
+              details: { error: "not_found" },
+            };
+          }
+          if (scope === "agent" && !scopeTarget?.trim()) {
+            return {
+              content: [{ type: "text", text: "Scope 'agent' requires scopeTarget (agent identifier)." }],
+              details: { error: "scope_target_required" },
+            };
+          }
+          const ok = factsDb.promoteScope(memoryId, scope, scope === "agent" ? scopeTarget!.trim() : null);
+          if (!ok) {
+            return {
+              content: [{ type: "text", text: `Could not promote memory ${memoryId}.` }],
+              details: { error: "promote_failed" },
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Promoted memory ${memoryId} to scope "${scope}"${scope === "agent" ? ` (agent: ${scopeTarget})` : ""}. It will persist after session end.`,
+              },
+            ],
+            details: { action: "promoted", id: memoryId, scope, scopeTarget: scope === "agent" ? scopeTarget : undefined },
+          };
+        },
+      },
+      { name: "memory_promote" },
     );
 
     api.registerTool(
@@ -3658,6 +3828,10 @@ const memoryHybridPlugin = {
             }
           }
 
+          const scope = opts.scope ?? "global";
+          const scopeTarget = scope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
+          const supersedesId = opts.supersedes?.trim();
+          const nowSec = supersedesId ? Math.floor(Date.now() / 1000) : undefined;
           const entry = factsDb.store({
             text,
             category,
@@ -3668,7 +3842,11 @@ const memoryHybridPlugin = {
             source: "cli",
             sourceDate,
             tags: tags ?? extractTags(text, entity),
+            scope,
+            scopeTarget,
+            ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
           });
+          if (supersedesId) factsDb.supersede(supersedesId, entry.id);
           try {
             const vector = await embeddings.embed(text);
             if (!(await vectorDb.hasDuplicate(vector))) {
@@ -3677,7 +3855,7 @@ const memoryHybridPlugin = {
           } catch (err) {
             log.warn(`memory-hybrid: vector store failed: ${err}`);
           }
-          return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : "") };
+          return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : ""), ...(supersedesId ? { supersededId: supersedesId } : {}) };
         }
 
         function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
@@ -3752,10 +3930,12 @@ const memoryHybridPlugin = {
                 deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
               } else if (key === "jobs" && Array.isArray(srcVal)) {
                 const arr = (Array.isArray(tgtVal) ? [...tgtVal] : []) as unknown[];
-                const hasNightly = arr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                if (!hasNightly) {
-                  const nightly = (srcVal as unknown[]).find((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                  if (nightly) arr.push(nightly);
+                const jobNames = (j: unknown) => (j as Record<string, unknown>)?.name as string;
+                for (const def of ["nightly-memory-sweep", "weekly-reflection"]) {
+                  if (!arr.some((j: unknown) => jobNames(j) === def)) {
+                    const job = (srcVal as unknown[]).find((j: unknown) => jobNames(j) === def);
+                    if (job) arr.push(job);
+                  }
                 }
                 (target as Record<string, unknown>)[key] = arr;
               } else if (tgtVal === undefined && !Array.isArray(srcVal)) {
@@ -3944,12 +4124,41 @@ const memoryHybridPlugin = {
               // ignore
             }
           }
+          let weeklyReflectionDefined = false;
+          if (existsSync(cronStorePath)) {
+            try {
+              const raw = readFileSync(cronStorePath, "utf-8");
+              const store = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = store.jobs;
+              if (Array.isArray(jobs)) {
+                const weekly = jobs.find((j: unknown) => /weekly-reflection|memory reflection|pattern synthesis/.test(String((j as Record<string, unknown>)?.name ?? ""))) as Record<string, unknown> | undefined;
+                if (weekly) weeklyReflectionDefined = true;
+              }
+            } catch { /* ignore */ }
+          }
+          if (!weeklyReflectionDefined && existsSync(defaultConfigPath)) {
+            try {
+              const raw = readFileSync(defaultConfigPath, "utf-8");
+              const root = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = root.jobs;
+              if (Array.isArray(jobs)) {
+                const weekly = jobs.find((j: unknown) => (j as Record<string, unknown>)?.name === "weekly-reflection");
+                if (weekly) weeklyReflectionDefined = true;
+              }
+            } catch { /* ignore */ }
+          }
           log("\nOptional / suggested jobs (cron store or openclaw.json):");
           if (nightlySweepDefined) {
             log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
           } else {
             log("  nightly-memory-sweep (session distillation): not defined");
             fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
+          }
+          if (weeklyReflectionDefined) {
+            log("  weekly-reflection (FR-011 pattern synthesis): defined");
+          } else {
+            log("  weekly-reflection (FR-011 pattern synthesis): not defined");
+            fixes.push("Optional: Set up weekly reflection via jobs. See docs/REFLECTION.md § Scheduled Job. Run 'openclaw hybrid-mem verify --fix' to add.");
           }
           log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
           if (opts.logFile && existsSync(opts.logFile)) {
@@ -4012,21 +4221,18 @@ const memoryHybridPlugin = {
                   applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
                 }
                 const jobs = Array.isArray(fixConfig.jobs) ? fixConfig.jobs : [];
-                const hasNightly = jobs.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                if (!hasNightly) {
-                  jobs.push({
-                    name: "nightly-memory-sweep",
-                    schedule: "0 2 * * *",
-                    channel: "system",
-                    message:
-                      "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
-                    isolated: true,
-                    model: "gemini",
-                  });
-                  (fixConfig as Record<string, unknown>).jobs = jobs;
-                  changed = true;
-                  applied.push("Added nightly-memory-sweep job for session distillation");
+                const jobDefs = [
+                  { name: "nightly-memory-sweep", schedule: "0 2 * * *", channel: "system", message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log", isolated: true, model: "gemini" },
+                  { name: "weekly-reflection", schedule: "0 3 * * 0", channel: "system", message: "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.", isolated: true, model: "gemini" },
+                ];
+                for (const def of jobDefs) {
+                  if (!jobs.some((j: unknown) => (j as Record<string, unknown>)?.name === def.name)) {
+                    jobs.push(def);
+                    changed = true;
+                    applied.push(def.name === "nightly-memory-sweep" ? "Added nightly-memory-sweep job for session distillation" : "Added weekly-reflection job for pattern synthesis (FR-011)");
+                  }
                 }
+                if (changed) (fixConfig as Record<string, unknown>).jobs = jobs;
                 const memoryDirPath = dirname(resolvedSqlitePath);
                 if (!existsSync(memoryDirPath)) {
                   mkdirSync(memoryDirPath, { recursive: true });
@@ -4396,10 +4602,18 @@ const memoryHybridPlugin = {
               { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) },
             ),
           autoClassifyConfig: cfg.autoClassify,
+          runCompaction: () =>
+            Promise.resolve(
+              factsDb.runCompaction({
+                inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+                hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+                hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+              }),
+            ),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -4420,11 +4634,45 @@ const memoryHybridPlugin = {
             : cfg.autoRecall.limit;
           const { minScore } = cfg.autoRecall;
           const limit = searchLimit;
-          const ftsResults = factsDb.search(e.prompt, limit);
+          const tierFilter = cfg.memoryTiering.enabled ? "warm" : "all";
+          const scopeFilter =
+            cfg.autoRecall.scopeFilter &&
+            (cfg.autoRecall.scopeFilter.userId || cfg.autoRecall.scopeFilter.agentId || cfg.autoRecall.scopeFilter.sessionId)
+              ? {
+                  userId: cfg.autoRecall.scopeFilter.userId ?? null,
+                  agentId: cfg.autoRecall.scopeFilter.agentId ?? null,
+                  sessionId: cfg.autoRecall.scopeFilter.sessionId ?? null,
+                }
+              : undefined;
+
+          // FR-004: HOT tier — always inject first (cap by hotMaxTokens)
+          let hotBlock = "";
+          if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
+            const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens, scopeFilter);
+            if (hotResults.length > 0) {
+              const hotLines = hotResults.map((r) => `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`);
+              hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
+            }
+          }
+
+          const ftsResults = factsDb.search(e.prompt, limit, { tierFilter, scopeFilter });
           let lanceResults: SearchResult[] = [];
           try {
             const vector = await embeddings.embed(e.prompt);
-            lanceResults = await vectorDb.search(vector, limit, minScore);
+            lanceResults = await vectorDb.search(vector, limit * 2, minScore);
+            lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+            // FR-005: Enrich lance results with full entry and apply dynamic salience
+            lanceResults = lanceResults.map((r) => {
+              const fullEntry = factsDb.getById(r.entry.id);
+              if (fullEntry) {
+                return {
+                  ...r,
+                  entry: fullEntry,
+                  score: computeDynamicSalience(r.score, fullEntry),
+                };
+              }
+              return r;
+            });
           } catch (err) {
             api.logger.warn(
               `memory-hybrid: vector recall failed: ${err}`,
@@ -4433,13 +4681,21 @@ const memoryHybridPlugin = {
 
           let candidates = mergeResults(ftsResults, lanceResults, limit, factsDb);
 
+          // FR-004: Exclude COLD tier from auto-recall (only HOT + WARM)
+          if (cfg.memoryTiering.enabled && candidates.length > 0) {
+            candidates = candidates.filter((r) => {
+              const full = factsDb.getById(r.entry.id);
+              return full && full.tier !== "cold";
+            }).slice(0, limit);
+          }
+
           const { entityLookup } = cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
             const promptLower = e.prompt.toLowerCase();
             const seenIds = new Set(candidates.map((c) => c.entry.id));
             for (const entity of entityLookup.entities) {
               if (!promptLower.includes(entity.toLowerCase())) continue;
-              const entityResults = factsDb.lookup(entity).slice(0, entityLookup.maxFactsPerEntity);
+              const entityResults = factsDb.lookup(entity, undefined, undefined, { scopeFilter }).slice(0, entityLookup.maxFactsPerEntity);
               for (const r of entityResults) {
                 if (!seenIds.has(r.entry.id)) {
                   seenIds.add(r.entry.id);
@@ -4457,7 +4713,7 @@ const memoryHybridPlugin = {
             candidates = candidates.slice(0, limit);
           }
 
-          if (candidates.length === 0) return;
+          if (candidates.length === 0) return hotBlock ? { prependContext: hotBlock } : undefined;
 
           {
             const nowSec = Math.floor(Date.now() / 1000);
@@ -4518,7 +4774,7 @@ const memoryHybridPlugin = {
               const t = r.entry.summary || r.entry.text;
               return sum + estimateTokensForDisplay(t);
             }, 0);
-            const header = `Available memories (${list.length} matches, ~${totalTokens} tokens total):\n`;
+            const header = `📋 Available memories (${list.length} matches, ~${totalTokens} tokens total):\n`;
             let usedTokens = estimateTokens(header);
             const indexEntries: { line: string; id: string; category: string; position: number }[] = [];
             for (let i = 0; i < list.length; i++) {
@@ -4528,7 +4784,7 @@ const memoryHybridPlugin = {
                 : (r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : ""));
               const tokenCost = estimateTokensForDisplay(r.entry.summary || r.entry.text);
               const pos = startPosition + indexEntries.length;
-              const line = `  ${pos}. [${r.entry.category}] ${title} (${tokenCost} tok)`;
+              const line = formatProgressiveIndexLine(r.entry.category, title, tokenCost, pos);
               const lineTokens = estimateTokens(line + "\n");
               if (usedTokens + lineTokens > cap) break;
               indexEntries.push({ line, id: r.entry.id, category: r.entry.category, position: pos });
@@ -4593,7 +4849,7 @@ const memoryHybridPlugin = {
             }
             const indexIntro = pinnedPart.length > 0
               ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
-              : `<relevant-memories format="index">\nAvailable memories (${rest.length} matches):\n`;
+              : `<relevant-memories format="index">\n`;
             const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
             const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
             const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(
@@ -4608,6 +4864,15 @@ const memoryHybridPlugin = {
             if (indexIds.length > 0) {
               factsDb.refreshAccessedFacts(indexIds);
             }
+            // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+            const allIds = [...pinned.map((r) => r.entry.id), ...indexIds];
+            if (cfg.graph.enabled && allIds.length >= 2) {
+              for (let i = 0; i < allIds.length; i++) {
+                for (let j = i + 1; j < allIds.length; j++) {
+                  factsDb.createOrStrengthenRelatedLink(allIds[i], allIds[j]);
+                }
+              }
+            }
             const indexContent = indexLines.join("\n");
             const fullContent =
               pinnedPart.length > 0
@@ -4616,7 +4881,7 @@ const memoryHybridPlugin = {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: fullContent };
+            return { prependContext: hotBlock + fullContent };
           }
 
           if (injectionFormat === "progressive") {
@@ -4631,12 +4896,20 @@ const memoryHybridPlugin = {
             lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
             factsDb.refreshAccessedFacts(includedIds);
+            // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+            if (cfg.graph.enabled && includedIds.length >= 2) {
+              for (let i = 0; i < includedIds.length; i++) {
+                for (let j = i + 1; j < includedIds.length; j++) {
+                  factsDb.createOrStrengthenRelatedLink(includedIds[i], includedIds[j]);
+                }
+              }
+            }
             const indexContent = indexLines.join("\n");
             api.logger.info?.(
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
             );
             return {
-              prependContext: `${indexHeader}${indexContent}${indexFooter}`,
+              prependContext: hotBlock + `${indexHeader}${indexContent}${indexFooter}`,
             };
           }
 
@@ -4645,6 +4918,7 @@ const memoryHybridPlugin = {
           let usedTokens = estimateTokens(header + footer);
 
           const lines: string[] = [];
+          const injectedIds: string[] = [];
           for (const r of candidates) {
             let text =
               useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
@@ -4660,10 +4934,22 @@ const memoryHybridPlugin = {
             const lineTokens = estimateTokens(line + "\n");
             if (usedTokens + lineTokens > maxTokens) break;
             lines.push(line);
+            injectedIds.push(r.entry.id);
             usedTokens += lineTokens;
           }
 
           if (lines.length === 0) return;
+
+          // FR-005: Access tracking for injected memories
+          factsDb.refreshAccessedFacts(injectedIds);
+          // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+          if (cfg.graph.enabled && injectedIds.length >= 2) {
+            for (let i = 0; i < injectedIds.length; i++) {
+              for (let j = i + 1; j < injectedIds.length; j++) {
+                factsDb.createOrStrengthenRelatedLink(injectedIds[i], injectedIds[j]);
+              }
+            }
+          }
 
           let memoryContext = lines.join("\n");
 
@@ -4716,10 +5002,28 @@ const memoryHybridPlugin = {
           }
 
           return {
-            prependContext: `${header}${memoryContext}${footer}`,
+            prependContext: hotBlock + `${header}${memoryContext}${footer}`,
           };
         } catch (err) {
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
+        }
+      });
+    }
+
+    // FR-004: Compaction on session end — migrate completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT
+    if (cfg.memoryTiering.enabled && cfg.memoryTiering.compactionOnSessionEnd) {
+      api.on("agent_end", async () => {
+        try {
+          const counts = factsDb.runCompaction({
+            inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+            hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+            hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+          });
+          if (counts.hot + counts.warm + counts.cold > 0) {
+            api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
+          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: compaction failed: ${err}`);
         }
       });
     }
@@ -4791,9 +5095,11 @@ const memoryHybridPlugin = {
               api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
 
-            // FR-008: Classify before auto-capture using embedding similarity (issue #8)
-            if (cfg.store.classifyBeforeWrite && vector) {
-              let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 3);
+            // FR-008: Classify before auto-capture using embedding similarity, fallback to entity/key (issue #8)
+            if (cfg.store.classifyBeforeWrite) {
+              let similarFacts: MemoryEntry[] = vector
+                ? await findSimilarByEmbedding(vectorDb, factsDb, vector, 3)
+                : [];
               if (similarFacts.length === 0) {
                 similarFacts = factsDb.findSimilarForClassification(
                   textToStore, extracted.entity, extracted.key, 3,
@@ -5139,6 +5445,7 @@ export const _testing = {
   parseSourceDate,
   estimateTokens,
   estimateTokensForDisplay,
+  formatProgressiveIndexLine,
   classifyDecay,
   calculateExpiry,
   extractStructuredFields,
@@ -5152,6 +5459,7 @@ export const _testing = {
   unionFind,
   getRoot,
   mergeResults,
+  filterByScope,
   safeEmbed,
   // Encryption primitives (used by CredentialsDB)
   deriveKey,
@@ -5165,7 +5473,10 @@ export const _testing = {
   Embeddings,
   WriteAheadLog,
   // FR-008 classification (for tests)
+  parseClassificationResponse,
   findSimilarByEmbedding,
+  // FR-011 reflection parsing (for tests)
+  parsePatternsFromReflectionResponse,
 };
 
 export { versionInfo } from "./versionInfo.js";

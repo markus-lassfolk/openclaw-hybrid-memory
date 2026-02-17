@@ -8,7 +8,8 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { SearchResult } from "../types/memory.js";
-import { mergeResults } from "../services/merge-results.js";
+import { mergeResults, filterByScope } from "../services/merge-results.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
 
 export type FindDuplicatesResult = {
@@ -25,6 +26,12 @@ export type StoreCliOpts = {
   value?: string;
   sourceDate?: string;
   tags?: string;
+  /** FR-010: Fact id this store supersedes (replaces). */
+  supersedes?: string;
+  /** FR-006: Memory scope (global, user, agent, session). Default global. */
+  scope?: "global" | "user" | "agent" | "session";
+  /** FR-006: Scope target (userId, agentId, sessionId). Required when scope is user/agent/session. */
+  scopeTarget?: string;
 };
 
 export type StoreCliResult =
@@ -34,7 +41,7 @@ export type StoreCliResult =
   | { outcome: "noop"; reason: string }
   | { outcome: "retracted"; targetId: string; reason: string }
   | { outcome: "updated"; id: string; supersededId: string; reason: string }
-  | { outcome: "stored"; id: string; textPreview: string };
+  | { outcome: "stored"; id: string; textPreview: string; supersededId?: string };
 
 export type InstallCliResult =
   | { ok: true; configPath: string; dryRun: boolean; written: boolean; configJson?: string; pluginId: string }
@@ -100,6 +107,8 @@ export type HybridMemCliContext = {
     breakdown?: Record<string, number>;
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
+  /** FR-004: Run memory tier compaction (completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT). */
+  runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
 };
 
 /** Chainable command type (Commander-style). */
@@ -136,12 +145,23 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     reflectionConfig,
     runClassify,
     autoClassifyConfig,
+    runCompaction,
   } = ctx;
 
   mem
-    .command("stats")
-    .description("Show memory statistics with decay breakdown")
+    .command("compact")
+    .description("FR-004: Run tier compaction — completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT")
     .action(async () => {
+      const counts = await runCompaction();
+      console.log(`Tier compaction: hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
+    });
+
+  mem
+    .command("stats")
+    .description("Show memory statistics with decay breakdown. Use --efficiency for tiers, sources, and token estimates.")
+    .option("--efficiency", "Show tier/source breakdown, estimated tokens, and token-savings note")
+    .action(async (opts?: { efficiency?: boolean }) => {
+      const efficiency = opts?.efficiency ?? false;
       const sqlCount = factsDb.count();
       let lanceCount = 0;
       try {
@@ -162,6 +182,30 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       }
       if (expired > 0) {
         console.log(`\nExpired (pending prune): ${expired}`);
+      }
+
+      if (efficiency) {
+        const tierBreakdown = factsDb.statsBreakdownByTier();
+        const sourceBreakdown = factsDb.statsBreakdownBySource();
+        const totalTokens = factsDb.estimateStoredTokens();
+        const tokensByTier = factsDb.estimateStoredTokensByTier();
+
+        console.log(`\n--- Efficiency ---`);
+        console.log(`\nBy tier (FR-004 hot/warm/cold):`);
+        for (const t of ["hot", "warm", "cold"]) {
+          const cnt = tierBreakdown[t] ?? 0;
+          const tok = tokensByTier[t as keyof typeof tokensByTier] ?? 0;
+          console.log(`  ${t.padEnd(6)} ${cnt} facts  ~${tok.toLocaleString()} tokens`);
+        }
+        console.log(`\nBy source:`);
+        const sources = Object.entries(sourceBreakdown).sort((a, b) => b[1] - a[1]);
+        for (const [src, cnt] of sources) {
+          console.log(`  ${src.padEnd(16)} ${cnt}`);
+        }
+        console.log(`\nEstimated tokens in memory: ~${totalTokens.toLocaleString()}`);
+        console.log(`\nToken savings: When auto-recall injects memories, providers can cache them.`);
+        console.log(`Cache Read is typically 90%+ cheaper than Input. Compare your provider dashboard`);
+        console.log(`(Input vs Cache Read) to see actual savings — many users see 90-97% reduction.`);
       }
     });
 
@@ -243,17 +287,25 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
     .option("--as-of <date>", "FR-010: Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
     .option("--include-superseded", "FR-010: Include superseded (historical) facts")
-    .action(async (query: string, opts: { limit?: string; tag?: string; asOf?: string; includeSuperseded?: boolean }) => {
+    .option("--user-id <id>", "FR-006: Include user-private memories for this user")
+    .option("--agent-id <id>", "FR-006: Include agent-specific memories for this agent")
+    .option("--session-id <id>", "FR-006: Include session-scoped memories for this session")
+    .action(async (query: string, opts: { limit?: string; tag?: string; asOf?: string; includeSuperseded?: boolean; userId?: string; agentId?: string; sessionId?: string }) => {
       const limit = parseInt(opts.limit || "5");
       const tag = opts.tag?.trim();
       const asOfSec = opts.asOf != null && opts.asOf !== "" ? parseDate(opts.asOf) : undefined;
-      const searchOpts = { tag, includeSuperseded: opts.includeSuperseded === true, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+      const scopeFilter: ScopeFilter | undefined =
+        opts.userId || opts.agentId || opts.sessionId
+          ? { userId: opts.userId ?? null, agentId: opts.agentId ?? null, sessionId: opts.sessionId ?? null }
+          : undefined;
+      const searchOpts = { tag, includeSuperseded: opts.includeSuperseded === true, scopeFilter, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
       const sqlResults = factsDb.search(query, limit, searchOpts);
       let lanceResults: SearchResult[] = [];
       if (!tag) {
         try {
           const vector = await embeddings.embed(query);
-          lanceResults = await vectorDb.search(vector, limit, 0.3);
+          lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
+          lanceResults = filterByScope(lanceResults, (id, o) => factsDb.getById(id, o), scopeFilter);
         } catch (err) {
           console.warn(`memory-hybrid: vector search failed: ${err}`);
         }
@@ -323,10 +375,19 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--value <value>", "Structured value")
     .option("--source-date <date>", "When fact originated (ISO-8601, e.g. 2026-01-15)")
     .option("--tags <tags>", "Comma-separated topic tags (e.g. nibe,zigbee); auto-inferred if omitted")
-    .action(async (opts: { text: string; category?: string; entity?: string; key?: string; value?: string; sourceDate?: string; tags?: string }) => {
+    .option("--supersedes <id>", "FR-010: Fact id this one supersedes (replaces)")
+    .option("--scope <scope>", "FR-006: Memory scope (global, user, agent, session). Default global.")
+    .option("--scope-target <target>", "FR-006: Scope target (userId, agentId, sessionId). Required when scope is user/agent/session.")
+    .action(async (opts: { text: string; category?: string; entity?: string; key?: string; value?: string; sourceDate?: string; tags?: string; supersedes?: string; scope?: string; scopeTarget?: string }) => {
       const text = opts.text;
       if (!text || text.length < 2) {
         console.error("--text is required and must be at least 2 characters");
+        process.exitCode = 1;
+        return;
+      }
+      const scope = opts.scope as "global" | "user" | "agent" | "session" | undefined;
+      if (scope && scope !== "global" && !opts.scopeTarget?.trim()) {
+        console.error(`Scope "${scope}" requires --scope-target (userId, agentId, or sessionId).`);
         process.exitCode = 1;
         return;
       }
@@ -338,6 +399,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         value: opts.value,
         sourceDate: opts.sourceDate,
         tags: opts.tags,
+        supersedes: opts.supersedes?.trim() || undefined,
+        scope,
+        scopeTarget: opts.scopeTarget?.trim(),
       });
       switch (result.outcome) {
         case "duplicate":
@@ -362,7 +426,11 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           console.log(`Updated: superseded ${result.supersededId} with ${result.id}. ${result.reason}`);
           break;
         case "stored":
-          console.log(`Stored: "${result.textPreview}" [id: ${result.id}]`);
+          console.log(
+            "supersededId" in result && result.supersededId
+              ? `Stored (supersedes ${result.supersededId}): "${result.textPreview}" [id: ${result.id}]`
+              : `Stored: "${result.textPreview}" [id: ${result.id}]`,
+          );
           break;
       }
     });
@@ -614,6 +682,44 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.error("Errors:");
         result.errors.forEach((e) => console.error(`  - ${e}`));
       }
+    });
+
+  const scopeCmd = mem
+    .command("scope")
+    .description("FR-006: Memory scoping — prune session memories, promote to durable");
+  scopeCmd
+    .command("prune-session")
+    .description("Delete session-scoped memories for a given session (cleared on session end)")
+    .argument("<session-id>", "Session identifier to prune")
+    .action(async (sessionId: string) => {
+      const count = factsDb.pruneSessionScope(sessionId);
+      console.log(`Pruned ${count} session-scoped memories for session "${sessionId}".`);
+    });
+  scopeCmd
+    .command("promote")
+    .description("Promote a session-scoped memory to global or agent scope (persists after session end)")
+    .requiredOption("--id <fact-id>", "Fact id to promote")
+    .requiredOption("--scope <global|agent>", "New scope: global or agent")
+    .option("--scope-target <target>", "Required when scope is agent: agent identifier")
+    .action(async (opts: { id: string; scope: string; scopeTarget?: string }) => {
+      const scope = opts.scope as "global" | "agent";
+      if (scope !== "global" && scope !== "agent") {
+        console.error("Scope must be 'global' or 'agent'.");
+        process.exitCode = 1;
+        return;
+      }
+      if (scope === "agent" && !opts.scopeTarget?.trim()) {
+        console.error("Scope 'agent' requires --scope-target (agent identifier).");
+        process.exitCode = 1;
+        return;
+      }
+      const ok = factsDb.promoteScope(opts.id, scope, scope === "agent" ? opts.scopeTarget!.trim() : null);
+      if (!ok) {
+        console.error(`Could not promote memory ${opts.id}.`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Promoted memory ${opts.id} to scope "${scope}"${scope === "agent" ? ` (agent: ${opts.scopeTarget})` : ""}.`);
     });
 
   mem
