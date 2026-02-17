@@ -470,7 +470,8 @@ class FactsDB {
     };
   }
 
-  private refreshAccessedFacts(ids: string[]): void {
+  /** FR-005: Update recall count and last accessed timestamp for salience boosting. */
+  refreshAccessedFacts(ids: string[]): void {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
@@ -696,7 +697,7 @@ class FactsDB {
   }
 
   /** FR-008/010: Mark a fact as superseded by a new fact. */
-  supersede(oldId: string, newId: string): boolean {
+  supersede(oldId: string, newId: string | null): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
     const result = this.liveDb
       .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
@@ -1485,8 +1486,11 @@ Examples:
     const targetId = match[2]?.trim() || undefined;
     const reason = match[3].trim();
 
-    // Validate targetId if UPDATE or DELETE
-    if ((action === "UPDATE" || action === "DELETE") && targetId) {
+    // Validate targetId if UPDATE or DELETE - must have a valid targetId
+    if (action === "UPDATE" || action === "DELETE") {
+      if (!targetId) {
+        return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
+      }
       const validTarget = existingFacts.find((f) => f.id === targetId);
       if (!validTarget) {
         return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
@@ -2186,9 +2190,10 @@ async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
-      if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
+      // Cosine similarity = dot product for unit vectors
+      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (cosineSim >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }
 
@@ -2317,15 +2322,16 @@ async function runFindDuplicates(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const dist = Math.sqrt(vi.reduce((s, v, k) => s + (v - vj[k]) ** 2, 0));
-      const score = 1 / (1 + dist);
-      if (score >= opts.threshold) {
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
+      // Cosine similarity = dot product for unit vectors
+      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (cosineSim >= opts.threshold) {
         const idA = ids[i];
         const idB = ids[j];
         pairs.push({
           idA,
           idB,
-          score,
+          score: cosineSim,
           textA: idToFact.get(idA)!.text,
           textB: idToFact.get(idB)!.text,
         });
@@ -2918,7 +2924,7 @@ const memoryHybridPlugin = {
               }
 
               if (classification.action === "DELETE" && classification.targetId) {
-                factsDb.supersede(classification.targetId, "deleted");
+                factsDb.supersede(classification.targetId, null);
                 return {
                   content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
                   details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
@@ -4805,6 +4811,10 @@ const memoryHybridPlugin = {
 
             if (indexLines.length === 0) return;
 
+            // Track access for the memories included in the index
+            const includedIds = candidates.slice(0, indexLines.length).map((r) => r.entry.id);
+            factsDb.refreshAccessedFacts(includedIds);
+
             const indexContent = indexLines.join("\n");
             api.logger.info?.(
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
@@ -4971,7 +4981,7 @@ const memoryHybridPlugin = {
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
-                    factsDb.supersede(classification.targetId, "deleted");
+                    factsDb.supersede(classification.targetId, null);
                     api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                     continue;
                   }

@@ -304,7 +304,7 @@ export const hybridConfigSchema = {
     const storeRaw = cfg.store as Record<string, unknown> | undefined;
     const store: StoreConfig = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
-      classifyBeforeWrite: storeRaw?.classifyBeforeWrite !== false,
+      classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
       classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : "gpt-4o-mini",
     };
 
