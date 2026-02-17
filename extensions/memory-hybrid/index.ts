@@ -2757,14 +2757,23 @@ const memoryHybridPlugin = {
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
 
-          // WAL: Write pending operation BEFORE any async work (embedding/network)
-          // Vector will be computed during replay if missing
+          // Generate vector first (this can take time and may fail)
+          let vector: number[] | undefined;
+          try {
+            vector = await embeddings.embed(textToStore);
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          }
+
+          // WAL: Write pending operation AFTER embedding generation, BEFORE storage
+          // Timestamp now reflects when we're ready to commit (not when we started)
+          // This prevents slow embeddings from causing entries to age out
           const walEntryId = randomUUID();
           if (wal) {
             try {
               wal.write({
                 id: walEntryId,
-                timestamp: Date.now(),
+                timestamp: Date.now(), // Captured after embedding completes
                 operation: "store",
                 data: {
                   text: textToStore,
@@ -2777,20 +2786,12 @@ const memoryHybridPlugin = {
                   decayClass: paramDecayClass,
                   summary,
                   tags,
-                  vector: undefined, // Will be computed after this point
+                  vector, // Include the computed vector
                 },
               });
             } catch (err) {
               api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
             }
-          }
-
-          // Generate vector after WAL write
-          let vector: number[] | undefined;
-          try {
-            vector = await embeddings.embed(textToStore);
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
           }
 
           // Now commit to actual storage
@@ -5131,7 +5132,7 @@ const memoryHybridPlugin = {
 
     api.registerService({
       id: PLUGIN_ID,
-      start: () => {
+      start: async () => {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
@@ -5143,75 +5144,75 @@ const memoryHybridPlugin = {
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
         }
 
-        // WAL Recovery: replay uncommitted operations from previous session (async, non-blocking)
+        // WAL Recovery: replay uncommitted operations from previous session (blocking)
+        // This must complete before service starts to ensure consistent state
         if (wal) {
           const pendingEntries = wal.getValidEntries();
           if (pendingEntries.length > 0) {
             api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
             
-            // Run recovery asynchronously to not block startup
-            void (async () => {
-              let recovered = 0;
-              let failed = 0;
+            let recovered = 0;
+            let failed = 0;
 
-              for (const entry of pendingEntries) {
-                try {
-                  if (entry.operation === "store") {
-                    const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
-                    
-                    // Check if already stored (idempotency)
-                    if (!factsDb.hasDuplicate(text)) {
-                      // Store to SQLite
-                      factsDb.store({
-                        text,
-                        category: (category as MemoryCategory) || "other",
-                        importance: importance || 0.7,
-                        entity: entity || null,
-                        key: key || null,
-                        value: value || null,
-                        source: source || "wal-recovery",
-                        decayClass,
-                        summary,
-                        tags,
-                      });
+            for (const entry of pendingEntries) {
+              try {
+                if (entry.operation === "store") {
+                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                  
+                  // Check if already stored (idempotency)
+                  if (!factsDb.hasDuplicate(text)) {
+                    // Store to SQLite
+                    factsDb.store({
+                      text,
+                      category: (category as MemoryCategory) || "other",
+                      importance: importance || 0.7,
+                      entity: entity || null,
+                      key: key || null,
+                      value: value || null,
+                      source: source || "wal-recovery",
+                      decayClass,
+                      summary,
+                      tags,
+                    });
 
-                      // Store to LanceDB (generate vector if missing)
-                      let vector = entry.data.vector;
-                      if (!vector) {
-                        try {
-                          vector = await embeddings.embed(text);
-                        } catch (err) {
-                          api.logger.warn(`memory-hybrid: WAL recovery embedding failed for entry ${entry.id}: ${err}`);
-                        }
+                    // Store to LanceDB (generate vector if missing)
+                    let vector = entry.data.vector;
+                    if (!vector) {
+                      try {
+                        vector = await embeddings.embed(text);
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: WAL recovery embedding failed for entry ${entry.id}: ${err}`);
                       }
-                      
-                      if (vector) {
-                        void vectorDb.store({
+                    }
+                    
+                    if (vector) {
+                      try {
+                        await vectorDb.store({
                           text,
                           vector,
                           importance: importance || 0.7,
                           category: category || "other",
-                        }).catch((err) => {
-                          api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
                         });
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
                       }
-
-                      recovered++;
                     }
-                  }
-                  
-                  // Remove successfully processed entry
-                  wal.remove(entry.id);
-                } catch (err) {
-                  api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
-                  failed++;
-                }
-              }
 
-              if (recovered > 0) {
-                api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
+                    recovered++;
+                  }
+                }
+                
+                // Remove successfully processed entry
+                wal.remove(entry.id);
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
+                failed++;
               }
-            })();
+            }
+
+            if (recovered > 0) {
+              api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
+            }
           }
 
           // Prune stale WAL entries
