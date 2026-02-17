@@ -161,6 +161,9 @@ class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
+  private supersededTextsCache: Set<string> | null = null;
+  private supersededTextsCacheTime: number = 0;
+  private readonly SUPERSEDED_CACHE_TTL_MS = 60000; // 1 minute cache
 
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     this.dbPath = dbPath;
@@ -698,6 +701,9 @@ class FactsDB {
     const result = this.liveDb
       .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
       .run(nowSec, newId, oldId);
+    if (result.changes > 0) {
+      this.invalidateSupersededCache();
+    }
     return result.changes > 0;
   }
 
@@ -868,12 +874,24 @@ class FactsDB {
     return rows.map((row) => this.rowToEntry(row));
   }
 
-  /** Get texts of superseded facts (for filtering LanceDB results). Optimized: only fetches text column. */
+  /** Get texts of superseded facts (for filtering LanceDB results). Cached for 1 minute to avoid repeated queries. */
   getSupersededTexts(): Set<string> {
+    const now = Date.now();
+    if (this.supersededTextsCache && (now - this.supersededTextsCacheTime) < this.SUPERSEDED_CACHE_TTL_MS) {
+      return this.supersededTextsCache;
+    }
+    
     const rows = this.liveDb
       .prepare(`SELECT text FROM facts WHERE superseded_at IS NOT NULL`)
       .all() as Array<{ text: string }>;
-    return new Set(rows.map((r) => r.text.toLowerCase()));
+    this.supersededTextsCache = new Set(rows.map((r) => r.text.toLowerCase()));
+    this.supersededTextsCacheTime = now;
+    return this.supersededTextsCache;
+  }
+  
+  /** Invalidate superseded texts cache (called after supersede operations). */
+  private invalidateSupersededCache(): void {
+    this.supersededTextsCache = null;
   }
 
   count(): number {
@@ -4039,7 +4057,7 @@ const memoryHybridPlugin = {
               process.exitCode = 1;
               return;
             }
-            const window = Math.max(1, parseInt(opts.window || String(cfg.reflection.defaultWindow)));
+            const window = Math.max(1, Math.min(90, parseInt(opts.window || String(cfg.reflection.defaultWindow))));
             const model = opts.model || cfg.reflection.model;
             const result = await runReflection(
               factsDb,
