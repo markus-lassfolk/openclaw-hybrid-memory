@@ -5282,5 +5282,42 @@ const memoryHybridPlugin = {
   },
 };
 
+// Export internal functions and classes for testing
+export const _testing = {
+  // Utility functions
+  normalizeTextForDedupe,
+  normalizedHash,
+  extractTags,
+  serializeTags,
+  parseTags,
+  tagsContains,
+  parseSourceDate,
+  estimateTokens,
+  classifyDecay,
+  calculateExpiry,
+  extractStructuredFields,
+  detectCategory,
+  detectCredentialPatterns,
+  extractCredentialMatch,
+  isCredentialLike,
+  inferServiceFromText,
+  isStructuredForConsolidation,
+  normalizeSuggestedLabel,
+  unionFind,
+  getRoot,
+  mergeResults,
+  // Crypto functions (for credentials-db.test.ts)
+  deriveKey,
+  encryptValue,
+  decryptValue,
+  // Classes for testing
+  FactsDB,
+  CredentialsDB,
+  ProposalsDB,
+  VectorDB,
+  Embeddings,
+  WriteAheadLog,
+};
+
 export { versionInfo } from "./versionInfo.js";
 export default memoryHybridPlugin;
