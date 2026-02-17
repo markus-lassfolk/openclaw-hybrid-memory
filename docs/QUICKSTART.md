@@ -131,10 +131,11 @@ Restart the gateway after backfill so memorySearch re-indexes.
 
 ## Next steps
 
-- [CONFIGURATION.md](CONFIGURATION.md) — Full config reference (auto-recall, auto-classify, credentials, etc.)
-- [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify, source dates
+- [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — What happens each turn (auto-recall, auto-capture, costs)
+- [EXAMPLES.md](EXAMPLES.md) — Real-world recipes and patterns
+- [FAQ.md](FAQ.md) — Common questions and quick answers
+- [CONFIGURATION.md](CONFIGURATION.md) — Full config reference
+- [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
+- [OPERATIONS.md](OPERATIONS.md) — Background jobs, scripts, upgrades
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and fixes
-- [MAINTENANCE.md](MAINTENANCE.md) — File hygiene, upgrades, periodic review
-- [SETUP-AUTONOMOUS.md](SETUP-AUTONOMOUS.md) — AI-friendly setup (let an agent install it)
-- [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Extract facts from old session logs

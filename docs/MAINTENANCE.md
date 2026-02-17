@@ -104,10 +104,10 @@ If you upgrade by other means, run `~/.openclaw/scripts/post-upgrade.sh` manuall
 
 ## Related docs
 
+- [OPERATIONS.md](OPERATIONS.md) — Background jobs, cron, scripts, upgrading
+- [EXAMPLES.md](EXAMPLES.md) — Monthly maintenance routine and other recipes
 - [QUICKSTART.md](QUICKSTART.md) — Installation
 - [CONFIGURATION.md](CONFIGURATION.md) — Config reference
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
-- [ARCHITECTURE.md](ARCHITECTURE.md) — System design
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation pipeline
-- [SETUP-AUTONOMOUS.md](SETUP-AUTONOMOUS.md) — AI-friendly autonomous setup
