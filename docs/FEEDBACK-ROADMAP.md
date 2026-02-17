@@ -19,7 +19,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 | **Performance** | Bulk refreshAccessedFacts | ✅ Done |
 | **Performance** | find-duplicates via LanceDB index | ✅ Done |
 | **Performance** | Superseded cache TTL (5 min) | ✅ Done |
-| **Performance** | Redundant embeddings / blocking I/O | ⏳ Not started |
+| **Performance** | Redundant embeddings / blocking I/O | 🔄 Partially done (in-memory LRU cache in Embeddings, max 500; blocking I/O not started) |
 | **Redundant code** | truncateText / truncateForStorage | ✅ Done |
 | **Redundant code** | safeEmbed centralize embedding errors | ✅ Done |
 | **WAL** | Append-only NDJSON + compact in pruneStale | ✅ Done |
@@ -89,7 +89,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 | **N+1 in refreshAccessedFacts** | ✅ Done | Bulk UPDATE with `WHERE id IN (?,...,?)` in batches of 500. |
 | **Quadratic find-duplicates** | ✅ Done | Uses `vectorDb.search(vector, limit, threshold)` per fact instead of O(n²) pairwise loop. |
 | **Cache thrashing (superseded)** | ✅ Done | `SUPERSEDED_CACHE_TTL_MS` increased from 60s to 5 minutes. |
-| **Redundant embeddings** | ⏳ Not started | Check existing vector before calling API. |
+| **Redundant embeddings** | ✅ Done | In-memory LRU cache in `Embeddings` (max 500 entries); repeated embed of same text returns cached vector. |
 | **Blocking I/O on hot path** | ⏳ Not started | Queue/background or cache for embedding/LLM. |
 
 ---
@@ -135,7 +135,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 4. ~~**WAL (medium):** Append-only + compact + fsync.~~ ✅
 5. ~~**Performance (medium):** find-duplicates via LanceDB; superseded cache TTL.~~ ✅
 6. **Split index.ts (medium–high):** Backends first, then services, then CLI. ⏳
-7. **Architecture (ongoing):** Embedding interface; FactsDB split; prompts externalized; redundant embeddings. ⏳
+7. **Architecture (ongoing):** Embedding interface; FactsDB split; prompts externalized; redundant embeddings (cache done). Blocking I/O / queue still ⏳.
 
 ---
 
