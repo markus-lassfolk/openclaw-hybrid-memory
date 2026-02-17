@@ -69,6 +69,25 @@ type SearchResult = {
   backend: "sqlite" | "lancedb";
 };
 
+// Link types for graph-based spreading activation (FR-007)
+const LINK_TYPES = [
+  "SUPERSEDES",
+  "CAUSED_BY",
+  "PART_OF",
+  "RELATED_TO",
+  "DEPENDS_ON",
+] as const;
+type LinkType = (typeof LINK_TYPES)[number];
+
+type MemoryLink = {
+  id: string;
+  sourceFact: string;
+  targetFact: string;
+  linkType: LinkType;
+  strength: number; // 0.0-1.0
+  createdAt: number;
+};
+
 // ============================================================================
 // SQLite + FTS5 Backend
 // ============================================================================
@@ -215,6 +234,28 @@ class FactsDB {
       CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category);
       CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
       CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
+    `);
+
+    // ---- Memory links table for graph-based spreading activation (FR-007) ----
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS memory_links (
+        id TEXT PRIMARY KEY,
+        source_fact_id TEXT NOT NULL,
+        target_fact_id TEXT NOT NULL,
+        link_type TEXT NOT NULL,
+        strength REAL NOT NULL DEFAULT 1.0,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+        FOREIGN KEY (target_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Indexes for efficient graph traversal
+    this.liveDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_fact_id);
+      CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id);
+      CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type);
+      CREATE INDEX IF NOT EXISTS idx_links_source_type ON memory_links(source_fact_id, link_type);
     `);
 
     // ---- TTL/Decay migration ----
@@ -857,6 +898,140 @@ class FactsDB {
       this.applyPragmas();
     }
     return this.db;
+  }
+
+  // ---- Graph-based spreading activation (FR-007) ----
+
+  /** Create a typed link between two facts. */
+  createLink(sourceFact: string, targetFact: string, linkType: LinkType, strength = 1.0): string {
+    const id = randomUUID();
+    const nowSec = Math.floor(Date.now() / 1000);
+    
+    this.liveDb
+      .prepare(
+        `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, sourceFact, targetFact, linkType, strength, nowSec);
+    
+    return id;
+  }
+
+  /** Get all links for a fact (both outgoing and incoming). */
+  getLinksForFact(factId: string): Array<{
+    id: string;
+    sourceFact: string;
+    targetFact: string;
+    linkType: LinkType;
+    strength: number;
+    direction: "outgoing" | "incoming";
+  }> {
+    const outgoing = this.liveDb
+      .prepare(
+        `SELECT id, source_fact_id, target_fact_id, link_type, strength
+         FROM memory_links
+         WHERE source_fact_id = ?`
+      )
+      .all(factId) as Array<{
+        id: string;
+        source_fact_id: string;
+        target_fact_id: string;
+        link_type: string;
+        strength: number;
+      }>;
+
+    const incoming = this.liveDb
+      .prepare(
+        `SELECT id, source_fact_id, target_fact_id, link_type, strength
+         FROM memory_links
+         WHERE target_fact_id = ?`
+      )
+      .all(factId) as Array<{
+        id: string;
+        source_fact_id: string;
+        target_fact_id: string;
+        link_type: string;
+        strength: number;
+      }>;
+
+    return [
+      ...outgoing.map((l) => ({
+        id: l.id,
+        sourceFact: l.source_fact_id,
+        targetFact: l.target_fact_id,
+        linkType: l.link_type as LinkType,
+        strength: l.strength,
+        direction: "outgoing" as const,
+      })),
+      ...incoming.map((l) => ({
+        id: l.id,
+        sourceFact: l.source_fact_id,
+        targetFact: l.target_fact_id,
+        linkType: l.link_type as LinkType,
+        strength: l.strength,
+        direction: "incoming" as const,
+      })),
+    ];
+  }
+
+  /** 
+   * Traverse the graph starting from a set of fact IDs using BFS.
+   * Returns connected fact IDs up to maxDepth hops away.
+   */
+  traverseGraph(startFactIds: string[], maxDepth = 2): Set<string> {
+    if (startFactIds.length === 0) return new Set();
+    
+    const visited = new Set<string>(startFactIds);
+    const queue: Array<{ id: string; depth: number }> = startFactIds.map((id) => ({
+      id,
+      depth: 0,
+    }));
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      
+      if (current.depth >= maxDepth) continue;
+
+      const links = this.getLinksForFact(current.id);
+      
+      for (const link of links) {
+        const nextId = link.direction === "outgoing" ? link.targetFact : link.sourceFact;
+        
+        if (!visited.has(nextId)) {
+          visited.add(nextId);
+          queue.push({ id: nextId, depth: current.depth + 1 });
+        }
+      }
+    }
+
+    return visited;
+  }
+
+  /**
+   * Find similar facts to a given fact ID based on vector similarity.
+   * Used for auto-linking during storage.
+   */
+  async findSimilarFactsForLinking(
+    factId: string,
+    vectorDb: VectorDB,
+    embeddings: Embeddings,
+    limit = 3,
+    minScore = 0.7
+  ): Promise<Array<{ id: string; score: number }>> {
+    const fact = this.get(factId);
+    if (!fact) return [];
+
+    try {
+      const vector = await embeddings.embed(fact.text);
+      const results = await vectorDb.search(vector, limit + 1, minScore); // +1 to exclude self
+      
+      return results
+        .filter((r) => r.entry.id !== factId)
+        .slice(0, limit)
+        .map((r) => ({ id: r.entry.id, score: r.score }));
+    } catch (err) {
+      return [];
+    }
   }
 
   close(): void {
