@@ -132,6 +132,20 @@
       "label": "Expiry warning days",
       "help": "Warn when credentials expire within this many days (default 7)"
     },
+    "wal.enabled": {
+      "label": "Write-Ahead Log",
+      "help": "Enable WAL for crash resilience - logs memory operations before committing (default: enabled)"
+    },
+    "wal.walPath": {
+      "label": "WAL file path",
+      "advanced": true,
+      "help": "Custom path for WAL file (default: same directory as SQLite DB)"
+    },
+    "wal.maxAge": {
+      "label": "WAL max age (ms)",
+      "advanced": true,
+      "help": "Maximum age of WAL entries before considered stale in milliseconds (default: 300000 = 5 minutes)"
+    },
     "personaProposals.enabled": {
       "label": "Persona Proposals",
       "help": "Opt-in agent self-evolution: agents can propose changes to identity files (SOUL.md, IDENTITY.md, USER.md) with human approval gate (default: disabled)"
@@ -252,6 +266,16 @@
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
         "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
+      },
+      "wal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable Write-Ahead Log for crash resilience (default: true)" },
+          "walPath": { "type": "string", "description": "Path to WAL file (default: same directory as SQLite DB)" },
+          "maxAge": { "type": "number", "description": "Maximum age of WAL entries before considered stale in ms (default: 300000 = 5 minutes)" }
+        },
+        "description": "Write-Ahead Log for crash resilience (enabled by default)"
       },
       "personaProposals": {
         "type": "object",
