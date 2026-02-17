@@ -12,6 +12,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.2.175] - 2026-02-17
+
+### Added
+
+- **`openclaw hybrid-mem upgrade`** — One-command upgrade to latest from npm. Removes current install, fetches latest, rebuilds native deps. Restart gateway afterward. Simplifies the upgrade flow (no more fighting the bull).
+
+### Fixed
+
+- **Postinstall:** Replaced shell rebuild with `scripts/postinstall-rebuild.cjs`. No more silent failures (`2>/dev/null || true`); clear errors on rebuild failure. Script included in published package via `scripts` in `files`.
+
+### Changed
+
+- **Documentation:** CLI-REFERENCE lists `upgrade`; UPGRADE-PLUGIN recommends `openclaw hybrid-mem upgrade` as primary method; extension README updated.
+- **Tests:** Added `postinstall.test.ts` to verify postinstall script and `scripts` in package files.
+
+---
+
 ## [2026.2.174] - 2026-02-17
 
 ### Added
@@ -188,7 +205,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.174...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.175...HEAD
+[2026.2.175]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.174...v2026.2.175
 [2026.2.174]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.173...v2026.2.174
 [2026.2.173]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.172...v2026.2.173
 [2026.2.172]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.172

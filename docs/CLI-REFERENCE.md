@@ -31,6 +31,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `reflect-rules [--dry-run] [--model M] [--force]` | Synthesize patterns into actionable rules. |
 | `reflect-meta [--dry-run] [--model M] [--force]` | Synthesize higher-level meta-patterns. |
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and optional jobs. Idempotent. |
+| `upgrade` | Upgrade to latest from npm. Removes current install, fetches latest, rebuilds native deps. Restart gateway afterward. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. |
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |

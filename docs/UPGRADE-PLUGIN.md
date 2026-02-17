@@ -25,15 +25,24 @@ That removes `$(npm root -g)/openclaw/extensions/memory-hybrid` if it exists. Af
 
 ## Quick upgrade (NPM)
 
-If you installed the plugin via OpenClaw's plugin system:
+**Recommended — one command:**
 
 ```bash
-openclaw plugins install openclaw-hybrid-memory
+openclaw hybrid-mem upgrade
+openclaw gateway stop && openclaw gateway start
+```
+
+The upgrade command removes the current install, fetches the latest from npm, rebuilds native deps, and tells you to restart. Then run `openclaw hybrid-mem verify` to confirm.
+
+**Alternative** — if the plugin folder is already removed or you prefer manual control:
+
+```bash
+openclaw plugins install openclaw-hybrid-memory@latest
 openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
 ```
 
-This fetches the latest version, installs it (and its dependencies, including native `better-sqlite3`), and replaces the previous copy. A `postinstall` script in the package ensures `better-sqlite3` is rebuilt after install. Restart is required so the gateway loads the new code.
+This fails with "plugin already exists" if the folder is present; use `openclaw hybrid-mem upgrade` in that case.
 
 ---
 
