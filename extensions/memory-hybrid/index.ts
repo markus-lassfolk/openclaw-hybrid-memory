@@ -1782,6 +1782,36 @@ let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
 /** FR-009: Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
 let lastProgressiveIndexIds: string[] = [];
 
+/**
+ * WAL helpers — wrap the write-before-commit / remove-after-commit pattern.
+ * Each call site was 8–12 lines of identical boilerplate; these reduce it to 1–2 lines.
+ */
+function walWrite(
+  operation: "store" | "update",
+  data: Record<string, unknown>,
+  logger: { warn: (msg: string) => void },
+): string {
+  const id = randomUUID();
+  if (wal) {
+    try {
+      wal.write({ id, timestamp: Date.now(), operation, data: data as any });
+    } catch (err) {
+      logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+    }
+  }
+  return id;
+}
+
+function walRemove(id: string, logger: { warn: (msg: string) => void }): void {
+  if (wal) {
+    try {
+      wal.remove(id);
+    } catch (err) {
+      logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
+    }
+  }
+}
+
 const PLUGIN_ID = "openclaw-hybrid-memory";
 
 const memoryHybridPlugin = {
@@ -2348,34 +2378,12 @@ const memoryHybridPlugin = {
               if (classification.action === "UPDATE" && classification.targetId) {
                 const oldFact = factsDb.getById(classification.targetId);
                 if (oldFact) {
-                  // WAL: Write pending UPDATE operation
-                  const walEntryId = randomUUID();
-                  if (wal) {
-                    try {
-                      wal.write({
-                        id: walEntryId,
-                        timestamp: Date.now(),
-                        operation: "update",
-                        data: {
-                          text: textToStore,
-                          category,
-                          importance: Math.max(importance, oldFact.importance),
-                          entity: entity || oldFact.entity,
-                          key: key || oldFact.key,
-                          value: value || oldFact.value,
-                          source: "conversation",
-                          decayClass: paramDecayClass ?? oldFact.decayClass,
-                          summary,
-                          tags,
-                          vector,
-                        },
-                      });
-                    } catch (err) {
-                      api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
-                    }
-                  }
+                  const walEntryId = walWrite("update", {
+                    text: textToStore, category, importance: Math.max(importance, oldFact.importance),
+                    entity: entity || oldFact.entity, key: key || oldFact.key, value: value || oldFact.value,
+                    source: "conversation", decayClass: paramDecayClass ?? oldFact.decayClass, summary, tags, vector,
+                  }, api.logger);
 
-                  // Store the new version and supersede the old one (FR-010: bi-temporal)
                   const nowSec = Math.floor(Date.now() / 1000);
                   const newEntry = factsDb.store({
                     text: textToStore,
@@ -2402,14 +2410,7 @@ const memoryHybridPlugin = {
                     api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                   }
 
-                  // WAL: Remove entry after successful commit
-                  if (wal) {
-                    try {
-                      wal.remove(walEntryId);
-                    } catch (err) {
-                      api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
-                    }
-                  }
+                  walRemove(walEntryId, api.logger);
 
                   api.logger.info?.(
                     `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
@@ -2429,32 +2430,10 @@ const memoryHybridPlugin = {
             }
           }
 
-          // WAL: Write pending operation before committing to storage
-          const walEntryId = randomUUID();
-          if (wal) {
-            try {
-              wal.write({
-                id: walEntryId,
-                timestamp: Date.now(),
-                operation: "store",
-                data: {
-                  text: textToStore,
-                  category,
-                  importance,
-                  entity,
-                  key,
-                  value,
-                  source: "conversation",
-                  decayClass: paramDecayClass,
-                  summary,
-                  tags,
-                  vector,
-                },
-              });
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
-            }
-          }
+          const walEntryId = walWrite("store", {
+            text: textToStore, category, importance, entity, key, value,
+            source: "conversation", decayClass: paramDecayClass, summary, tags, vector,
+          }, api.logger);
 
           // Now commit to actual storage (FR-010: optional supersedes for manual supersession)
           const nowSec = Math.floor(Date.now() / 1000);
@@ -2491,14 +2470,7 @@ const memoryHybridPlugin = {
             api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
           }
 
-          // WAL: Remove entry after successful commit
-          if (wal) {
-            try {
-              wal.remove(walEntryId);
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
-            }
-          }
+          walRemove(walEntryId, api.logger);
 
           // FR-007: Auto-link to similar facts when enabled
           let autoLinked = 0;
@@ -4845,32 +4817,12 @@ const memoryHybridPlugin = {
                       const finalImportance = Math.max(0.7, oldFact.importance);
                       // vector already computed above for classification
 
-                      // WAL: Write pending UPDATE operation
-                      const walEntryId = randomUUID();
-                      if (wal) {
-                        try {
-                          wal.write({
-                            id: walEntryId,
-                            timestamp: Date.now(),
-                            operation: "update",
-                            data: {
-                              text: textToStore,
-                              category,
-                              importance: finalImportance,
-                              entity: extracted.entity || oldFact.entity,
-                              key: extracted.key || oldFact.key,
-                              value: extracted.value || oldFact.value,
-                              source: "auto-capture",
-                              decayClass: oldFact.decayClass,
-                              summary,
-                              tags: extractTags(textToStore, extracted.entity),
-                              vector,
-                            },
-                          });
-                        } catch (err) {
-                          api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
-                        }
-                      }
+                      const walEntryId = walWrite("update", {
+                        text: textToStore, category, importance: finalImportance,
+                        entity: extracted.entity || oldFact.entity, key: extracted.key || oldFact.key,
+                        value: extracted.value || oldFact.value, source: "auto-capture",
+                        decayClass: oldFact.decayClass, summary, tags: extractTags(textToStore, extracted.entity), vector,
+                      }, api.logger);
 
                       const nowSec = Math.floor(Date.now() / 1000);
                       const newEntry = factsDb.store({
@@ -4896,14 +4848,7 @@ const memoryHybridPlugin = {
                         api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
                       }
 
-                      // WAL: Remove entry after successful commit
-                      if (wal) {
-                        try {
-                          wal.remove(walEntryId);
-                        } catch (err) {
-                          api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
-                        }
-                      }
+                      walRemove(walEntryId, api.logger);
 
                       api.logger.info?.(
                         `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
@@ -4920,33 +4865,12 @@ const memoryHybridPlugin = {
               }
             }
 
-            // WAL: Write pending operation before committing to storage (vector already computed above)
-            const walEntryId = randomUUID();
-            if (wal) {
-              try {
-                wal.write({
-                  id: walEntryId,
-                  timestamp: Date.now(),
-                  operation: "store",
-                  data: {
-                    text: textToStore,
-                    category,
-                    importance: CLI_STORE_IMPORTANCE,
-                    entity: extracted.entity,
-                    key: extracted.key,
-                    value: extracted.value,
-                    source: "auto-capture",
-                    summary,
-                    tags: extractTags(textToStore, extracted.entity),
-                    vector,
-                  },
-                });
-              } catch (err) {
-                api.logger.warn(`memory-hybrid: auto-capture WAL write failed: ${err}`);
-              }
-            }
+            const walEntryId = walWrite("store", {
+              text: textToStore, category, importance: CLI_STORE_IMPORTANCE,
+              entity: extracted.entity, key: extracted.key, value: extracted.value,
+              source: "auto-capture", summary, tags: extractTags(textToStore, extracted.entity), vector,
+            }, api.logger);
 
-            // Now commit to actual storage (include tags to match WAL entry)
             const storedEntry = factsDb.store({
               text: textToStore,
               category,
@@ -4964,19 +4888,10 @@ const memoryHybridPlugin = {
                 await vectorDb.store({ text: textToStore, vector, importance: CLI_STORE_IMPORTANCE, category, id: storedEntry.id });
               }
             } catch (err) {
-              api.logger.warn(
-                `memory-hybrid: vector capture failed: ${err}`,
-              );
+              api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
             }
 
-            // WAL: Remove entry after successful commit
-            if (wal) {
-              try {
-                wal.remove(walEntryId);
-              } catch (err) {
-                api.logger.warn(`memory-hybrid: auto-capture WAL cleanup failed: ${err}`);
-              }
-            }
+            walRemove(walEntryId, api.logger);
 
             stored++;
           }
@@ -5131,8 +5046,7 @@ const memoryHybridPlugin = {
                 api.logger.warn(`memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`);
               }
                 
-                // Remove successfully processed entry
-                wal.remove(entry.id);
+                walRemove(entry.id, api.logger);
               } catch (err) {
                 api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
                 failed++;

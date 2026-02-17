@@ -71,14 +71,14 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 
 **Feedback:** Text truncation in 3+ forms; embedding calls with identical error handling copy-pasted 8+ times; WAL write/remove pattern duplicated 4+ times (300+ lines).
 
-**Status: ✅ Done (except WAL helper — deferred, see below).**
+**Status: ✅ Done.**
 
 | Utility | Status |
 |---------|--------|
 | **`truncateText(text, maxLen, suffix?)`** | ✅ Done. Added; used for credential notes and available in `_testing`. |
 | **`truncateForStorage(text, maxChars)`** | ✅ Done. Added; replaces capture truncation at store call sites. |
 | **`safeEmbed(embeddings, text, logWarn?)`** | ✅ Done. Returns `number[] \| null`; used in find-duplicates. |
-| **WAL write/remove helper** | ⏳ Deferred. Call sites still call `wal.write` / `wal.remove` directly; WAL is now O(1) append so duplication is low-impact (each call is 1 line). Not worth abstracting further. |
+| **WAL write/remove helper** | ✅ Done. `walWrite(op, data, logger)` and `walRemove(id, logger)` helpers replace 8–12 lines of boilerplate at each call site (5 sites converted). |
 
 ---
 
