@@ -95,6 +95,16 @@ export type CredentialsConfig = {
   expiryWarningDays?: number;
 };
 
+/** Write-Ahead Log (WAL) configuration for crash resilience */
+export type WALConfig = {
+  /** Enable WAL for crash resilience (default: true) */
+  enabled: boolean;
+  /** Path to WAL file (default: same directory as SQLite DB) */
+  walPath?: string;
+  /** Maximum age of WAL entries before they're considered stale (ms, default: 5 minutes) */
+  maxAge?: number;
+};
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -115,6 +125,8 @@ export type HybridMemoryConfig = {
   credentials: CredentialsConfig;
   /** Graph-based spreading activation (FR-007): auto-linking and graph traversal */
   graph: GraphConfig;
+  /** Write-Ahead Log for crash resilience (default: enabled) */
+  wal: WALConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -286,6 +298,14 @@ export const hybridConfigSchema = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
     };
 
+    // Parse WAL config (enabled by default for crash resilience)
+    const walRaw = cfg.wal as Record<string, unknown> | undefined;
+    const wal: WALConfig = {
+      enabled: walRaw?.enabled !== false,
+      walPath: typeof walRaw?.walPath === "string" ? walRaw.walPath : undefined,
+      maxAge: typeof walRaw?.maxAge === "number" && walRaw.maxAge > 0 ? walRaw.maxAge : 5 * 60 * 1000,
+    };
+
     // Parse credentials config (opt-in). Enable automatically when a valid encryption key is set.
     const credRaw = cfg.credentials as Record<string, unknown> | undefined;
     const explicitlyDisabled = credRaw?.enabled === false;
@@ -362,6 +382,7 @@ export const hybridConfigSchema = {
       store,
       credentials,
       graph,
+      wal,
     };
   },
 };

@@ -55,6 +55,7 @@ If something fails, **`openclaw hybrid-mem verify [--fix]`** reports issues and 
 |------|-------------|
 | **[docs/hybrid-memory-manager-v3.md](docs/hybrid-memory-manager-v3.md)** | Full deployment reference: architecture, config, MEMORY.md template, AGENTS.md Memory Protocol, manual flow (§8), verification, troubleshooting, CLI, upgrades. |
 | **[docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md)** | Graph-based spreading activation (FR-007): typed relationships, zero-LLM recall via graph traversal, auto-linking, configuration, and usage guide. |
+| **[docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md)** | Write-Ahead Log (WAL) for crash resilience: architecture, configuration, recovery process, testing, and troubleshooting. |
 | **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)** | Autonomous setup: point an OpenClaw agent at this file to install, configure, backfill, and verify (option 2 above). |
 | **[deploy/](deploy/)** | Merge-ready `openclaw.memory-snippet.json` (memory-hybrid + memorySearch) and deploy README. |
 | **extensions/memory-hybrid/** | Plugin source: SQLite+FTS5+LanceDB ([README](extensions/memory-hybrid/README.md)). |
@@ -110,6 +111,7 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 - **Consolidation job** — cluster similar facts, LLM-merge each cluster into one fact, store and delete cluster (`openclaw hybrid-mem consolidate`)
 
 **Persistence & robustness**
+- **Write-Ahead Log (WAL)** for crash resilience — pre-flight commit of memory operations with automatic recovery on startup (see [WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))
 - Confidence decay and automatic pruning (periodic job; no external cron)
 - SQLite safeguards for concurrent access (`busy_timeout`, WAL checkpointing)
 - Timestamp migration for database consistency across schema versions
