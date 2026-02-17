@@ -1404,6 +1404,10 @@ class WriteAheadLog {
    * Write a pending memory operation to the WAL.
    * This is a synchronous operation to ensure durability before proceeding.
    * Uses atomic write (temp file + rename) to prevent corruption on crash.
+   * 
+   * Note: For maximum durability guarantees, this could use fsync before rename
+   * (via fs.openSync + fs.writeSync + fs.fsyncSync + fs.closeSync), but the
+   * current atomic rename approach provides good crash-safety for most use cases.
    */
   write(entry: WALEntry): void {
     try {
@@ -1414,8 +1418,6 @@ class WriteAheadLog {
       // Atomic write: write to temp file, then rename
       const tempPath = `${this.walPath}.tmp`;
       writeFileSync(tempPath, content, "utf-8");
-      // fsync would go here in production, but Node's writeFileSync doesn't expose it
-      // For maximum safety, could use fs.openSync + fs.writeSync + fs.fsyncSync + fs.closeSync
       renameSync(tempPath, this.walPath);
     } catch (err) {
       throw new Error(`WAL write failed: ${err}`);

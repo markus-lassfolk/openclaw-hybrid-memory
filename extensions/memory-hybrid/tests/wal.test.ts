@@ -7,6 +7,10 @@ import { _testing } from "../index.js";
 
 const { WriteAheadLog } = _testing;
 
+// Test constants
+const TEST_MAX_AGE_MS = 1000; // 1 second for fast tests
+const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes (production default)
+
 describe("WriteAheadLog", () => {
   let testDir: string;
   let walPath: string;
@@ -29,7 +33,7 @@ describe("WriteAheadLog", () => {
   describe("constructor", () => {
     it("creates WAL directory if it doesn't exist", () => {
       const nestedPath = join(testDir, "nested", "dir", "test.wal");
-      const nestedWal = new WriteAheadLog(nestedPath, 5 * 60 * 1000);
+      const nestedWal = new WriteAheadLog(nestedPath, DEFAULT_MAX_AGE_MS);
       expect(existsSync(join(testDir, "nested", "dir"))).toBe(true);
       nestedWal.clear(); // cleanup
     });
@@ -37,7 +41,7 @@ describe("WriteAheadLog", () => {
 
   describe("write and read operations", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
     it("writes and reads a single entry", () => {
@@ -106,7 +110,7 @@ describe("WriteAheadLog", () => {
     });
 
     it("returns empty array for non-existent WAL file", () => {
-      const emptyWal = new WriteAheadLog(join(testDir, "nonexistent.wal"), 5 * 60 * 1000);
+      const emptyWal = new WriteAheadLog(join(testDir, "nonexistent.wal"), DEFAULT_MAX_AGE_MS);
       const entries = emptyWal.readAll();
       expect(entries).toEqual([]);
     });
@@ -134,7 +138,7 @@ describe("WriteAheadLog", () => {
 
   describe("atomic write operations", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
     it("uses atomic write (temp file + rename)", () => {
@@ -180,7 +184,7 @@ describe("WriteAheadLog", () => {
 
   describe("remove operation", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
     it("removes a specific entry by id", () => {
@@ -263,7 +267,7 @@ describe("WriteAheadLog", () => {
 
   describe("clear operation", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
     it("removes the WAL file", () => {
@@ -288,7 +292,7 @@ describe("WriteAheadLog", () => {
 
   describe("pruning operations", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 1000); // 1 second max age for testing
+      wal = new WriteAheadLog(walPath, TEST_MAX_AGE_MS);
     });
 
     it("prunes stale entries older than maxAge", async () => {
@@ -349,7 +353,7 @@ describe("WriteAheadLog", () => {
 
   describe("getValidEntries", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 1000); // 1 second max age
+      wal = new WriteAheadLog(walPath, TEST_MAX_AGE_MS);
     });
 
     it("returns only non-stale entries", () => {
@@ -390,7 +394,7 @@ describe("WriteAheadLog", () => {
     });
 
     it("returns empty array for non-existent WAL", () => {
-      const emptyWal = new WriteAheadLog(join(testDir, "new.wal"), 1000);
+      const emptyWal = new WriteAheadLog(join(testDir, "new.wal"), TEST_MAX_AGE_MS);
       const validEntries = emptyWal.getValidEntries();
       expect(validEntries).toEqual([]);
     });
@@ -398,7 +402,7 @@ describe("WriteAheadLog", () => {
 
   describe("error handling", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
     it("throws error when write fails", () => {
@@ -429,7 +433,7 @@ describe("WriteAheadLog", () => {
 
   describe("idempotency and crash recovery simulation", () => {
     beforeEach(() => {
-      wal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
     it("simulates recovery after crash during write", () => {
@@ -443,7 +447,7 @@ describe("WriteAheadLog", () => {
       wal.write(entry);
 
       // Simulate crash by creating a new WAL instance
-      const recoveredWal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      const recoveredWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
       const entries = recoveredWal.getValidEntries();
 
       expect(entries).toHaveLength(1);
@@ -465,7 +469,7 @@ describe("WriteAheadLog", () => {
       writeFileSync(walPath, content.slice(0, content.length / 2), "utf-8");
 
       // Create new instance and try to read
-      const recoveredWal = new WriteAheadLog(walPath, 5 * 60 * 1000);
+      const recoveredWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
       const entries = recoveredWal.readAll();
 
       // Should return empty array for corrupted data
