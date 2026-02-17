@@ -1702,6 +1702,7 @@ function mergeResults(
   sqliteResults: SearchResult[],
   lanceResults: SearchResult[],
   limit: number,
+  factsDb?: FactsDB,
 ): SearchResult[] {
   const seen = new Set<string>();
   const merged: SearchResult[] = [];
@@ -1713,13 +1714,18 @@ function mergeResults(
     }
   }
 
+  // Build a set of superseded fact texts for filtering LanceDB results
+  const supersededTexts = factsDb ? factsDb.getSupersededTexts() : new Set<string>();
+
   for (const r of lanceResults) {
+    // Skip if this text matches a superseded fact
+    const isSuperseded = supersededTexts.has(r.entry.text.toLowerCase());
     const isDupe = merged.some(
       (m) =>
         m.entry.id === r.entry.id ||
         m.entry.text.toLowerCase() === r.entry.text.toLowerCase(),
     );
-    if (!isDupe) {
+    if (!isDupe && !isSuperseded) {
       merged.push(r);
     }
   }
@@ -2841,7 +2847,7 @@ const memoryHybridPlugin = {
             }
           }
 
-          const results = mergeResults(sqliteResults, lanceResults, limit);
+          const results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
 
           if (results.length === 0) {
             return {
@@ -3262,7 +3268,7 @@ const memoryHybridPlugin = {
               lanceResults = await vectorDb.search(vector, 5, 0.7);
             } catch {}
 
-            const results = mergeResults(sqlResults, lanceResults, 5);
+            const results = mergeResults(sqlResults, lanceResults, 5, factsDb);
 
             if (results.length === 0) {
               return {
@@ -4244,7 +4250,7 @@ const memoryHybridPlugin = {
               const vector = await embeddings.embed(query);
               lanceResults = await vectorDb.search(vector, limit, 0.3);
             }
-            const merged = mergeResults(sqlResults, lanceResults, limit);
+            const merged = mergeResults(sqlResults, lanceResults, limit, factsDb);
 
             const output = merged.map((r) => ({
               id: r.entry.id,
@@ -5163,7 +5169,7 @@ const memoryHybridPlugin = {
             );
           }
 
-          let candidates = mergeResults(ftsResults, lanceResults, limit);
+          let candidates = mergeResults(ftsResults, lanceResults, limit, factsDb);
 
           const { entityLookup } = cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
