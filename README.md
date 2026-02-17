@@ -56,6 +56,7 @@ If something fails, **`openclaw hybrid-mem verify [--fix]`** reports issues and 
 | **[docs/hybrid-memory-manager-v3.md](docs/hybrid-memory-manager-v3.md)** | Full deployment reference: architecture, config, MEMORY.md template, AGENTS.md Memory Protocol, manual flow (§8), verification, troubleshooting, CLI, upgrades. |
 | **[docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md)** | Write-Ahead Log (WAL) for crash resilience: architecture, configuration, recovery process, testing, and troubleshooting. |
 | **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)** | Autonomous setup: point an OpenClaw agent at this file to install, configure, backfill, and verify (option 2 above). |
+| **[docs/REFLECTION.md](docs/REFLECTION.md)** | **NEW (FR-011)**: Reflection layer — analyze facts to extract behavioral patterns and meta-insights. Weekly or on-demand pattern synthesis from observations. |
 | **[deploy/](deploy/)** | Merge-ready `openclaw.memory-snippet.json` (memory-hybrid + memorySearch) and deploy README. |
 | **extensions/memory-hybrid/** | Plugin source: SQLite+FTS5+LanceDB ([README](extensions/memory-hybrid/README.md)). |
 | **[scripts/](scripts/)** | Upgrade helpers (post-upgrade reinstall, `openclaw-upgrade`). Session distillation: [scripts/distill-sessions/](scripts/distill-sessions/), [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md). |
@@ -100,6 +101,7 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 - **Importance and recency** in composite score (optional)
 - **Entity-centric recall** — when the prompt mentions an entity (e.g. user, owner), merge in lookup facts for that entity
 - **Chunked long facts** — store a short summary for long facts; inject summary at recall to save tokens (full text still in DB and tools)
+- **Reflection layer (FR-011)** — analyze facts to extract behavioral patterns; weekly or on-demand pattern synthesis from observations ([docs/REFLECTION.md](docs/REFLECTION.md))
 
 **Quality & deduplication**
 - LLM-based auto-classification of “other” facts into categories (on a schedule and via CLI)
