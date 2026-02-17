@@ -362,16 +362,6 @@ export const hybridConfigSchema = {
       };
     }
 
-    // Parse WAL config (enabled by default for crash resilience)
-    const walRaw = cfg.wal as Record<string, unknown> | undefined;
-    const wal: WALConfig = {
-      enabled: walRaw?.enabled !== false,
-      walPath: typeof walRaw?.walPath === "string" ? walRaw.walPath : undefined,
-      maxAge: typeof walRaw?.maxAge === "number" && walRaw.maxAge > 0
-        ? walRaw.maxAge
-        : 5 * 60_000, // 5 minutes default
-    };
-
     // Parse persona proposals config (opt-in, disabled by default)
     const proposalsRaw = cfg.personaProposals as Record<string, unknown> | undefined;
     const personaProposals: PersonaProposalsConfig = {
