@@ -57,7 +57,12 @@ If something fails, **`openclaw hybrid-mem verify [--fix]`** reports issues and 
 
 1. Enable in config: add `"personaProposals": { "enabled": true }` to plugin config
 2. Restart the gateway
-3. Agent can use: `persona_propose`, `persona_proposals_list`, `persona_proposal_review`, `persona_proposal_apply`
+3. **Agent tools** (agent-callable):
+   - `persona_propose` — create a proposal
+   - `persona_proposals_list` — view pending proposals
+4. **Human-only commands** (CLI):
+   - `openclaw proposals review <id> <approve|reject>` — approve/reject proposals
+   - `openclaw proposals apply <id>` — apply approved changes
 
 ### How it works
 
@@ -79,12 +84,13 @@ If something fails, **`openclaw hybrid-mem verify [--fix]`** reports issues and 
 
 ### Safety rails
 
-- Identity files never auto-modified (human approval required)
-- Rate limiting prevents spam
-- Evidence requirements (session refs + confidence thresholds)
-- Auto-expiry if not reviewed
-- Full audit trail in `memory/decisions/`
-- Git rollback capability
+- **Identity files never auto-modified** — human approval required via CLI commands
+- **Agent cannot self-approve** — review/apply are CLI-only, not agent-callable tools
+- **Rate limiting** — prevents proposal spam
+- **Evidence requirements** — session refs + confidence thresholds
+- **Auto-expiry** — proposals expire if not reviewed
+- **Full audit trail** — all actions logged to `memory/decisions/`
+- **Git rollback** — full history for reverting changes
 
 ## Docs & reference
 
