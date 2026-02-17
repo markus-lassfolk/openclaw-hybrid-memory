@@ -856,28 +856,7 @@ class FactsDB {
   getById(id: string): MemoryEntry | null {
     const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
-    return {
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-      recallCount: (row.recall_count as number) || 0,
-      lastAccessed: (row.last_accessed as number) || null,
-      supersededAt: (row.superseded_at as number) || null,
-      supersededBy: (row.superseded_by as string) || null,
-    };
+    return this.rowToEntry(row);
   }
 
   /** Get all non-expired, non-superseded facts (for reflection). */
@@ -886,58 +865,15 @@ class FactsDB {
     const rows = this.liveDb
       .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL ORDER BY created_at DESC`)
       .all(nowSec) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-      recallCount: (row.recall_count as number) || 0,
-      lastAccessed: (row.last_accessed as number) || null,
-      supersededAt: (row.superseded_at as number) || null,
-      supersededBy: (row.superseded_by as string) || null,
-    }));
+    return rows.map((row) => this.rowToEntry(row));
   }
 
-  /** Get all non-expired facts including superseded ones (for filtering LanceDB results). */
-  getAllIncludingSuperseded(): MemoryEntry[] {
-    const nowSec = Math.floor(Date.now() / 1000);
+  /** Get texts of superseded facts (for filtering LanceDB results). Optimized: only fetches text column. */
+  getSupersededTexts(): Set<string> {
     const rows = this.liveDb
-      .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`)
-      .all(nowSec) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: row.id as string,
-      text: row.text as string,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-      recallCount: (row.recall_count as number) || 0,
-      lastAccessed: (row.last_accessed as number) || null,
-      supersededAt: (row.superseded_at as number) || null,
-      supersededBy: (row.superseded_by as string) || null,
-    }));
+      .prepare(`SELECT text FROM facts WHERE superseded_at IS NOT NULL`)
+      .all() as Array<{ text: string }>;
+    return new Set(rows.map((r) => r.text.toLowerCase()));
   }
 
   count(): number {
@@ -1463,16 +1399,8 @@ function mergeResults(
     }
   }
 
-  // Build a set of superseded fact texts for filtering LanceDB results
-  const supersededTexts = new Set<string>();
-  if (factsDb) {
-    const allFacts = factsDb.getAllIncludingSuperseded();
-    for (const fact of allFacts) {
-      if (fact.supersededAt) {
-        supersededTexts.add(fact.text.toLowerCase());
-      }
-    }
-  }
+  // Get superseded fact texts for filtering LanceDB results (optimized: text-only query)
+  const supersededTexts = factsDb ? factsDb.getSupersededTexts() : new Set<string>();
 
   for (const r of lanceResults) {
     // Skip if this text matches a superseded fact
@@ -1995,10 +1923,23 @@ function buildReflectionPrompt(facts: MemoryEntry[], window: number, minObservat
     factsByCategory.get(fact.category)!.push(fact);
   }
 
+  // Limit facts per category and truncate long texts to prevent token overflow
+  const MAX_FACTS_PER_CATEGORY = 50;
+  const MAX_FACT_LENGTH = 300;
+  
   const factsSummary = [...factsByCategory.entries()]
     .map(([cat, items]) => {
-      const lines = items.map((f, i) => `  ${i + 1}. ${f.text}`).join("\n");
-      return `[${cat}] (${items.length} observations)\n${lines}`;
+      const limited = items.slice(0, MAX_FACTS_PER_CATEGORY);
+      const lines = limited.map((f, i) => {
+        const text = f.text.length > MAX_FACT_LENGTH 
+          ? f.text.slice(0, MAX_FACT_LENGTH) + "..."
+          : f.text;
+        return `  ${i + 1}. ${text}`;
+      }).join("\n");
+      const suffix = items.length > MAX_FACTS_PER_CATEGORY 
+        ? `\n  ... and ${items.length - MAX_FACTS_PER_CATEGORY} more`
+        : "";
+      return `[${cat}] (${items.length} observations)\n${lines}${suffix}`;
     })
     .join("\n\n");
 
@@ -3046,9 +2987,10 @@ const memoryHybridPlugin = {
                   });
                   factsDb.supersede(classification.targetId, newEntry.id);
 
+                  const finalImportance = Math.max(importance, oldFact.importance);
                   try {
                     if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                      await vectorDb.store({ text: textToStore, vector, importance, category });
+                      await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category });
                     }
                   } catch (err) {
                     api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -5053,6 +4995,8 @@ const memoryHybridPlugin = {
                   if (classification.action === "UPDATE" && classification.targetId) {
                     const oldFact = factsDb.getById(classification.targetId);
                     if (oldFact) {
+                      const finalImportance = Math.max(0.7, oldFact.importance);
+                      
                       // Generate vector first
                       let vector: number[] | undefined;
                       try {
@@ -5072,11 +5016,12 @@ const memoryHybridPlugin = {
                             data: {
                               text: textToStore,
                               category,
-                              importance: Math.max(0.7, oldFact.importance),
+                              importance: finalImportance,
                               entity: extracted.entity || oldFact.entity,
                               key: extracted.key || oldFact.key,
                               value: extracted.value || oldFact.value,
                               source: "auto-capture",
+                              decayClass: oldFact.decayClass,
                               summary,
                               tags: extractTags(textToStore, extracted.entity),
                               vector,
@@ -5090,7 +5035,7 @@ const memoryHybridPlugin = {
                       const newEntry = factsDb.store({
                         text: textToStore,
                         category,
-                        importance: Math.max(0.7, oldFact.importance),
+                        importance: finalImportance,
                         entity: extracted.entity || oldFact.entity,
                         key: extracted.key || oldFact.key,
                         value: extracted.value || oldFact.value,
@@ -5101,7 +5046,7 @@ const memoryHybridPlugin = {
                       factsDb.supersede(classification.targetId, newEntry.id);
                       try {
                         if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                          await vectorDb.store({ text: textToStore, vector, importance: 0.7, category });
+                          await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category });
                         }
                       } catch (err) {
                         api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
