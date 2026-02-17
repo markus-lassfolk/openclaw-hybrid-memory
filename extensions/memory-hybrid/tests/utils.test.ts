@@ -11,6 +11,7 @@ const {
   parseSourceDate,
   estimateTokens,
   estimateTokensForDisplay,
+  formatProgressiveIndexLine,
   classifyDecay,
   calculateExpiry,
   extractStructuredFields,
@@ -240,6 +241,27 @@ describe("estimateTokensForDisplay", () => {
   it("gives higher count for long words than length/4", () => {
     const long = "internationalization";
     expect(estimateTokensForDisplay(long)).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-009: Progressive index line format
+// ---------------------------------------------------------------------------
+
+describe("formatProgressiveIndexLine", () => {
+  it("formats line as position, category, title, and token cost", () => {
+    const line = formatProgressiveIndexLine("preference", "IDE settings", 48, 1);
+    expect(line).toBe('  1. [preference] IDE settings (48 tok)');
+  });
+
+  it("uses correct position and category", () => {
+    const line = formatProgressiveIndexLine("technical", "PostgreSQL connection config for prod", 185, 2);
+    expect(line).toBe('  2. [technical] PostgreSQL connection config for prod (185 tok)');
+  });
+
+  it("matches FR-009 index format [category] title/key (N tok)", () => {
+    const line = formatProgressiveIndexLine("decision", "Chose React over Vue for frontend", 92, 3);
+    expect(line).toMatch(/^\s+\d+\.\s\[decision\]\s.+\s\(\d+\stok\)$/);
   });
 });
 

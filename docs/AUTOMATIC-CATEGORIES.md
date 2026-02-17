@@ -1,3 +1,9 @@
+---
+layout: default
+title: Automatic Categories
+parent: Features
+nav_order: 8
+---
 # Automatic Categories (Category Discovery)
 
 How the plugin **creates new categories automatically** from your data: the **category discovery** step groups "other" facts by free-form topic labels; any label that appears often enough becomes a real category.

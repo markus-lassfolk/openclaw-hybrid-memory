@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { _testing } from "../index.js";
 
-const { mergeResults } = _testing;
+const { mergeResults, filterByScope } = _testing;
 
 type SearchResult = Parameters<typeof mergeResults>[0][0];
 
@@ -99,6 +99,23 @@ describe("mergeResults", () => {
     expect(mergeResults([], single, 10).length).toBe(1);
   });
 
+  it("FR-010: excludes Lance results whose text is superseded", () => {
+    const supersededProvider = {
+      getSupersededTexts: () => new Set(["old superseded fact"]),
+    };
+    const sqlite = [makeResult({ text: "Current fact", score: 0.8, backend: "sqlite" })];
+    const lance = [
+      makeResult({ text: "Old superseded fact", score: 0.9, backend: "lancedb" }),
+      makeResult({ text: "Another current fact", score: 0.7, backend: "lancedb" }),
+    ];
+    const merged = mergeResults(sqlite, lance, 10, supersededProvider);
+    expect(merged.length).toBe(2);
+    const texts = merged.map((r) => r.entry.text);
+    expect(texts).toContain("Current fact");
+    expect(texts).toContain("Another current fact");
+    expect(texts).not.toContain("Old superseded fact");
+  });
+
   it("uses sourceDate for tie-breaking when available", () => {
     const now = Math.floor(Date.now() / 1000);
     const a = makeResult({ text: "A", score: 0.7, createdAt: now - 5000 });
@@ -106,5 +123,34 @@ describe("mergeResults", () => {
     const b = makeResult({ text: "B", score: 0.7, createdAt: now, backend: "lancedb" });
     const merged = mergeResults([a], [b], 10);
     expect(merged[0].entry.text).toBe("A");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// filterByScope (FR-006)
+// ---------------------------------------------------------------------------
+
+describe("filterByScope", () => {
+  it("returns all results when scopeFilter is empty", () => {
+    const results = [
+      makeResult({ text: "A", id: "id-a" }),
+      makeResult({ text: "B", id: "id-b" }),
+    ];
+    const getById = (id: string) => ({ id });
+    expect(filterByScope(results, getById, undefined)).toEqual(results);
+    expect(filterByScope(results, getById, {})).toEqual(results);
+  });
+
+  it("filters out results not in scope", () => {
+    const inScope = makeResult({ text: "In scope", id: "id-1" });
+    const outOfScope = makeResult({ text: "Out of scope", id: "id-2" });
+    const results = [inScope, outOfScope];
+    const getById = (id: string, opts?: { scopeFilter?: { userId?: string } }) => {
+      if (id === "id-2" && opts?.scopeFilter?.userId === "alice") return null;
+      return { id };
+    };
+    const filtered = filterByScope(results, getById, { userId: "alice" });
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].entry.id).toBe("id-1");
   });
 });

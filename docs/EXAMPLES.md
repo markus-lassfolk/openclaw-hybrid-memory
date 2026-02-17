@@ -1,3 +1,9 @@
+---
+layout: default
+title: Examples & Recipes
+parent: Getting Started
+nav_order: 4
+---
 # Examples & Recipes
 
 Real-world patterns for getting the most out of hybrid memory.
@@ -156,6 +162,32 @@ Boost long-lived facts:
   "autoRecall": {
     "preferLongTerm": true,
     "useImportanceRecency": true
+  }
+}
+```
+
+### Progressive disclosure (FR-009): agent-driven memory retrieval
+
+Inject a lightweight memory index instead of full texts; the agent uses `memory_recall` to fetch only what it needs. Saves tokens and scales to large memory stores:
+
+```json
+{
+  "autoRecall": {
+    "injectionFormat": "progressive",
+    "progressiveMaxCandidates": 15,
+    "progressiveIndexMaxTokens": 300
+  }
+}
+```
+
+Optional: pin frequently used or permanent facts in full, rest as index:
+
+```json
+{
+  "autoRecall": {
+    "injectionFormat": "progressive_hybrid",
+    "progressivePinnedRecallCount": 3,
+    "progressiveGroupByCategory": true
   }
 }
 ```
