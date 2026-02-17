@@ -2090,13 +2090,15 @@ async function runReflection(
     }
 
     for (const existing of existingEmbeddings) {
-      const dist = Math.sqrt(
-        patternVector.reduce((s, v, k) => s + (v - existing.vector[k]) ** 2, 0),
-      );
-      const similarity = 1 / (1 + dist);
-      if (similarity >= 0.85) {
+      // Use cosine similarity for normalized embeddings (OpenAI embeddings are normalized)
+      // Cosine similarity = dot product for unit vectors
+      const dotProduct = patternVector.reduce((s, v, k) => s + v * existing.vector[k], 0);
+      const cosineSimilarity = dotProduct; // Already normalized, so no need to divide by magnitudes
+      
+      // 0.85 cosine similarity = 85% similar (actual semantic similarity)
+      if (cosineSimilarity >= 0.85) {
         isDuplicate = true;
-        logger.info(`memory-hybrid: reflect — skipping duplicate pattern (${(similarity * 100).toFixed(0)}% similar to existing)`);
+        logger.info(`memory-hybrid: reflect — skipping duplicate pattern (${(cosineSimilarity * 100).toFixed(0)}% similar to existing)`);
         break;
       }
     }
@@ -2122,6 +2124,9 @@ async function runReflection(
     } catch (err) {
       logger.warn(`memory-hybrid: reflect — vector store failed for pattern: ${err}`);
     }
+
+    // Add to existing embeddings so subsequent patterns in this batch are checked against it
+    existingEmbeddings.push({ text: pattern, vector: patternVector });
 
     stored++;
     logger.info(`memory-hybrid: reflect — stored pattern: ${pattern.slice(0, 80)}...`);

@@ -64,7 +64,7 @@ PATTERN: User values type safety (TypeScript strict mode, explicit types)
 
 ### 4. Deduplication
 
-Each extracted pattern is checked against existing patterns using semantic similarity (embedding distance). Patterns with ≥85% similarity to existing ones are skipped.
+Each extracted pattern is checked against existing patterns using cosine similarity (dot product of normalized embeddings). Patterns with ≥85% cosine similarity to existing ones are skipped. This threshold effectively catches paraphrased or semantically equivalent patterns while allowing genuinely distinct insights.
 
 ### 5. Storage
 
@@ -275,7 +275,7 @@ Output: "User follows functional programming principles with strong emphasis on 
 
 **Cause**: Semantic similarity threshold too low, or patterns are genuinely different.
 
-**Solution**: The system automatically deduplicates at 85% similarity. If you see duplicates, they're considered distinct enough to keep.
+**Solution**: The system automatically deduplicates at 85% cosine similarity (actual semantic similarity, not euclidean distance). Patterns are also deduplicated within each batch, so even if the LLM returns similar patterns in one run, only the first will be stored. If you still see duplicates, they're considered distinct enough to keep (< 85% similar).
 
 ### Patterns too generic
 
