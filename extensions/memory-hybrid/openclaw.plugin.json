@@ -193,23 +193,6 @@
     "graph.useInRecall": {
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
-    },
-    "reflection.enabled": {
-      "label": "Reflection",
-      "help": "Enable reflection layer to analyze facts and extract behavioral patterns (FR-011)"
-    },
-    "reflection.model": {
-      "label": "Reflection model",
-      "placeholder": "gpt-4o-mini",
-      "help": "Model for reflection analysis (default gpt-4o-mini)"
-    },
-    "reflection.defaultWindow": {
-      "label": "Reflection window (days)",
-      "help": "Default time window in days for reflection analysis (default 14)"
-    },
-    "reflection.minObservations": {
-      "label": "Min observations for pattern",
-      "help": "Minimum observations required to generate a pattern (default 2)"
     }
   },
   "configSchema": {
@@ -344,17 +327,6 @@
           "useInRecall": { "type": "boolean", "description": "Enable graph traversal in memory_recall (default: true)" }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
-      },
-      "reflection": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "enabled": { "type": "boolean" },
-          "model": { "type": "string" },
-          "defaultWindow": { "type": "number" },
-          "minObservations": { "type": "number" }
-        },
-        "description": "Reflection layer: analyze facts to extract behavioral patterns (FR-011)"
       }
     },
     "required": ["embedding"]
