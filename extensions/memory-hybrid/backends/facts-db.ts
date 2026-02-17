@@ -590,7 +590,7 @@ export class FactsDB {
     const prefRows = this.liveDb
       .prepare(
         `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND category = 'preference' AND (COALESCE(last_accessed, last_confirmed_at) < ? OR last_accessed IS NULL)
+         AND category = 'preference' AND COALESCE(last_accessed, last_confirmed_at, created_at) < ?
          AND tier = 'hot'`,
       )
       .all(nowSec, inactiveCutoff) as Array<{ id: string }>;
@@ -687,7 +687,7 @@ export class FactsDB {
     const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
     const tierFilterClause =
       tierFilter === "warm"
-        ? "AND (f.tier IS NULL OR f.tier = 'warm')"
+        ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')"
         : "";
     const { clause: scopeFilterClauseStr, params: scopeParams } = this.scopeFilterClause(scopeFilter);
 

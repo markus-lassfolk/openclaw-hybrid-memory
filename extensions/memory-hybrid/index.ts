@@ -2029,6 +2029,11 @@ const memoryHybridPlugin = {
               description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include session-scoped memories for this session.",
             }),
           ),
+          includeCold: Type.Optional(
+            Type.Boolean({
+              description: "FR-004: Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
@@ -4876,7 +4881,7 @@ const memoryHybridPlugin = {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: fullContent };
+            return { prependContext: hotBlock + fullContent };
           }
 
           if (injectionFormat === "progressive") {
