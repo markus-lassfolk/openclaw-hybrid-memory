@@ -6,12 +6,12 @@
 - **memory-hybrid plugin** (`extensions/memory-hybrid/`): Two-tier storage (SQLite+FTS5 for facts, LanceDB for semantic search), auto-capture, auto-recall, decay tiers with TTL, checkpoints, optional LLM auto-classification and custom categories.
 - **Tools**: `memory_store`, `memory_recall`, `memory_forget`, `memory_checkpoint`, `memory_prune`.
 - **CLI** (`openclaw hybrid-mem`): `stats`, `prune`, `checkpoint`, `backfill-decay`, `extract-daily`, `search`, `lookup`, `classify`, `categories`.
-- **Full deployment reference**: [docs/hybrid-memory-manager-v3.md](docs/hybrid-memory-manager-v3.md) — architecture, plugin install (§3), config (§4), MEMORY.md template (§6), AGENTS.md Memory Protocol (§7), single deployment flow (§8), verification (§11), troubleshooting (§12), CLI (§13), upgrades (§14).
-- **Autonomous setup**: [docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md) for AI-driven install, config, backfill, and verification.
-- **Deploy snippet**: [deploy/openclaw.memory-snippet.json](deploy/openclaw.memory-snippet.json) (memory-hybrid + memorySearch, compaction, bootstrap limits) and [deploy/README.md](deploy/README.md).
-- **Backfill script**: [scripts/backfill-memory.mjs](scripts/backfill-memory.mjs) — dynamic section handling, no hardcoded dates; safe on new systems.
-- **Upgrade helpers**: [scripts/post-upgrade.sh](scripts/post-upgrade.sh), [scripts/upgrade.sh](scripts/upgrade.sh), [scripts/README.md](scripts/README.md) for post–OpenClaw-upgrade LanceDB reinstall and one-command upgrade flow.
-- **Version metadata**: [extensions/memory-hybrid/versionInfo.ts](extensions/memory-hybrid/versionInfo.ts) — `pluginVersion` (from package.json), `memoryManagerVersion` (3.0), `schemaVersion`; exposed on plugin, in `openclaw.plugin.json`, and in `openclaw hybrid-mem stats` and gateway logs. Doc §3.3 describes versioning and upgrades.
+- **Full deployment reference**: [docs/hybrid-memory-manager-v3.md](../docs/hybrid-memory-manager-v3.md) — architecture, plugin install (§3), config (§4), MEMORY.md template (§6), AGENTS.md Memory Protocol (§7), single deployment flow (§8), verification (§11), troubleshooting (§12), CLI (§13), upgrades (§14).
+- **Autonomous setup**: [docs/SETUP-AUTONOMOUS.md](../docs/SETUP-AUTONOMOUS.md) for AI-driven install, config, backfill, and verification.
+- **Deploy snippet**: [deploy/openclaw.memory-snippet.json](../deploy/openclaw.memory-snippet.json) (memory-hybrid + memorySearch, compaction, bootstrap limits) and [deploy/README.md](../deploy/README.md).
+- **Backfill script**: [scripts/backfill-memory.mjs](../scripts/backfill-memory.mjs) — dynamic section handling, no hardcoded dates; safe on new systems.
+- **Upgrade helpers**: [scripts/post-upgrade.sh](../scripts/post-upgrade.sh), [scripts/upgrade.sh](../scripts/upgrade.sh), [scripts/README.md](../scripts/README.md) for post–OpenClaw-upgrade LanceDB reinstall and one-command upgrade flow.
+- **Version metadata**: [extensions/memory-hybrid/versionInfo.ts](../extensions/memory-hybrid/versionInfo.ts) — `pluginVersion` (from package.json), `memoryManagerVersion` (3.0), `schemaVersion`; exposed on plugin, in `openclaw.plugin.json`, and in `openclaw hybrid-mem stats` and gateway logs. Doc §3.3 describes versioning and upgrades.
 - **CHANGELOG**: This file.
 
 ### Changed

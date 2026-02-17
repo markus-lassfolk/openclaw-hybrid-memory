@@ -7,6 +7,12 @@
     "index.ts",
     "config.ts",
     "versionInfo.ts",
+    "backends",
+    "cli",
+    "services",
+    "utils",
+    "types",
+    "prompts",
     "openclaw.plugin.json",
     "package.json",
     "README.md"
