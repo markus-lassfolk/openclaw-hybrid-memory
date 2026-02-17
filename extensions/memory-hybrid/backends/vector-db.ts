@@ -36,7 +36,10 @@ export class VectorDB {
     if (this.closed) throw new Error("VectorDB is closed");
     if (this.table) return;
     if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInitialize();
+    this.initPromise = this.doInitialize().catch((err) => {
+      this.initPromise = null;
+      throw err;
+    });
     return this.initPromise;
   }
 
