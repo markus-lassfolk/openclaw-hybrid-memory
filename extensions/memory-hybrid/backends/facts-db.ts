@@ -1074,6 +1074,9 @@ export class FactsDB {
       lastAccessed: (row.last_accessed as number) || null,
       supersededAt: (row.superseded_at as number) || null,
       supersededBy: (row.superseded_by as string) || null,
+      validFrom: (row.valid_from as number) || null,
+      validUntil: (row.valid_until as number) || null,
+      supersedesId: (row.supersedes_id as string) || null,
     }));
   }
 

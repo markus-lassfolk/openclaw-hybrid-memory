@@ -21,10 +21,15 @@ export function loadPrompt(name: string): string {
   return template;
 }
 
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function fillPrompt(template: string, vars: Record<string, string>): string {
   let out = template;
   for (const [key, value] of Object.entries(vars)) {
-    out = out.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+    const pattern = new RegExp(`\\{\\{${escapeRegExp(key)}\\}\\}`, "g");
+    out = out.replace(pattern, () => value);
   }
   return out;
 }
