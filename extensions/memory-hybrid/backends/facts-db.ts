@@ -1285,7 +1285,7 @@ export class FactsDB {
     const proc = this.getProcedureById(id);
     if (!proc) return false;
     const failureCount = proc.failureCount + 1;
-    const confidence = Math.max(0.1, 0.5 + 0.1 * (proc.successCount - failureCount));
+    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - failureCount)));
     if (recipeJson !== undefined) {
       this.liveDb
         .prepare(

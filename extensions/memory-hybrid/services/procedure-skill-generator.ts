@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry } from "../types/memory.js";
+import type { GenerateAutoSkillsResult } from "../cli/register.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 
@@ -35,13 +36,6 @@ export type GenerateAutoSkillsOptions = {
   skillTTLDays: number;
   maxPerRun?: number;
   dryRun?: boolean;
-};
-
-export type GenerateAutoSkillsResult = {
-  generated: number;
-  skipped: number;
-  dryRun: boolean;
-  paths: string[];
 };
 
 /**
