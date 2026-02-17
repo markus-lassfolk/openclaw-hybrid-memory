@@ -29,8 +29,8 @@ export type AutoClassifyConfig = {
   minFactsForNewCategory?: number;
 };
 
-/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index (agent fetches on demand) */
-export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive";
+/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index (agent fetches on demand), progressive_hybrid = pinned in full + rest as index */
+export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive" | "progressive_hybrid";
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
@@ -39,7 +39,7 @@ export type EntityLookupConfig = {
   maxFactsPerEntity: number;    // max facts to merge per matched entity (default 2)
 };
 
-/** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary */
+/** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary, progressive options */
 export type AutoRecallConfig = {
   enabled: boolean;
   maxTokens: number;
@@ -55,6 +55,14 @@ export type AutoRecallConfig = {
   useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
   summarizeWhenOverBudget: boolean;  // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
   summarizeModel: string;        // model for summarize-when-over-budget (default gpt-4o-mini)
+  /** FR-009: Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
+  progressiveMaxCandidates?: number;
+  /** FR-009: Max tokens for the index block in progressive mode (default: use maxTokens). */
+  progressiveIndexMaxTokens?: number;
+  /** FR-009: Group index lines by category (e.g. "Preferences (3):") for readability (default false). */
+  progressiveGroupByCategory?: boolean;
+  /** FR-009: Min recall count or permanent decay to treat as "pinned" in progressive_hybrid (default 3). */
+  progressivePinnedRecallCount?: number;
 };
 
 /** Store options: fuzzy dedupe (2.3) and optional FR-008 classify-before-write. */
@@ -109,6 +117,13 @@ export type GraphConfig = {
   useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
 };
 
+/** FR-011: Reflection / pattern synthesis from session history */
+export type ReflectionConfig = {
+  enabled: boolean;
+  model: string;             // LLM for reflection (default: gpt-4o-mini)
+  defaultWindow: number;     // Time window in days (default: 14)
+  minObservations: number;   // Min observations to support a pattern (default: 2)
+};
 
 /** Credential types supported by the credentials store */
 export const CREDENTIAL_TYPES = [
@@ -158,6 +173,8 @@ export type HybridMemoryConfig = {
   wal: WALConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
+  /** FR-011: Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
+  reflection: ReflectionConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -257,7 +274,7 @@ export const hybridConfigSchema = {
 
     // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars?, injectionFormat? }
     const arRaw = cfg.autoRecall;
-    const VALID_FORMATS = ["full", "short", "minimal", "progressive"] as const;
+    const VALID_FORMATS = ["full", "short", "minimal", "progressive", "progressive_hybrid"] as const;
     let autoRecall: AutoRecallConfig;
     if (typeof arRaw === "object" && arRaw !== null && !Array.isArray(arRaw)) {
       const ar = arRaw as Record<string, unknown>;
@@ -286,6 +303,19 @@ export const hybridConfigSchema = {
       const useSummaryInInjection = ar.useSummaryInInjection !== false;
       const summarizeWhenOverBudget = ar.summarizeWhenOverBudget === true;
       const summarizeModel = typeof ar.summarizeModel === "string" ? ar.summarizeModel : "gpt-4o-mini";
+      const progressiveMaxCandidates =
+        typeof ar.progressiveMaxCandidates === "number" && ar.progressiveMaxCandidates > 0
+          ? Math.floor(ar.progressiveMaxCandidates)
+          : 15;
+      const progressiveIndexMaxTokens =
+        typeof ar.progressiveIndexMaxTokens === "number" && ar.progressiveIndexMaxTokens > 0
+          ? Math.floor(ar.progressiveIndexMaxTokens)
+          : undefined;
+      const progressiveGroupByCategory = ar.progressiveGroupByCategory === true;
+      const progressivePinnedRecallCount =
+        typeof ar.progressivePinnedRecallCount === "number" && ar.progressivePinnedRecallCount >= 0
+          ? Math.floor(ar.progressivePinnedRecallCount)
+          : 3;
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
@@ -301,6 +331,10 @@ export const hybridConfigSchema = {
         useSummaryInInjection,
         summarizeWhenOverBudget,
         summarizeModel,
+        progressiveMaxCandidates,
+        progressiveIndexMaxTokens,
+        progressiveGroupByCategory,
+        progressivePinnedRecallCount,
       };
     } else {
       autoRecall = {
@@ -318,6 +352,10 @@ export const hybridConfigSchema = {
         useSummaryInInjection: true,
         summarizeWhenOverBudget: false,
         summarizeModel: "gpt-4o-mini",
+        progressiveMaxCandidates: 15,
+        progressiveIndexMaxTokens: undefined,
+        progressiveGroupByCategory: false,
+        progressivePinnedRecallCount: 3,
       };
     }
 
@@ -427,6 +465,19 @@ export const hybridConfigSchema = {
         : 10,
     };
 
+    // Parse reflection config (FR-011)
+    const reflectionRaw = cfg.reflection as Record<string, unknown> | undefined;
+    const reflection: ReflectionConfig = {
+      enabled: reflectionRaw?.enabled === true,
+      model: typeof reflectionRaw?.model === "string" ? reflectionRaw.model : "gpt-4o-mini",
+      defaultWindow: typeof reflectionRaw?.defaultWindow === "number" && reflectionRaw.defaultWindow > 0
+        ? Math.min(90, Math.floor(reflectionRaw.defaultWindow))
+        : 14,
+      minObservations: typeof reflectionRaw?.minObservations === "number" && reflectionRaw.minObservations >= 1
+        ? Math.floor(reflectionRaw.minObservations)
+        : 2,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -447,6 +498,7 @@ export const hybridConfigSchema = {
       graph,
       wal,
       personaProposals,
+      reflection,
     };
   },
 };

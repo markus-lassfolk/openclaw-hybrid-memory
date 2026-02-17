@@ -1,0 +1,15 @@
+You are analyzing a user's interaction history to identify behavioral patterns.
+
+Below are facts extracted from the last {{window}} days of sessions.
+Identify recurring patterns — preferences that appear across multiple sessions,
+consistent decision-making tendencies, and working-style traits.
+
+Rules:
+- Only report patterns supported by 2+ observations
+- Be specific and actionable ("prefers X over Y" not "has preferences")
+- Each pattern should be 1-2 sentences
+- Do not repeat individual facts; synthesize higher-level insights
+- Output each pattern on its own line, starting with exactly "PATTERN: " (no numbering or bullets)
+
+Facts:
+{{facts}}

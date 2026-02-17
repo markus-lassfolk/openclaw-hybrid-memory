@@ -11,10 +11,10 @@ permalink: /
 Durable, structured, searchable memory for OpenClaw agents.
 {: .fs-6 .fw-300 }
 
-Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes this — it gives your agent **persistent memory** that auto-captures what matters and recalls it when relevant.
+Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes this &mdash; it gives your agent **persistent memory** that auto-captures what matters and recalls it when relevant.
 {: .fs-5 .fw-300 }
 
-[Get Started](hybrid-memory-manager-v3){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
+[Get Started](QUICKSTART){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory){: .btn .fs-5 .mb-4 .mb-md-0 }
 
 ---
@@ -35,28 +35,55 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 
 ## Documentation
 
-### Core
+### Getting started
 
 | Document | Description |
 |----------|-------------|
-| **[Deployment Guide](hybrid-memory-manager-v3)** | Full v3 deployment guide — install, configure, verify |
-| **[Setup (Autonomous)](SETUP-AUTONOMOUS)** | Let an OpenClaw agent install it for you |
+| **[Quick Start](QUICKSTART)** | Install, configure, verify &mdash; get running in 10 minutes |
+| **[Autonomous Setup](SETUP-AUTONOMOUS)** | Let an OpenClaw agent install it for you |
+| **[Configuration](CONFIGURATION)** | Full `openclaw.json` reference |
+
+### Architecture & internals
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](ARCHITECTURE) | Four-part hybrid architecture, workspace layout, bootstrap files |
+| [How It Works](HOW-IT-WORKS) | End-to-end flow of memory capture, storage, and recall |
+| [Memory Protocol](MEMORY-PROTOCOL) | Paste-ready AGENTS.md block |
 
 ### Features
 
 | Document | Description |
 |----------|-------------|
+| [Features Overview](FEATURES) | Categories, decay, tags, auto-classify, source dates |
 | [Credential Vault](CREDENTIALS) | Opt-in encrypted storage for API keys, tokens, passwords |
 | [Session Distillation](SESSION-DISTILLATION) | Extracting durable facts from old conversation logs |
 | [Graph Memory](GRAPH-MEMORY) | Graph-based fact linking and spreading activation |
 | [WAL Crash Resilience](WAL-CRASH-RESILIENCE) | Write-ahead log design and recovery |
 | [Reflection Layer](REFLECTION) | Pattern synthesis from accumulated facts |
+| [Conflicting Memories](CONFLICTING-MEMORIES) | Classify-before-write, supersession, bi-temporal |
+| [Automatic Categories](AUTOMATIC-CATEGORIES) | Category discovery from "other" facts |
+| [Dynamic Derived Data](DYNAMIC-DERIVED-DATA) | Index: tags, categories, decay, and other derived data |
 
-### Analysis
+### Operations & maintenance
+
+| Document | Description |
+|----------|-------------|
+| [CLI Reference](CLI-REFERENCE) | All 21 `openclaw hybrid-mem` commands |
+| [Operations](OPERATIONS) | Day-to-day operational procedures |
+| [Uninstall](UNINSTALL) | Revert to default memory; optional data removal |
+| [Upgrade OpenClaw](UPGRADE-OPENCLAW) | What to do after every OpenClaw upgrade |
+| [Upgrade Plugin](UPGRADE-PLUGIN) | Upgrading the hybrid-memory plugin |
+| [Backup](BACKUP) | What to back up and how to restore |
+| [Maintenance](MAINTENANCE) | File hygiene, periodic review, upgrades |
+| [Troubleshooting](TROUBLESHOOTING) | Common issues, API key behaviour, diagnostics |
+
+### Analysis & planning
 
 | Document | Description |
 |----------|-------------|
 | [Model-Agnostic Analysis](MODEL-AGNOSTIC-ANALYSIS) | Compatibility across LLM providers |
+| [Feedback Roadmap](FEEDBACK-ROADMAP) | Planned improvements and feature requests |
 
 ---
 

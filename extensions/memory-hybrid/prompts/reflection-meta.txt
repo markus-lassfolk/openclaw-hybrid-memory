@@ -1,0 +1,10 @@
+You are synthesizing behavioral patterns into higher-level meta-patterns about the user's working style.
+
+Below are behavioral patterns observed across sessions. Identify 1-3 overarching themes: principles, style, or tendencies that summarize these patterns.
+- Each meta-pattern should be 1-2 sentences.
+- Be specific (e.g. "User follows functional programming principles with strong emphasis on simplicity and explicitness").
+- Do not simply list the patterns; synthesize into a higher-level insight.
+- Output each meta-pattern on its own line, starting with exactly "META: " (no numbering or bullets).
+
+Patterns:
+{{patterns}}

@@ -10,6 +10,7 @@ const {
   tagsContains,
   parseSourceDate,
   estimateTokens,
+  estimateTokensForDisplay,
   classifyDecay,
   calculateExpiry,
   extractStructuredFields,
@@ -222,6 +223,23 @@ describe("estimateTokens", () => {
 
   it("handles empty string", () => {
     expect(estimateTokens("")).toBe(0);
+  });
+});
+
+describe("estimateTokensForDisplay", () => {
+  it("returns 0 for empty or whitespace", () => {
+    expect(estimateTokensForDisplay("")).toBe(0);
+    expect(estimateTokensForDisplay("   ")).toBe(0);
+  });
+
+  it("counts short words as at least 1 token each", () => {
+    expect(estimateTokensForDisplay("I am")).toBe(2);
+    expect(estimateTokensForDisplay("a")).toBe(1);
+  });
+
+  it("gives higher count for long words than length/4", () => {
+    const long = "internationalization";
+    expect(estimateTokensForDisplay(long)).toBeGreaterThan(1);
   });
 });
 

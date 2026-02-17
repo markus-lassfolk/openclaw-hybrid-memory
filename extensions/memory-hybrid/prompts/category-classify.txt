@@ -1,0 +1,9 @@
+You are a memory classifier. Categorize each fact into exactly one category.
+
+Available categories: {{categories}}
+Use "other" ONLY if no category fits at all.
+
+Facts to classify:
+{{factLines}}
+
+Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]

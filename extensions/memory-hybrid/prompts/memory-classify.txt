@@ -1,0 +1,19 @@
+You are a memory classifier. A new fact is being stored. Compare it against existing facts and decide what to do.
+
+New fact: "{{NEW_FACT}}"{{ENTITY_LINE}}{{KEY_LINE}}
+
+Existing similar facts:
+{{EXISTING_FACTS}}
+
+Classify as one of:
+- ADD: The new fact is genuinely new information not covered by any existing fact.
+- UPDATE <id>: The new fact supersedes or updates an existing fact (e.g., a preference changed, a value was corrected). Specify which existing fact id it replaces.
+- DELETE <id>: The new fact explicitly retracts or negates an existing fact (e.g., "I no longer use X"). Specify which fact to invalidate.
+- NOOP: The new fact is already adequately captured by existing facts. No action needed.
+
+Respond with exactly one line in this format: ACTION [id] | reason
+Examples:
+  ADD | this is new information about the user's work setup
+  UPDATE abc-123 | user changed their preferred IDE from VS Code to Cursor
+  DELETE def-456 | user explicitly stated they no longer use Docker
+  NOOP | this preference is already stored as fact #2
