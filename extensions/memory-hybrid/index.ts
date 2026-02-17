@@ -802,12 +802,12 @@ class FactsDB {
     return row?.id ?? null;
   }
 
-  /** FR-008/010: Mark a fact as superseded by a new fact. For deletions, pass null as newId. */
-  supersede(oldId: string, newId: string | null): boolean {
+  /** FR-008/010: Mark a fact as superseded by a new fact. For deletions, pass null as supersedingId. */
+  supersede(oldId: string, supersedingId: string | null): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
     const result = this.liveDb
       .prepare(`UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL`)
-      .run(nowSec, newId, oldId);
+      .run(nowSec, supersedingId, oldId);
     if (result.changes > 0) {
       this.invalidateSupersededCache();
     }
@@ -1595,7 +1595,7 @@ Examples:
     // Validate targetId if UPDATE or DELETE
     if (action === "UPDATE" || action === "DELETE") {
       if (!targetId) {
-        return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
+        return { action: "ADD", reason: `${action} requires a targetId; treating as ADD` };
       }
       const validTarget = existingFacts.find((f) => f.id === targetId);
       if (!validTarget) {
@@ -2725,9 +2725,9 @@ const memoryHybridPlugin = {
         api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
       }
       
-      // TODO: Implement WAL recovery logic here
-      // For now, we just log that WAL is enabled
-      // Recovery would replay uncommitted operations from the WAL
+      // Note: WAL recovery logic will be implemented in a future enhancement.
+      // The current implementation provides the WAL infrastructure and write/cleanup operations.
+      // Recovery would replay uncommitted operations from the WAL on startup after a crash.
     } else {
       wal = null;
     }
