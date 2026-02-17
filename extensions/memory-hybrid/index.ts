@@ -2060,28 +2060,41 @@ async function runReflection(
 
   // Deduplicate against existing patterns using semantic similarity
   const existingPatterns = allFacts.filter((f) => f.category === "pattern");
+  
+  // Pre-compute embeddings for existing patterns to avoid redundant API calls
+  const existingEmbeddings: Array<{ text: string; vector: number[] }> = [];
+  for (const existing of existingPatterns) {
+    try {
+      const vector = await embeddings.embed(existing.text);
+      existingEmbeddings.push({ text: existing.text, vector });
+    } catch (err) {
+      logger.warn(`memory-hybrid: reflect — failed to embed existing pattern: ${err}`);
+    }
+  }
+  
   let stored = 0;
 
   for (const pattern of patterns) {
     // Check for semantic duplicates
     let isDuplicate = false;
+    let patternVector: number[];
     try {
-      const patternVector = await embeddings.embed(pattern);
-      for (const existing of existingPatterns) {
-        const existingVector = await embeddings.embed(existing.text);
-        const dist = Math.sqrt(
-          patternVector.reduce((s, v, k) => s + (v - existingVector[k]) ** 2, 0),
-        );
-        const similarity = 1 / (1 + dist);
-        if (similarity >= 0.85) {
-          isDuplicate = true;
-          logger.info(`memory-hybrid: reflect — skipping duplicate pattern (${(similarity * 100).toFixed(0)}% similar to existing)`);
-          break;
-        }
-      }
+      patternVector = await embeddings.embed(pattern);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect — embedding failed for pattern: ${err}`);
       continue;
+    }
+
+    for (const existing of existingEmbeddings) {
+      const dist = Math.sqrt(
+        patternVector.reduce((s, v, k) => s + (v - existing.vector[k]) ** 2, 0),
+      );
+      const similarity = 1 / (1 + dist);
+      if (similarity >= 0.85) {
+        isDuplicate = true;
+        logger.info(`memory-hybrid: reflect — skipping duplicate pattern (${(similarity * 100).toFixed(0)}% similar to existing)`);
+        break;
+      }
     }
 
     if (isDuplicate) continue;
@@ -2100,8 +2113,8 @@ async function runReflection(
     });
 
     try {
-      const vector = await embeddings.embed(pattern);
-      await vectorDb.store({ text: pattern, vector, importance: 0.9, category: "pattern" });
+      // Reuse the already-computed embedding
+      await vectorDb.store({ text: pattern, vector: patternVector, importance: 0.9, category: "pattern" });
     } catch (err) {
       logger.warn(`memory-hybrid: reflect — vector store failed for pattern: ${err}`);
     }
@@ -3482,6 +3495,13 @@ const memoryHybridPlugin = {
           ),
         }),
         async execute(_toolCallId, params) {
+          if (!cfg.reflection.enabled) {
+            return {
+              content: [{ type: "text", text: "Reflection is disabled. Enable it in config: reflection.enabled = true" }],
+              details: { enabled: false },
+            };
+          }
+
           const { window = cfg.reflection.defaultWindow } = params as { window?: number };
           const validWindow = Math.max(1, Math.min(90, window));
 
@@ -4018,7 +4038,13 @@ const memoryHybridPlugin = {
           .option("--window <days>", "Time window in days (default from config or 14)", String(cfg.reflection.defaultWindow))
           .option("--dry-run", "Show extracted patterns without storing")
           .option("--model <model>", "LLM for reflection (default from config or gpt-4o-mini)", cfg.reflection.model)
-          .action(async (opts: { window?: string; dryRun?: boolean; model?: string }) => {
+          .option("--force", "Run even if reflection is disabled in config")
+          .action(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
+            if (!cfg.reflection.enabled && !opts.force) {
+              console.error("Reflection is disabled in config. Enable it with reflection.enabled = true, or use --force to run anyway.");
+              process.exitCode = 1;
+              return;
+            }
             const window = Math.max(1, parseInt(opts.window || String(cfg.reflection.defaultWindow)));
             const model = opts.model || cfg.reflection.model;
             const result = await runReflection(

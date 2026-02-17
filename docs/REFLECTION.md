@@ -54,7 +54,7 @@ Rules:
 
 ### 3. Pattern Extraction
 
-The LLM response is parsed for patterns (lines starting with `PATTERN:`):
+The LLM response is parsed for patterns (lines starting with `PATTERN:`). Each pattern must be between 20-500 characters to ensure quality and prevent trivial or overly verbose patterns.
 
 ```
 PATTERN: User consistently favors functional/compositional patterns over OOP
@@ -91,7 +91,12 @@ openclaw hybrid-mem reflect --dry-run
 
 # Use different model
 openclaw hybrid-mem reflect --model gpt-4o
+
+# Force run even if reflection is disabled in config
+openclaw hybrid-mem reflect --force
 ```
+
+**Note**: The CLI command checks if reflection is enabled in config. Use `--force` to bypass this check.
 
 ### Agent Tool
 
@@ -249,6 +254,14 @@ Output: "User follows functional programming principles with strong emphasis on 
 
 ## Troubleshooting
 
+### Reflection is disabled
+
+**Cause**: The `reflection.enabled` config is set to `false` (default).
+
+**Solution**:
+- Enable in config: set `reflection.enabled = true` in `~/.openclaw/openclaw.json`
+- Or use `--force` flag to run anyway: `openclaw hybrid-mem reflect --force`
+
 ### No patterns extracted
 
 **Cause**: Not enough observations in the time window, or observations are too diverse.
@@ -283,7 +296,10 @@ Options:
   --window <days>    Time window in days (default: from config or 14)
   --dry-run          Show extracted patterns without storing
   --model <model>    LLM for reflection (default: from config or gpt-4o-mini)
+  --force            Run even if reflection is disabled in config
 ```
+
+**Note**: Requires `reflection.enabled = true` in config, or use `--force` to bypass.
 
 ### Tool
 
