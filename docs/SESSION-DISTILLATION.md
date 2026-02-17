@@ -476,8 +476,12 @@ Output must be valid JSONL. One fact per line. NO markdown, NO code fences, NO f
 
 ## Further Reading
 
-- [Hybrid Memory Manager v3 (docs/hybrid-memory-manager-v3.md)](hybrid-memory-manager-v3.md) — Full deployment reference
+- [README](../README.md) — Project overview and all docs
+- [QUICKSTART.md](QUICKSTART.md) — Installation and first run
 - [SETUP-AUTONOMOUS.md](SETUP-AUTONOMOUS.md) — AI-friendly autonomous setup
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) — `distill-window`, `record-distill`, `extract-daily` commands
+- [CREDENTIALS.md](CREDENTIALS.md) — How credentials are routed during distillation
+- [MAINTENANCE.md](MAINTENANCE.md) — Backfill from session logs
 - [Run Report Example (docs/run-reports/example-distillation-report.md)](run-reports/example-distillation-report.md) — Example distillation report (placeholder data)
 
 ---

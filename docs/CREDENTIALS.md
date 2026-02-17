@@ -109,3 +109,13 @@ When detected, a hint is stored and injected at the start of the next turn, prom
 
 - **credential_get**: When a credential has `expires` set and it's within `expiryWarningDays`, a warning is appended to the response.
 - **credential_list**: Items expiring soon are flagged with an expiry date and a ⚠️ marker. A summary block lists how many credentials need rotation.
+
+---
+
+## Related docs
+
+- [README](../README.md) — Project overview and all docs
+- [CONFIGURATION.md](CONFIGURATION.md) — Credentials config settings
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) — `credentials migrate-to-vault` command
+- [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — How distillation routes credentials to vault
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues

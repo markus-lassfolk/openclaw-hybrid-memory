@@ -11,7 +11,7 @@
 
 **Nightly job by default.** Upgrade and snippet-only users now get the session-distillation job without running the full install:
 
-- **Deploy snippet** (`deploy/openclaw.memory-snippet.json`) includes the `nightly-memory-sweep` job.
+- **Deploy snippet** ([deploy/openclaw.memory-snippet.json](../deploy/openclaw.memory-snippet.json)) includes the `nightly-memory-sweep` job.
 - **`openclaw hybrid-mem verify --fix`** adds the nightly job to `openclaw.json` when it is missing.
 
 ### Changed

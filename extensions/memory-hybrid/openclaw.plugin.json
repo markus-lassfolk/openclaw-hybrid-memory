@@ -42,7 +42,7 @@
     },
     "autoRecall.injectionFormat": {
       "label": "Auto-Recall injection format",
-      "help": "full | short | minimal | progressive (progressive = memory index, agent fetches on demand)"
+      "help": "full | short | minimal | progressive | progressive_hybrid (progressive = index; progressive_hybrid = pinned in full + rest as index)"
     },
     "autoRecall.limit": {
       "label": "Auto-Recall limit",
@@ -84,6 +84,22 @@
       "label": "Summarize model",
       "placeholder": "gpt-4o-mini",
       "help": "Model for summarize-when-over-budget (default gpt-4o-mini)"
+    },
+    "autoRecall.progressiveMaxCandidates": {
+      "label": "Progressive max candidates",
+      "help": "Max memories in progressive index (default 15). Used when injectionFormat is progressive or progressive_hybrid."
+    },
+    "autoRecall.progressiveIndexMaxTokens": {
+      "label": "Progressive index max tokens",
+      "help": "Token cap for the index block in progressive mode (default: same as maxTokens)"
+    },
+    "autoRecall.progressiveGroupByCategory": {
+      "label": "Progressive group by category",
+      "help": "Group index lines by category for readability (default false)"
+    },
+    "autoRecall.progressivePinnedRecallCount": {
+      "label": "Progressive pinned recall count",
+      "help": "In progressive_hybrid: facts with recallCount >= this or permanent decay are injected in full (default 3)"
     },
     "captureMaxChars": {
       "label": "Capture max characters",
@@ -226,8 +242,12 @@
               "maxPerMemoryChars": { "type": "number" },
               "injectionFormat": {
                 "type": "string",
-                "enum": ["full", "short", "minimal", "progressive"]
+                "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
               },
+              "progressiveMaxCandidates": { "type": "number" },
+              "progressiveIndexMaxTokens": { "type": "number" },
+              "progressiveGroupByCategory": { "type": "boolean" },
+              "progressivePinnedRecallCount": { "type": "number" },
               "limit": { "type": "number" },
               "minScore": { "type": "number" },
               "preferLongTerm": { "type": "boolean" },
