@@ -54,6 +54,7 @@ If something fails, **`openclaw hybrid-mem verify [--fix]`** reports issues and 
 | Path | Description |
 |------|-------------|
 | **[docs/hybrid-memory-manager-v3.md](docs/hybrid-memory-manager-v3.md)** | Full deployment reference: architecture, config, MEMORY.md template, AGENTS.md Memory Protocol, manual flow (§8), verification, troubleshooting, CLI, upgrades. |
+| **[docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md)** | Graph-based spreading activation (FR-007): typed relationships, zero-LLM recall via graph traversal, auto-linking, configuration, and usage guide. |
 | **[docs/SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md)** | Autonomous setup: point an OpenClaw agent at this file to install, configure, backfill, and verify (option 2 above). |
 | **[deploy/](deploy/)** | Merge-ready `openclaw.memory-snippet.json` (memory-hybrid + memorySearch) and deploy README. |
 | **extensions/memory-hybrid/** | Plugin source: SQLite+FTS5+LanceDB ([README](extensions/memory-hybrid/README.md)). |
@@ -92,6 +93,7 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 
 **Capture & recall**
 - Auto-capture and auto-recall lifecycle hooks
+- **Graph-based spreading activation (FR-007)** — typed relationships (SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON) between facts enable zero-LLM recall via graph traversal; finds conceptually/causally related items that vector search misses. See [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md).
 - **Token control:** configurable auto-recall token cap (`maxTokens`), per-memory truncation (`maxPerMemoryChars`), shorter injection format (`full` / `short` / `minimal`)
 - **Summarize when over budget:** optional LLM summary of candidate memories when over token cap (2–3 sentences injected instead of a long list)
 - Configurable recall limit and vector min score
