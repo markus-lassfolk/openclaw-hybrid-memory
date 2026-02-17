@@ -209,6 +209,30 @@
     "graph.useInRecall": {
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
+    },
+    "procedures.enabled": {
+      "label": "Procedural memory",
+      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills (issue #23)"
+    },
+    "procedures.sessionsDir": {
+      "label": "Session directory",
+      "help": "Path to session JSONL files (default: ~/.openclaw/agents/main/sessions)"
+    },
+    "procedures.minSteps": {
+      "label": "Min steps",
+      "help": "Minimum tool steps to count as a procedure (default: 2)"
+    },
+    "procedures.validationThreshold": {
+      "label": "Validation threshold",
+      "help": "Success count before auto-generating a skill (default: 3)"
+    },
+    "procedures.skillTTLDays": {
+      "label": "Skill TTL (days)",
+      "help": "Procedure confidence TTL / revalidation window (default: 30)"
+    },
+    "procedures.skillsAutoPath": {
+      "label": "Auto-skills path",
+      "help": "Path for auto-generated skills (default: skills/auto)"
     }
   },
   "configSchema": {
@@ -347,6 +371,20 @@
           "useInRecall": { "type": "boolean", "description": "Enable graph traversal in memory_recall (default: true)" }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
+      },
+      "procedures": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable procedural memory (default: true)" },
+          "sessionsDir": { "type": "string", "description": "Session JSONL directory (default: ~/.openclaw/agents/main/sessions)" },
+          "minSteps": { "type": "number", "description": "Min tool steps per procedure (default: 2)" },
+          "validationThreshold": { "type": "number", "description": "Validations before auto-skill (default: 3)" },
+          "skillTTLDays": { "type": "number", "description": "Procedure TTL days (default: 30)" },
+          "skillsAutoPath": { "type": "string", "description": "Path for auto-generated skills (default: skills/auto)" },
+          "requireApprovalForPromote": { "type": "boolean", "description": "Require human move to promote auto-skill (default: true)" }
+        },
+        "description": "Procedural memory: auto-generated skills from learned patterns (issue #23)"
       }
     },
     "required": ["embedding"]

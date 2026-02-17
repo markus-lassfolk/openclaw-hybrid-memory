@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import type { MemoryCategory, DecayClass } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
-import type { MemoryEntry, SearchResult } from "../types/memory.js";
+import type { MemoryEntry, ProcedureEntry, SearchResult } from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 
@@ -117,6 +117,71 @@ export class FactsDB {
 
     // ---- FR-007: Graph-based spreading activation ----
     this.migrateMemoryLinksTable();
+
+    // ---- Procedural memory (issue #23): procedure columns on facts + procedures table ----
+    this.migrateProcedureColumns();
+    this.migrateProceduresTable();
+  }
+
+  /** Procedural memory: add procedure_type, success_count, last_validated, source_sessions to facts. */
+  private migrateProcedureColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("procedure_type")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN procedure_type TEXT`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN success_count INTEGER DEFAULT 0`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_validated INTEGER`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_sessions TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_procedure_type ON facts(procedure_type) WHERE procedure_type IS NOT NULL`,
+    );
+  }
+
+  /** Procedural memory: create procedures table for full recipe storage. */
+  private migrateProceduresTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS procedures (
+        id TEXT PRIMARY KEY,
+        task_pattern TEXT NOT NULL,
+        recipe_json TEXT NOT NULL,
+        procedure_type TEXT DEFAULT 'positive',
+        success_count INTEGER DEFAULT 1,
+        failure_count INTEGER DEFAULT 0,
+        last_validated INTEGER,
+        last_failed INTEGER,
+        confidence REAL DEFAULT 0.5,
+        ttl_days INTEGER DEFAULT 30,
+        promoted_to_skill INTEGER DEFAULT 0,
+        skill_path TEXT,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_procedures_type ON procedures(procedure_type)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_procedures_validated ON procedures(last_validated)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_procedures_confidence ON procedures(confidence)`);
+    this.liveDb.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS procedures_fts USING fts5(
+        task_pattern,
+        content=procedures,
+        content_rowid=rowid,
+        tokenize='porter unicode61'
+      )
+    `);
+    this.liveDb.exec(`
+      CREATE TRIGGER IF NOT EXISTS procedures_fts_ai AFTER INSERT ON procedures BEGIN
+        INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
+      END;
+      CREATE TRIGGER IF NOT EXISTS procedures_fts_ad AFTER DELETE ON procedures BEGIN
+        INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+      END;
+      CREATE TRIGGER IF NOT EXISTS procedures_fts_au AFTER UPDATE ON procedures BEGIN
+        INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+        INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
+      END
+    `);
   }
 
   private migrateTagsColumn(): void {
@@ -315,6 +380,11 @@ export class FactsDB {
       validUntil?: number | null;
       /** FR-010: Id of the fact this one supersedes. */
       supersedesId?: string | null;
+      /** Procedural memory: fact as procedure summary. */
+      procedureType?: "positive" | "negative" | null;
+      successCount?: number;
+      lastValidated?: number | null;
+      sourceSessions?: string | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -344,11 +414,21 @@ export class FactsDB {
     const validFrom = entry.validFrom ?? sourceDate ?? nowSec;
     const validUntil = entry.validUntil ?? null;
     const supersedesId = entry.supersedesId ?? null;
+    const procedureType = entry.procedureType ?? null;
+    const successCount = entry.successCount ?? 0;
+    const lastValidated = entry.lastValidated ?? null;
+    const sourceSessionsRaw = entry.sourceSessions ?? null;
+    const sourceSessionsStr =
+      sourceSessionsRaw == null
+        ? null
+        : typeof sourceSessionsRaw === "string"
+          ? sourceSessionsRaw
+          : JSON.stringify(sourceSessionsRaw);
 
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, procedure_type, success_count, last_validated, source_sessions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -371,6 +451,10 @@ export class FactsDB {
         validFrom,
         validUntil,
         supersedesId,
+        procedureType,
+        successCount,
+        lastValidated,
+        sourceSessionsStr,
       );
 
     return {
@@ -387,6 +471,10 @@ export class FactsDB {
       validFrom,
       validUntil: validUntil ?? undefined,
       supersedesId: supersedesId ?? undefined,
+      procedureType: procedureType ?? undefined,
+      successCount,
+      lastValidated: lastValidated ?? undefined,
+      sourceSessions: sourceSessionsRaw ?? undefined,
     };
   }
 
@@ -707,6 +795,10 @@ export class FactsDB {
       validFrom: (row.valid_from as number) ?? undefined,
       validUntil: (row.valid_until as number) ?? undefined,
       supersedesId: (row.supersedes_id as string) ?? undefined,
+      procedureType: (row.procedure_type as "positive" | "negative") ?? undefined,
+      successCount: (row.success_count as number) ?? undefined,
+      lastValidated: (row.last_validated as number) ?? undefined,
+      sourceSessions: (row.source_sessions as string) ?? undefined,
     };
   }
 
@@ -1023,6 +1115,204 @@ export class FactsDB {
       this.applyPragmas();
     }
     return this.db;
+  }
+
+  // ---------- Procedural memory (issue #23): procedures table CRUD ----------
+
+  private procedureRowToEntry(row: Record<string, unknown>): ProcedureEntry {
+    return {
+      id: row.id as string,
+      taskPattern: row.task_pattern as string,
+      recipeJson: row.recipe_json as string,
+      procedureType: (row.procedure_type as "positive" | "negative") || "positive",
+      successCount: (row.success_count as number) ?? 0,
+      failureCount: (row.failure_count as number) ?? 0,
+      lastValidated: (row.last_validated as number) ?? null,
+      lastFailed: (row.last_failed as number) ?? null,
+      confidence: (row.confidence as number) ?? 0.5,
+      ttlDays: (row.ttl_days as number) ?? 30,
+      promotedToSkill: (row.promoted_to_skill as number) ?? 0,
+      skillPath: (row.skill_path as string) ?? null,
+      createdAt: (row.created_at as number) ?? 0,
+      updatedAt: (row.updated_at as number) ?? 0,
+    };
+  }
+
+  /** Insert or replace a procedure. Returns the procedure id. */
+  upsertProcedure(proc: {
+    id?: string;
+    taskPattern: string;
+    recipeJson: string;
+    procedureType: "positive" | "negative";
+    successCount?: number;
+    failureCount?: number;
+    lastValidated?: number | null;
+    lastFailed?: number | null;
+    confidence?: number;
+    ttlDays?: number;
+    sourceSessionId?: string;
+  }): ProcedureEntry {
+    const id = proc.id ?? randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    const existing = this.getProcedureById(id);
+    if (existing) {
+      const successCount = (proc.successCount ?? existing.successCount);
+      const failureCount = (proc.failureCount ?? existing.failureCount);
+      const confidence = proc.confidence ?? Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount));
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET task_pattern = ?, recipe_json = ?, procedure_type = ?, success_count = ?, failure_count = ?, last_validated = ?, last_failed = ?, confidence = ?, ttl_days = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(
+          proc.taskPattern,
+          proc.recipeJson,
+          proc.procedureType,
+          successCount,
+          failureCount,
+          proc.lastValidated ?? existing.lastValidated,
+          proc.lastFailed ?? existing.lastFailed,
+          confidence,
+          proc.ttlDays ?? existing.ttlDays,
+          now,
+          id,
+        );
+      return this.getProcedureById(id)!;
+    }
+    this.liveDb
+      .prepare(
+        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, last_validated, last_failed, confidence, ttl_days, promoted_to_skill, skill_path, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
+      )
+      .run(
+        id,
+        proc.taskPattern,
+        proc.recipeJson,
+        proc.procedureType,
+        proc.successCount ?? 1,
+        proc.failureCount ?? 0,
+        proc.lastValidated ?? null,
+        proc.lastFailed ?? null,
+        proc.confidence ?? 0.5,
+        proc.ttlDays ?? 30,
+        now,
+        now,
+      );
+    return this.getProcedureById(id)!;
+  }
+
+  getProcedureById(id: string): ProcedureEntry | null {
+    const row = this.liveDb.prepare(`SELECT * FROM procedures WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return this.procedureRowToEntry(row);
+  }
+
+  /** Find procedure by task_pattern hash or normalized match (for dedupe). */
+  findProcedureByTaskPattern(taskPattern: string, limit = 5): ProcedureEntry[] {
+    const safeQuery = taskPattern
+      .replace(/['"]/g, "")
+      .split(/\s+/)
+      .filter((w) => w.length > 1)
+      .slice(0, 5)
+      .map((w) => `"${w}"`)
+      .join(" OR ");
+    if (!safeQuery) return [];
+    try {
+      const rows = this.liveDb
+        .prepare(
+          `SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY rank LIMIT ?`,
+        )
+        .all(safeQuery, limit) as Array<Record<string, unknown>>;
+      return rows.map((r) => this.procedureRowToEntry(r));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Search procedures by task description (FTS). Returns positive procedures first, then negative. */
+  searchProcedures(taskDescription: string, limit = 10): ProcedureEntry[] {
+    const safeQuery = taskDescription
+      .replace(/['"]/g, "")
+      .split(/\s+/)
+      .filter((w) => w.length > 1)
+      .slice(0, 8)
+      .map((w) => `"${w}"`)
+      .join(" OR ");
+    if (!safeQuery) return [];
+    try {
+      const rows = this.liveDb
+        .prepare(
+          `SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type ASC, p.confidence DESC, CASE WHEN p.last_validated IS NULL THEN 1 ELSE 0 END, p.last_validated DESC LIMIT ?`,
+        )
+        .all(safeQuery, limit) as Array<Record<string, unknown>>;
+      return rows.map((r) => this.procedureRowToEntry(r));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Get negative procedures whose task_pattern might match the given description (for warnings). */
+  getNegativeProceduresMatching(taskDescription: string, limit = 5): ProcedureEntry[] {
+    const all = this.searchProcedures(taskDescription, limit * 2);
+    return all.filter((p) => p.procedureType === "negative").slice(0, limit);
+  }
+
+  /** Record a successful use of a procedure (bump success_count, last_validated). */
+  recordProcedureSuccess(id: string): boolean {
+    const now = Math.floor(Date.now() / 1000);
+    const proc = this.getProcedureById(id);
+    if (!proc) return false;
+    const successCount = proc.successCount + 1;
+    const confidence = Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount));
+    this.liveDb
+      .prepare(
+        `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(successCount, now, confidence, now, id);
+    return true;
+  }
+
+  /** Record a failed use (bump failure_count, last_failed). */
+  recordProcedureFailure(id: string): boolean {
+    const now = Math.floor(Date.now() / 1000);
+    const proc = this.getProcedureById(id);
+    if (!proc) return false;
+    const failureCount = proc.failureCount + 1;
+    const confidence = Math.max(0.1, 0.5 + 0.1 * (proc.successCount - failureCount));
+    this.liveDb
+      .prepare(
+        `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(failureCount, now, confidence, now, id);
+    return true;
+  }
+
+  /** Procedures with success_count >= threshold and not yet promoted (for auto skill generation). */
+  getProceduresReadyForSkill(validationThreshold: number, limit = 50): ProcedureEntry[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM procedures WHERE procedure_type = 'positive' AND success_count >= ? AND promoted_to_skill = 0 ORDER BY success_count DESC, last_validated DESC LIMIT ?`,
+      )
+      .all(validationThreshold, limit) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.procedureRowToEntry(r));
+  }
+
+  /** Mark procedure as promoted to skill (skill_path set). */
+  markProcedurePromoted(id: string, skillPath: string): boolean {
+    const result = this.liveDb
+      .prepare(`UPDATE procedures SET promoted_to_skill = 1, skill_path = ?, updated_at = ? WHERE id = ?`)
+      .run(skillPath, Math.floor(Date.now() / 1000), id);
+    return result.changes > 0;
+  }
+
+  /** Procedures that are past TTL (last_validated older than ttl_days). For revalidation/decay. */
+  getStaleProcedures(ttlDays: number, limit = 100): ProcedureEntry[] {
+    const cutoff = Math.floor(Date.now() / 1000) - ttlDays * 24 * 3600;
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM procedures WHERE last_validated < ? OR (last_validated IS NULL AND created_at < ?) ORDER BY last_validated DESC NULLS LAST LIMIT ?`,
+      )
+      .all(cutoff, cutoff, limit) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.procedureRowToEntry(r));
   }
 
   close(): void {
