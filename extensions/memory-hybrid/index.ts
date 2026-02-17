@@ -1018,7 +1018,7 @@ class FactsDB {
     limit = 3,
     minScore = 0.7
   ): Promise<Array<{ id: string; score: number }>> {
-    const fact = this.get(factId);
+    const fact = this.getById(factId);
     if (!fact) return [];
 
     try {
@@ -2380,21 +2380,50 @@ const memoryHybridPlugin = {
 
           const results = mergeResults(sqliteResults, lanceResults, limit);
 
-          if (results.length === 0) {
+          // Graph traversal: find connected facts (FR-007)
+          let graphResults: SearchResult[] = [];
+          if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
+            try {
+              const startIds = results.map((r) => r.entry.id);
+              const connectedIds = factsDb.traverseGraph(startIds, cfg.graph.maxTraversalDepth);
+              
+              // Get facts for connected IDs (excluding those already in results)
+              const seenIds = new Set(startIds);
+              for (const id of connectedIds) {
+                if (!seenIds.has(id)) {
+                  const fact = factsDb.getById(id);
+                  if (fact) {
+                    graphResults.push({
+                      entry: fact,
+                      score: 0.5, // Lower score for graph-discovered facts
+                      backend: "sqlite",
+                    });
+                  }
+                }
+              }
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: graph traversal failed: ${err}`);
+            }
+          }
+
+          // Merge graph results with original results
+          const allResults = [...results, ...graphResults].slice(0, limit * 2); // Allow more results with graph
+
+          if (allResults.length === 0) {
             return {
               content: [{ type: "text", text: "No relevant memories found." }],
               details: { count: 0 },
             };
           }
 
-          const text = results
+          const text = allResults
             .map(
               (r, i) =>
                 `${i + 1}. [${r.backend}/${r.entry.category}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%)`,
             )
             .join("\n");
 
-          const sanitized = results.map((r) => ({
+          const sanitized = allResults.map((r) => ({
             id: r.entry.id,
             text: r.entry.text,
             category: r.entry.category,
@@ -2408,14 +2437,15 @@ const memoryHybridPlugin = {
               : undefined,
           }));
 
+          const graphNote = graphResults.length > 0 ? ` (includes ${graphResults.length} graph-connected facts)` : "";
           return {
             content: [
               {
                 type: "text",
-                text: `Found ${results.length} memories:\n\n${text}`,
+                text: `Found ${allResults.length} memories${graphNote}:\n\n${text}`,
               },
             ],
-            details: { count: results.length, memories: sanitized },
+            details: { count: allResults.length, memories: sanitized, graphConnected: graphResults.length },
           };
         },
       },
@@ -2592,14 +2622,36 @@ const memoryHybridPlugin = {
             api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
           }
 
+          // Auto-linking: create RELATED_TO links to similar facts (FR-007)
+          let linkedCount = 0;
+          if (cfg.graph.enabled && cfg.graph.autoLink) {
+            try {
+              const similarFacts = await factsDb.findSimilarFactsForLinking(
+                entry.id,
+                vectorDb,
+                embeddings,
+                cfg.graph.autoLinkLimit,
+                cfg.graph.autoLinkMinScore
+              );
+              
+              for (const similar of similarFacts) {
+                factsDb.createLink(entry.id, similar.id, "RELATED_TO", similar.score);
+                linkedCount++;
+              }
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: auto-linking failed: ${err}`);
+            }
+          }
+
+          const linkInfo = linkedCount > 0 ? ` (linked to ${linkedCount} related facts)` : "";
           return {
             content: [
               {
                 type: "text",
-                text: `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]`,
+                text: `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${linkInfo}`,
               },
             ],
-            details: { action: "created", id: entry.id, backend: "both", decayClass: entry.decayClass },
+            details: { action: "created", id: entry.id, backend: "both", decayClass: entry.decayClass, linksCreated: linkedCount },
           };
         },
       },
@@ -2712,6 +2764,136 @@ const memoryHybridPlugin = {
         },
       },
       { name: "memory_forget" },
+    );
+
+    // Graph-based memory link tools (FR-007)
+    api.registerTool(
+      {
+        name: "memory_link",
+        label: "Create Memory Link",
+        description:
+          "Create a typed relationship link between two facts. Use this to establish causal, hierarchical, or semantic relationships.",
+        parameters: Type.Object({
+          sourceFact: Type.String({ description: "Source fact ID" }),
+          targetFact: Type.String({ description: "Target fact ID" }),
+          linkType: stringEnum(LINK_TYPES as unknown as readonly string[]),
+          strength: Type.Optional(
+            Type.Number({ description: "Link strength 0.0-1.0 (default: 1.0)" }),
+          ),
+        }),
+        async execute(_toolCallId, params) {
+          const {
+            sourceFact,
+            targetFact,
+            linkType,
+            strength = 1.0,
+          } = params as {
+            sourceFact: string;
+            targetFact: string;
+            linkType: LinkType;
+            strength?: number;
+          };
+
+          // Validate that both facts exist
+          const source = factsDb.getById(sourceFact);
+          const target = factsDb.getById(targetFact);
+
+          if (!source) {
+            return {
+              content: [{ type: "text", text: `Source fact ${sourceFact} not found.` }],
+              details: { error: "source_not_found" },
+            };
+          }
+
+          if (!target) {
+            return {
+              content: [{ type: "text", text: `Target fact ${targetFact} not found.` }],
+              details: { error: "target_not_found" },
+            };
+          }
+
+          const linkId = factsDb.createLink(sourceFact, targetFact, linkType, strength);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Created ${linkType} link from "${source.text.slice(0, 50)}..." to "${target.text.slice(0, 50)}..." (strength: ${strength})`,
+              },
+            ],
+            details: { action: "link_created", linkId, sourceFact, targetFact, linkType, strength },
+          };
+        },
+      },
+      { name: "memory_link" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_graph",
+        label: "Explore Memory Graph",
+        description:
+          "Explore the graph of connected facts. Shows all linked facts for a given fact ID with relationship types.",
+        parameters: Type.Object({
+          factId: Type.String({ description: "Fact ID to explore" }),
+          depth: Type.Optional(
+            Type.Number({ description: "Traversal depth (default: 1, max: 3)" }),
+          ),
+        }),
+        async execute(_toolCallId, params) {
+          const { factId, depth = 1 } = params as {
+            factId: string;
+            depth?: number;
+          };
+
+          const fact = factsDb.getById(factId);
+          if (!fact) {
+            return {
+              content: [{ type: "text", text: `Fact ${factId} not found.` }],
+              details: { error: "fact_not_found" },
+            };
+          }
+
+          const maxDepth = Math.min(Math.max(1, depth), 3);
+          const connectedIds = factsDb.traverseGraph([factId], maxDepth);
+          
+          // Get direct links for the fact
+          const directLinks = factsDb.getLinksForFact(factId);
+
+          const linkDescriptions = directLinks.map((link) => {
+            const otherId = link.direction === "outgoing" ? link.targetFact : link.sourceFact;
+            const otherFact = factsDb.getById(otherId);
+            const arrow = link.direction === "outgoing" ? "→" : "←";
+            return `  ${arrow} [${link.linkType}] ${otherFact?.text.slice(0, 60) || otherId} (strength: ${link.strength.toFixed(2)})`;
+          });
+
+          const text = [
+            `Fact: "${fact.text.slice(0, 100)}${fact.text.length > 100 ? "..." : ""}"`,
+            ``,
+            `Direct links (${directLinks.length}):`,
+            ...linkDescriptions,
+            ``,
+            `Total connected facts (depth ${maxDepth}): ${connectedIds.size - 1}`, // -1 to exclude the fact itself
+          ].join("\n");
+
+          return {
+            content: [{ type: "text", text }],
+            details: {
+              factId,
+              directLinks: directLinks.length,
+              totalConnected: connectedIds.size - 1,
+              links: directLinks.map((l) => ({
+                id: l.id,
+                type: l.linkType,
+                direction: l.direction,
+                otherId: l.direction === "outgoing" ? l.targetFact : l.sourceFact,
+                strength: l.strength,
+              })),
+            },
+          };
+        },
+      },
+      { name: "memory_graph" },
     );
 
     // Credential tools (opt-in)
