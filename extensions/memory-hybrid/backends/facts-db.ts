@@ -144,7 +144,13 @@ export class FactsDB {
     );
   }
 
-  /** FR-006: Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId. */
+  /**
+   * FR-006: Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId.
+   * ⚠️ SECURITY: Callers MUST derive scope filter values from trusted runtime identity (authenticated user/agent/session).
+   * Do NOT pass arbitrary caller-controlled tool/CLI parameters here — that enables cross-tenant data leakage
+   * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
+   * (set by integration layer) rather than user-supplied parameters. See docs/MEMORY-SCOPING.md.
+   */
   private scopeFilterClause(filter: ScopeFilter | null | undefined): { clause: string; params: Record<string, unknown> } {
     if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
       return { clause: "", params: {} };
@@ -168,7 +174,10 @@ export class FactsDB {
     return { clause: "AND " + parts.join(" "), params };
   }
 
-  /** FR-006: Build SQL fragment for scope filtering with positional params (for lookup/getAll). */
+  /**
+   * FR-006: Build SQL fragment for scope filtering with positional params (for lookup/getAll).
+   * Same security constraints as scopeFilterClause — derive from trusted identity only.
+   */
   private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: unknown[] } {
     if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
       return { clause: "", params: [] };
@@ -589,6 +598,15 @@ export class FactsDB {
       if (this.setTier(id, "warm")) counts.warm++;
     }
 
+    // 2b) Collect existing HOT facts with blocker tag (avoid N+1 in step 4)
+    const existingHotBlockerRows = this.liveDb
+      .prepare(
+        `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'`,
+      )
+      .all(nowSec) as Array<{ id: string }>;
+    const allBlockerIdSet = new Set(existingHotBlockerRows.map((r) => r.id));
+
     // 3) Active blockers -> HOT (tag 'blocker'); cap HOT tier by hotMaxFacts and hotMaxTokens
     const blockerRows = this.liveDb
       .prepare(
@@ -608,6 +626,7 @@ export class FactsDB {
       hotIds.push(row.id);
     }
     for (const id of hotIds) {
+      allBlockerIdSet.add(id);
       if (this.setTier(id, "hot")) counts.hot++;
     }
 
@@ -617,16 +636,9 @@ export class FactsDB {
         `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
       )
       .all(nowSec) as Array<{ id: string }>;
-    const blockerIdSet = new Set(hotIds);
-    let demoted = 0;
     for (const { id } of hotRows) {
-      if (blockerIdSet.has(id)) continue;
-      const tagsRow = this.liveDb.prepare(`SELECT tags FROM facts WHERE id = ?`).get(id) as { tags: string | null } | undefined;
-      const hasBlocker = tagsRow && tagsRow.tags && tagsRow.tags.toLowerCase().includes("blocker");
-      if (!hasBlocker && this.setTier(id, "warm")) {
-        demoted++;
-        counts.warm++;
-      }
+      if (allBlockerIdSet.has(id)) continue;
+      if (this.setTier(id, "warm")) counts.warm++;
     }
 
     return counts;
