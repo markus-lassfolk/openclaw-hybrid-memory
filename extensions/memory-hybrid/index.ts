@@ -41,7 +41,7 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
@@ -4845,6 +4845,35 @@ const memoryHybridPlugin = {
           });
         }
 
+        async function runUpgradeForCli(): Promise<UpgradeCliResult> {
+          const extDir = dirname(fileURLToPath(import.meta.url));
+          const { spawnSync } = await import("node:child_process");
+          try {
+            rmSync(extDir, { recursive: true, force: true });
+          } catch (e) {
+            return { ok: false, error: `Could not remove plugin directory: ${e}. Run: rm -rf ${extDir} && openclaw plugins install openclaw-hybrid-memory@latest` };
+          }
+          const r = spawnSync("openclaw", ["plugins", "install", "openclaw-hybrid-memory@latest"], {
+            stdio: "inherit",
+            cwd: homedir(),
+            shell: true,
+          });
+          if (r.status !== 0) {
+            return { ok: false, error: `Install failed (exit ${r.status}). Run manually: openclaw plugins install openclaw-hybrid-memory@latest` };
+          }
+          let version = "latest";
+          try {
+            const pkgPath = join(extDir, "package.json");
+            if (existsSync(pkgPath)) {
+              const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
+              version = pkg.version ?? version;
+            }
+          } catch {
+            // ignore
+          }
+          return { ok: true, version, pluginDir: extDir };
+        }
+
         function runUninstallForCli(opts: { cleanAll: boolean; leaveConfig: boolean }): UninstallCliResult {
           const openclawDir = join(homedir(), ".openclaw");
           const configPath = join(openclawDir, "openclaw.json");
@@ -4918,6 +4947,7 @@ const memoryHybridPlugin = {
           runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
+          runUpgrade: () => runUpgradeForCli(),
           runFindDuplicates: (opts) =>
             runFindDuplicates(factsDb, embeddings, opts, api.logger),
           runConsolidate: (opts) =>

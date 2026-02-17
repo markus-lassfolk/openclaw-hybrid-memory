@@ -64,6 +64,10 @@ export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => vo
 
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
+export type UpgradeCliResult =
+  | { ok: true; version: string; pluginDir: string }
+  | { ok: false; error: string };
+
 export type UninstallCliResult =
   | { outcome: "config_updated"; pluginId: string; cleaned: string[] }
   | { outcome: "config_not_found"; pluginId: string; cleaned: string[] }
@@ -88,6 +92,7 @@ export type HybridMemCliContext = {
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
+  runUpgrade: () => Promise<UpgradeCliResult>;
   runFindDuplicates: (opts: {
     threshold: number;
     includeStructured: boolean;
@@ -147,6 +152,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runDistill,
     runMigrateToVault,
     runUninstall,
+    runUpgrade,
     runFindDuplicates,
     runConsolidate,
     runReflection,
@@ -786,6 +792,20 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         return;
       }
       console.log(`Promoted memory ${opts.id} to scope "${scope}"${scope === "agent" ? ` (agent: ${opts.scopeTarget})` : ""}.`);
+    });
+
+  mem
+    .command("upgrade")
+    .description("Upgrade to the latest version from npm. Removes current install, fetches latest, rebuilds native deps. Restart the gateway afterward.")
+    .action(async () => {
+      const result = await runUpgrade();
+      if (!result.ok) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Upgraded to openclaw-hybrid-memory@${result.version}`);
+      console.log("Restart the gateway to load the new version: openclaw gateway stop && openclaw gateway start");
     });
 
   mem
