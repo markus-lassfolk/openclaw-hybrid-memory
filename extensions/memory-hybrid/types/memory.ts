@@ -40,6 +40,11 @@ export type MemoryEntry = {
   scope?: MemoryScope;
   /** FR-006: Scope target (e.g. userId for user scope, agentId for agent scope, sessionId for session scope). Null for global. */
   scopeTarget?: string | null;
+  /** Procedural memory (issue #23): fact is a procedure summary. */
+  procedureType?: "positive" | "negative" | null;
+  successCount?: number;
+  lastValidated?: number | null;
+  sourceSessions?: string | null;
 };
 
 /** FR-006: Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */
@@ -51,6 +56,31 @@ export type ScopeFilter = {
   userId?: string | null;
   agentId?: string | null;
   sessionId?: string | null;
+};
+
+/** One step in a procedure recipe. */
+export type ProcedureStep = {
+  tool: string;
+  args?: Record<string, unknown>;
+  summary?: string;
+};
+
+/** Stored procedure (procedures table). */
+export type ProcedureEntry = {
+  id: string;
+  taskPattern: string;
+  recipeJson: string;
+  procedureType: "positive" | "negative";
+  successCount: number;
+  failureCount: number;
+  lastValidated: number | null;
+  lastFailed: number | null;
+  confidence: number;
+  ttlDays: number;
+  promotedToSkill: number;
+  skillPath: string | null;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type SearchResult = {

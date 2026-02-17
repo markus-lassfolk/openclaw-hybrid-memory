@@ -62,6 +62,21 @@ export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => v
 export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; skipped: number; dryRun: boolean };
 export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
+export type ExtractProceduresResult = {
+  sessionsScanned: number;
+  proceduresStored: number;
+  positiveCount: number;
+  negativeCount: number;
+  dryRun: boolean;
+};
+
+export type GenerateAutoSkillsResult = {
+  generated: number;
+  skipped: number;
+  dryRun: boolean;
+  paths: string[];
+};
+
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
 export type UpgradeCliResult =
@@ -90,6 +105,8 @@ export type HybridMemCliContext = {
   runExtractDaily: (opts: { days: number; dryRun: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
+  runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean }) => Promise<ExtractProceduresResult>;
+  runGenerateAutoSkills: (opts: { dryRun: boolean }) => Promise<GenerateAutoSkillsResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: () => Promise<UpgradeCliResult>;
@@ -150,6 +167,8 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractDaily,
     runBackfill,
     runDistill,
+    runExtractProcedures,
+    runGenerateAutoSkills,
     runMigrateToVault,
     runUninstall,
     runUpgrade,
@@ -591,6 +610,42 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log(
           `\nBackfill done: ${result.stored} new facts stored, ${result.skipped} duplicates skipped (${result.candidates} candidates from ${result.files} files)`,
         );
+      }
+    });
+
+  mem
+    .command("extract-procedures")
+    .description("Procedural memory: extract tool-call sequences from session JSONL and store as procedures")
+    .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
+    .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
+    .option("--dry-run", "Show what would be stored without writing")
+    .action(async (opts: { dir?: string; days?: string; dryRun?: boolean }) => {
+      const days = opts.days ? parseInt(opts.days, 10) : undefined;
+      const result = await runExtractProcedures({
+        sessionDir: opts.dir,
+        days: Number.isFinite(days) ? days : undefined,
+        dryRun: !!opts.dryRun,
+      });
+      if (result.dryRun) {
+        console.log(`\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`);
+      } else {
+        console.log(
+          `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
+        );
+      }
+    });
+
+  mem
+    .command("generate-auto-skills")
+    .description("Generate SKILL.md + recipe.json in skills/auto/ for procedures validated enough times")
+    .option("--dry-run", "Show what would be generated without writing")
+    .action(async (opts: { dryRun?: boolean }) => {
+      const result = await runGenerateAutoSkills({ dryRun: !!opts.dryRun });
+      if (result.dryRun) {
+        console.log(`\n[dry-run] Would generate ${result.generated} auto-skills`);
+      } else {
+        console.log(`\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`);
+        for (const p of result.paths) console.log(`  ${p}`);
       }
     });
 
