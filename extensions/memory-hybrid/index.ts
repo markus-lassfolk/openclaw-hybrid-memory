@@ -3276,12 +3276,10 @@ const memoryHybridPlugin = {
             "Apply an approved persona proposal to its target identity file. Creates a backup and logs the change.",
           parameters: Type.Object({
             proposalId: Type.String({ description: "The approved proposal ID to apply" }),
-            workspaceRoot: Type.Optional(Type.String({ description: "Workspace root path (optional, will try to detect)" })),
           }),
           async execute(_toolCallId, params) {
-            const { proposalId, workspaceRoot } = params as {
+            const { proposalId } = params as {
               proposalId: string;
-              workspaceRoot?: string;
             };
 
             const proposal = proposalsDb!.get(proposalId);
@@ -3304,9 +3302,8 @@ const memoryHybridPlugin = {
               };
             }
 
-            // Try to find workspace root
-            const wsRoot = workspaceRoot || process.env.OPENCLAW_WORKSPACE || homedir();
-            const targetPath = join(wsRoot, proposal.targetFile);
+            // Resolve target file path using api.resolvePath (consistent with rest of plugin)
+            const targetPath = api.resolvePath(proposal.targetFile);
 
             // Check if file exists
             if (!existsSync(targetPath)) {
