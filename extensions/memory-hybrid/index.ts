@@ -910,6 +910,36 @@ class FactsDB {
     }));
   }
 
+  /** Get all non-expired facts including superseded ones (for filtering LanceDB results). */
+  getAllIncludingSuperseded(): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`)
+      .all(nowSec) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      category: row.category as MemoryCategory,
+      importance: row.importance as number,
+      entity: (row.entity as string) || null,
+      key: (row.key as string) || null,
+      value: (row.value as string) || null,
+      source: row.source as string,
+      createdAt: row.created_at as number,
+      sourceDate: (row.source_date as number) ?? undefined,
+      tags: parseTags(row.tags as string | null),
+      decayClass: (row.decay_class as DecayClass) || "stable",
+      expiresAt: (row.expires_at as number) || null,
+      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
+      confidence: (row.confidence as number) || 1.0,
+      summary: (row.summary as string) || undefined,
+      recallCount: (row.recall_count as number) || 0,
+      lastAccessed: (row.last_accessed as number) || null,
+      supersededAt: (row.superseded_at as number) || null,
+      supersededBy: (row.superseded_by as string) || null,
+    }));
+  }
+
   count(): number {
     const row = this.liveDb
       .prepare(`SELECT COUNT(*) as cnt FROM facts`)
@@ -1421,6 +1451,7 @@ function mergeResults(
   sqliteResults: SearchResult[],
   lanceResults: SearchResult[],
   limit: number,
+  factsDb?: FactsDB,
 ): SearchResult[] {
   const seen = new Set<string>();
   const merged: SearchResult[] = [];
@@ -1432,13 +1463,26 @@ function mergeResults(
     }
   }
 
+  // Build a set of superseded fact texts for filtering LanceDB results
+  const supersededTexts = new Set<string>();
+  if (factsDb) {
+    const allFacts = factsDb.getAllIncludingSuperseded();
+    for (const fact of allFacts) {
+      if (fact.supersededAt) {
+        supersededTexts.add(fact.text.toLowerCase());
+      }
+    }
+  }
+
   for (const r of lanceResults) {
+    // Skip if this text matches a superseded fact
+    const isSuperseded = supersededTexts.has(r.entry.text.toLowerCase());
     const isDupe = merged.some(
       (m) =>
         m.entry.id === r.entry.id ||
         m.entry.text.toLowerCase() === r.entry.text.toLowerCase(),
     );
-    if (!isDupe) {
+    if (!isDupe && !isSuperseded) {
       merged.push(r);
     }
   }
@@ -2739,7 +2783,7 @@ const memoryHybridPlugin = {
             }
           }
 
-          const results = mergeResults(sqliteResults, lanceResults, limit);
+          const results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
 
           if (results.length === 0) {
             return {
@@ -3159,7 +3203,7 @@ const memoryHybridPlugin = {
               lanceResults = await vectorDb.search(vector, 5, 0.7);
             } catch {}
 
-            const results = mergeResults(sqlResults, lanceResults, 5);
+            const results = mergeResults(sqlResults, lanceResults, 5, factsDb);
 
             if (results.length === 0) {
               return {
@@ -3785,7 +3829,7 @@ const memoryHybridPlugin = {
               const vector = await embeddings.embed(query);
               lanceResults = await vectorDb.search(vector, limit, 0.3);
             }
-            const merged = mergeResults(sqlResults, lanceResults, limit);
+            const merged = mergeResults(sqlResults, lanceResults, limit, factsDb);
 
             const output = merged.map((r) => ({
               id: r.entry.id,
@@ -4736,7 +4780,7 @@ const memoryHybridPlugin = {
             );
           }
 
-          let candidates = mergeResults(ftsResults, lanceResults, limit);
+          let candidates = mergeResults(ftsResults, lanceResults, limit, factsDb);
 
           const { entityLookup } = cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
