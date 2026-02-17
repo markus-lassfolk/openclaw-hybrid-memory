@@ -2240,6 +2240,7 @@ let proposalsDb: ProposalsDB | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
+let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
 
 const PLUGIN_ID = "openclaw-hybrid-memory";
 
@@ -3205,173 +3206,19 @@ const memoryHybridPlugin = {
         { name: "persona_proposals_list" },
       );
 
-      api.registerTool(
-        {
-          name: "persona_proposal_review",
-          label: "Review Persona Proposal",
-          description:
-            "Approve or reject a persona proposal. Only approved proposals can be applied to identity files.",
-          parameters: Type.Object({
-            proposalId: Type.String({ description: "The proposal ID to review" }),
-            action: stringEnum(["approve", "reject"] as const),
-            reviewedBy: Type.Optional(Type.String({ description: "Name/ID of reviewer (optional)" })),
-          }),
-          async execute(_toolCallId, params) {
-            const { proposalId, action, reviewedBy } = params as {
-              proposalId: string;
-              action: "approve" | "reject";
-              reviewedBy?: string;
-            };
+      // NOTE: persona_proposal_review and persona_proposal_apply are intentionally
+      // NOT registered as agent-callable tools. They are CLI-only commands to ensure
+      // human approval is required. This prevents agents from self-approving and
+      // applying their own proposals, maintaining the security guarantee.
 
-            const proposal = proposalsDb!.get(proposalId);
-            if (!proposal) {
-              return {
-                content: [{ type: "text", text: `Proposal ${proposalId} not found.` }],
-                details: { error: "not_found" },
-              };
-            }
-
-            if (proposal.status !== "pending") {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`,
-                  },
-                ],
-                details: { error: "already_reviewed", currentStatus: proposal.status },
-              };
-            }
-
-            const newStatus = action === "approve" ? "approved" : "rejected";
-            const updated = proposalsDb!.updateStatus(proposalId, newStatus, reviewedBy);
-
-            auditProposal(action, proposalId, {
-              reviewedBy: reviewedBy ?? "unknown",
-              previousStatus: "pending",
-              newStatus,
-            });
-
-            api.logger.info(`memory-hybrid: proposal ${proposalId} ${action}d by ${reviewedBy ?? "unknown"}`);
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Proposal ${proposalId} ${action}d.\n\n${action === "approve" ? "Use persona_proposal_apply to apply the change to the identity file." : "Proposal rejected and will not be applied."}`,
-                },
-              ],
-              details: { proposalId, status: newStatus, reviewedBy: reviewedBy ?? null },
-            };
-          },
-        },
-        { name: "persona_proposal_review" },
-      );
-
-      api.registerTool(
-        {
-          name: "persona_proposal_apply",
-          label: "Apply Approved Persona Proposal",
-          description:
-            "Apply an approved persona proposal to its target identity file. Creates a backup and logs the change.",
-          parameters: Type.Object({
-            proposalId: Type.String({ description: "The approved proposal ID to apply" }),
-          }),
-          async execute(_toolCallId, params) {
-            const { proposalId } = params as {
-              proposalId: string;
-            };
-
-            const proposal = proposalsDb!.get(proposalId);
-            if (!proposal) {
-              return {
-                content: [{ type: "text", text: `Proposal ${proposalId} not found.` }],
-                details: { error: "not_found" },
-              };
-            }
-
-            if (proposal.status !== "approved") {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`,
-                  },
-                ],
-                details: { error: "not_approved", currentStatus: proposal.status },
-              };
-            }
-
-            // Resolve target file path using api.resolvePath (consistent with rest of plugin)
-            const targetPath = api.resolvePath(proposal.targetFile);
-
-            // Check if file exists
-            if (!existsSync(targetPath)) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Target file ${proposal.targetFile} not found at ${targetPath}. Cannot apply proposal.`,
-                  },
-                ],
-                details: { error: "file_not_found", targetPath },
-              };
-            }
-
-            // Create backup
-            const backupPath = `${targetPath}.backup-${Date.now()}`;
-            try {
-              const original = readFileSync(targetPath, "utf-8");
-              writeFileSync(backupPath, original);
-
-              // Apply change (simple append for now - in production, you'd want smarter diff application)
-              const timestamp = new Date().toISOString();
-              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${proposal.observation} -->\n\n${proposal.suggestedChange}\n`;
-              writeFileSync(targetPath, original + changeBlock);
-
-              proposalsDb!.markApplied(proposalId);
-
-              auditProposal("applied", proposalId, {
-                targetFile: proposal.targetFile,
-                targetPath,
-                backupPath,
-                timestamp,
-              });
-
-              api.logger.info(`memory-hybrid: proposal ${proposalId} applied to ${proposal.targetFile}`);
-
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Proposal ${proposalId} applied to ${proposal.targetFile}.\n\nBackup saved: ${backupPath}\n\nChange:\n${proposal.suggestedChange}`,
-                  },
-                ],
-                details: { proposalId, status: "applied", targetPath, backupPath },
-              };
-            } catch (err) {
-              api.logger.error(`memory-hybrid: failed to apply proposal ${proposalId}: ${err}`);
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Failed to apply proposal: ${String(err)}`,
-                  },
-                ],
-                details: { error: "apply_failed", message: String(err) },
-              };
-            }
-          },
-        },
-        { name: "persona_proposal_apply" },
-      );
-
-      // Periodic cleanup of expired proposals
-      setInterval(() => {
+      // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop)
+      proposalsPruneTimer = setInterval(() => {
         try {
-          const pruned = proposalsDb!.pruneExpired();
-          if (pruned > 0) {
-            api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+          if (proposalsDb) {
+            const pruned = proposalsDb.pruneExpired();
+            if (pruned > 0) {
+              api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+            }
           }
         } catch (err) {
           api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
@@ -4851,6 +4698,125 @@ const memoryHybridPlugin = {
     }
 
     // ========================================================================
+    // Persona Proposals CLI Commands (human-only, not agent-callable)
+    // ========================================================================
+
+    if (cfg.personaProposals.enabled && proposalsDb) {
+      // Helper functions for CLI commands
+      const auditProposal = (action: string, proposalId: string, details?: any) => {
+        const auditDir = join(dirname(resolvedSqlitePath), "memory", "decisions");
+        mkdirSync(auditDir, { recursive: true });
+        const timestamp = new Date().toISOString();
+        const entry = {
+          timestamp,
+          action,
+          proposalId,
+          ...details,
+        };
+        const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
+        try {
+          writeFileSync(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
+        } catch (err) {
+          console.error(`Audit log write failed: ${err}`);
+        }
+      };
+
+      api.registerCli(({ program }) => {
+        const proposals = program
+          .command("proposals")
+          .description("Manage persona proposals (human-only commands)");
+
+        proposals
+          .command("review <proposalId> <action>")
+          .description("Approve or reject a persona proposal (action: approve|reject)")
+          .option("--reviewed-by <name>", "Name/ID of reviewer")
+          .action(async (proposalId: string, action: string, opts: { reviewedBy?: string }) => {
+            if (action !== "approve" && action !== "reject") {
+              console.error("Action must be 'approve' or 'reject'");
+              process.exit(1);
+            }
+
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              console.error(`Proposal ${proposalId} not found`);
+              process.exit(1);
+            }
+
+            if (proposal.status !== "pending") {
+              console.error(`Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`);
+              process.exit(1);
+            }
+
+            const newStatus = action === "approve" ? "approved" : "rejected";
+            proposalsDb!.updateStatus(proposalId, newStatus, opts.reviewedBy);
+
+            auditProposal(action, proposalId, {
+              reviewedBy: opts.reviewedBy ?? "cli-user",
+              previousStatus: "pending",
+              newStatus,
+            });
+
+            console.log(`Proposal ${proposalId} ${action}d.`);
+            if (action === "approve") {
+              console.log(`\nUse 'openclaw proposals apply ${proposalId}' to apply the change.`);
+            }
+          });
+
+        proposals
+          .command("apply <proposalId>")
+          .description("Apply an approved persona proposal to its target identity file")
+          .action(async (proposalId: string) => {
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              console.error(`Proposal ${proposalId} not found`);
+              process.exit(1);
+            }
+
+            if (proposal.status !== "approved") {
+              console.error(`Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`);
+              process.exit(1);
+            }
+
+            // Resolve target file path
+            const targetPath = api.resolvePath(proposal.targetFile);
+
+            if (!existsSync(targetPath)) {
+              console.error(`Target file ${proposal.targetFile} not found at ${targetPath}`);
+              process.exit(1);
+            }
+
+            // Create backup
+            const backupPath = `${targetPath}.backup-${Date.now()}`;
+            try {
+              const original = readFileSync(targetPath, "utf-8");
+              writeFileSync(backupPath, original);
+
+              // Apply change
+              const timestamp = new Date().toISOString();
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${proposal.observation} -->\n\n${proposal.suggestedChange}\n`;
+              writeFileSync(targetPath, original + changeBlock);
+
+              proposalsDb!.markApplied(proposalId);
+
+              auditProposal("applied", proposalId, {
+                targetFile: proposal.targetFile,
+                targetPath,
+                backupPath,
+                timestamp,
+              });
+
+              console.log(`Proposal ${proposalId} applied to ${proposal.targetFile}`);
+              console.log(`Backup saved: ${backupPath}`);
+              console.log(`\nChange:\n${proposal.suggestedChange}`);
+            } catch (err) {
+              console.error(`Failed to apply proposal: ${err}`);
+              process.exit(1);
+            }
+          });
+      });
+    }
+
+    // ========================================================================
     // Service
     // ========================================================================
 
@@ -4917,6 +4883,7 @@ const memoryHybridPlugin = {
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
+        if (proposalsPruneTimer) { clearInterval(proposalsPruneTimer); proposalsPruneTimer = null; }
         factsDb.close();
         if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }
         if (proposalsDb) { proposalsDb.close(); proposalsDb = null; }
