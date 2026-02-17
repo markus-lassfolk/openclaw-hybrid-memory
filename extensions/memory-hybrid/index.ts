@@ -205,7 +205,7 @@ class WriteAheadLog {
       writeSync(fd, line);
       closeSync(fd);
     } catch (err) {
-      this.logger?.warn(`memory-hybrid: WAL append failed (${err}), falling back to read-modify-write`);
+      this.logger?.warn(`memory-hybrid: WAL append failed for entry ${entry.id} (${err}), falling back to read-modify-write`);
       // Fallback to less efficient method if append fails
       const entries = this.readAll();
       entries.push(entry);
@@ -243,8 +243,8 @@ class WriteAheadLog {
   }
 
   private writeAll(entries: WALEntry[]): void {
-    // Write as newline-delimited JSON
-    const content = entries.map((e) => JSON.stringify(e)).join("\n") + (entries.length > 0 ? "\n" : "");
+    // Write as newline-delimited JSON (always with trailing newline for consistency)
+    const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
     writeFileSync(this.walPath, content, "utf-8");
   }
 
