@@ -1158,7 +1158,7 @@ export class FactsDB {
     if (existing) {
       const successCount = (proc.successCount ?? existing.successCount);
       const failureCount = (proc.failureCount ?? existing.failureCount);
-      const confidence = proc.confidence ?? Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount));
+      const confidence = proc.confidence ?? Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount)));
       this.liveDb
         .prepare(
           `UPDATE procedures SET task_pattern = ?, recipe_json = ?, procedure_type = ?, success_count = ?, failure_count = ?, last_validated = ?, last_failed = ?, confidence = ?, ttl_days = ?, updated_at = ? WHERE id = ?`,
@@ -1262,7 +1262,7 @@ export class FactsDB {
     const proc = this.getProcedureById(id);
     if (!proc) return false;
     const successCount = proc.successCount + 1;
-    const confidence = Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount));
+    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount)));
     if (recipeJson !== undefined) {
       this.liveDb
         .prepare(
@@ -1272,7 +1272,7 @@ export class FactsDB {
     } else {
       this.liveDb
         .prepare(
-          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
         )
         .run(successCount, now, confidence, now, id);
     }
@@ -1295,7 +1295,7 @@ export class FactsDB {
     } else {
       this.liveDb
         .prepare(
-          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
         )
         .run(failureCount, now, confidence, now, id);
     }
