@@ -140,6 +140,23 @@ export type MemoryTieringConfig = {
   hotMaxFacts: number;
 };
 
+/** Procedural memory (issue #23): auto-generated skills from learned patterns */
+export type ProceduresConfig = {
+  enabled: boolean;
+  /** Session JSONL directory (default: ~/.openclaw/agents/main/sessions) */
+  sessionsDir: string;
+  /** Min tool steps to consider a procedure (default: 2) */
+  minSteps: number;
+  /** Validations before auto-generating a skill (default: 3) */
+  validationThreshold: number;
+  /** TTL days for procedure confidence / revalidation (default: 30) */
+  skillTTLDays: number;
+  /** Path to auto-generated skills (default: workspace/skills/auto) */
+  skillsAutoPath: string;
+  /** Require human approval before promoting auto-skill to permanent (default: true) */
+  requireApprovalForPromote: boolean;
+};
+
 /** Credential types supported by the credentials store */
 export const CREDENTIAL_TYPES = [
   "token",
@@ -194,6 +211,8 @@ export type HybridMemoryConfig = {
   memoryTiering: MemoryTieringConfig;
   /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
   distill?: { apiKey?: string; defaultModel?: string };
+  /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
+  procedures: ProceduresConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -537,6 +556,29 @@ export const hybridConfigSchema = {
         : 50,
     };
 
+    // Parse procedures config (issue #23)
+    const defaultSessionsDir = join(homedir(), ".openclaw", "agents", "main", "sessions");
+    const proceduresRaw = cfg.procedures as Record<string, unknown> | undefined;
+    const procedures: ProceduresConfig = {
+      enabled: proceduresRaw?.enabled !== false,
+      sessionsDir: typeof proceduresRaw?.sessionsDir === "string" && proceduresRaw.sessionsDir.length > 0
+        ? proceduresRaw.sessionsDir
+        : defaultSessionsDir,
+      minSteps: typeof proceduresRaw?.minSteps === "number" && proceduresRaw.minSteps >= 1
+        ? Math.floor(proceduresRaw.minSteps)
+        : 2,
+      validationThreshold: typeof proceduresRaw?.validationThreshold === "number" && proceduresRaw.validationThreshold >= 1
+        ? Math.floor(proceduresRaw.validationThreshold)
+        : 3,
+      skillTTLDays: typeof proceduresRaw?.skillTTLDays === "number" && proceduresRaw.skillTTLDays >= 1
+        ? Math.floor(proceduresRaw.skillTTLDays)
+        : 30,
+      skillsAutoPath: typeof proceduresRaw?.skillsAutoPath === "string" && proceduresRaw.skillsAutoPath.length > 0
+        ? proceduresRaw.skillsAutoPath
+        : "skills/auto",
+      requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -560,6 +602,7 @@ export const hybridConfigSchema = {
       reflection,
       memoryTiering,
       distill,
+      procedures,
     };
   },
 };

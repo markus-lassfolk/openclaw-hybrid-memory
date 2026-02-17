@@ -37,6 +37,7 @@ Your OpenClaw agent forgets everything between sessions. Preferences, decisions,
 - **Reflection layer** — synthesizes behavioral patterns and rules from accumulated facts ([docs/REFLECTION.md](docs/REFLECTION.md))
 - **Graph memory** — typed relationships between facts enable zero-LLM recall via graph traversal ([docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md))
 - **Session distillation** — batch-extracts durable facts from old conversation logs ([docs/SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md))
+- **Procedural memory** — extracts tool-call procedures from sessions, injects “last time this worked” in recall, auto-generates skills ([docs/PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md))
 
 ### Reliability
 - **Write-ahead log (WAL)** — crash-resilient memory operations with automatic recovery ([docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))
@@ -142,6 +143,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 |----------|-------------|
 | [CREDENTIALS.md](docs/CREDENTIALS.md) | Credential vault (opt-in encrypted store) |
 | [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md) | Extracting facts from session logs |
+| [PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md) | Auto-generated skills from learned tool-call patterns (issue #23) |
 | [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md) | Graph-based fact linking (FR-007) |
 | [WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md) | Write-ahead log design |
 | [REFLECTION.md](docs/REFLECTION.md) | Reflection layer (FR-011) |

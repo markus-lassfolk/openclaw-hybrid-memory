@@ -36,6 +36,8 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. `--model M` picks the LLM (e.g. `gemini-2.0-flash` for Gemini; config `distill.defaultModel` used when omitted). Gemini uses larger batches (500k tokens). Oversized sessions chunked with 10% overlap. |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
 | `record-distill` | Record that session distillation was run (timestamp for `verify`). |
+| `extract-procedures [--dir path] [--days N] [--dry-run]` | Extract tool-call procedures from session JSONL; store positive/negative procedures. |
+| `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
 | `scope prune-session <session-id>` | **(FR-006)** Delete session-scoped memories for a given session (cleared on session end). |
 | `scope promote --id <fact-id> --scope global or agent [--scope-target <target>]` | **(FR-006)** Promote a session-scoped memory to global or agent scope (persists after session end). |
@@ -121,3 +123,4 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 - [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault (`credentials migrate-to-vault`)
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation (`distill-window`, `record-distill`)
 - [MEMORY-SCOPING.md](MEMORY-SCOPING.md) — **(FR-006)** Scope types, store/recall filters, session cleanup, promote
+- [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) — Procedural memory (`extract-procedures`, `generate-auto-skills`)
