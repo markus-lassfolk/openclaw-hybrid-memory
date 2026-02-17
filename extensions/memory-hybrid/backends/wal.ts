@@ -69,34 +69,46 @@ export class WriteAheadLog {
   }
 
   readAll(): WALEntry[] {
-    try {
-      if (!existsSync(this.walPath)) return [];
-      const content = readFileSync(this.walPath, "utf-8").trim();
-      if (!content) return [];
+    if (!existsSync(this.walPath)) return [];
+    const content = readFileSync(this.walPath, "utf-8").trim();
+    if (!content) return [];
 
-      if (content.startsWith("[")) {
+    // Backward-compat: support full-file JSON array format if present.
+    if (content.startsWith("[")) {
+      try {
         const entries = JSON.parse(content) as WALEntry[];
         return Array.isArray(entries) ? entries : [];
+      } catch (err) {
+        // Fall back to NDJSON parsing if the array is corrupted.
+        console.warn(`WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`);
       }
+    }
 
-      const removedIds = new Set<string>();
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
+    const removedIds = new Set<string>();
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
+      try {
         const obj = JSON.parse(trimmed) as { op: string; id: string };
         if (obj.op === "remove" && obj.id) removedIds.add(obj.id);
+      } catch (err) {
+        console.warn(`WAL readAll: failed to parse remove line, skipping: ${err}`);
       }
-      const entries: WALEntry[] = [];
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
+    }
+
+    const entries: WALEntry[] = [];
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
+      try {
         const obj = JSON.parse(trimmed) as unknown;
         if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
+      } catch (err) {
+        console.warn(`WAL readAll: failed to parse WAL entry line, skipping: ${err}`);
       }
-      return entries;
-    } catch {
-      return [];
     }
+
+    return entries;
   }
 
   remove(id: string): void {

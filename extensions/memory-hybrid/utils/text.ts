@@ -4,6 +4,8 @@
 
 /** Single place for text truncation. Returns text up to maxLen, with suffix if truncated. */
 export function truncateText(text: string, maxLen: number, suffix = "…"): string {
+  if (maxLen <= 0) return "";
+  if (maxLen <= suffix.length) return suffix.slice(0, maxLen);
   if (text.length <= maxLen) return text;
   return text.slice(0, maxLen - suffix.length).trim() + suffix;
 }

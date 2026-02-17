@@ -1950,7 +1950,17 @@ const memoryHybridPlugin = {
                 factId = lastProgressiveIndexIds[idx - 1] ?? null;
               }
             } else if (typeof idParam === "string" && idParam.trim().length > 0) {
-              factId = idParam.trim();
+              const trimmed = idParam.trim();
+              // Check if it's a numeric string (progressive index position)
+              if (/^\d+$/.test(trimmed)) {
+                const idx = parseInt(trimmed, 10);
+                if (idx >= 1 && idx <= lastProgressiveIndexIds.length) {
+                  factId = lastProgressiveIndexIds[idx - 1] ?? null;
+                }
+              } else {
+                // Treat as fact ID
+                factId = trimmed;
+              }
             }
             if (factId) {
               const entry = factsDb.getById(factId);
@@ -2251,8 +2261,11 @@ const memoryHybridPlugin = {
           }
 
           // FR-008: Classify the operation before storing (use embedding similarity per issue #8)
-          if (cfg.store.classifyBeforeWrite && vector) {
-            let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+          if (cfg.store.classifyBeforeWrite) {
+            let similarFacts: MemoryEntry[] = [];
+            if (vector) {
+              similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+            }
             if (similarFacts.length === 0) {
               similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
             }
@@ -4888,7 +4901,7 @@ const memoryHybridPlugin = {
                 ? `${r.entry.entity ? r.entry.entity + ": " : ""}${r.entry.key}`
                 : (r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : ""));
               const tokenCost = estimateTokensForDisplay(r.entry.summary || r.entry.text);
-              const pos = startPosition + indexEntries.length + 1;
+              const pos = startPosition + indexEntries.length;
               const line = `  ${pos}. [${r.entry.category}] ${title} (${tokenCost} tok)`;
               const lineTokens = estimateTokens(line + "\n");
               if (usedTokens + lineTokens > cap) break;
@@ -4905,16 +4918,17 @@ const memoryHybridPlugin = {
                 byCat.set(e.category, arr);
               }
               const sortedCats = [...byCat.keys()].sort();
-              lines = [];
+              lines = [header.trimEnd()];
               for (const cat of sortedCats) {
                 const entries = byCat.get(cat)!;
                 lines.push(`  ${cat} (${entries.length}):`);
                 for (const e of entries) {
-                  lines.push(e.line.replace(/^\s+\d+\./, "    -"));
+                  // Keep numeric position for memory_recall(id: N) to work
+                  lines.push(e.line.replace(/^(\s+)(\d+\.)/, "  $2"));
                 }
               }
             } else {
-              lines = indexEntries.map((e) => e.line);
+              lines = [header.trimEnd(), ...indexEntries.map((e) => e.line)];
             }
             return { lines, ids, usedTokens };
           }

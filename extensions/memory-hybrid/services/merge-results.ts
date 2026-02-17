@@ -15,12 +15,14 @@ export function mergeResults(
   limit: number,
   factsDb?: SupersededProvider,
 ): SearchResult[] {
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  const seenTexts = new Set<string>();
   const merged: SearchResult[] = [];
 
   for (const r of sqliteResults) {
-    if (!seen.has(r.entry.id)) {
-      seen.add(r.entry.id);
+    if (!seenIds.has(r.entry.id)) {
+      seenIds.add(r.entry.id);
+      seenTexts.add(r.entry.text.toLowerCase());
       merged.push(r);
     }
   }
@@ -28,13 +30,12 @@ export function mergeResults(
   const supersededTexts = factsDb ? factsDb.getSupersededTexts() : new Set<string>();
 
   for (const r of lanceResults) {
-    const isSuperseded = supersededTexts.has(r.entry.text.toLowerCase());
-    const isDupe = merged.some(
-      (m) =>
-        m.entry.id === r.entry.id ||
-        m.entry.text.toLowerCase() === r.entry.text.toLowerCase(),
-    );
+    const normalizedText = r.entry.text.toLowerCase();
+    const isSuperseded = supersededTexts.has(normalizedText);
+    const isDupe = seenIds.has(r.entry.id) || seenTexts.has(normalizedText);
     if (!isDupe && !isSuperseded) {
+      seenIds.add(r.entry.id);
+      seenTexts.add(normalizedText);
       merged.push(r);
     }
   }
