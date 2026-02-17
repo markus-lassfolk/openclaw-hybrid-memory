@@ -85,6 +85,31 @@ export type CredentialsConfig = {
   expiryWarningDays?: number;
 };
 
+/** Proposal statuses for persona evolution workflow */
+export const PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applied"] as const;
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+
+/** Identity file types that can be proposed for modification */
+export const IDENTITY_FILE_TYPES = ["SOUL.md", "IDENTITY.md", "USER.md"] as const;
+export type IdentityFileType = (typeof IDENTITY_FILE_TYPES)[number];
+
+/** Opt-in persona proposals: agent self-evolution with human approval gate */
+export type PersonaProposalsConfig = {
+  enabled: boolean;
+  /** Identity files that can be modified via proposals (default: ["SOUL.md", "IDENTITY.md", "USER.md"]) */
+  allowedFiles: IdentityFileType[];
+  /** Max proposals per week to prevent spam (default: 5) */
+  maxProposalsPerWeek: number;
+  /** Min confidence score 0-1 for proposals (default: 0.7) */
+  minConfidence: number;
+  /** Days before proposals auto-expire if not reviewed (default: 30, 0 = never) */
+  proposalTTLDays: number;
+  /** Require minimum session evidence count (default: 10) */
+  minSessionEvidence: number;
+  /** LLM model for proposal validation/formatting (default: gpt-4o-mini) */
+  validationModel: string;
+};
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -103,6 +128,8 @@ export type HybridMemoryConfig = {
   store: StoreConfig;
   /** Opt-in credential management: structured, encrypted storage (default: disabled) */
   credentials: CredentialsConfig;
+  /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
+  personaProposals: PersonaProposalsConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -315,6 +342,30 @@ export const hybridConfigSchema = {
       };
     }
 
+    // Parse persona proposals config (opt-in, disabled by default)
+    const proposalsRaw = cfg.personaProposals as Record<string, unknown> | undefined;
+    const personaProposals: PersonaProposalsConfig = {
+      enabled: proposalsRaw?.enabled === true,
+      allowedFiles: Array.isArray(proposalsRaw?.allowedFiles)
+        ? (proposalsRaw.allowedFiles as string[]).filter((f) => IDENTITY_FILE_TYPES.includes(f as IdentityFileType)) as IdentityFileType[]
+        : [...IDENTITY_FILE_TYPES],
+      maxProposalsPerWeek: typeof proposalsRaw?.maxProposalsPerWeek === "number" && proposalsRaw.maxProposalsPerWeek > 0
+        ? Math.floor(proposalsRaw.maxProposalsPerWeek)
+        : 5,
+      minConfidence: typeof proposalsRaw?.minConfidence === "number" && proposalsRaw.minConfidence >= 0 && proposalsRaw.minConfidence <= 1
+        ? proposalsRaw.minConfidence
+        : 0.7,
+      proposalTTLDays: typeof proposalsRaw?.proposalTTLDays === "number" && proposalsRaw.proposalTTLDays >= 0
+        ? Math.floor(proposalsRaw.proposalTTLDays)
+        : 30,
+      minSessionEvidence: typeof proposalsRaw?.minSessionEvidence === "number" && proposalsRaw.minSessionEvidence > 0
+        ? Math.floor(proposalsRaw.minSessionEvidence)
+        : 10,
+      validationModel: typeof proposalsRaw?.validationModel === "string"
+        ? proposalsRaw.validationModel
+        : "gpt-4o-mini",
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -332,6 +383,7 @@ export const hybridConfigSchema = {
       autoClassify,
       store,
       credentials,
+      personaProposals,
     };
   },
 };

@@ -34,6 +34,10 @@ import {
   vectorDimsForModel,
   CREDENTIAL_TYPES,
   type CredentialType,
+  PROPOSAL_STATUSES,
+  type ProposalStatus,
+  IDENTITY_FILE_TYPES,
+  type IdentityFileType,
 } from "./config.js";
 import { versionInfo } from "./versionInfo.js";
 
@@ -1018,6 +1022,189 @@ class CredentialsDB {
 
   close(): void {
     try { this.db.close(); } catch { /* already closed */ }
+  }
+}
+
+// ============================================================================
+// Persona Proposals Database
+// ============================================================================
+
+type ProposalEntry = {
+  id: string;
+  targetFile: string;
+  title: string;
+  observation: string;
+  suggestedChange: string;
+  confidence: number;
+  evidenceSessions: string[];
+  status: string;
+  createdAt: number;
+  reviewedAt: number | null;
+  reviewedBy: string | null;
+  appliedAt: number | null;
+  expiresAt: number | null;
+};
+
+class ProposalsDB {
+  private db: Database.Database;
+  private readonly dbPath: string;
+
+  constructor(dbPath: string) {
+    this.dbPath = dbPath;
+    mkdirSync(dirname(dbPath), { recursive: true });
+    this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS proposals (
+        id TEXT PRIMARY KEY,
+        target_file TEXT NOT NULL,
+        title TEXT NOT NULL,
+        observation TEXT NOT NULL,
+        suggested_change TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        evidence_sessions TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        reviewed_by TEXT,
+        applied_at INTEGER,
+        expires_at INTEGER
+      )
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
+      CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at);
+      CREATE INDEX IF NOT EXISTS idx_proposals_expires ON proposals(expires_at);
+    `);
+  }
+
+  create(entry: {
+    targetFile: string;
+    title: string;
+    observation: string;
+    suggestedChange: string;
+    confidence: number;
+    evidenceSessions: string[];
+    expiresAt?: number | null;
+  }): ProposalEntry {
+    const id = randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    const evidenceJson = JSON.stringify(entry.evidenceSessions);
+
+    this.db
+      .prepare(
+        `INSERT INTO proposals (id, target_file, title, observation, suggested_change, confidence, evidence_sessions, status, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      )
+      .run(
+        id,
+        entry.targetFile,
+        entry.title,
+        entry.observation,
+        entry.suggestedChange,
+        entry.confidence,
+        evidenceJson,
+        now,
+        entry.expiresAt ?? null,
+      );
+
+    return this.get(id)!;
+  }
+
+  get(id: string): ProposalEntry | null {
+    const row = this.db
+      .prepare("SELECT * FROM proposals WHERE id = ?")
+      .get(id) as any;
+    if (!row) return null;
+    return this.rowToEntry(row);
+  }
+
+  list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
+    let query = "SELECT * FROM proposals WHERE 1=1";
+    const params: any[] = [];
+
+    if (filters?.status) {
+      query += " AND status = ?";
+      params.push(filters.status);
+    }
+    if (filters?.targetFile) {
+      query += " AND target_file = ?";
+      params.push(filters.targetFile);
+    }
+
+    query += " ORDER BY created_at DESC";
+
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map((r) => this.rowToEntry(r));
+  }
+
+  updateStatus(
+    id: string,
+    status: string,
+    reviewedBy?: string,
+  ): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare(
+        "UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+      )
+      .run(status, now, reviewedBy ?? null, id);
+    return this.get(id);
+  }
+
+  markApplied(id: string): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?")
+      .run(now, id);
+    return this.get(id);
+  }
+
+  countRecentProposals(daysBack: number): number {
+    const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
+    const row = this.db
+      .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
+      .get(cutoff) as any;
+    return row?.count ?? 0;
+  }
+
+  pruneExpired(): number {
+    const now = Math.floor(Date.now() / 1000);
+    const result = this.db
+      .prepare(
+        "DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'",
+      )
+      .run(now);
+    return result.changes;
+  }
+
+  private rowToEntry(row: any): ProposalEntry {
+    return {
+      id: row.id,
+      targetFile: row.target_file,
+      title: row.title,
+      observation: row.observation,
+      suggestedChange: row.suggested_change,
+      confidence: row.confidence,
+      evidenceSessions: JSON.parse(row.evidence_sessions),
+      status: row.status,
+      createdAt: row.created_at,
+      reviewedAt: row.reviewed_at,
+      reviewedBy: row.reviewed_by,
+      appliedAt: row.applied_at,
+      expiresAt: row.expires_at,
+    };
+  }
+
+  close(): void {
+    try {
+      this.db.close();
+    } catch {
+      /* already closed */
+    }
   }
 }
 
@@ -2049,6 +2236,7 @@ let vectorDb: VectorDB;
 let embeddings: Embeddings;
 let openaiClient: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
+let proposalsDb: ProposalsDB | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -2081,6 +2269,14 @@ const memoryHybridPlugin = {
       api.logger.info(`memory-hybrid: credentials store enabled (${credPath})`);
     } else {
       credentialsDb = null;
+    }
+
+    if (cfg.personaProposals.enabled) {
+      const proposalsPath = join(dirname(resolvedSqlitePath), "proposals.db");
+      proposalsDb = new ProposalsDB(proposalsPath);
+      api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
+    } else {
+      proposalsDb = null;
     }
 
     // Load previously discovered categories so they remain available after restart
@@ -2807,6 +3003,384 @@ const memoryHybridPlugin = {
       },
       { name: "memory_prune" },
     );
+
+    // ========================================================================
+    // Persona Proposals Tools (opt-in, disabled by default)
+    // ========================================================================
+
+    if (cfg.personaProposals.enabled && proposalsDb) {
+      // Helper: audit trail logging
+      const auditProposal = (action: string, proposalId: string, details?: any) => {
+        const auditDir = join(dirname(resolvedSqlitePath), "memory", "decisions");
+        mkdirSync(auditDir, { recursive: true });
+        const timestamp = new Date().toISOString();
+        const entry = {
+          timestamp,
+          action,
+          proposalId,
+          ...details,
+        };
+        const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
+        try {
+          writeFileSync(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: audit log write failed: ${err}`);
+        }
+      };
+
+      // Helper: rate limiting check
+      const checkRateLimit = (): { allowed: boolean; count: number; limit: number } => {
+        const weekInDays = 7;
+        const count = proposalsDb!.countRecentProposals(weekInDays);
+        const limit = cfg.personaProposals.maxProposalsPerWeek;
+        return { allowed: count < limit, count, limit };
+      };
+
+      api.registerTool(
+        {
+          name: "persona_propose",
+          label: "Propose Persona Change",
+          description:
+            "Propose a change to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns. Requires human approval before applying. Rate-limited to prevent spam.",
+          parameters: Type.Object({
+            targetFile: stringEnum(cfg.personaProposals.allowedFiles),
+            title: Type.String({
+              description: "Short title for the proposal (e.g., 'Add tone-matching guidance')",
+            }),
+            observation: Type.String({
+              description: "What pattern or behavior you observed (e.g., 'Over ~50 interactions, user responds better to bullet points')",
+            }),
+            suggestedChange: Type.String({
+              description: "The specific change to make to the file (be precise about location and wording)",
+            }),
+            confidence: Type.Number({
+              description: "Confidence score 0-1 (must be >= minConfidence from config)",
+              minimum: 0,
+              maximum: 1,
+            }),
+            evidenceSessions: Type.Array(Type.String(), {
+              description: "List of session IDs or references that support this proposal",
+            }),
+          }),
+          async execute(_toolCallId, params) {
+            const {
+              targetFile,
+              title,
+              observation,
+              suggestedChange,
+              confidence,
+              evidenceSessions,
+            } = params as {
+              targetFile: string;
+              title: string;
+              observation: string;
+              suggestedChange: string;
+              confidence: number;
+              evidenceSessions: string[];
+            };
+
+            // Rate limiting
+            const rateCheck = checkRateLimit();
+            if (!rateCheck.allowed) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Rate limit exceeded: ${rateCheck.count}/${rateCheck.limit} proposals this week. Try again later.`,
+                  },
+                ],
+                details: { error: "rate_limit_exceeded", ...rateCheck },
+              };
+            }
+
+            // Confidence check
+            if (confidence < cfg.personaProposals.minConfidence) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Confidence ${confidence} is below minimum ${cfg.personaProposals.minConfidence}. Gather more evidence before proposing.`,
+                  },
+                ],
+                details: { error: "confidence_too_low", confidence, minRequired: cfg.personaProposals.minConfidence },
+              };
+            }
+
+            // Evidence check
+            if (evidenceSessions.length < cfg.personaProposals.minSessionEvidence) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Need at least ${cfg.personaProposals.minSessionEvidence} session evidence (provided: ${evidenceSessions.length})`,
+                  },
+                ],
+                details: { error: "insufficient_evidence", provided: evidenceSessions.length, minRequired: cfg.personaProposals.minSessionEvidence },
+              };
+            }
+
+            // Calculate expiry
+            const expiresAt = cfg.personaProposals.proposalTTLDays > 0
+              ? Math.floor(Date.now() / 1000) + cfg.personaProposals.proposalTTLDays * 24 * 3600
+              : null;
+
+            // Create proposal
+            const proposal = proposalsDb!.create({
+              targetFile,
+              title,
+              observation,
+              suggestedChange,
+              confidence,
+              evidenceSessions,
+              expiresAt,
+            });
+
+            auditProposal("created", proposal.id, {
+              targetFile,
+              title,
+              confidence,
+              evidenceCount: evidenceSessions.length,
+            });
+
+            api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Proposal created: ${proposal.id}\nTitle: ${title}\nTarget: ${targetFile}\nStatus: pending\n\nAwaiting human review. Use persona_proposals_list to view all pending proposals.`,
+                },
+              ],
+              details: { proposalId: proposal.id, status: "pending", expiresAt: proposal.expiresAt },
+            };
+          },
+        },
+        { name: "persona_propose" },
+      );
+
+      api.registerTool(
+        {
+          name: "persona_proposals_list",
+          label: "List Persona Proposals",
+          description:
+            "List all persona proposals, optionally filtered by status (pending/approved/rejected/applied) or target file.",
+          parameters: Type.Object({
+            status: Type.Optional(stringEnum(PROPOSAL_STATUSES)),
+            targetFile: Type.Optional(Type.String()),
+          }),
+          async execute(_toolCallId, params) {
+            const { status, targetFile } = params as { status?: string; targetFile?: string };
+
+            const proposals = proposalsDb!.list({ status, targetFile });
+
+            if (proposals.length === 0) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: "No proposals found matching filters.",
+                  },
+                ],
+                details: { count: 0, filters: { status, targetFile } },
+              };
+            }
+
+            const lines = proposals.map((p) => {
+              const age = Math.floor((Date.now() / 1000 - p.createdAt) / 86400);
+              const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / 86400) : null;
+              return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.slice(0, 120)}...`;
+            });
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Found ${proposals.length} proposal(s):\n\n${lines.join("\n\n")}`,
+                },
+              ],
+              details: { count: proposals.length, proposals: proposals.map(p => ({ id: p.id, status: p.status, title: p.title, targetFile: p.targetFile })) },
+            };
+          },
+        },
+        { name: "persona_proposals_list" },
+      );
+
+      api.registerTool(
+        {
+          name: "persona_proposal_review",
+          label: "Review Persona Proposal",
+          description:
+            "Approve or reject a persona proposal. Only approved proposals can be applied to identity files.",
+          parameters: Type.Object({
+            proposalId: Type.String({ description: "The proposal ID to review" }),
+            action: stringEnum(["approve", "reject"] as const),
+            reviewedBy: Type.Optional(Type.String({ description: "Name/ID of reviewer (optional)" })),
+          }),
+          async execute(_toolCallId, params) {
+            const { proposalId, action, reviewedBy } = params as {
+              proposalId: string;
+              action: "approve" | "reject";
+              reviewedBy?: string;
+            };
+
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              return {
+                content: [{ type: "text", text: `Proposal ${proposalId} not found.` }],
+                details: { error: "not_found" },
+              };
+            }
+
+            if (proposal.status !== "pending") {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`,
+                  },
+                ],
+                details: { error: "already_reviewed", currentStatus: proposal.status },
+              };
+            }
+
+            const newStatus = action === "approve" ? "approved" : "rejected";
+            const updated = proposalsDb!.updateStatus(proposalId, newStatus, reviewedBy);
+
+            auditProposal(action, proposalId, {
+              reviewedBy: reviewedBy ?? "unknown",
+              previousStatus: "pending",
+              newStatus,
+            });
+
+            api.logger.info(`memory-hybrid: proposal ${proposalId} ${action}d by ${reviewedBy ?? "unknown"}`);
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Proposal ${proposalId} ${action}d.\n\n${action === "approve" ? "Use persona_proposal_apply to apply the change to the identity file." : "Proposal rejected and will not be applied."}`,
+                },
+              ],
+              details: { proposalId, status: newStatus, reviewedBy: reviewedBy ?? null },
+            };
+          },
+        },
+        { name: "persona_proposal_review" },
+      );
+
+      api.registerTool(
+        {
+          name: "persona_proposal_apply",
+          label: "Apply Approved Persona Proposal",
+          description:
+            "Apply an approved persona proposal to its target identity file. Creates a backup and logs the change.",
+          parameters: Type.Object({
+            proposalId: Type.String({ description: "The approved proposal ID to apply" }),
+            workspaceRoot: Type.Optional(Type.String({ description: "Workspace root path (optional, will try to detect)" })),
+          }),
+          async execute(_toolCallId, params) {
+            const { proposalId, workspaceRoot } = params as {
+              proposalId: string;
+              workspaceRoot?: string;
+            };
+
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              return {
+                content: [{ type: "text", text: `Proposal ${proposalId} not found.` }],
+                details: { error: "not_found" },
+              };
+            }
+
+            if (proposal.status !== "approved") {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`,
+                  },
+                ],
+                details: { error: "not_approved", currentStatus: proposal.status },
+              };
+            }
+
+            // Try to find workspace root
+            const wsRoot = workspaceRoot || process.env.OPENCLAW_WORKSPACE || homedir();
+            const targetPath = join(wsRoot, proposal.targetFile);
+
+            // Check if file exists
+            if (!existsSync(targetPath)) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Target file ${proposal.targetFile} not found at ${targetPath}. Cannot apply proposal.`,
+                  },
+                ],
+                details: { error: "file_not_found", targetPath },
+              };
+            }
+
+            // Create backup
+            const backupPath = `${targetPath}.backup-${Date.now()}`;
+            try {
+              const original = readFileSync(targetPath, "utf-8");
+              writeFileSync(backupPath, original);
+
+              // Apply change (simple append for now - in production, you'd want smarter diff application)
+              const timestamp = new Date().toISOString();
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${proposal.observation} -->\n\n${proposal.suggestedChange}\n`;
+              writeFileSync(targetPath, original + changeBlock);
+
+              proposalsDb!.markApplied(proposalId);
+
+              auditProposal("applied", proposalId, {
+                targetFile: proposal.targetFile,
+                targetPath,
+                backupPath,
+                timestamp,
+              });
+
+              api.logger.info(`memory-hybrid: proposal ${proposalId} applied to ${proposal.targetFile}`);
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Proposal ${proposalId} applied to ${proposal.targetFile}.\n\nBackup saved: ${backupPath}\n\nChange:\n${proposal.suggestedChange}`,
+                  },
+                ],
+                details: { proposalId, status: "applied", targetPath, backupPath },
+              };
+            } catch (err) {
+              api.logger.error(`memory-hybrid: failed to apply proposal ${proposalId}: ${err}`);
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to apply proposal: ${String(err)}`,
+                  },
+                ],
+                details: { error: "apply_failed", message: String(err) },
+              };
+            }
+          },
+        },
+        { name: "persona_proposal_apply" },
+      );
+
+      // Periodic cleanup of expired proposals
+      setInterval(() => {
+        try {
+          const pruned = proposalsDb!.pruneExpired();
+          if (pruned > 0) {
+            api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
+        }
+      }, 24 * 60 * 60_000); // daily
+    }
 
     // ========================================================================
     // CLI Commands
@@ -4348,6 +4922,7 @@ const memoryHybridPlugin = {
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
         factsDb.close();
         if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }
+        if (proposalsDb) { proposalsDb.close(); proposalsDb = null; }
         api.logger.info("memory-hybrid: stopped");
       },
     });

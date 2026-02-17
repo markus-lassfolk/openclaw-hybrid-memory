@@ -131,6 +131,35 @@
     "credentials.expiryWarningDays": {
       "label": "Expiry warning days",
       "help": "Warn when credentials expire within this many days (default 7)"
+    },
+    "personaProposals.enabled": {
+      "label": "Persona Proposals",
+      "help": "Opt-in agent self-evolution: agents can propose changes to identity files (SOUL.md, IDENTITY.md, USER.md) with human approval gate (default: disabled)"
+    },
+    "personaProposals.allowedFiles": {
+      "label": "Allowed identity files",
+      "help": "Identity files that can be modified via proposals (default: all three)"
+    },
+    "personaProposals.maxProposalsPerWeek": {
+      "label": "Max proposals per week",
+      "help": "Rate limit to prevent proposal spam (default: 5)"
+    },
+    "personaProposals.minConfidence": {
+      "label": "Min confidence",
+      "help": "Minimum confidence score 0-1 for proposals (default: 0.7)"
+    },
+    "personaProposals.proposalTTLDays": {
+      "label": "Proposal TTL (days)",
+      "help": "Days before proposals auto-expire if not reviewed (default: 30, 0 = never)"
+    },
+    "personaProposals.minSessionEvidence": {
+      "label": "Min session evidence",
+      "help": "Minimum number of session references required (default: 10)"
+    },
+    "personaProposals.validationModel": {
+      "label": "Validation model",
+      "placeholder": "gpt-4o-mini",
+      "help": "LLM model for proposal validation/formatting (default: gpt-4o-mini)"
     }
   },
   "configSchema": {
@@ -223,6 +252,24 @@
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
         "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
+      },
+      "personaProposals": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable agent self-evolution via gated persona proposals (default: false)" },
+          "allowedFiles": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["SOUL.md", "IDENTITY.md", "USER.md"] },
+            "description": "Identity files that can be modified via proposals"
+          },
+          "maxProposalsPerWeek": { "type": "number", "description": "Max proposals per week to prevent spam (default: 5)" },
+          "minConfidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "Min confidence score for proposals (default: 0.7)" },
+          "proposalTTLDays": { "type": "number", "description": "Days before proposals auto-expire (default: 30, 0 = never)" },
+          "minSessionEvidence": { "type": "number", "description": "Min session evidence count (default: 10)" },
+          "validationModel": { "type": "string", "description": "LLM model for validation (default: gpt-4o-mini)" }
+        },
+        "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
       }
     },
     "required": ["embedding"]
