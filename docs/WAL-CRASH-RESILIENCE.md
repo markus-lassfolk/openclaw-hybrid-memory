@@ -144,14 +144,14 @@ The recovery process is idempotent:
 
 ### Write Path
 
-- **Synchronous WAL write**: ~1-5ms per operation (local file I/O)
-- **Minimal overhead**: Single JSON append operation
+- **Synchronous WAL write**: ~1-5ms per operation (local file I/O with atomic rename)
+- **Minimal overhead**: JSON array rewrite per operation (atomic temp file + rename for crash safety)
 - **No network calls**: WAL is purely local
 
 ### Startup
 
 - **Recovery check**: ~10-50ms for typical WAL sizes (<100 entries)
-- **Replay**: Only uncommitted operations are replayed
+- **Replay**: Only uncommitted operations are replayed (with embedding regeneration if needed)
 - **Pruning**: Stale entries are automatically removed
 
 ### Storage
@@ -227,9 +227,9 @@ This is **not** the same as SQLite's built-in WAL mode (though they serve simila
 
 The Memory WAL protects against:
 
-- Crashes during embedding generation (before SQLite write)
+- Crashes during embedding generation (WAL is written before embedding, so operation can be recovered with embedding regeneration)
 - Crashes during LanceDB write (after SQLite write)
-- Crashes during multi-step operations (e.g., credential vault + memory pointer)
+- Crashes during multi-step operations (though credentials vault is currently not WAL-protected)
 
 ## Limitations
 
@@ -251,7 +251,7 @@ Potential improvements for future versions:
 ## Related Features
 
 - **Auto-capture**: Automatically protected by WAL
-- **Credentials vault**: Credential storage operations are also WAL-protected
+- **Credentials vault**: Currently not WAL-protected; credentials are stored via a separate mechanism that returns early in the memory_store path
 - **Session distillation**: Bulk imports can use WAL for resilience
 
 ## Troubleshooting

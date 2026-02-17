@@ -14,7 +14,7 @@ import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -1403,12 +1403,20 @@ class WriteAheadLog {
   /**
    * Write a pending memory operation to the WAL.
    * This is a synchronous operation to ensure durability before proceeding.
+   * Uses atomic write (temp file + rename) to prevent corruption on crash.
    */
   write(entry: WALEntry): void {
     try {
       const entries = this.readAll();
       entries.push(entry);
-      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+      const content = JSON.stringify(entries, null, 2);
+      
+      // Atomic write: write to temp file, then rename
+      const tempPath = `${this.walPath}.tmp`;
+      writeFileSync(tempPath, content, "utf-8");
+      // fsync would go here in production, but Node's writeFileSync doesn't expose it
+      // For maximum safety, could use fs.openSync + fs.writeSync + fs.fsyncSync + fs.closeSync
+      renameSync(tempPath, this.walPath);
     } catch (err) {
       throw new Error(`WAL write failed: ${err}`);
     }
@@ -1435,6 +1443,7 @@ class WriteAheadLog {
 
   /**
    * Remove a specific entry from the WAL after successful commit.
+   * Uses atomic write (temp file + rename) to prevent corruption on crash.
    */
   remove(id: string): void {
     try {
@@ -1443,7 +1452,10 @@ class WriteAheadLog {
       if (filtered.length === 0) {
         this.clear();
       } else {
-        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+        const content = JSON.stringify(filtered, null, 2);
+        const tempPath = `${this.walPath}.tmp`;
+        writeFileSync(tempPath, content, "utf-8");
+        renameSync(tempPath, this.walPath);
       }
     } catch (err) {
       throw new Error(`WAL remove failed: ${err}`);
@@ -2743,15 +2755,8 @@ const memoryHybridPlugin = {
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
 
-          // Generate vector first (needed for WAL)
-          let vector: number[] | undefined;
-          try {
-            vector = await embeddings.embed(textToStore);
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
-          }
-
-          // WAL: Write pending operation before committing to storage
+          // WAL: Write pending operation BEFORE any async work (embedding/network)
+          // Vector will be computed during replay if missing
           const walEntryId = randomUUID();
           if (wal) {
             try {
@@ -2770,12 +2775,20 @@ const memoryHybridPlugin = {
                   decayClass: paramDecayClass,
                   summary,
                   tags,
-                  vector,
+                  vector: undefined, // Will be computed after this point
                 },
               });
             } catch (err) {
               api.logger.warn(`memory-hybrid: WAL write failed: ${err}`);
             }
+          }
+
+          // Generate vector after WAL write
+          let vector: number[] | undefined;
+          try {
+            vector = await embeddings.embed(textToStore);
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
           }
 
           // Now commit to actual storage
@@ -5128,62 +5141,75 @@ const memoryHybridPlugin = {
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
         }
 
-        // WAL Recovery: replay uncommitted operations from previous session
+        // WAL Recovery: replay uncommitted operations from previous session (async, non-blocking)
         if (wal) {
           const pendingEntries = wal.getValidEntries();
           if (pendingEntries.length > 0) {
             api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
-            let recovered = 0;
-            let failed = 0;
+            
+            // Run recovery asynchronously to not block startup
+            void (async () => {
+              let recovered = 0;
+              let failed = 0;
 
-            for (const entry of pendingEntries) {
-              try {
-                if (entry.operation === "store") {
-                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
-                  
-                  // Check if already stored (idempotency)
-                  if (!factsDb.hasDuplicate(text)) {
-                    // Store to SQLite
-                    factsDb.store({
-                      text,
-                      category: (category as MemoryCategory) || "other",
-                      importance: importance || 0.7,
-                      entity: entity || null,
-                      key: key || null,
-                      value: value || null,
-                      source: source || "wal-recovery",
-                      decayClass,
-                      summary,
-                      tags,
-                    });
-
-                    // Store to LanceDB (async, best effort)
-                    if (entry.data.vector) {
-                      void vectorDb.store({
+              for (const entry of pendingEntries) {
+                try {
+                  if (entry.operation === "store") {
+                    const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                    
+                    // Check if already stored (idempotency)
+                    if (!factsDb.hasDuplicate(text)) {
+                      // Store to SQLite
+                      factsDb.store({
                         text,
-                        vector: entry.data.vector,
+                        category: (category as MemoryCategory) || "other",
                         importance: importance || 0.7,
-                        category: category || "other",
-                      }).catch((err) => {
-                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                        entity: entity || null,
+                        key: key || null,
+                        value: value || null,
+                        source: source || "wal-recovery",
+                        decayClass,
+                        summary,
+                        tags,
                       });
+
+                      // Store to LanceDB (generate vector if missing)
+                      let vector = entry.data.vector;
+                      if (!vector) {
+                        try {
+                          vector = await embeddings.embed(text);
+                        } catch (err) {
+                          api.logger.warn(`memory-hybrid: WAL recovery embedding failed for entry ${entry.id}: ${err}`);
+                        }
+                      }
+                      
+                      if (vector) {
+                        void vectorDb.store({
+                          text,
+                          vector,
+                          importance: importance || 0.7,
+                          category: category || "other",
+                        }).catch((err) => {
+                          api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                        });
+                      }
+
+                      recovered++;
                     }
-
-                    recovered++;
                   }
+                  
+                  // Remove successfully processed entry
+                  wal.remove(entry.id);
+                } catch (err) {
+                  api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
+                  failed++;
                 }
-                
-                // Remove successfully processed entry
-                wal.remove(entry.id);
-              } catch (err) {
-                api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
-                failed++;
               }
-            }
 
-            if (recovered > 0) {
-              api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
-            }
+              if (recovered > 0) {
+                api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
+              }
+            })();
           }
 
           // Prune stale WAL entries
