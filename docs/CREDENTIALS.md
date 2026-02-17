@@ -114,7 +114,7 @@ When detected, a hint is stored and injected at the start of the next turn, prom
 
 ## Related docs
 
-- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [README](../README.md) — Project overview and all docs
 - [CONFIGURATION.md](CONFIGURATION.md) — Credentials config settings
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — `credentials migrate-to-vault` command
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — How distillation routes credentials to vault

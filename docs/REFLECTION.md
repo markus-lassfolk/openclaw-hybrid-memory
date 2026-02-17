@@ -374,7 +374,7 @@ Synthesizes meta-patterns from current patterns. Returns: `{ metaExtracted, meta
 
 ## Related docs
 
-- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [README](../README.md) — Project overview and all docs
 - [FEATURES.md](FEATURES.md) — Categories, decay, auto-classify (the observation layer)
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — `reflect`, `reflect-rules`, `reflect-meta` commands
 - [CONFIGURATION.md](CONFIGURATION.md) — Reflection config in plugin settings

@@ -6,7 +6,7 @@
 - **memory-hybrid plugin** (`extensions/memory-hybrid/`): Two-tier storage (SQLite+FTS5 for facts, LanceDB for semantic search), auto-capture, auto-recall, decay tiers with TTL, checkpoints, optional LLM auto-classification and custom categories.
 - **Tools**: `memory_store`, `memory_recall`, `memory_forget`, `memory_checkpoint`, `memory_prune`.
 - **CLI** (`openclaw hybrid-mem`): `stats`, `prune`, `checkpoint`, `backfill-decay`, `extract-daily`, `search`, `lookup`, `classify`, `categories`.
-- **Full deployment reference**: [docs/hybrid-memory-manager-v3.md](../docs/hybrid-memory-manager-v3.md) — architecture, plugin install (§3), config (§4), MEMORY.md template (§6), AGENTS.md Memory Protocol (§7), single deployment flow (§8), verification (§11), troubleshooting (§12), CLI (§13), upgrades (§14).
+- **Full deployment reference**: See [docs/QUICKSTART.md](../docs/QUICKSTART.md), [docs/CONFIGURATION.md](../docs/CONFIGURATION.md), [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), and other focused docs under `docs/`.
 - **Autonomous setup**: [docs/SETUP-AUTONOMOUS.md](../docs/SETUP-AUTONOMOUS.md) for AI-driven install, config, backfill, and verification.
 - **Deploy snippet**: [deploy/openclaw.memory-snippet.json](../deploy/openclaw.memory-snippet.json) (memory-hybrid + memorySearch, compaction, bootstrap limits) and [deploy/README.md](../deploy/README.md).
 - **Backfill script**: [scripts/backfill-memory.mjs](../scripts/backfill-memory.mjs) — dynamic section handling, no hardcoded dates; safe on new systems.

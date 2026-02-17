@@ -48,7 +48,7 @@ export OPENCLAW_MEMORY_EXTENSION_DIR=/path/to/openclaw/extensions/memory-hybrid
 ~/.openclaw/scripts/post-upgrade.sh
 ```
 
-See [../docs/hybrid-memory-manager-v3.md §12](../docs/hybrid-memory-manager-v3.md) for the full upgrade section.
+See [../docs/MAINTENANCE.md](../docs/MAINTENANCE.md) for the full upgrade section.
 
 ---
 
@@ -74,4 +74,4 @@ NODE_PATH="$EXT_DIR/node_modules" OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-$HOM
 NODE_PATH="$EXT_DIR/node_modules" node scripts/backfill-memory.mjs --dry-run
 ```
 
-See [../docs/hybrid-memory-manager-v3.md §8 Backfill](../docs/hybrid-memory-manager-v3.md) for full details.
+See [../docs/MAINTENANCE.md](../docs/MAINTENANCE.md) for full details on deployment and backfill.

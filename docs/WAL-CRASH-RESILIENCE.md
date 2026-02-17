@@ -287,6 +287,6 @@ Potential improvements for future versions:
 
 ## Related docs
 
-- [hybrid-memory-manager-v3.md](hybrid-memory-manager-v3.md) — Documentation hub
+- [README](../README.md) — Project overview and all docs
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture overview
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and fixes
