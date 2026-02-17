@@ -740,7 +740,6 @@ class FactsDB {
   /** FR-008: Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
   findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
-    const normText = normalizeTextForDedupe(text);
     const results: MemoryEntry[] = [];
 
     // Priority 1: exact entity+key match (most likely an UPDATE)
