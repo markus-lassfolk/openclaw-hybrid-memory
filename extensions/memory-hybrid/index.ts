@@ -88,6 +88,9 @@ type MemoryLink = {
   createdAt: number;
 };
 
+// Score assigned to facts discovered via graph traversal (lower than direct search matches)
+const GRAPH_DISCOVERED_SCORE = 0.5;
+
 // ============================================================================
 // SQLite + FTS5 Backend
 // ============================================================================
@@ -907,12 +910,15 @@ class FactsDB {
     const id = randomUUID();
     const nowSec = Math.floor(Date.now() / 1000);
     
+    // Validate and clamp strength to [0.0, 1.0]
+    const validStrength = Math.max(0.0, Math.min(1.0, strength));
+    
     this.liveDb
       .prepare(
         `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(id, sourceFact, targetFact, linkType, strength, nowSec);
+      .run(id, sourceFact, targetFact, linkType, validStrength, nowSec);
     
     return id;
   }
@@ -2395,7 +2401,7 @@ const memoryHybridPlugin = {
                   if (fact) {
                     graphResults.push({
                       entry: fact,
-                      score: 0.5, // Lower score for graph-discovered facts
+                      score: GRAPH_DISCOVERED_SCORE,
                       backend: "sqlite",
                     });
                   }
