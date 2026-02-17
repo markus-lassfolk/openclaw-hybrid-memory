@@ -3370,7 +3370,7 @@ const memoryHybridPlugin = {
             }
 
             // Validate evidence session content (non-empty, unique)
-            const invalidSessions = evidenceSessions.filter(s => !s || typeof s !== "string" || s.trim().length === 0);
+            const invalidSessions = evidenceSessions.filter(s => typeof s !== "string" || s.trim().length === 0);
             if (invalidSessions.length > 0) {
               return {
                 content: [
@@ -3383,8 +3383,8 @@ const memoryHybridPlugin = {
               };
             }
 
-            // Check for duplicate evidence sessions
-            const uniqueSessions = new Set(evidenceSessions.map(s => s.trim()));
+            // Check for duplicate evidence sessions (without trimming to preserve exact matches)
+            const uniqueSessions = new Set(evidenceSessions);
             if (uniqueSessions.size !== evidenceSessions.length) {
               return {
                 content: [
