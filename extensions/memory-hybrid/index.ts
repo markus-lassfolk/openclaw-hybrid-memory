@@ -881,11 +881,11 @@ class FactsDB {
     };
   }
 
-  /** Get all non-expired facts (for reflection). */
+  /** Get all non-expired, non-superseded facts (for reflection). */
   getAll(): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const rows = this.liveDb
-      .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`)
+      .prepare(`SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL ORDER BY created_at DESC`)
       .all(nowSec) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       id: row.id as string,
@@ -904,6 +904,10 @@ class FactsDB {
       lastConfirmedAt: (row.last_confirmed_at as number) || 0,
       confidence: (row.confidence as number) || 1.0,
       summary: (row.summary as string) || undefined,
+      recallCount: (row.recall_count as number) || 0,
+      lastAccessed: (row.last_accessed as number) || null,
+      supersededAt: (row.superseded_at as number) || null,
+      supersededBy: (row.superseded_by as string) || null,
     }));
   }
 
