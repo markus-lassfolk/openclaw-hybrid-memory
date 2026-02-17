@@ -76,6 +76,16 @@ export type WALConfig = {
   maxAge?: number;
 };
 
+/** Graph-based spreading activation (FR-007): auto-linking and traversal settings */
+export type GraphConfig = {
+  enabled: boolean;
+  autoLink: boolean;            // Auto-create RELATED_TO links during storage
+  autoLinkMinScore: number;     // Min similarity score for auto-linking (default 0.7)
+  autoLinkLimit: number;        // Max similar facts to link per storage (default 3)
+  maxTraversalDepth: number;    // Max hops for graph traversal in recall (default 2)
+  useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
+};
+
 /** Reflection: analyze facts to extract behavioral patterns and meta-insights */
 export type ReflectionConfig = {
   enabled: boolean;
@@ -129,6 +139,8 @@ export type HybridMemoryConfig = {
   store: StoreConfig;
   /** Opt-in credential management: structured, encrypted storage (default: disabled) */
   credentials: CredentialsConfig;
+  /** Graph-based spreading activation (FR-007): auto-linking and graph traversal */
+  graph: GraphConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
   /** Reflection: analyze facts to extract behavioral patterns (FR-011) */
@@ -357,6 +369,23 @@ export const hybridConfigSchema = {
       };
     }
 
+    // Parse graph config (FR-007)
+    const graphRaw = cfg.graph as Record<string, unknown> | undefined;
+    const graph: GraphConfig = {
+      enabled: graphRaw?.enabled !== false,
+      autoLink: graphRaw?.autoLink === true,
+      autoLinkMinScore: typeof graphRaw?.autoLinkMinScore === "number" && graphRaw.autoLinkMinScore >= 0 && graphRaw.autoLinkMinScore <= 1
+        ? graphRaw.autoLinkMinScore
+        : 0.7,
+      autoLinkLimit: typeof graphRaw?.autoLinkLimit === "number" && graphRaw.autoLinkLimit > 0
+        ? Math.floor(graphRaw.autoLinkLimit)
+        : 3,
+      maxTraversalDepth: typeof graphRaw?.maxTraversalDepth === "number" && graphRaw.maxTraversalDepth > 0
+        ? Math.floor(graphRaw.maxTraversalDepth)
+        : 2,
+      useInRecall: graphRaw?.useInRecall !== false,
+    };
+
     // Parse reflection config (FR-011)
     const reflRaw = cfg.reflection as Record<string, unknown> | undefined;
     const reflection: ReflectionConfig = {
@@ -387,6 +416,7 @@ export const hybridConfigSchema = {
       autoClassify,
       store,
       credentials,
+      graph,
       wal,
       reflection,
     };
