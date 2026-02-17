@@ -59,6 +59,9 @@ export type ExtractDailySink = { log: (s: string) => void; warn: (s: string) => 
 export type BackfillCliResult = { stored: number; skipped: number; candidates: number; files: number; dryRun: boolean };
 export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
+export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; skipped: number; dryRun: boolean };
+export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
+
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
 export type UninstallCliResult =
@@ -82,6 +85,7 @@ export type HybridMemCliContext = {
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (opts: { days: number; dryRun: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
+  runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runFindDuplicates: (opts: {
@@ -140,6 +144,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runRecordDistill,
     runExtractDaily,
     runBackfill,
+    runDistill,
     runMigrateToVault,
     runUninstall,
     runFindDuplicates,
@@ -474,6 +479,40 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         { fix: !!opts.fix, logFile: opts.logFile },
         { log: (s) => console.log(s), error: (s) => console.error(s) },
       );
+    });
+
+  mem
+    .command("distill")
+    .description("Index session JSONL into memory (extract facts via LLM, dedup, store). Use distill-window for date range info.")
+    .option("--dry-run", "Show what would be processed without storing")
+    .option("--all", "Process all sessions (last 90 days)")
+    .option("--days <n>", "Process sessions from last N days (default: 3)", "3")
+    .option("--since <date>", "Process sessions since date (YYYY-MM-DD)")
+    .option("--model <model>", "LLM model for extraction (default: gpt-4o-mini)", "gpt-4o-mini")
+    .option("--verbose", "Log each fact as it is stored")
+    .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
+    .action(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string }) => {
+      const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
+      const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
+      const result = await runDistill(
+        {
+          dryRun: !!opts.dryRun,
+          all: !!opts.all,
+          days: opts.days ? parseInt(opts.days) : undefined,
+          since: opts.since?.trim() || undefined,
+          model: opts.model,
+          verbose: !!opts.verbose,
+          maxSessions: maxSessions > 0 ? maxSessions : undefined,
+        },
+        sink,
+      );
+      if (result.dryRun) {
+        console.log(`\nWould extract ${result.factsExtracted} facts from ${result.sessionsScanned} sessions.`);
+      } else {
+        console.log(
+          `\nDistill done: ${result.stored} stored, ${result.skipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
+        );
+      }
     });
 
   mem

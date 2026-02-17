@@ -8,6 +8,23 @@ nav_order: 3
 
 **Extract durable knowledge from historical OpenClaw conversation logs**
 
+## Native CLI: `openclaw hybrid-mem distill`
+
+The simplest way to run distillation:
+
+```bash
+openclaw hybrid-mem distill              # Last 3 days (default)
+openclaw hybrid-mem distill --all        # Last 90 days (full backfill)
+openclaw hybrid-mem distill --days 14    # Last 14 days
+openclaw hybrid-mem distill --since 2026-01-01
+openclaw hybrid-mem distill --dry-run    # Preview without storing
+openclaw hybrid-mem distill --max-sessions 10  # Limit for cost control
+```
+
+This command scans `~/.openclaw/agents/*/sessions/*.jsonl`, extracts text, sends it to the LLM for fact extraction, deduplicates by embedding similarity, stores net-new facts, and records the run automatically. Cron-friendly: `openclaw hybrid-mem distill` via exec — no complex agent prompts needed.
+
+---
+
 ## What the distill job actually does
 
 When you run the pipeline (manually or via the nightly job), it:

@@ -57,7 +57,7 @@ This runs at 2 AM daily as an isolated sub-agent. It processes session logs from
 
 ```bash
 # Add to crontab (crontab -e)
-0 2 * * * cd ~/.openclaw && openclaw sessions spawn --model gemini --isolated --message "Run session distillation for the last 3 days. Use openclaw hybrid-mem distill-window to get the date range. Process sessions, extract facts, dedupe, store. Run openclaw hybrid-mem record-distill when done." >> /var/log/openclaw-distill.log 2>&1
+0 2 * * * cd ~/.openclaw && openclaw hybrid-mem distill >> /var/log/openclaw-distill.log 2>&1
 ```
 
 **After each distillation run**, always execute:

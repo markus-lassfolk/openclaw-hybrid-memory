@@ -13,9 +13,9 @@ import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -41,7 +41,7 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
@@ -4639,6 +4639,199 @@ const memoryHybridPlugin = {
           return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: false };
         }
 
+        const DISTILL_DEDUP_THRESHOLD = 0.85;
+
+        function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string }): Array<{ path: string; mtime: number }> {
+          const openclawDir = join(homedir(), ".openclaw");
+          const agentsDir = join(openclawDir, "agents");
+          if (!existsSync(agentsDir)) return [];
+          const cutoffMs =
+            opts.since
+              ? new Date(opts.since).getTime()
+              : Date.now() - (opts.all ? 90 : (opts.days ?? 3)) * 24 * 60 * 60 * 1000;
+          const out: Array<{ path: string; mtime: number }> = [];
+          for (const agentName of readdirSync(agentsDir, { withFileTypes: true })) {
+            if (!agentName.isDirectory()) continue;
+            const sessionsDir = join(agentsDir, agentName.name, "sessions");
+            if (!existsSync(sessionsDir)) continue;
+            for (const f of readdirSync(sessionsDir, { withFileTypes: true })) {
+              if (!f.isFile() || !f.name.endsWith(".jsonl") || f.name.startsWith(".deleted.")) continue;
+              const fp = join(sessionsDir, f.name);
+              try {
+                const stat = statSync(fp);
+                if (stat.mtimeMs >= cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
+              } catch { /* ignore */ }
+            }
+          }
+          out.sort((a, b) => a.mtime - b.mtime);
+          return out;
+        }
+
+        function extractTextFromSessionJsonl(filePath: string): string {
+          const lines = readFileSync(filePath, "utf-8").split("\n");
+          const parts: string[] = [];
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
+              if (obj.type !== "message" || !obj.message) continue;
+              const msg = obj.message;
+              if (msg.role !== "user" && msg.role !== "assistant") continue;
+              const content = msg.content;
+              if (!Array.isArray(content)) continue;
+              for (const block of content) {
+                if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) {
+                  parts.push(block.text.trim());
+                }
+              }
+            } catch { /* skip malformed lines */ }
+          }
+          return parts.join("\n\n");
+        }
+
+        async function runDistillForCli(
+          opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number },
+          sink: DistillCliSink,
+        ): Promise<DistillCliResult> {
+          const sessionFiles = gatherSessionFiles({
+            all: opts.all,
+            days: opts.days ?? (opts.all ? 90 : 3),
+            since: opts.since,
+          });
+          const maxSessions = opts.maxSessions ?? 0;
+          const filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
+          if (filesToProcess.length === 0) {
+            sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
+            return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
+          }
+          const batches: string[] = [];
+          let currentBatch = "";
+          const batchTokenLimit = 80_000;
+          for (let i = 0; i < filesToProcess.length; i++) {
+            const { path: fp } = filesToProcess[i];
+            const sessionDate = basename(fp).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
+            const text = extractTextFromSessionJsonl(fp);
+            if (!text.trim()) continue;
+            const block = `\n--- SESSION: ${basename(fp)} ---\n\n${text}`;
+            const blockTokens = Math.ceil(block.length / 4);
+            if (currentBatch.length > 0 && (estimateTokens(currentBatch) + blockTokens > batchTokenLimit)) {
+              batches.push(currentBatch);
+              currentBatch = block;
+            } else {
+              currentBatch += (currentBatch ? "\n" : "") + block;
+            }
+          }
+          if (currentBatch.trim()) batches.push(currentBatch);
+          const distillPrompt = loadPrompt("distill-sessions");
+          const model = opts.model ?? "gpt-4o-mini";
+          const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; source_date?: string; tags?: string[] }> = [];
+          for (let b = 0; b < batches.length; b++) {
+            sink.log(`Processing batch ${b + 1}/${batches.length}...`);
+            const userContent = distillPrompt + "\n\n" + batches[b];
+            try {
+              const resp = await openai.chat.completions.create({
+                model,
+                messages: [{ role: "user", content: userContent }],
+                temperature: 0.2,
+                max_tokens: 8000,
+              });
+              const content = resp.choices[0]?.message?.content?.trim() || "";
+              const lines = content.split("\n").filter((l) => l.trim());
+              for (const line of lines) {
+                const jsonMatch = line.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) continue;
+                try {
+                  const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+                  const category = String(obj.category || "other").toLowerCase();
+                  const text = String(obj.text || "").trim();
+                  if (!text || text.length < 10) continue;
+                  const entity = typeof obj.entity === "string" ? obj.entity : null;
+                  const key = typeof obj.key === "string" ? obj.key : null;
+                  const value = typeof obj.value === "string" ? obj.value : (entity && key ? text.slice(0, 200) : "");
+                  const source_date = typeof obj.source_date === "string" ? obj.source_date : null;
+                  const tags = Array.isArray(obj.tags) ? (obj.tags as string[]).filter((t) => typeof t === "string") : undefined;
+                  allFacts.push({ category, text, entity: entity ?? undefined, key: key ?? undefined, value, source_date: source_date ?? undefined, tags });
+                } catch { /* skip malformed JSON */ }
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: distill LLM batch ${b + 1} failed: ${err}`);
+            }
+          }
+          if (opts.dryRun) {
+            sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
+            return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored: 0, skipped: 0, dryRun: true };
+          }
+          const sourceDateSec = (s: string | null | undefined) => {
+            if (!s || typeof s !== "string") return null;
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+            if (!m) return null;
+            return Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 1000);
+          };
+          let stored = 0;
+          let skipped = 0;
+          for (const fact of allFacts) {
+            const isCred = fact.entity === "Credentials" || (fact.key && /^(api_key|token|password|secret)/i.test(fact.key));
+            if (isCred && cfg.credentials.enabled && credentialsDb) {
+              const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
+              if (parsed) {
+                if (!opts.dryRun) {
+                  credentialsDb.store({ service: parsed.service, type: parsed.type, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
+                  const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
+                  const entry = factsDb.store({
+                    text: pointerText,
+                    category: "technical",
+                    importance: BATCH_STORE_IMPORTANCE,
+                    entity: "Credentials",
+                    key: parsed.service,
+                    value: VAULT_POINTER_PREFIX + parsed.service,
+                    source: "distillation",
+                    sourceDate: sourceDateSec(fact.source_date),
+                  });
+                  try {
+                    const vector = await embeddings.embed(pointerText);
+                    if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+                      await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
+                    }
+                  } catch { /* ignore */ }
+                  stored++;
+                  if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
+                }
+                continue;
+              }
+            }
+            if (factsDb.hasDuplicate(fact.text)) {
+              skipped++;
+              continue;
+            }
+            try {
+              const vector = await embeddings.embed(fact.text);
+              if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
+                skipped++;
+                continue;
+              }
+              const entry = factsDb.store({
+                text: fact.text,
+                category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
+                importance: BATCH_STORE_IMPORTANCE,
+                entity: fact.entity ?? null,
+                key: fact.key ?? null,
+                value: fact.value ?? fact.text.slice(0, 200),
+                source: "distillation",
+                sourceDate: sourceDateSec(fact.source_date),
+                tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
+              });
+              await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
+              stored++;
+              if (opts.verbose) sink.log(`  stored: [${fact.category}] ${fact.text.slice(0, 60)}...`);
+            } catch (err) {
+              sink.warn(`memory-hybrid: distill store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+            }
+          }
+          runRecordDistillForCli();
+          return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
+        }
+
         async function runMigrateToVaultForCli(): Promise<MigrateToVaultResult | null> {
           if (!credentialsDb) return null;
           const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
@@ -4722,6 +4915,7 @@ const memoryHybridPlugin = {
           runRecordDistill: () => Promise.resolve(runRecordDistillForCli()),
           runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
           runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
+          runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
           runFindDuplicates: (opts) =>
@@ -4764,7 +4958,7 @@ const memoryHybridPlugin = {
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
