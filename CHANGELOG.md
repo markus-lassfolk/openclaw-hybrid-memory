@@ -37,6 +37,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **CLI (eighth batch):** verify moved to `cli/register.ts`; added `runVerifyForCli` with VerifyCliSink, runVerify in context.
 - **CLI (ninth batch):** distill-window and record-distill moved to `cli/register.ts`; added `runDistillWindowForCli`, `runRecordDistillForCli`, DistillWindowResult, RecordDistillResult, runDistillWindow, runRecordDistill in context.
 - **CLI (final batch):** extract-daily, credentials (migrate-to-vault), uninstall moved to `cli/register.ts`. All CLI commands now registered via `registerHybridMemCli`. No CLI command blocks remain in index.ts.
+- **Blocking I/O:** Hot-path sync I/O (agent_end, before_agent_start, auditProposal, discoverCategoriesFromOther) converted to async `fs/promises` (mkdir, readFile, writeFile, unlink, access).
+- **Naming consistency:** Renamed `openaiClient` → `openai` (module-level), `db` → `factsDb` in classify/discovery functions.
+- **Magic numbers:** 15+ named constants extracted to `utils/constants.ts` (importance levels, temperatures, thresholds, max chars, timeouts, SECONDS_PER_DAY).
 
 ### Added
 

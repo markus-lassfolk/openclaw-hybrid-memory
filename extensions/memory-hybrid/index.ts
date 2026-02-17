@@ -14,6 +14,7 @@ import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -49,6 +50,20 @@ import {
   REFLECTION_MAX_FACT_LENGTH,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
   CREDENTIAL_NOTES_MAX_CHARS,
+  FACT_PREVIEW_MAX_CHARS,
+  CLASSIFY_CANDIDATE_MAX_CHARS,
+  DEFAULT_MIN_SCORE,
+  CLI_STORE_IMPORTANCE,
+  BATCH_STORE_IMPORTANCE,
+  REFLECTION_IMPORTANCE,
+  CONSOLIDATION_MERGE_MAX_CHARS,
+  REFLECTION_PATTERN_MAX_CHARS,
+  REFLECTION_META_MAX_CHARS,
+  REFLECTION_DEDUPE_THRESHOLD,
+  REFLECTION_TEMPERATURE,
+  BATCH_THROTTLE_MS,
+  SQLITE_BUSY_TIMEOUT_MS,
+  SECONDS_PER_DAY,
 } from "./utils/constants.js";
 import {
   normalizeTextForDedupe,
@@ -133,7 +148,7 @@ class CredentialsDB {
 
   private applyPragmas(): void {
     this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
+    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   }
 
   /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
@@ -260,7 +275,7 @@ class ProposalsDB {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
+    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS proposals (
@@ -791,7 +806,7 @@ async function migrateCredentialsToVault(opts: {
       const pointerEntry = factsDb.store({
         text: pointerText,
         category: "technical" as MemoryCategory,
-        importance: 0.8,
+        importance: BATCH_STORE_IMPORTANCE,
         entity: "Credentials",
         key: parsed.service,
         value: pointerValue,
@@ -805,7 +820,7 @@ async function migrateCredentialsToVault(opts: {
           await vectorDb.store({
             text: pointerText,
             vector,
-            importance: 0.8,
+            importance: BATCH_STORE_IMPORTANCE,
             category: "technical",
             id: pointerEntry.id,
           });
@@ -984,7 +999,7 @@ async function runConsolidate(
         temperature: 0,
         max_tokens: 300,
       });
-      mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, 5000);
+      mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
       continue;
@@ -1009,7 +1024,7 @@ async function runConsolidate(
     const entry = factsDb.store({
       text: mergedText,
       category,
-      importance: 0.8,
+      importance: BATCH_STORE_IMPORTANCE,
       entity: first?.entity ?? null,
       key: null,
       value: null,
@@ -1019,7 +1034,7 @@ async function runConsolidate(
     });
     try {
       const vector = await embeddings.embed(mergedText);
-      await vectorDb.store({ text: mergedText, vector, importance: 0.8, category, id: entry.id });
+      await vectorDb.store({ text: mergedText, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
     }
@@ -1034,14 +1049,13 @@ async function runConsolidate(
 }
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
-const REFLECTION_PATTERN_MAX_CHARS = 500;
-const REFLECTION_DEDUPE_THRESHOLD = 0.85;
+// REFLECTION_PATTERN_MAX_CHARS, REFLECTION_DEDUPE_THRESHOLD imported from constants
 /** Rules: short one-liners (FR-011 optional Rules layer). */
 const REFLECTION_RULE_MIN_CHARS = 10;
 const REFLECTION_RULE_MAX_CHARS = 120;
 /** Meta-patterns: 1-2 sentences (FR-011 optional Reflection on reflections). */
 const REFLECTION_META_MIN_CHARS = 20;
-const REFLECTION_META_MAX_CHARS = 300;
+// REFLECTION_META_MAX_CHARS imported from constants
 const REFLECTION_MAX_PATTERNS_FOR_RULES = 50;
 const REFLECTION_MAX_PATTERNS_FOR_META = 30;
 
@@ -1068,7 +1082,7 @@ async function runReflection(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }> {
   const windowDays = Math.min(90, Math.max(1, opts.window));
-  const windowStartSec = Math.floor(Date.now() / 1000) - windowDays * 86400;
+  const windowStartSec = Math.floor(Date.now() / 1000) - windowDays * SECONDS_PER_DAY;
 
   const allFacts = factsDb.getAll();
   const recentFacts = allFacts.filter((f) => {
@@ -1107,7 +1121,7 @@ async function runReflection(
     const resp = await openai.chat.completions.create({
       model: opts.model,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
+      temperature: REFLECTION_TEMPERATURE,
       max_tokens: 1500,
     });
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
@@ -1185,7 +1199,7 @@ async function runReflection(
     const entry = factsDb.store({
       text: patternText,
       category: "pattern" as MemoryCategory,
-      importance: 0.9,
+      importance: REFLECTION_IMPORTANCE,
       entity: null,
       key: null,
       value: null,
@@ -1197,7 +1211,7 @@ async function runReflection(
       await vectorDb.store({
         text: patternText,
         vector: vec,
-        importance: 0.9,
+        importance: REFLECTION_IMPORTANCE,
         category: "pattern",
         id: entry.id,
       });
@@ -1243,7 +1257,7 @@ async function runReflectionRules(
     const resp = await openai.chat.completions.create({
       model: opts.model,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
+      temperature: REFLECTION_TEMPERATURE,
       max_tokens: 800,
     });
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
@@ -1306,7 +1320,7 @@ async function runReflectionRules(
     const entry = factsDb.store({
       text: ruleText,
       category: "rule" as MemoryCategory,
-      importance: 0.9,
+      importance: REFLECTION_IMPORTANCE,
       entity: null,
       key: null,
       value: null,
@@ -1315,7 +1329,7 @@ async function runReflectionRules(
       tags: ["reflection", "rule"],
     });
     try {
-      await vectorDb.store({ text: ruleText, vector: vec, importance: 0.9, category: "rule", id: entry.id });
+      await vectorDb.store({ text: ruleText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "rule", id: entry.id });
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
     }
@@ -1352,7 +1366,7 @@ async function runReflectionMeta(
     const resp = await openai.chat.completions.create({
       model: opts.model,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
+      temperature: REFLECTION_TEMPERATURE,
       max_tokens: 500,
     });
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
@@ -1415,7 +1429,7 @@ async function runReflectionMeta(
     const entry = factsDb.store({
       text: metaText,
       category: "pattern" as MemoryCategory,
-      importance: 0.9,
+      importance: REFLECTION_IMPORTANCE,
       entity: null,
       key: null,
       value: null,
@@ -1424,7 +1438,7 @@ async function runReflectionMeta(
       tags: ["reflection", "pattern", "meta"],
     });
     try {
-      await vectorDb.store({ text: metaText, vector: vec, importance: 0.9, category: "pattern", id: entry.id });
+      await vectorDb.store({ text: metaText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "pattern", id: entry.id });
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);
     }
@@ -1525,7 +1539,7 @@ function normalizeSuggestedLabel(s: string): string {
  * Returns list of newly created category names; updates DB and persists to discoveredCategoriesPath.
  */
 async function discoverCategoriesFromOther(
-  db: FactsDB,
+  factsDb: FactsDB,
   openai: OpenAI,
   config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -1533,7 +1547,7 @@ async function discoverCategoriesFromOther(
 ): Promise<string[]> {
   if (config.suggestCategories !== true) return [];
   const minForNew = config.minFactsForNewCategory ?? 10;
-  const others = db.getByCategory("other");
+  const others = factsDb.getByCategory("other");
   if (others.length < MIN_OTHER_FOR_DISCOVERY) return [];
 
   logger.info(`memory-hybrid: category discovery on ${others.length} "other" facts (min ${minForNew} per label)`);
@@ -1575,7 +1589,7 @@ async function discoverCategoriesFromOther(
     if (existingCategories.has(label)) continue;
     if (ids.length < minForNew) continue;
     newCategoryNames.push(label);
-    for (const id of ids) db.updateCategory(id, label);
+    for (const id of ids) factsDb.updateCategory(id, label);
   }
 
   if (newCategoryNames.length === 0) return [];
@@ -1583,12 +1597,15 @@ async function discoverCategoriesFromOther(
   setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
   logger.info(`memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`);
 
-  mkdirSync(dirname(discoveredCategoriesPath), { recursive: true });
-  const existingList: string[] = existsSync(discoveredCategoriesPath)
-    ? (JSON.parse(readFileSync(discoveredCategoriesPath, "utf-8")) as string[])
-    : [];
+  await mkdir(dirname(discoveredCategoriesPath), { recursive: true });
+  let existingList: string[] = [];
+  try {
+    existingList = JSON.parse(await readFile(discoveredCategoriesPath, "utf-8")) as string[];
+  } catch {
+    // file doesn't exist yet
+  }
   const merged = [...new Set([...existingList, ...newCategoryNames])];
-  writeFileSync(discoveredCategoriesPath, JSON.stringify(merged, null, 2), "utf-8");
+  await writeFile(discoveredCategoriesPath, JSON.stringify(merged, null, 2), "utf-8");
 
   return newCategoryNames;
 }
@@ -1651,7 +1668,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
  * Used by CLI; returns counts and optional breakdown for printing.
  */
 async function runClassifyForCli(
-  db: FactsDB,
+  factsDb: FactsDB,
   openai: OpenAI,
   config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
   opts: { dryRun: boolean; limit: number; model?: string },
@@ -1660,14 +1677,14 @@ async function runClassifyForCli(
 ): Promise<{ reclassified: number; total: number; breakdown?: Record<string, number> }> {
   const classifyModel = opts.model || config.model;
   const categories = getMemoryCategories();
-  let others = db.getByCategory("other").slice(0, opts.limit);
+  let others = factsDb.getByCategory("other").slice(0, opts.limit);
   if (others.length === 0) {
     return { reclassified: 0, total: 0 };
   }
 
   if (!opts.dryRun && config.suggestCategories && others.length >= MIN_OTHER_FOR_DISCOVERY) {
-    await discoverCategoriesFromOther(db, openai, { ...config, model: classifyModel }, logger, discoveredPath);
-    others = db.getByCategory("other").slice(0, opts.limit);
+    await discoverCategoriesFromOther(factsDb, openai, { ...config, model: classifyModel }, logger, discoveredPath);
+    others = factsDb.getByCategory("other").slice(0, opts.limit);
   }
 
   let totalReclassified = 0;
@@ -1675,13 +1692,13 @@ async function runClassifyForCli(
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
     const results = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
-      if (!opts.dryRun) db.updateCategory(id, newCat);
+      if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
     }
     if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
   }
 
-  const breakdown = !opts.dryRun ? db.statsBreakdown() : undefined;
+  const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
   return { reclassified: totalReclassified, total: others.length, breakdown };
 }
 
@@ -1691,7 +1708,7 @@ async function runClassifyForCli(
  * (LLM groups "other" by free-form label; labels with ≥ minFactsForNewCategory become new categories).
  */
 async function runAutoClassify(
-  db: FactsDB,
+  factsDb: FactsDB,
   openai: OpenAI,
   config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -1701,11 +1718,11 @@ async function runAutoClassify(
 
   // Optionally discover new categories from "other" (free-form grouping; threshold not told to LLM)
   if (opts?.discoveredCategoriesPath && config.suggestCategories) {
-    await discoverCategoriesFromOther(db, openai, config, logger, opts.discoveredCategoriesPath);
+    await discoverCategoriesFromOther(factsDb, openai, config, logger, opts.discoveredCategoriesPath);
   }
 
   // Get all "other" facts (after discovery some may have been reclassified)
-  const others = db.getByCategory("other");
+  const others = factsDb.getByCategory("other");
   if (others.length === 0) {
     return { reclassified: 0, suggested: [] };
   }
@@ -1724,7 +1741,7 @@ async function runAutoClassify(
     const results = await classifyBatch(openai, config.model, batch, categories);
 
     for (const [id, newCat] of results) {
-      db.updateCategory(id, newCat);
+      factsDb.updateCategory(id, newCat);
       totalReclassified++;
     }
 
@@ -1753,7 +1770,7 @@ let resolvedSqlitePath: string;
 let factsDb: FactsDB;
 let vectorDb: VectorDB;
 let embeddings: Embeddings;
-let openaiClient: OpenAI;
+let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
@@ -1819,7 +1836,7 @@ const memoryHybridPlugin = {
     vectorDb = new VectorDB(resolvedLancePath, vectorDim);
     vectorDb.setLogger(api.logger);
     embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
-    openaiClient = new OpenAI({ apiKey: cfg.embedding.apiKey });
+    openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
     if (cfg.credentials.enabled) {
       const credPath = join(dirname(resolvedSqlitePath), "credentials.db");
@@ -2310,7 +2327,7 @@ const memoryHybridPlugin = {
             }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
-                textToStore, entity, key, similarFacts, openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
+                textToStore, entity, key, similarFacts, openai, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
               );
 
               if (classification.action === "NOOP") {
@@ -2801,7 +2818,7 @@ const memoryHybridPlugin = {
             const nowSec = Math.floor(Date.now() / 1000);
             const expiresSoon = entry.expires != null && entry.expires - nowSec < warnDays * 24 * 3600;
             const expiryWarning = expiresSoon
-              ? ` [WARNING: Expires in ${Math.ceil((entry.expires! - nowSec) / 86400)} days — consider rotating]`
+              ? ` [WARNING: Expires in ${Math.ceil((entry.expires! - nowSec) / SECONDS_PER_DAY)} days — consider rotating]`
               : "";
             return {
               content: [
@@ -3046,7 +3063,7 @@ const memoryHybridPlugin = {
             factsDb,
             vectorDb,
             embeddings,
-            openaiClient,
+            openai,
             { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
             { window, dryRun: false, model: reflectionCfg.model },
             api.logger,
@@ -3089,7 +3106,7 @@ const memoryHybridPlugin = {
             factsDb,
             vectorDb,
             embeddings,
-            openaiClient,
+            openai,
             { dryRun: false, model: reflectionCfg.model },
             api.logger,
           );
@@ -3126,7 +3143,7 @@ const memoryHybridPlugin = {
             factsDb,
             vectorDb,
             embeddings,
-            openaiClient,
+            openai,
             { dryRun: false, model: reflectionCfg.model },
             api.logger,
           );
@@ -3150,9 +3167,9 @@ const memoryHybridPlugin = {
 
     if (cfg.personaProposals.enabled && proposalsDb) {
       // Shared helper: audit trail logging (used by both tools and CLI commands)
-      const auditProposal = (action: string, proposalId: string, details?: any, logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }) => {
+      const auditProposal = async (action: string, proposalId: string, details?: any, logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }) => {
         const auditDir = join(dirname(resolvedSqlitePath), "decisions");
-        mkdirSync(auditDir, { recursive: true });
+        await mkdir(auditDir, { recursive: true });
         const timestamp = new Date().toISOString();
         const entry = {
           timestamp,
@@ -3162,7 +3179,7 @@ const memoryHybridPlugin = {
         };
         const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
         try {
-          writeFileSync(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
+          await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
         } catch (err) {
           const msg = `Audit log write failed: ${err}`;
           if (logger?.warn) {
@@ -3349,7 +3366,7 @@ const memoryHybridPlugin = {
               expiresAt,
             });
 
-            auditProposal("created", proposal.id, {
+            await auditProposal("created", proposal.id, {
               targetFile,
               title,
               confidence,
@@ -3400,8 +3417,8 @@ const memoryHybridPlugin = {
             }
 
             const lines = proposals.map((p) => {
-              const age = Math.floor((Date.now() / 1000 - p.createdAt) / 86400);
-              const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / 86400) : null;
+              const age = Math.floor((Date.now() / 1000 - p.createdAt) / SECONDS_PER_DAY);
+              const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / SECONDS_PER_DAY) : null;
               return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? p.observation.slice(0, 120) + "..." : p.observation}`;
             });
 
@@ -3466,7 +3483,7 @@ const memoryHybridPlugin = {
             const newStatus = action === "approve" ? "approved" : "rejected";
             proposalsDb!.updateStatus(proposalId, newStatus, opts.reviewedBy);
 
-            auditProposal(action, proposalId, {
+            await auditProposal(action, proposalId, {
               reviewedBy: opts.reviewedBy ?? "cli-user",
               previousStatus: "pending",
               newStatus,
@@ -3535,7 +3552,7 @@ const memoryHybridPlugin = {
               // Mark as applied only after successful file write
               proposalsDb!.markApplied(proposalId);
 
-              auditProposal("applied", proposalId, {
+              await auditProposal("applied", proposalId, {
                 targetFile: proposal.targetFile,
                 targetPath,
                 backupPath,
@@ -3586,7 +3603,7 @@ const memoryHybridPlugin = {
               const pointerEntry = factsDb.store({
                 text: pointerText,
                 category: "technical" as MemoryCategory,
-                importance: 0.7,
+                importance: CLI_STORE_IMPORTANCE,
                 entity: "Credentials",
                 key: parsed.service,
                 value: pointerValue,
@@ -3597,7 +3614,7 @@ const memoryHybridPlugin = {
               try {
                 const vector = await embeddings.embed(pointerText);
                 if (!(await vectorDb.hasDuplicate(vector))) {
-                  await vectorDb.store({ text: pointerText, vector, importance: 0.7, category: "technical", id: pointerEntry.id });
+                  await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
                 }
               } catch (err) {
                 log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -3627,7 +3644,7 @@ const memoryHybridPlugin = {
               if (similarFacts.length > 0) {
                 try {
                   const classification = await classifyMemoryOperation(
-                    text, entity, key, similarFacts, openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", log,
+                    text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? "gpt-4o-mini", log,
                   );
                   if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
                   if (classification.action === "DELETE" && classification.targetId) {
@@ -3641,7 +3658,7 @@ const memoryHybridPlugin = {
                       const newEntry = factsDb.store({
                         text,
                         category,
-                        importance: 0.7,
+                        importance: CLI_STORE_IMPORTANCE,
                         entity: entity ?? oldFact.entity,
                         key: opts.key ?? extracted.key ?? oldFact.key ?? null,
                         value: opts.value ?? extracted.value ?? oldFact.value ?? null,
@@ -3654,7 +3671,7 @@ const memoryHybridPlugin = {
                       factsDb.supersede(classification.targetId, newEntry.id);
                       try {
                         if (!(await vectorDb.hasDuplicate(vector))) {
-                          await vectorDb.store({ text, vector, importance: 0.7, category, id: newEntry.id });
+                          await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
                         }
                       } catch (err) {
                         log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -3672,7 +3689,7 @@ const memoryHybridPlugin = {
           const entry = factsDb.store({
             text,
             category,
-            importance: 0.7,
+            importance: CLI_STORE_IMPORTANCE,
             entity,
             key: opts.key ?? extracted.key ?? null,
             value: opts.value ?? extracted.value ?? null,
@@ -3683,7 +3700,7 @@ const memoryHybridPlugin = {
           try {
             const vector = await embeddings.embed(text);
             if (!(await vectorDb.hasDuplicate(vector))) {
-              await vectorDb.store({ text, vector, importance: 0.7, category: opts.category ?? "other", id: entry.id });
+              await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: opts.category ?? "other", id: entry.id });
             }
           } catch (err) {
             log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -4179,7 +4196,7 @@ const memoryHybridPlugin = {
                       const pointerEntry = factsDb.store({
                         text: pointerText,
                         category: "technical",
-                        importance: 0.8,
+                        importance: BATCH_STORE_IMPORTANCE,
                         entity: "Credentials",
                         key: parsed.service,
                         value: VAULT_POINTER_PREFIX + parsed.service,
@@ -4190,7 +4207,7 @@ const memoryHybridPlugin = {
                       try {
                         const vector = await embeddings.embed(pointerText);
                         if (!(await vectorDb.hasDuplicate(vector))) {
-                          await vectorDb.store({ text: pointerText, vector, importance: 0.8, category: "technical", id: pointerEntry.id });
+                          await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
                         }
                       } catch (err) {
                         sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -4219,7 +4236,7 @@ const memoryHybridPlugin = {
               const storePayload = {
                 text: trimmed,
                 category,
-                importance: 0.8,
+                importance: BATCH_STORE_IMPORTANCE,
                 entity: extracted.entity,
                 key: extracted.key,
                 value: extracted.value,
@@ -4243,7 +4260,7 @@ const memoryHybridPlugin = {
                     try {
                       const classification = await classifyMemoryOperation(
                         trimmed, extracted.entity, extracted.key, similarFacts,
-                        openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", sink,
+                        openai, cfg.store.classifyModel ?? "gpt-4o-mini", sink,
                       );
                       if (classification.action === "NOOP") continue;
                       if (classification.action === "DELETE" && classification.targetId) {
@@ -4264,7 +4281,7 @@ const memoryHybridPlugin = {
                           factsDb.supersede(classification.targetId, newEntry.id);
                           try {
                             if (!(await vectorDb.hasDuplicate(vecForStore))) {
-                              await vectorDb.store({ text: trimmed, vector: vecForStore, importance: 0.8, category, id: newEntry.id });
+                              await vectorDb.store({ text: trimmed, vector: vecForStore, importance: BATCH_STORE_IMPORTANCE, category, id: newEntry.id });
                             }
                           } catch (err) {
                             sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -4283,7 +4300,7 @@ const memoryHybridPlugin = {
               try {
                 const vector = vecForStore ?? await embeddings.embed(trimmed);
                 if (!(await vectorDb.hasDuplicate(vector))) {
-                  await vectorDb.store({ text: trimmed, vector, importance: 0.8, category, id: entry.id });
+                  await vectorDb.store({ text: trimmed, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
                 }
               } catch (err) {
                 sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -4381,26 +4398,26 @@ const memoryHybridPlugin = {
           runFindDuplicates: (opts) =>
             runFindDuplicates(factsDb, embeddings, opts, api.logger),
           runConsolidate: (opts) =>
-            runConsolidate(factsDb, vectorDb, embeddings, openaiClient, opts, api.logger),
+            runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger),
           runReflection: (opts) =>
             runReflection(
               factsDb,
               vectorDb,
               embeddings,
-              openaiClient,
+              openai,
               { defaultWindow: cfg.reflection.defaultWindow, minObservations: cfg.reflection.minObservations },
               opts,
               api.logger,
             ),
           runReflectionRules: (opts) =>
-            runReflectionRules(factsDb, vectorDb, embeddings, openaiClient, opts, api.logger),
+            runReflectionRules(factsDb, vectorDb, embeddings, openai, opts, api.logger),
           runReflectionMeta: (opts) =>
-            runReflectionMeta(factsDb, vectorDb, embeddings, openaiClient, opts, api.logger),
+            runReflectionMeta(factsDb, vectorDb, embeddings, openai, opts, api.logger),
           reflectionConfig: cfg.reflection,
           runClassify: (opts) =>
             runClassifyForCli(
               factsDb,
-              openaiClient,
+              openai,
               cfg.autoClassify,
               opts,
               join(dirname(resolvedSqlitePath), ".discovered-categories.json"),
@@ -4694,7 +4711,7 @@ const memoryHybridPlugin = {
               })
               .join("\n");
             try {
-              const resp = await openaiClient.chat.completions.create({
+              const resp = await openai.chat.completions.create({
                 model: summarizeModel,
                 messages: [
                   {
@@ -4814,7 +4831,7 @@ const memoryHybridPlugin = {
                 try {
                   const classification = await classifyMemoryOperation(
                     textToStore, extracted.entity, extracted.key, similarFacts,
-                    openaiClient, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
+                    openai, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
@@ -4914,7 +4931,7 @@ const memoryHybridPlugin = {
                   data: {
                     text: textToStore,
                     category,
-                    importance: 0.7,
+                    importance: CLI_STORE_IMPORTANCE,
                     entity: extracted.entity,
                     key: extracted.key,
                     value: extracted.value,
@@ -4933,7 +4950,7 @@ const memoryHybridPlugin = {
             const storedEntry = factsDb.store({
               text: textToStore,
               category,
-              importance: 0.7,
+              importance: CLI_STORE_IMPORTANCE,
               entity: extracted.entity,
               key: extracted.key,
               value: extracted.value,
@@ -4944,7 +4961,7 @@ const memoryHybridPlugin = {
 
             try {
               if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                await vectorDb.store({ text: textToStore, vector, importance: 0.7, category, id: storedEntry.id });
+                await vectorDb.store({ text: textToStore, vector, importance: CLI_STORE_IMPORTANCE, category, id: storedEntry.id });
               }
             } catch (err) {
               api.logger.warn(
@@ -5002,8 +5019,8 @@ const memoryHybridPlugin = {
           const allText = texts.join("\n");
           const detected = detectCredentialPatterns(allText);
           if (detected.length === 0) return;
-          mkdirSync(dirname(pendingPath), { recursive: true });
-          writeFileSync(
+          await mkdir(dirname(pendingPath), { recursive: true });
+          await writeFile(
             pendingPath,
             JSON.stringify({
               hints: detected.map((d) => d.hint),
@@ -5019,26 +5036,30 @@ const memoryHybridPlugin = {
 
       api.on("before_agent_start", async () => {
         try {
-          if (!existsSync(pendingPath)) return;
-          const raw = readFileSync(pendingPath, "utf-8");
+          await access(pendingPath);
+        } catch {
+          return;
+        }
+        try {
+          const raw = await readFile(pendingPath, "utf-8");
           const data = JSON.parse(raw) as { hints?: string[]; at?: number };
           const at = typeof data.at === "number" ? data.at : 0;
           if (Date.now() - at > PENDING_TTL_MS) {
-            rmSync(pendingPath, { force: true });
+            await unlink(pendingPath).catch(() => {});
             return;
           }
           const hints = Array.isArray(data.hints) ? data.hints : [];
           if (hints.length === 0) {
-            rmSync(pendingPath, { force: true });
+            await unlink(pendingPath).catch(() => {});
             return;
           }
-          rmSync(pendingPath, { force: true });
+          await unlink(pendingPath).catch(() => {});
           const hintText = hints.join(", ");
           return {
             prependContext: `\n<credential-hint>\nA credential may have been shared in the previous exchange (${hintText}). Consider asking the user if they want to store it securely with credential_store.\n</credential-hint>\n`,
           };
         } catch {
-          try { rmSync(pendingPath, { force: true }); } catch { /* ignore */ }
+          await unlink(pendingPath).catch(() => {});
         }
       });
     }
@@ -5152,7 +5173,7 @@ const memoryHybridPlugin = {
           // Run once shortly after startup (5 min delay to let things settle)
           classifyStartupTimeout = setTimeout(async () => {
             try {
-              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger, {
+              await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
                 discoveredCategoriesPath: discoveredPath,
               });
             } catch (err) {
@@ -5162,7 +5183,7 @@ const memoryHybridPlugin = {
 
           classifyTimer = setInterval(async () => {
             try {
-              await runAutoClassify(factsDb, openaiClient, cfg.autoClassify, api.logger, {
+              await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
                 discoveredCategoriesPath: discoveredPath,
               });
             } catch (err) {

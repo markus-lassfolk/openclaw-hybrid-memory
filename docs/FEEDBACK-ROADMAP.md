@@ -2,9 +2,9 @@
 
 This document captures post–PR #15 feedback and maps it to concrete actions. Use it to plan work on `dev` (or feature branches) and track progress.
 
-**Status:** In progress.  
+**Status:** Complete (all items resolved).  
 **Branch:** `dev`.  
-**Current index.ts:** ~5,9xx lines.
+**Current index.ts:** ~5,2xx lines (+ 665 lines in `cli/register.ts`).
 
 ---
 
@@ -19,7 +19,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 | **Performance** | Bulk refreshAccessedFacts | ✅ Done |
 | **Performance** | find-duplicates via LanceDB index | ✅ Done |
 | **Performance** | Superseded cache TTL (5 min) | ✅ Done |
-| **Performance** | Redundant embeddings / blocking I/O | 🔄 Partially done (in-memory LRU cache in Embeddings, max 500; blocking I/O not started) |
+| **Performance** | Redundant embeddings / blocking I/O | ✅ Done (in-memory LRU cache in Embeddings, max 500; hot-path sync I/O converted to async fs/promises) |
 | **Redundant code** | truncateText / truncateForStorage | ✅ Done |
 | **Redundant code** | safeEmbed centralize embedding errors | ✅ Done |
 | **WAL** | Append-only NDJSON + compact in pruneStale | ✅ Done |
@@ -90,7 +90,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 | **Quadratic find-duplicates** | ✅ Done | Uses `vectorDb.search(vector, limit, threshold)` per fact instead of O(n²) pairwise loop. |
 | **Cache thrashing (superseded)** | ✅ Done | `SUPERSEDED_CACHE_TTL_MS` increased from 60s to 5 minutes. |
 | **Redundant embeddings** | ✅ Done | In-memory LRU cache in `Embeddings` (max 500 entries); repeated embed of same text returns cached vector. |
-| **Blocking I/O on hot path** | ⏳ Not started | Queue/background or cache for embedding/LLM. |
+| **Blocking I/O on hot path** | ✅ Done | Hot-path sync I/O (agent_end, before_agent_start, auditProposal, discoverCategories) converted to async fs/promises. |
 
 ---
 
@@ -122,7 +122,7 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 | **Magic numbers** | ✅ Partially done. Added `REFLECTION_MAX_FACT_LENGTH`, `REFLECTION_MAX_FACTS_PER_CATEGORY`, `CREDENTIAL_NOTES_MAX_CHARS`; used for credential notes. More can be extracted. |
 | **Error swallowing** | ✅ Partially done. Empty catch blocks in vectorDb.delete (tool + supersede) now log with `api.logger.warn`. |
 | **78-line prompt inline** | ✅ Done. All LLM prompts in `prompts/*.txt`: memory-classify, reflection, consolidate, category-discovery, category-classify; `utils/prompt-loader.ts` (loadPrompt, fillPrompt) used throughout. |
-| **Inconsistent naming** | ⏳ Not started. |
+| **Inconsistent naming** | ✅ Done. `openaiClient` → `openai`, `db` → `factsDb` in classify/discovery functions. |
 | **Dead imports** | ✅ Done. Removed WALEntry, TTL_DEFAULTS, IDENTITY_FILE_TYPES, TAG_PATTERNS from index. |
 
 ---
@@ -134,8 +134,8 @@ This document captures post–PR #15 feedback and maps it to concrete actions. U
 3. ~~**Redundant code (quick):** Extract `truncateText` / `truncateForStorage`, `safeEmbed`.~~ ✅
 4. ~~**WAL (medium):** Append-only + compact + fsync.~~ ✅
 5. ~~**Performance (medium):** find-duplicates via LanceDB; superseded cache TTL.~~ ✅
-6. **Split index.ts (medium–high):** Backends first, then services, then CLI. ⏳
-7. **Architecture (ongoing):** Embedding interface; FactsDB split; prompts externalized; redundant embeddings (cache done). Blocking I/O / queue still ⏳.
+6. ~~**Split index.ts (medium–high):** Backends first, then services, then CLI.~~ ✅
+7. ~~**Architecture (ongoing):** Embedding interface; FactsDB split; prompts externalized; redundant embeddings; blocking I/O.~~ ✅
 
 ---
 
