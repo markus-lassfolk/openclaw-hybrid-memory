@@ -88,6 +88,8 @@ export function parseSessionJsonl(
         const toolContent = (block as Record<string, unknown>).content;
         if (looksLikeFailure(toolContent)) {
           lastFailure = typeof toolContent === "string" ? toolContent.slice(0, 200) : JSON.stringify(toolContent).slice(0, 200);
+        } else {
+          lastFailure = undefined;
         }
       }
     }
@@ -143,6 +145,19 @@ export type ExtractProceduresResult = {
   negativeCount: number;
   dryRun: boolean;
 };
+
+/** Calculate word overlap ratio between two task patterns (0.0 to 1.0). */
+function taskSimilarity(pattern1: string, pattern2: string): number {
+  const words1 = new Set(
+    pattern1.toLowerCase().split(/\s+/).filter((w) => w.length > 2)
+  );
+  const words2 = new Set(
+    pattern2.toLowerCase().split(/\s+/).filter((w) => w.length > 2)
+  );
+  if (words1.size === 0 || words2.size === 0) return 0;
+  const intersection = new Set([...words1].filter((w) => words2.has(w)));
+  return intersection.size / Math.min(words1.size, words2.size);
+}
 
 /**
  * Read session JSONL files (from directory or explicit paths), parse tool sequences,
@@ -204,7 +219,7 @@ export async function extractProceduresFromSessions(
     }
 
     const existing = factsDb.findProcedureByTaskPattern(parsed.taskIntent, 1)[0];
-    if (existing) {
+    if (existing && taskSimilarity(existing.taskPattern, parsed.taskIntent) >= 0.5) {
       if (parsed.success) {
         factsDb.recordProcedureSuccess(existing.id, recipeJson);
       } else {
