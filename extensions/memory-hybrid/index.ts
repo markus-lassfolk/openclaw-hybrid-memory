@@ -14,7 +14,7 @@ import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync, openSync, writeSync, closeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -191,29 +191,57 @@ class WriteAheadLog {
     
     // Initialize WAL file if it doesn't exist
     if (!existsSync(walPath)) {
-      writeFileSync(walPath, "[]", "utf-8");
+      writeFileSync(walPath, "", "utf-8");
     }
   }
 
   write(entry: WALEntry): void {
-    const entries = this.readAll();
-    entries.push(entry);
-    writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+    // Append entry as newline-delimited JSON for O(1) writes
+    const line = JSON.stringify(entry) + "\n";
+    try {
+      const fd = openSync(this.walPath, "a");
+      writeSync(fd, line);
+      closeSync(fd);
+    } catch {
+      // Fallback to less efficient method if append fails
+      const entries = this.readAll();
+      entries.push(entry);
+      this.writeAll(entries);
+    }
   }
 
   remove(id: string): void {
+    // Read all entries, filter out the one to remove, and rewrite
     const entries = this.readAll();
     const filtered = entries.filter((e) => e.id !== id);
-    writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+    this.writeAll(filtered);
   }
 
   readAll(): WALEntry[] {
     try {
       const content = readFileSync(this.walPath, "utf-8");
-      return JSON.parse(content) as WALEntry[];
+      if (!content.trim()) return [];
+      
+      // Support both newline-delimited JSON and legacy JSON array format
+      if (content.trim().startsWith("[")) {
+        // Legacy JSON array format
+        return JSON.parse(content) as WALEntry[];
+      } else {
+        // Newline-delimited JSON format
+        return content
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .map((line) => JSON.parse(line) as WALEntry);
+      }
     } catch {
       return [];
     }
+  }
+
+  private writeAll(entries: WALEntry[]): void {
+    // Write as newline-delimited JSON
+    const content = entries.map((e) => JSON.stringify(e)).join("\n") + (entries.length > 0 ? "\n" : "");
+    writeFileSync(this.walPath, content, "utf-8");
   }
 
   pruneStale(): number {
@@ -222,13 +250,13 @@ class WriteAheadLog {
     const fresh = entries.filter((e) => now - e.timestamp < this.maxAge);
     const pruned = entries.length - fresh.length;
     if (pruned > 0) {
-      writeFileSync(this.walPath, JSON.stringify(fresh, null, 2), "utf-8");
+      this.writeAll(fresh);
     }
     return pruned;
   }
 
   clear(): void {
-    writeFileSync(this.walPath, "[]", "utf-8");
+    writeFileSync(this.walPath, "", "utf-8");
   }
 }
 
@@ -2681,9 +2709,9 @@ const memoryHybridPlugin = {
     }
 
     // Initialize WAL (Write-Ahead Log) for crash resilience
-    if (cfg.wal.enabled) {
-      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
-      const maxAge = cfg.wal.maxAge || 300000; // 5 minutes default
+    if (cfg.wal?.enabled) {
+      const walPath = cfg.wal?.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
+      const maxAge = cfg.wal?.maxAge || 300000; // 5 minutes default
       wal = new WriteAheadLog(api.resolvePath(walPath), maxAge);
       api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
       
