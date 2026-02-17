@@ -60,10 +60,6 @@ export type AutoRecallConfig = {
 /** Store options: fuzzy dedupe (2.3) uses normalized-text hash to skip near-duplicate facts. */
 export type StoreConfig = {
   fuzzyDedupe: boolean;
-  /** FR-008: When true, classify incoming facts as ADD/UPDATE/DELETE/NOOP before storing (default true). Uses a cheap LLM call. */
-  classifyBeforeWrite: boolean;
-  /** FR-008: Model to use for memory operation classification (default: same as autoClassify.model). */
-  classifyModel: string;
 };
 
 /** Write-Ahead Log (WAL) configuration for crash resilience */
@@ -111,16 +107,6 @@ export type GraphConfig = {
   useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
 };
 
-/** Reflection: analyze facts to extract behavioral patterns and meta-insights */
-export type ReflectionConfig = {
-  enabled: boolean;
-  /** Model for reflection analysis (default gpt-4o-mini) */
-  model: string;
-  /** Default time window in days for reflection (default 14) */
-  defaultWindow: number;
-  /** Minimum observations required to generate a pattern (default 2) */
-  minObservations: number;
-};
 
 /** Credential types supported by the credentials store */
 export const CREDENTIAL_TYPES = [
@@ -170,8 +156,6 @@ export type HybridMemoryConfig = {
   wal: WALConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
-  /** Reflection: analyze facts to extract behavioral patterns (FR-011) */
-  reflection: ReflectionConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -343,8 +327,6 @@ export const hybridConfigSchema = {
     const storeRaw = cfg.store as Record<string, unknown> | undefined;
     const store: StoreConfig = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
-      classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
-      classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : "gpt-4o-mini",
     };
 
     // Parse WAL config (enabled by default for crash resilience)
@@ -444,19 +426,6 @@ export const hybridConfigSchema = {
         : "gpt-4o-mini",
     };
 
-    // Parse reflection config (FR-011)
-    const reflRaw = cfg.reflection as Record<string, unknown> | undefined;
-    const reflection: ReflectionConfig = {
-      enabled: reflRaw?.enabled === true,
-      model: typeof reflRaw?.model === "string" ? reflRaw.model : "gpt-4o-mini",
-      defaultWindow: typeof reflRaw?.defaultWindow === "number" && reflRaw.defaultWindow > 0
-        ? Math.floor(reflRaw.defaultWindow)
-        : 14,
-      minObservations: typeof reflRaw?.minObservations === "number" && reflRaw.minObservations >= 1
-        ? Math.floor(reflRaw.minObservations)
-        : 2,
-    };
-
     return {
       embedding: {
         provider: "openai",
@@ -477,7 +446,6 @@ export const hybridConfigSchema = {
       graph,
       wal,
       personaProposals,
-      reflection,
     };
   },
 };

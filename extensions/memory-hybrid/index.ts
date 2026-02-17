@@ -3578,11 +3578,6 @@ const memoryHybridPlugin = {
               process.exit(1);
             }
 
-            // Mark as applied BEFORE file operations to prevent concurrent double-application
-            // If file ops fail, we'll have an "applied" proposal that didn't actually apply,
-            // but that's safer than applying twice. The backup and audit log provide recovery.
-            proposalsDb!.markApplied(proposalId);
-
             // Create backup
             const backupPath = `${targetPath}.backup-${Date.now()}`;
             try {
@@ -3604,6 +3599,9 @@ const memoryHybridPlugin = {
               const safeObservation = escapeHtmlComment(proposal.observation);
               const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
               writeFileSync(targetPath, original + changeBlock);
+
+              // Mark as applied only after successful file write
+              proposalsDb!.markApplied(proposalId);
 
               auditProposal("applied", proposalId, {
                 targetFile: proposal.targetFile,
