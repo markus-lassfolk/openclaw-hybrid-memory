@@ -89,18 +89,34 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Documentation
 
+### Getting started
+
 | Document | Description |
 |----------|-------------|
 | **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, verify — get running in 10 minutes |
+| **[HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)** | What happens each turn: auto-recall, auto-capture, background jobs, costs |
+| **[EXAMPLES.md](docs/EXAMPLES.md)** | Real-world recipes: project setup, tuning, tags, backfilling, maintenance routines |
+| **[FAQ.md](docs/FAQ.md)** | Common questions: cost, providers, backups, resets, troubleshooting quick answers |
+
+### Reference
+
+| Document | Description |
+|----------|-------------|
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap files |
 | **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference |
 | **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates |
 | **[CLI-REFERENCE.md](docs/CLI-REFERENCE.md)** | All 21 `openclaw hybrid-mem` commands |
-| **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | Common issues, API key behaviour, diagnostics |
-| **[MAINTENANCE.md](docs/MAINTENANCE.md)** | File hygiene, periodic review, upgrades |
 | **[MEMORY-PROTOCOL.md](docs/MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md block |
 
-### Specialized docs
+### Operations
+
+| Document | Description |
+|----------|-------------|
+| **[OPERATIONS.md](docs/OPERATIONS.md)** | Background jobs, cron, scripts, upgrading OpenClaw and the plugin |
+| **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | Common issues, API key behaviour, diagnostics |
+| **[MAINTENANCE.md](docs/MAINTENANCE.md)** | File hygiene, periodic review |
+
+### Specialized
 
 | Document | Description |
 |----------|-------------|
