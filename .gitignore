@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Test coverage (Vitest, etc.)
+coverage/
+
 # Environment and secrets
 .env
 .env.*
