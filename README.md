@@ -49,6 +49,49 @@ If something fails, **`openclaw hybrid-mem verify [--fix]`** reports issues and 
 
 **Duplicate or “id mismatch” in logs?** Use the plugin **id** in config: `plugins.slots.memory` = `"openclaw-hybrid-memory"` and `plugins.entries["openclaw-hybrid-memory"]`. Remove any backup extension folders (e.g. `memory-hybrid.bak-*`) so only one copy loads.
 
+## Persona Proposals (opt-in)
+
+**Agent self-evolution with human approval** — allows agents to propose changes to their own identity files based on observed patterns, while keeping final control with the human owner.
+
+### Quick start
+
+1. Enable in config: add `"personaProposals": { "enabled": true }` to plugin config
+2. Restart the gateway
+3. **Agent tools** (agent-callable):
+   - `persona_propose` — create a proposal
+   - `persona_proposals_list` — view pending proposals
+4. **Human-only commands** (CLI):
+   - `openclaw proposals review <id> <approve|reject>` — approve/reject proposals
+   - `openclaw proposals apply <id>` — apply approved changes
+
+### How it works
+
+1. **Observation**: Agent notices patterns (e.g., "user responds better to bullet points")
+2. **Proposal**: Agent creates proposal with evidence (session refs, confidence, suggested change)
+3. **Review**: Human approves/rejects
+4. **Application**: Approved changes applied with backup and audit trail
+
+### Configuration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `false` | Enable feature |
+| `allowedFiles` | `["SOUL.md", "IDENTITY.md", "USER.md"]` | Files that can be modified |
+| `maxProposalsPerWeek` | `5` | Rate limit |
+| `minConfidence` | `0.7` | Min confidence (0-1) |
+| `proposalTTLDays` | `30` | Days before expiry |
+| `minSessionEvidence` | `10` | Min session refs required |
+
+### Safety rails
+
+- **Identity files never auto-modified** — human approval required via CLI commands
+- **Agent cannot self-approve** — review/apply are CLI-only, not agent-callable tools
+- **Rate limiting** — prevents proposal spam
+- **Evidence requirements** — session refs + confidence thresholds
+- **Auto-expiry** — proposals expire if not reviewed
+- **Full audit trail** — all actions logged to `memory/decisions/`
+- **Git rollback** — full history for reverting changes
+
 ## Docs & reference
 
 | Path | Description |
@@ -118,4 +161,13 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 - SQLite safeguards for concurrent access (`busy_timeout`, WAL checkpointing)
 - Timestamp migration for database consistency across schema versions
 - Pre-compaction memory flush prompts so the model saves to **both** `memory_store` and daily files before context is truncated
+
+**Persona proposals (opt-in, disabled by default)**
+- **Agent self-evolution with human approval** — agents can propose changes to identity files (`SOUL.md`, `IDENTITY.md`, `USER.md`) based on observed patterns
+- **Human-gated workflow** — proposals require explicit approval before being applied
+- **Rate limiting** — max N proposals per week to prevent spam (default: 5)
+- **Evidence requirements** — proposals must include session references and meet minimum confidence thresholds
+- **Audit trail** — all proposal actions logged to `memory/decisions/` with full history
+- **Safety rails** — identity files never auto-modified; proposals auto-expire if not reviewed; rollback via git history
+- **Tools**: `persona_propose`, `persona_proposals_list` (review/apply are human-only via CLI: `openclaw proposals review|apply`)
 

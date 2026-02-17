@@ -34,6 +34,11 @@ import {
   vectorDimsForModel,
   CREDENTIAL_TYPES,
   type CredentialType,
+  type WALConfig,
+  PROPOSAL_STATUSES,
+  type ProposalStatus,
+  IDENTITY_FILE_TYPES,
+  type IdentityFileType,
 } from "./config.js";
 import { versionInfo } from "./versionInfo.js";
 
@@ -76,139 +81,6 @@ type SearchResult = {
   score: number;
   backend: "sqlite" | "lancedb";
 };
-
-type WALEntry = {
-  id: string;
-  timestamp: number;
-  operation: "store" | "delete" | "update";
-  data: {
-    text: string;
-    category?: string;
-    importance?: number;
-    entity?: string | null;
-    key?: string | null;
-    value?: string | null;
-    source?: string;
-    decayClass?: DecayClass;
-    summary?: string | null;
-    tags?: string[];
-    vector?: number[];
-  };
-};
-
-// ============================================================================
-// Write-Ahead Log (WAL) for Crash Resilience
-// ============================================================================
-
-/**
- * Write-Ahead Log (WAL) for crash resilience.
- * 
- * Before committing memory operations to SQLite/LanceDB, we write them to a
- * WAL file. If the agent crashes during generation, the WAL is replayed on
- * startup to ensure no data loss.
- */
-class WriteAheadLog {
-  private walPath: string;
-  private maxAge: number;
-
-  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
-    this.walPath = walPath;
-    this.maxAge = maxAge;
-    mkdirSync(dirname(walPath), { recursive: true });
-  }
-
-  /**
-   * Write a pending memory operation to the WAL.
-   * This is a synchronous operation to ensure durability before proceeding.
-   */
-  write(entry: WALEntry): void {
-    try {
-      const entries = this.readAll();
-      entries.push(entry);
-      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
-    } catch (err) {
-      throw new Error(`WAL write failed: ${err}`);
-    }
-  }
-
-  /**
-   * Read all pending operations from the WAL.
-   */
-  readAll(): WALEntry[] {
-    try {
-      if (!existsSync(this.walPath)) {
-        return [];
-      }
-      const content = readFileSync(this.walPath, "utf-8");
-      if (!content.trim()) {
-        return [];
-      }
-      const entries = JSON.parse(content) as WALEntry[];
-      return Array.isArray(entries) ? entries : [];
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Remove a specific entry from the WAL after successful commit.
-   */
-  remove(id: string): void {
-    try {
-      const entries = this.readAll();
-      const filtered = entries.filter((e) => e.id !== id);
-      if (filtered.length === 0) {
-        this.clear();
-      } else {
-        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
-      }
-    } catch (err) {
-      throw new Error(`WAL remove failed: ${err}`);
-    }
-  }
-
-  /**
-   * Clear the entire WAL file.
-   */
-  clear(): void {
-    try {
-      if (existsSync(this.walPath)) {
-        rmSync(this.walPath, { force: true });
-      }
-    } catch (err) {
-      throw new Error(`WAL clear failed: ${err}`);
-    }
-  }
-
-  /**
-   * Get entries that are not stale (within maxAge).
-   */
-  getValidEntries(): WALEntry[] {
-    const entries = this.readAll();
-    const now = Date.now();
-    return entries.filter((e) => now - e.timestamp < this.maxAge);
-  }
-
-  /**
-   * Remove stale entries from the WAL.
-   */
-  pruneStale(): number {
-    const entries = this.readAll();
-    const now = Date.now();
-    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
-    const pruned = entries.length - valid.length;
-    
-    if (pruned > 0) {
-      if (valid.length === 0) {
-        this.clear();
-      } else {
-        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
-      }
-    }
-    
-    return pruned;
-  }
-}
 
 // ============================================================================
 // SQLite + FTS5 Backend
@@ -294,9 +166,6 @@ class FactsDB {
   private db: Database.Database;
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
-  private supersededTextsCache: Set<string> | null = null;
-  private supersededTextsCacheTime: number = 0;
-  private readonly SUPERSEDED_CACHE_TTL_MS = 60000; // 1 minute cache
 
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     this.dbPath = dbPath;
@@ -603,8 +472,7 @@ class FactsDB {
     };
   }
 
-  /** FR-005: Update recall count and last accessed timestamp for salience boosting. */
-  refreshAccessedFacts(ids: string[]): void {
+  private refreshAccessedFacts(ids: string[]): void {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
 
@@ -1349,6 +1217,334 @@ class CredentialsDB {
 }
 
 // ============================================================================
+// Persona Proposals Database
+// ============================================================================
+
+type ProposalEntry = {
+  id: string;
+  targetFile: string;
+  title: string;
+  observation: string;
+  suggestedChange: string;
+  confidence: number;
+  evidenceSessions: string[];
+  status: string;
+  createdAt: number;
+  reviewedAt: number | null;
+  reviewedBy: string | null;
+  appliedAt: number | null;
+  expiresAt: number | null;
+};
+
+class ProposalsDB {
+  private db: Database.Database;
+  private readonly dbPath: string;
+
+  constructor(dbPath: string) {
+    this.dbPath = dbPath;
+    mkdirSync(dirname(dbPath), { recursive: true });
+    this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS proposals (
+        id TEXT PRIMARY KEY,
+        target_file TEXT NOT NULL,
+        title TEXT NOT NULL,
+        observation TEXT NOT NULL,
+        suggested_change TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        evidence_sessions TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        reviewed_by TEXT,
+        applied_at INTEGER,
+        expires_at INTEGER
+      )
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
+      CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at);
+      CREATE INDEX IF NOT EXISTS idx_proposals_expires ON proposals(expires_at);
+    `);
+  }
+
+  create(entry: {
+    targetFile: string;
+    title: string;
+    observation: string;
+    suggestedChange: string;
+    confidence: number;
+    evidenceSessions: string[];
+    expiresAt?: number | null;
+  }): ProposalEntry {
+    const id = randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    const evidenceJson = JSON.stringify(entry.evidenceSessions);
+
+    this.db
+      .prepare(
+        `INSERT INTO proposals (id, target_file, title, observation, suggested_change, confidence, evidence_sessions, status, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      )
+      .run(
+        id,
+        entry.targetFile,
+        entry.title,
+        entry.observation,
+        entry.suggestedChange,
+        entry.confidence,
+        evidenceJson,
+        now,
+        entry.expiresAt ?? null,
+      );
+
+    return this.get(id)!;
+  }
+
+  get(id: string): ProposalEntry | null {
+    const row = this.db
+      .prepare("SELECT * FROM proposals WHERE id = ?")
+      .get(id) as any;
+    if (!row) return null;
+    return this.rowToEntry(row);
+  }
+
+  list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
+    let query = "SELECT * FROM proposals WHERE 1=1";
+    const params: any[] = [];
+
+    if (filters?.status) {
+      query += " AND status = ?";
+      params.push(filters.status);
+    }
+    if (filters?.targetFile) {
+      query += " AND target_file = ?";
+      params.push(filters.targetFile);
+    }
+
+    query += " ORDER BY created_at DESC";
+
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map((r) => this.rowToEntry(r));
+  }
+
+  updateStatus(
+    id: string,
+    status: string,
+    reviewedBy?: string,
+  ): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare(
+        "UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+      )
+      .run(status, now, reviewedBy ?? null, id);
+    return this.get(id);
+  }
+
+  markApplied(id: string): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?")
+      .run(now, id);
+    return this.get(id);
+  }
+
+  countRecentProposals(daysBack: number): number {
+    const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
+    const row = this.db
+      .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
+      .get(cutoff) as any;
+    return row?.count ?? 0;
+  }
+
+  pruneExpired(): number {
+    const now = Math.floor(Date.now() / 1000);
+    const result = this.db
+      .prepare(
+        "DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'",
+      )
+      .run(now);
+    return result.changes;
+  }
+
+  private rowToEntry(row: any): ProposalEntry {
+    // Parse evidence_sessions with error handling for corrupted data
+    let evidenceSessions: string[] = [];
+    try {
+      evidenceSessions = JSON.parse(row.evidence_sessions);
+      if (!Array.isArray(evidenceSessions)) {
+        evidenceSessions = [];
+      }
+    } catch {
+      // Corrupted JSON - fallback to empty array
+      evidenceSessions = [];
+    }
+
+    return {
+      id: row.id,
+      targetFile: row.target_file,
+      title: row.title,
+      observation: row.observation,
+      suggestedChange: row.suggested_change,
+      confidence: row.confidence,
+      evidenceSessions,
+      status: row.status,
+      createdAt: row.created_at,
+      reviewedAt: row.reviewed_at,
+      reviewedBy: row.reviewed_by,
+      appliedAt: row.applied_at,
+      expiresAt: row.expires_at,
+    };
+  }
+
+  close(): void {
+    try {
+      this.db.close();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
+// ============================================================================
+// Write-Ahead Log (WAL) for Crash Resilience
+// ============================================================================
+
+type WALEntry = {
+  id: string;
+  timestamp: number;
+  operation: "store" | "delete" | "update";
+  data: {
+    text: string;
+    category?: string;
+    importance?: number;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    source?: string;
+    decayClass?: DecayClass;
+    summary?: string | null;
+    tags?: string[];
+    vector?: number[];
+  };
+};
+
+/**
+ * Write-Ahead Log (WAL) for crash resilience.
+ *
+ * Before committing memory operations to SQLite/LanceDB, we write them to a
+ * WAL file. If the agent crashes during generation, the WAL is replayed on
+ * startup to ensure no data loss.
+ */
+class WriteAheadLog {
+  private walPath: string;
+  private maxAge: number;
+
+  constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
+    this.walPath = walPath;
+    this.maxAge = maxAge;
+    mkdirSync(dirname(walPath), { recursive: true });
+  }
+
+  /**
+   * Write a pending memory operation to the WAL.
+   * This is a synchronous operation to ensure durability before proceeding.
+   */
+  write(entry: WALEntry): void {
+    try {
+      const entries = this.readAll();
+      entries.push(entry);
+      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+    } catch (err) {
+      throw new Error(`WAL write failed: ${err}`);
+    }
+  }
+
+  /**
+   * Read all pending operations from the WAL.
+   */
+  readAll(): WALEntry[] {
+    try {
+      if (!existsSync(this.walPath)) {
+        return [];
+      }
+      const content = readFileSync(this.walPath, "utf-8");
+      if (!content.trim()) {
+        return [];
+      }
+      const entries = JSON.parse(content) as WALEntry[];
+      return Array.isArray(entries) ? entries : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Remove a specific entry from the WAL after successful commit.
+   */
+  remove(id: string): void {
+    try {
+      const entries = this.readAll();
+      const filtered = entries.filter((e) => e.id !== id);
+      if (filtered.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+      }
+    } catch (err) {
+      throw new Error(`WAL remove failed: ${err}`);
+    }
+  }
+
+  /**
+   * Clear the entire WAL file.
+   */
+  clear(): void {
+    try {
+      if (existsSync(this.walPath)) {
+        rmSync(this.walPath, { force: true });
+      }
+    } catch (err) {
+      throw new Error(`WAL clear failed: ${err}`);
+    }
+  }
+
+  /**
+   * Get entries that are not stale (within maxAge).
+   */
+  getValidEntries(): WALEntry[] {
+    const entries = this.readAll();
+    const now = Date.now();
+    return entries.filter((e) => now - e.timestamp < this.maxAge);
+  }
+
+  /**
+   * Remove stale entries from the WAL.
+   */
+  pruneStale(): number {
+    const entries = this.readAll();
+    const now = Date.now();
+    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+    const pruned = entries.length - valid.length;
+
+    if (pruned > 0) {
+      if (valid.length === 0) {
+        this.clear();
+      } else {
+        writeFileSync(this.walPath, JSON.stringify(valid, null, 2), "utf-8");
+      }
+    }
+
+    return pruned;
+  }
+}
+
+// ============================================================================
 // LanceDB Backend
 // ============================================================================
 
@@ -1504,7 +1700,6 @@ function mergeResults(
   sqliteResults: SearchResult[],
   lanceResults: SearchResult[],
   limit: number,
-  factsDb?: FactsDB,
 ): SearchResult[] {
   const seen = new Set<string>();
   const merged: SearchResult[] = [];
@@ -1516,18 +1711,13 @@ function mergeResults(
     }
   }
 
-  // Get superseded fact texts for filtering LanceDB results (optimized: text-only query)
-  const supersededTexts = factsDb ? factsDb.getSupersededTexts() : new Set<string>();
-
   for (const r of lanceResults) {
-    // Skip if this text matches a superseded fact
-    const isSuperseded = supersededTexts.has(r.entry.text.toLowerCase());
     const isDupe = merged.some(
       (m) =>
         m.entry.id === r.entry.id ||
         m.entry.text.toLowerCase() === r.entry.text.toLowerCase(),
     );
-    if (!isDupe && !isSuperseded) {
+    if (!isDupe) {
       merged.push(r);
     }
   }
@@ -2027,219 +2217,6 @@ function detectCategory(text: string): MemoryCategory {
 }
 
 // ============================================================================
-// Reflection Layer (FR-011): Pattern Synthesis from Observations
-// ============================================================================
-
-/**
- * Reflection prompt template: analyze facts to extract behavioral patterns.
- * Based on Claude-Diary and Generative Agents paper approach.
- */
-function buildReflectionPrompt(facts: MemoryEntry[], window: number, minObservations: number): string {
-  const factsByCategory = new Map<string, MemoryEntry[]>();
-  for (const fact of facts) {
-    if (!factsByCategory.has(fact.category)) {
-      factsByCategory.set(fact.category, []);
-    }
-    factsByCategory.get(fact.category)!.push(fact);
-  }
-
-  // Limit facts per category and truncate long texts to prevent token overflow
-  const MAX_FACTS_PER_CATEGORY = 50;
-  const MAX_FACT_LENGTH = 300;
-  
-  const factsSummary = [...factsByCategory.entries()]
-    .map(([cat, items]) => {
-      const limited = items.slice(0, MAX_FACTS_PER_CATEGORY);
-      const lines = limited.map((f, i) => {
-        const text = f.text.length > MAX_FACT_LENGTH 
-          ? f.text.slice(0, MAX_FACT_LENGTH) + "..."
-          : f.text;
-        return `  ${i + 1}. ${text}`;
-      }).join("\n");
-      const suffix = items.length > MAX_FACTS_PER_CATEGORY 
-        ? `\n  ... and ${items.length - MAX_FACTS_PER_CATEGORY} more`
-        : "";
-      return `[${cat}] (${items.length} observations)\n${lines}${suffix}`;
-    })
-    .join("\n\n");
-
-  return `You are analyzing a user's interaction history to identify behavioral patterns.
-
-Below are facts extracted from the last ${window} days of sessions.
-Identify recurring patterns — preferences that appear across multiple sessions,
-consistent decision-making tendencies, and working-style traits.
-
-Rules:
-- Only report patterns supported by ${minObservations}+ observations
-- Be specific and actionable ("prefers X over Y" not "has preferences")
-- Each pattern should be 1-2 sentences
-- Do not repeat individual facts; synthesize higher-level insights
-- Focus on patterns that would help an AI agent match the user's working style
-- Output each pattern on a new line, starting with "PATTERN:"
-
-Facts:
-${factsSummary}
-
-Output format (one per line):
-PATTERN: [your pattern here]
-PATTERN: [another pattern here]`;
-}
-
-/**
- * Run reflection analysis: gather recent facts, send to LLM, extract patterns, deduplicate, store.
- */
-async function runReflection(
-  factsDb: FactsDB,
-  vectorDb: VectorDB,
-  embeddings: Embeddings,
-  openai: OpenAI,
-  opts: {
-    window: number;
-    model: string;
-    minObservations: number;
-    dryRun: boolean;
-  },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number }> {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const windowStartSec = nowSec - opts.window * 24 * 3600;
-
-  // Gather recent observations (exclude existing patterns/rules to avoid recursion)
-  const allFacts = factsDb.getAll();
-  const recentFacts = allFacts.filter((f) => {
-    const factDate = f.sourceDate ?? f.createdAt;
-    return factDate >= windowStartSec && f.category !== "pattern" && f.category !== "rule";
-  });
-
-  if (recentFacts.length < opts.minObservations) {
-    logger.info(`memory-hybrid: reflect — only ${recentFacts.length} facts in window (need ${opts.minObservations}+)`);
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
-  }
-
-  logger.info(`memory-hybrid: reflect — analyzing ${recentFacts.length} facts from last ${opts.window} days...`);
-
-  const prompt = buildReflectionPrompt(recentFacts, opts.window, opts.minObservations);
-
-  let responseText: string;
-  try {
-    const resp = await openai.chat.completions.create({
-      model: opts.model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
-      max_tokens: 1000,
-    });
-    responseText = (resp.choices[0]?.message?.content ?? "").trim();
-  } catch (err) {
-    logger.warn(`memory-hybrid: reflect LLM call failed: ${err}`);
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
-  }
-
-  if (!responseText) {
-    logger.info("memory-hybrid: reflect — no patterns extracted");
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
-  }
-
-  // Parse patterns from response
-  const lines = responseText.split("\n");
-  const patterns: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("PATTERN:")) {
-      const pattern = trimmed.slice(8).trim();
-      if (pattern.length >= 20 && pattern.length <= 500) {
-        patterns.push(pattern);
-      }
-    }
-  }
-
-  if (patterns.length === 0) {
-    logger.info("memory-hybrid: reflect — no valid patterns found in response");
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0 };
-  }
-
-  logger.info(`memory-hybrid: reflect — extracted ${patterns.length} patterns`);
-
-  if (opts.dryRun) {
-    for (let i = 0; i < patterns.length; i++) {
-      logger.info(`  ${i + 1}. ${patterns[i]}`);
-    }
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: 0 };
-  }
-
-  // Deduplicate against existing patterns using semantic similarity
-  const existingPatterns = allFacts.filter((f) => f.category === "pattern");
-  
-  // Pre-compute embeddings for existing patterns to avoid redundant API calls
-  const existingEmbeddings: Array<{ text: string; vector: number[] }> = [];
-  for (const existing of existingPatterns) {
-    try {
-      const vector = await embeddings.embed(existing.text);
-      existingEmbeddings.push({ text: existing.text, vector });
-    } catch (err) {
-      logger.warn(`memory-hybrid: reflect — failed to embed existing pattern: ${err}`);
-    }
-  }
-  
-  let stored = 0;
-
-  for (const pattern of patterns) {
-    // Check for semantic duplicates
-    let isDuplicate = false;
-    let patternVector: number[];
-    try {
-      patternVector = await embeddings.embed(pattern);
-    } catch (err) {
-      logger.warn(`memory-hybrid: reflect — embedding failed for pattern: ${err}`);
-      continue;
-    }
-
-    for (const existing of existingEmbeddings) {
-      // Use cosine similarity for normalized embeddings (OpenAI embeddings are normalized)
-      // Cosine similarity = dot product for unit vectors
-      const dotProduct = patternVector.reduce((s, v, k) => s + v * existing.vector[k], 0);
-      const cosineSimilarity = dotProduct; // Already normalized, so no need to divide by magnitudes
-      
-      // 0.85 cosine similarity = 85% similar (actual semantic similarity)
-      if (cosineSimilarity >= 0.85) {
-        isDuplicate = true;
-        logger.info(`memory-hybrid: reflect — skipping duplicate pattern (${(cosineSimilarity * 100).toFixed(0)}% similar to existing)`);
-        break;
-      }
-    }
-
-    if (isDuplicate) continue;
-
-    // Store pattern with high importance and permanent decay
-    const entry = factsDb.store({
-      text: pattern,
-      category: "pattern",
-      importance: 0.9,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "pattern"],
-    });
-
-    try {
-      // Reuse the already-computed embedding
-      await vectorDb.store({ text: pattern, vector: patternVector, importance: 0.9, category: "pattern" });
-    } catch (err) {
-      logger.warn(`memory-hybrid: reflect — vector store failed for pattern: ${err}`);
-    }
-
-    // Add to existing embeddings so subsequent patterns in this batch are checked against it
-    existingEmbeddings.push({ text: pattern, vector: patternVector });
-
-    stored++;
-    logger.info(`memory-hybrid: reflect — stored pattern: ${pattern.slice(0, 80)}...`);
-  }
-
-  return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: stored };
-}
-
-// ============================================================================
 // LLM-based Auto-Classifier
 // ============================================================================
 
@@ -2323,10 +2300,8 @@ async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
-      // Cosine similarity = dot product for unit vectors
-      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
-      if (cosineSim >= opts.threshold) edges.push([ids[i], ids[j]]);
+      const score = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }
 
@@ -2455,16 +2430,14 @@ async function runFindDuplicates(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      // Use cosine similarity for normalized embeddings (OpenAI embeddings are unit vectors)
-      // Cosine similarity = dot product for unit vectors
-      const cosineSim = vi.reduce((s, v, k) => s + v * vj[k], 0);
-      if (cosineSim >= opts.threshold) {
+      const score = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      if (score >= opts.threshold) {
         const idA = ids[i];
         const idB = ids[j];
         pairs.push({
           idA,
           idB,
-          score: cosineSim,
+          score,
           textA: idToFact.get(idA)!.text,
           textB: idToFact.get(idB)!.text,
         });
@@ -2693,9 +2666,11 @@ let embeddings: Embeddings;
 let openaiClient: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
+let proposalsDb: ProposalsDB | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
+let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
 
 const PLUGIN_ID = "openclaw-hybrid-memory";
 
@@ -2727,12 +2702,21 @@ const memoryHybridPlugin = {
       credentialsDb = null;
     }
 
+    // Initialize Write-Ahead Log for crash resilience
     if (cfg.wal.enabled) {
       const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
       wal = new WriteAheadLog(walPath, cfg.wal.maxAge);
       api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
     } else {
       wal = null;
+    }
+
+    if (cfg.personaProposals.enabled) {
+      const proposalsPath = join(dirname(resolvedSqlitePath), "proposals.db");
+      proposalsDb = new ProposalsDB(proposalsPath);
+      api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
+    } else {
+      proposalsDb = null;
     }
 
     // Load previously discovered categories so they remain available after restart
@@ -2855,7 +2839,7 @@ const memoryHybridPlugin = {
             }
           }
 
-          const results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
+          const results = mergeResults(sqliteResults, lanceResults, limit);
 
           if (results.length === 0) {
             return {
@@ -3276,7 +3260,7 @@ const memoryHybridPlugin = {
               lanceResults = await vectorDb.search(vector, 5, 0.7);
             } catch {}
 
-            const results = mergeResults(sqlResults, lanceResults, 5, factsDb);
+            const results = mergeResults(sqlResults, lanceResults, 5);
 
             if (results.length === 0) {
               return {
@@ -3608,57 +3592,416 @@ const memoryHybridPlugin = {
       { name: "memory_prune" },
     );
 
-    api.registerTool(
-      {
-        name: "memory_reflect",
-        label: "Memory Reflect",
-        description:
-          "Analyze recent facts to extract behavioral patterns and meta-insights (FR-011). Use this periodically to synthesize higher-order patterns from observations.",
-        parameters: Type.Object({
-          window: Type.Optional(
-            Type.Number({ description: "Time window in days (default from config or 14)" }),
-          ),
-        }),
-        async execute(_toolCallId, params) {
-          if (!cfg.reflection.enabled) {
-            return {
-              content: [{ type: "text", text: "Reflection is disabled. Enable it in config: reflection.enabled = true" }],
-              details: { enabled: false },
-            };
+    // ========================================================================
+    // Persona Proposals Tools (opt-in, disabled by default)
+    // ========================================================================
+
+    if (cfg.personaProposals.enabled && proposalsDb) {
+      // Shared helper: audit trail logging (used by both tools and CLI commands)
+      const auditProposal = (action: string, proposalId: string, details?: any, logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }) => {
+        const auditDir = join(dirname(resolvedSqlitePath), "decisions");
+        mkdirSync(auditDir, { recursive: true });
+        const timestamp = new Date().toISOString();
+        const entry = {
+          timestamp,
+          action,
+          proposalId,
+          ...details,
+        };
+        const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
+        try {
+          writeFileSync(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
+        } catch (err) {
+          const msg = `Audit log write failed: ${err}`;
+          if (logger?.warn) {
+            logger.warn(`memory-hybrid: ${msg}`);
+          } else if (logger?.error) {
+            logger.error(msg);
           }
+        }
+      };
 
-          const { window = cfg.reflection.defaultWindow } = params as { window?: number };
-          const validWindow = Math.max(1, Math.min(90, window));
+      // Helper: rate limiting check
+      const checkRateLimit = (): { allowed: boolean; count: number; limit: number } => {
+        const weekInDays = 7;
+        const count = proposalsDb!.countRecentProposals(weekInDays);
+        const limit = cfg.personaProposals.maxProposalsPerWeek;
+        return { allowed: count < limit, count, limit };
+      };
 
-          const result = await runReflection(
-            factsDb,
-            vectorDb,
-            embeddings,
-            openaiClient,
-            {
-              window: validWindow,
-              model: cfg.reflection.model,
-              minObservations: cfg.reflection.minObservations,
-              dryRun: false,
-            },
-            api.logger,
-          );
+      api.registerTool(
+        {
+          name: "persona_propose",
+          label: "Propose Persona Change",
+          description:
+            "Propose a change to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns. Requires human approval before applying. Rate-limited to prevent spam.",
+          parameters: Type.Object({
+            targetFile: stringEnum(cfg.personaProposals.allowedFiles),
+            title: Type.String({
+              description: "Short title for the proposal (e.g., 'Add tone-matching guidance')",
+            }),
+            observation: Type.String({
+              description: "What pattern or behavior you observed (e.g., 'Over ~50 interactions, user responds better to bullet points')",
+            }),
+            suggestedChange: Type.String({
+              description: "The specific change to make to the file (be precise about location and wording)",
+            }),
+            confidence: Type.Number({
+              description: "Confidence score 0-1 (must be >= minConfidence from config)",
+              minimum: 0,
+              maximum: 1,
+            }),
+            evidenceSessions: Type.Array(Type.String(), {
+              description: "List of session IDs or references that support this proposal",
+            }),
+          }),
+          async execute(_toolCallId, params) {
+            const {
+              targetFile,
+              title,
+              observation,
+              suggestedChange,
+              confidence,
+              evidenceSessions,
+            } = params as {
+              targetFile: string;
+              title: string;
+              observation: string;
+              suggestedChange: string;
+              confidence: number;
+              evidenceSessions: string[];
+            };
 
-          const text = `Reflection complete.\nFacts analyzed: ${result.factsAnalyzed} (last ${validWindow} days)\nPatterns extracted: ${result.patternsExtracted}\nPatterns stored: ${result.patternsStored}`;
+            // Field length validation (prevent database bloat and file corruption)
+            const MAX_TITLE_LENGTH = 200;
+            const MAX_OBSERVATION_LENGTH = 5000;
+            const MAX_SUGGESTED_CHANGE_LENGTH = 10000;
 
-          return {
-            content: [{ type: "text", text }],
-            details: {
-              factsAnalyzed: result.factsAnalyzed,
-              patternsExtracted: result.patternsExtracted,
-              patternsStored: result.patternsStored,
-              window: validWindow,
-            },
-          };
+            if (title.length > MAX_TITLE_LENGTH) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Title too long: ${title.length} chars (max: ${MAX_TITLE_LENGTH})`,
+                  },
+                ],
+                details: { error: "title_too_long", length: title.length, max: MAX_TITLE_LENGTH },
+              };
+            }
+
+            if (observation.length > MAX_OBSERVATION_LENGTH) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Observation too long: ${observation.length} chars (max: ${MAX_OBSERVATION_LENGTH})`,
+                  },
+                ],
+                details: { error: "observation_too_long", length: observation.length, max: MAX_OBSERVATION_LENGTH },
+              };
+            }
+
+            if (suggestedChange.length > MAX_SUGGESTED_CHANGE_LENGTH) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Suggested change too long: ${suggestedChange.length} chars (max: ${MAX_SUGGESTED_CHANGE_LENGTH})`,
+                  },
+                ],
+                details: { error: "suggested_change_too_long", length: suggestedChange.length, max: MAX_SUGGESTED_CHANGE_LENGTH },
+              };
+            }
+
+            // Rate limiting
+            const rateCheck = checkRateLimit();
+            if (!rateCheck.allowed) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Rate limit exceeded: ${rateCheck.count}/${rateCheck.limit} proposals this week. Try again later.`,
+                  },
+                ],
+                details: { error: "rate_limit_exceeded", ...rateCheck },
+              };
+            }
+
+            // Confidence check
+            if (confidence < cfg.personaProposals.minConfidence) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Confidence ${confidence} is below minimum ${cfg.personaProposals.minConfidence}. Gather more evidence before proposing.`,
+                  },
+                ],
+                details: { error: "confidence_too_low", confidence, minRequired: cfg.personaProposals.minConfidence },
+              };
+            }
+
+            // Evidence validation: check count and content quality
+            if (evidenceSessions.length < cfg.personaProposals.minSessionEvidence) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Need at least ${cfg.personaProposals.minSessionEvidence} session evidence (provided: ${evidenceSessions.length})`,
+                  },
+                ],
+                details: { error: "insufficient_evidence", provided: evidenceSessions.length, minRequired: cfg.personaProposals.minSessionEvidence },
+              };
+            }
+
+            // Validate evidence session content (non-empty, unique)
+            const invalidSessions = evidenceSessions.filter(s => typeof s !== "string" || s.trim().length === 0);
+            if (invalidSessions.length > 0) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Evidence sessions must be non-empty strings. Found ${invalidSessions.length} invalid entries.`,
+                  },
+                ],
+                details: { error: "invalid_evidence_sessions", invalidCount: invalidSessions.length },
+              };
+            }
+
+            // Check for duplicate evidence sessions (without trimming to preserve exact matches)
+            const uniqueSessions = new Set(evidenceSessions);
+            if (uniqueSessions.size !== evidenceSessions.length) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Evidence sessions must be unique. Found ${evidenceSessions.length - uniqueSessions.size} duplicate(s).`,
+                  },
+                ],
+                details: { error: "duplicate_evidence_sessions", duplicateCount: evidenceSessions.length - uniqueSessions.size },
+              };
+            }
+
+            // Calculate expiry
+            const expiresAt = cfg.personaProposals.proposalTTLDays > 0
+              ? Math.floor(Date.now() / 1000) + cfg.personaProposals.proposalTTLDays * 24 * 3600
+              : null;
+
+            // Create proposal
+            const proposal = proposalsDb!.create({
+              targetFile,
+              title,
+              observation,
+              suggestedChange,
+              confidence,
+              evidenceSessions,
+              expiresAt,
+            });
+
+            auditProposal("created", proposal.id, {
+              targetFile,
+              title,
+              confidence,
+              evidenceCount: evidenceSessions.length,
+            }, api.logger);
+
+            api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Proposal created: ${proposal.id}\nTitle: ${title}\nTarget: ${targetFile}\nStatus: pending\n\nAwaiting human review. Use persona_proposals_list to view all pending proposals.`,
+                },
+              ],
+              details: { proposalId: proposal.id, status: "pending", expiresAt: proposal.expiresAt },
+            };
+          },
         },
-      },
-      { name: "memory_reflect" },
-    );
+        { name: "persona_propose" },
+      );
+
+      api.registerTool(
+        {
+          name: "persona_proposals_list",
+          label: "List Persona Proposals",
+          description:
+            "List all persona proposals, optionally filtered by status (pending/approved/rejected/applied) or target file.",
+          parameters: Type.Object({
+            status: Type.Optional(stringEnum(PROPOSAL_STATUSES)),
+            targetFile: Type.Optional(Type.String()),
+          }),
+          async execute(_toolCallId, params) {
+            const { status, targetFile } = params as { status?: string; targetFile?: string };
+
+            const proposals = proposalsDb!.list({ status, targetFile });
+
+            if (proposals.length === 0) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: "No proposals found matching filters.",
+                  },
+                ],
+                details: { count: 0, filters: { status, targetFile } },
+              };
+            }
+
+            const lines = proposals.map((p) => {
+              const age = Math.floor((Date.now() / 1000 - p.createdAt) / 86400);
+              const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / 86400) : null;
+              return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.slice(0, 120)}...`;
+            });
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Found ${proposals.length} proposal(s):\n\n${lines.join("\n\n")}`,
+                },
+              ],
+              details: { count: proposals.length, proposals: proposals.map(p => ({ id: p.id, status: p.status, title: p.title, targetFile: p.targetFile })) },
+            };
+          },
+        },
+        { name: "persona_proposals_list" },
+      );
+
+      // NOTE: persona_proposal_review and persona_proposal_apply are intentionally
+      // NOT registered as agent-callable tools. They are CLI-only commands to ensure
+      // human approval is required. This prevents agents from self-approving and
+      // applying their own proposals, maintaining the security guarantee.
+
+      // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop)
+      proposalsPruneTimer = setInterval(() => {
+        try {
+          if (proposalsDb) {
+            const pruned = proposalsDb.pruneExpired();
+            if (pruned > 0) {
+              api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+            }
+          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
+        }
+      }, 24 * 60 * 60_000); // daily
+
+      // Register CLI commands for human-only review/apply operations
+      api.registerCli(({ program }) => {
+        const proposals = program
+          .command("proposals")
+          .description("Manage persona proposals (human-only commands)");
+
+        proposals
+          .command("review <proposalId> <action>")
+          .description("Approve or reject a persona proposal (action: approve|reject)")
+          .option("--reviewed-by <name>", "Name/ID of reviewer")
+          .action(async (proposalId: string, action: string, opts: { reviewedBy?: string }) => {
+            if (action !== "approve" && action !== "reject") {
+              console.error("Action must be 'approve' or 'reject'");
+              process.exit(1);
+            }
+
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              console.error(`Proposal ${proposalId} not found`);
+              process.exit(1);
+            }
+
+            if (proposal.status !== "pending") {
+              console.error(`Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`);
+              process.exit(1);
+            }
+
+            const newStatus = action === "approve" ? "approved" : "rejected";
+            proposalsDb!.updateStatus(proposalId, newStatus, opts.reviewedBy);
+
+            auditProposal(action, proposalId, {
+              reviewedBy: opts.reviewedBy ?? "cli-user",
+              previousStatus: "pending",
+              newStatus,
+            }, { error: console.error });
+
+            console.log(`Proposal ${proposalId} ${action}d.`);
+            if (action === "approve") {
+              console.log(`\nUse 'openclaw proposals apply ${proposalId}' to apply the change.`);
+            }
+          });
+
+        proposals
+          .command("apply <proposalId>")
+          .description("Apply an approved persona proposal to its target identity file")
+          .action(async (proposalId: string) => {
+            const proposal = proposalsDb!.get(proposalId);
+            if (!proposal) {
+              console.error(`Proposal ${proposalId} not found`);
+              process.exit(1);
+            }
+
+            if (proposal.status !== "approved") {
+              console.error(`Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`);
+              process.exit(1);
+            }
+
+            // Re-validate targetFile against current allowedFiles config (defense against config changes or DB tampering)
+            if (!cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
+              console.error(`Target file ${proposal.targetFile} is no longer in allowedFiles. Cannot apply.`);
+              console.error(`Current allowedFiles: ${cfg.personaProposals.allowedFiles.join(", ")}`);
+              process.exit(1);
+            }
+
+            // Additional path traversal defense (even though schema validates at creation)
+            if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
+              console.error(`Invalid target file path: ${proposal.targetFile}. Path traversal detected.`);
+              process.exit(1);
+            }
+
+            // Resolve target file path
+            const targetPath = api.resolvePath(proposal.targetFile);
+
+            if (!existsSync(targetPath)) {
+              console.error(`Target file ${proposal.targetFile} not found at ${targetPath}`);
+              process.exit(1);
+            }
+
+            // Create backup
+            const backupPath = `${targetPath}.backup-${Date.now()}`;
+            try {
+              const original = readFileSync(targetPath, "utf-8");
+              writeFileSync(backupPath, original);
+
+              // Escape HTML comment sequences to prevent breakout
+              const escapeHtmlComment = (text: string): string => {
+                return text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
+              };
+
+              // Apply change (simple append strategy)
+              // TODO: Future enhancement - use LLM for smart diff application, content validation, merge conflict resolution
+              const timestamp = new Date().toISOString();
+              const safeObservation = escapeHtmlComment(proposal.observation);
+              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
+              writeFileSync(targetPath, original + changeBlock);
+
+              // Mark as applied only after successful file write
+              proposalsDb!.markApplied(proposalId);
+
+              auditProposal("applied", proposalId, {
+                targetFile: proposal.targetFile,
+                targetPath,
+                backupPath,
+                timestamp,
+              }, { error: console.error });
+
+              console.log(`Proposal ${proposalId} applied to ${proposal.targetFile}`);
+              console.log(`Backup saved: ${backupPath}`);
+              console.log(`\nChange:\n${proposal.suggestedChange}`);
+            } catch (err) {
+              console.error(`Failed to apply proposal: ${err}`);
+              process.exit(1);
+            }
+          });
+      });
+    }
 
     // ========================================================================
     // CLI Commands
@@ -3902,7 +4245,7 @@ const memoryHybridPlugin = {
               const vector = await embeddings.embed(query);
               lanceResults = await vectorDb.search(vector, limit, 0.3);
             }
-            const merged = mergeResults(sqlResults, lanceResults, limit, factsDb);
+            const merged = mergeResults(sqlResults, lanceResults, limit);
 
             const output = merged.map((r) => ({
               id: r.entry.id,
@@ -4155,39 +4498,6 @@ const memoryHybridPlugin = {
               console.log(`    A: ${trim(p.textA, 80)}`);
               console.log(`    B: ${trim(p.textB, 80)}`);
             }
-          });
-
-        mem
-          .command("reflect")
-          .description("Analyze recent facts to extract behavioral patterns (FR-011)")
-          .option("--window <days>", "Time window in days (default from config or 14)", String(cfg.reflection.defaultWindow))
-          .option("--dry-run", "Show extracted patterns without storing")
-          .option("--model <model>", "LLM for reflection (default from config or gpt-4o-mini)", cfg.reflection.model)
-          .option("--force", "Run even if reflection is disabled in config")
-          .action(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
-            if (!cfg.reflection.enabled && !opts.force) {
-              console.error("Reflection is disabled in config. Enable it with reflection.enabled = true, or use --force to run anyway.");
-              process.exitCode = 1;
-              return;
-            }
-            const window = Math.max(1, Math.min(90, parseInt(opts.window || String(cfg.reflection.defaultWindow))));
-            const model = opts.model || cfg.reflection.model;
-            const result = await runReflection(
-              factsDb,
-              vectorDb,
-              embeddings,
-              openaiClient,
-              {
-                window,
-                model,
-                minObservations: cfg.reflection.minObservations,
-                dryRun: !!opts.dryRun,
-              },
-              api.logger,
-            );
-            console.log(`Facts analyzed: ${result.factsAnalyzed} (last ${window} days)`);
-            console.log(`Patterns extracted: ${result.patternsExtracted}`);
-            console.log(`Patterns stored: ${result.patternsStored}${opts.dryRun ? " (dry run)" : ""}`);
           });
 
         mem
@@ -4825,7 +5135,7 @@ const memoryHybridPlugin = {
             }
           });
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -4853,7 +5163,7 @@ const memoryHybridPlugin = {
             );
           }
 
-          let candidates = mergeResults(ftsResults, lanceResults, limit, factsDb);
+          let candidates = mergeResults(ftsResults, lanceResults, limit);
 
           const { entityLookup } = cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
@@ -5246,7 +5556,7 @@ const memoryHybridPlugin = {
               }
             }
 
-            // Now commit to actual storage
+            // Now commit to actual storage (include tags to match WAL entry)
             factsDb.store({
               text: textToStore,
               category,
@@ -5396,7 +5706,7 @@ const memoryHybridPlugin = {
                     factsDb.store({
                       text,
                       category: (category as MemoryCategory) || "other",
-                      importance: importance || 0.7,
+                      importance: importance ?? 0.7,
                       entity: entity || null,
                       key: key || null,
                       value: value || null,
@@ -5411,7 +5721,7 @@ const memoryHybridPlugin = {
                       void vectorDb.store({
                         text,
                         vector: entry.data.vector,
-                        importance: importance || 0.7,
+                        importance: importance ?? 0.7,
                         category: category || "other",
                       }).catch((err) => {
                         api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
@@ -5420,6 +5730,41 @@ const memoryHybridPlugin = {
 
                     recovered++;
                   }
+                } else if (entry.operation === "update") {
+                  // Legacy "update" entries from prior versions: treat as store
+                  api.logger.warn(`memory-hybrid: WAL recovery found legacy "update" operation (entry ${entry.id}), treating as store`);
+                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                  
+                  if (!factsDb.hasDuplicate(text)) {
+                    factsDb.store({
+                      text,
+                      category: (category as MemoryCategory) || "other",
+                      importance: importance ?? 0.7,
+                      entity: entity || null,
+                      key: key || null,
+                      value: value || null,
+                      source: source || "wal-recovery",
+                      decayClass,
+                      summary,
+                      tags,
+                    });
+
+                    if (entry.data.vector) {
+                      void vectorDb.store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance ?? 0.7,
+                        category: category || "other",
+                      }).catch((err) => {
+                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                      });
+                    }
+
+                    recovered++;
+                  }
+                } else {
+                  // Unrecognized operation type
+                  api.logger.warn(`memory-hybrid: WAL recovery found unrecognized operation "${entry.operation}" (entry ${entry.id}), discarding`);
                 }
                 
                 // Remove successfully processed entry
@@ -5431,9 +5776,9 @@ const memoryHybridPlugin = {
             }
 
             if (recovered > 0 || failed > 0) {
-              api.logger.info(`memory-hybrid: WAL recovery complete — ${recovered} recovered, ${failed} failed`);
+              api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
             }
-            
+
             // Prune any remaining stale entries
             const pruned = wal.pruneStale();
             if (pruned > 0) {
@@ -5491,12 +5836,47 @@ const memoryHybridPlugin = {
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
+        if (proposalsPruneTimer) { clearInterval(proposalsPruneTimer); proposalsPruneTimer = null; }
         factsDb.close();
         if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }
+        if (proposalsDb) { proposalsDb.close(); proposalsDb = null; }
         api.logger.info("memory-hybrid: stopped");
       },
     });
   },
+};
+
+// Export internal functions and classes for testing
+export const _testing = {
+  // Utility functions
+  normalizeTextForDedupe,
+  normalizedHash,
+  extractTags,
+  serializeTags,
+  parseTags,
+  tagsContains,
+  parseSourceDate,
+  estimateTokens,
+  classifyDecay,
+  calculateExpiry,
+  extractStructuredFields,
+  detectCategory,
+  detectCredentialPatterns,
+  extractCredentialMatch,
+  isCredentialLike,
+  inferServiceFromText,
+  isStructuredForConsolidation,
+  normalizeSuggestedLabel,
+  unionFind,
+  getRoot,
+  mergeResults,
+  // Classes for testing
+  FactsDB,
+  CredentialsDB,
+  ProposalsDB,
+  VectorDB,
+  Embeddings,
+  WriteAheadLog,
 };
 
 export { versionInfo } from "./versionInfo.js";
