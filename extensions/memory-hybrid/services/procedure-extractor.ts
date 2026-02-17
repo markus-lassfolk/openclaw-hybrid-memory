@@ -27,7 +27,35 @@ function normalizeTaskIntent(text: string): string {
 /** Check if tool result content indicates failure (error, 404, exception, etc.). */
 function looksLikeFailure(content: unknown): boolean {
   if (content == null) return false;
-  const s = typeof content === "string" ? content : JSON.stringify(content);
+  
+  // For objects, check for common error properties first before stringifying
+  if (typeof content === "object" && content !== null) {
+    const obj = content as Record<string, unknown>;
+    if (obj.error || obj.statusCode === 404 || obj.failed || obj.exception) {
+      return true;
+    }
+  }
+  
+  // For strings or small objects, check content
+  let s: string;
+  if (typeof content === "string") {
+    s = content;
+  } else {
+    // Limit stringification to prevent performance issues with large objects
+    try {
+      const str = JSON.stringify(content);
+      if (str.length > 10000) {
+        // For very large responses, only check the first 10KB
+        s = str.slice(0, 10000);
+      } else {
+        s = str;
+      }
+    } catch {
+      // If stringification fails (circular refs, etc.), assume not a failure
+      return false;
+    }
+  }
+  
   const lower = s.toLowerCase();
   return (
     lower.includes("error") ||
