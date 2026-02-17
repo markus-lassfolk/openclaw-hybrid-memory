@@ -2272,85 +2272,87 @@ const memoryHybridPlugin = {
       { name: "memory_recall" },
     );
 
-    api.registerTool(
-      {
-        name: "memory_recall_procedures",
-        label: "Recall Procedures",
-        description:
-          "Search for learned procedures (positive: what worked; negative: known failures) matching a task description.",
-        parameters: Type.Object({
-          taskDescription: Type.String({
-            description: "What you are trying to do (e.g. 'check Moltbook', 'HA health checks')",
+    if (cfg.procedures.enabled) {
+      api.registerTool(
+        {
+          name: "memory_recall_procedures",
+          label: "Recall Procedures",
+          description:
+            "Search for learned procedures (positive: what worked; negative: known failures) matching a task description.",
+          parameters: Type.Object({
+            taskDescription: Type.String({
+              description: "What you are trying to do (e.g. 'check Moltbook', 'HA health checks')",
+            }),
+            limit: Type.Optional(
+              Type.Number({ description: "Max procedures to return (default: 5)" }),
+            ),
           }),
-          limit: Type.Optional(
-            Type.Number({ description: "Max procedures to return (default: 5)" }),
-          ),
-        }),
-        async execute(_toolCallId: string, params: Record<string, unknown>) {
-          const { taskDescription, limit = 5 } = params as {
-            taskDescription: string;
-            limit?: number;
-          };
-          const q = typeof taskDescription === "string" && taskDescription.trim().length > 0
-            ? taskDescription.trim()
-            : null;
-          if (!q) {
-            return {
-              content: [{ type: "text" as const, text: "Provide a task description to recall procedures." }],
-              details: { count: 0 },
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
+            const { taskDescription, limit = 5 } = params as {
+              taskDescription: string;
+              limit?: number;
             };
-          }
-          const procedures = factsDb.searchProcedures(q, limit);
-          const negatives = factsDb.getNegativeProceduresMatching(q, 3);
-          const lines: string[] = [];
-          const positiveList = procedures.filter((p) => p.procedureType === "positive");
-          if (positiveList.length > 0) {
-            lines.push("Last time this worked:");
-            for (const p of positiveList) {
-              let recipe: unknown;
-              try {
-                recipe = JSON.parse(p.recipeJson);
-              } catch {
-                recipe = [];
-              }
-              const steps = Array.isArray(recipe)
-                ? (recipe as Array<{ tool?: string; args?: Record<string, unknown> }>).map(
-                    (s) => s.tool + (s.args && Object.keys(s.args).length > 0 ? `(${JSON.stringify(s.args).slice(0, 80)}…)` : ""),
-                  ).join(" → ")
-                : p.recipeJson.slice(0, 200);
-              lines.push(`- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x)`);
+            const q = typeof taskDescription === "string" && taskDescription.trim().length > 0
+              ? taskDescription.trim()
+              : null;
+            if (!q) {
+              return {
+                content: [{ type: "text" as const, text: "Provide a task description to recall procedures." }],
+                details: { count: 0 },
+              };
             }
-          }
-          if (negatives.length > 0) {
-            lines.push("");
-            lines.push("⚠️ Known issues (avoid):");
-            for (const p of negatives) {
-              let recipe: unknown;
-              try {
-                recipe = JSON.parse(p.recipeJson);
-              } catch {
-                recipe = [];
+            const procedures = factsDb.searchProcedures(q, limit);
+            const negatives = factsDb.getNegativeProceduresMatching(q, 3);
+            const lines: string[] = [];
+            const positiveList = procedures.filter((p) => p.procedureType === "positive");
+            if (positiveList.length > 0) {
+              lines.push("Last time this worked:");
+              for (const p of positiveList) {
+                let recipe: unknown;
+                try {
+                  recipe = JSON.parse(p.recipeJson);
+                } catch {
+                  recipe = [];
+                }
+                const steps = Array.isArray(recipe)
+                  ? (recipe as Array<{ tool?: string; args?: Record<string, unknown> }>).map(
+                      (s) => s.tool + (s.args && Object.keys(s.args).length > 0 ? `(${JSON.stringify(s.args).slice(0, 80)}…)` : ""),
+                    ).join(" → ")
+                  : p.recipeJson.slice(0, 200);
+                lines.push(`- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x)`);
               }
-              const steps = Array.isArray(recipe)
-                ? (recipe as Array<{ tool?: string }>).map((s) => s.tool).filter(Boolean).join(" → ")
-                : "";
-              lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}`);
             }
-          }
-          if (lines.length === 0) {
+            if (negatives.length > 0) {
+              lines.push("");
+              lines.push("⚠️ Known issues (avoid):");
+              for (const p of negatives) {
+                let recipe: unknown;
+                try {
+                  recipe = JSON.parse(p.recipeJson);
+                } catch {
+                  recipe = [];
+                }
+                const steps = Array.isArray(recipe)
+                  ? (recipe as Array<{ tool?: string }>).map((s) => s.tool).filter(Boolean).join(" → ")
+                  : "";
+                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}`);
+              }
+            }
+            if (lines.length === 0) {
+              return {
+                content: [{ type: "text" as const, text: "No procedures found for this task." }],
+                details: { count: 0 },
+              };
+            }
             return {
-              content: [{ type: "text" as const, text: "No procedures found for this task." }],
-              details: { count: 0 },
+              content: [{ type: "text" as const, text: lines.join("\n") }],
+              details: { count: positiveList.length + negatives.length, procedures: positiveList.length, warnings: negatives.length },
             };
-          }
-          return {
-            content: [{ type: "text" as const, text: lines.join("\n") }],
-            details: { count: positiveList.length + negatives.length, procedures: positiveList.length, warnings: negatives.length },
-          };
+          },
         },
-      },
-      { name: "memory_recall_procedures" },
-    );
+        { name: "memory_recall_procedures" },
+      );
+    }
 
     api.registerTool(
       {

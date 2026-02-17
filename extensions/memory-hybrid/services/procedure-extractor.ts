@@ -5,6 +5,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureStep } from "../types/memory.js";
+import type { ExtractProceduresResult } from "../cli/register.js";
 
 export type ParsedSession = {
   sessionId: string;
@@ -164,14 +165,6 @@ export type ExtractProceduresOptions = {
   sessionDir?: string;
   filePaths?: string[];
   dryRun?: boolean;
-};
-
-export type ExtractProceduresResult = {
-  sessionsScanned: number;
-  proceduresStored: number;
-  positiveCount: number;
-  negativeCount: number;
-  dryRun: boolean;
 };
 
 /** Calculate word overlap ratio between two task patterns (0.0 to 1.0). */
