@@ -707,41 +707,6 @@ class FactsDB {
     return result.changes > 0;
   }
 
-  /** FR-008: Update an existing fact's text/value in-place (for UPDATE classification). */
-  updateFact(id: string, fields: { text?: string; value?: string; importance?: number; summary?: string | null }): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const sets: string[] = [];
-    const params: unknown[] = [];
-
-    if (fields.text !== undefined) {
-      sets.push("text = ?");
-      params.push(fields.text);
-      sets.push("normalized_hash = ?");
-      params.push(normalizedHash(fields.text));
-    }
-    if (fields.value !== undefined) {
-      sets.push("value = ?");
-      params.push(fields.value);
-    }
-    if (fields.importance !== undefined) {
-      sets.push("importance = ?");
-      params.push(fields.importance);
-    }
-    if (fields.summary !== undefined) {
-      sets.push("summary = ?");
-      params.push(fields.summary);
-    }
-    sets.push("last_confirmed_at = ?");
-    params.push(nowSec);
-    sets.push("confidence = 1.0");
-
-    if (sets.length === 0) return false;
-    params.push(id);
-    const result = this.liveDb
-      .prepare(`UPDATE facts SET ${sets.join(", ")} WHERE id = ?`)
-      .run(...params);
-    return result.changes > 0;
-  }
 
   /** FR-008: Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
   findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
