@@ -1,0 +1,198 @@
+# Features — Categories, Decay, Tags, and Auto-Classify
+
+Detailed reference for the memory-hybrid plugin's classification, decay, tagging, and LLM auto-classify features.
+
+---
+
+## Categories
+
+### Default categories
+
+Five categories are built in and always available:
+
+| Category | Typical content | Examples |
+|----------|----------------|----------|
+| `preference` | Likes, dislikes, working-style choices | "I prefer dark mode", "I hate tabs" |
+| `fact` | Biographical or factual statements | "My birthday is Nov 13", "lives in Prague" |
+| `decision` | Architectural or process decisions with rationale | "Decided to use Postgres because ..." |
+| `entity` | Named things: people, projects, tools, identifiers | "John's email is john@example.com" |
+| `other` | Anything the heuristics can't classify | Catch-all; reclassified later by auto-classify |
+
+### Custom categories
+
+Add a `categories` array to plugin config in `openclaw.json`:
+
+```json
+{ "categories": ["research", "health", "finance"] }
+```
+
+Defaults are always included; custom categories are merged and deduplicated. See [CONFIGURATION.md](CONFIGURATION.md) for the full config block.
+
+Once registered, custom categories are available in `memory_store`, the LLM auto-classifier, `hybrid-mem classify` CLI, and `hybrid-mem categories`.
+
+### Category discovery
+
+When `autoClassify.suggestCategories` is `true` (default), the auto-classify job groups "other" facts by free-form topic labels. Any label with at least `minFactsForNewCategory` facts (default 10) becomes a new category. Discovered categories are persisted to `~/.openclaw/memory/.discovered-categories.json`.
+
+---
+
+## Classification Pipeline
+
+Every fact passes through up to three stages:
+
+```text
+conversation text
+      |
+      v
+ 1. Auto-capture filter          shouldCapture() — regex triggers
+    (hot path, no LLM)           + sensitive-content exclusion
+      |
+      v
+ 2. Heuristic classification     detectCategory() — fast regex
+    (hot path, no LLM)           matching on the text
+      |
+      v
+ 3. LLM auto-classify            Runs in background:
+    (background, cheap LLM)      daily batch + 5 min after startup
+      |
+      v
+  stored fact
+```
+
+**Stage 1 — Auto-capture filter.** `shouldCapture()` checks regex triggers (e.g. "remember", "prefer", "decided", email/phone patterns) and rejects sensitive content (passwords, API keys, SSNs, credit cards) and messages that are too short/long or look like structured markup.
+
+**Stage 2 — Heuristic classification.** `detectCategory()` runs a fast regex pass — no LLM call. Anything that doesn't match falls through to `"other"`.
+
+**Stage 3 — LLM auto-classify.** Background job periodically queries all `"other"` facts and sends them to a cheap LLM in batches. When category discovery is enabled, it first groups by free-form topic labels.
+
+**Manual override.** The `memory_store` tool accepts an explicit `category` parameter that bypasses heuristic detection.
+
+### Heuristic detection patterns
+
+| Category | Patterns matched |
+|----------|-----------------|
+| `decision` | `decided`, `chose`, `went with`, `selected`, `always use`, `never use`, `will use` |
+| `preference` | `prefer`, `like`, `love`, `hate`, `want` |
+| `entity` | Phone numbers (`+` followed by 10+ digits), email addresses, `is called` |
+| `fact` | `born`, `birthday`, `lives`, `works`, `is`, `are`, `has`, `have` |
+| `other` | Everything else (fallback) |
+
+### Structured field extraction
+
+After category detection, `extractStructuredFields()` extracts **entity / key / value** triples:
+
+| Pattern | Extracted fields | Example |
+|---------|-----------------|---------|
+| `decided/chose X because Y` | entity=`decision`, key=`X`, value=`Y` | "Decided to use Postgres because JSONB" |
+| `always/never X` | entity=`convention`, key=`X` | "Always use strict mode" |
+| `X's Y is Z` / `My Y is Z` | entity=`X`/`user`, key=`Y`, value=`Z` | "My birthday is Nov 13" |
+| `I prefer/like/hate X` | entity=`user`, key=`prefer`/`like`/`hate`, value=`X` | "I prefer dark mode" |
+| Email found | key=`email`, value=address | "john@example.com" |
+| Phone found | key=`phone`, value=number | "+1234567890" |
+
+### Adding heuristic patterns for custom categories
+
+The built-in `detectCategory()` only recognizes the five default categories. To add a heuristic for a custom category, edit `detectCategory()` in `index.ts`:
+
+```typescript
+// Before the final return:
+if (/research|paper|study|journal|arxiv/i.test(lower)) return "research";
+return "other";
+```
+
+Without this, custom categories are only assigned via explicit `memory_store` calls or the LLM auto-classifier.
+
+---
+
+## Auto-Classify (LLM Reclassification)
+
+### How it works
+
+1. **No inline LLM calls.** During auto-capture, facts are classified by fast heuristics only.
+2. **Background batch job.** If `autoClassify.enabled` is `true`:
+   - Once on startup (5-minute delay).
+   - Then every **24 hours**.
+3. **Safe.** Only reclassifies facts currently categorized as `"other"`.
+4. **Batched.** Sent in batches of `batchSize` (default 20) with 500ms pause between batches.
+
+### LLM prompt
+
+> You are a memory classifier. Categorize each fact into exactly one category.
+> Available categories: preference, fact, decision, entity *(plus custom categories, minus "other")*
+> Use "other" ONLY if no category fits at all.
+> Respond with ONLY a JSON array of category strings.
+
+### CLI commands
+
+| Command | Description |
+|---------|-------------|
+| `hybrid-mem classify --dry-run` | Preview classifications without applying |
+| `hybrid-mem classify` | Run LLM auto-classify immediately |
+| `hybrid-mem classify --limit N` | Classify at most N facts |
+| `hybrid-mem classify --model M` | Override the LLM model |
+| `hybrid-mem categories` | List all categories with fact counts |
+
+---
+
+## Decay and Pruning
+
+**No cron or external jobs are required.** The plugin handles decay automatically:
+
+1. **On gateway start** — Expired facts are hard-deleted.
+2. **Every 60 minutes** — Periodic prune: deletes expired facts and soft-decays confidence for facts past ~75% of their TTL.
+
+### Decay classes
+
+| Decay class | TTL | Refresh on access? |
+|-------------|-----|--------------------|
+| permanent   | Never expires | No |
+| stable      | 90 days      | Yes — expiry resets on recall |
+| active      | 14 days      | Yes — expiry resets on recall |
+| session     | 24 hours     | No |
+| checkpoint  | 4 hours      | No |
+
+Classification is automatic (e.g. decisions → permanent; tasks → active; tech details → stable).
+
+**Manual controls:** `openclaw hybrid-mem prune` (options: `--hard`, `--soft`, `--dry-run`), `openclaw hybrid-mem backfill-decay` to re-classify existing facts.
+
+### Changing TTLs or adding decay classes
+
+TTLs and decay class names are defined in `config.ts` (`TTL_DEFAULTS`, `DECAY_CLASSES`). To change a TTL or add a new class, edit those constants and the `classifyDecay` logic, then redeploy. There is no config setting for decay or TTL.
+
+---
+
+## Source Date (FR-003)
+
+Facts have an optional `source_date` (Unix seconds): when the fact *originated*, not when it was stored.
+
+| Source | `source_date` | `created_at` |
+|--------|---------------|--------------|
+| Live capture | `null` (uses `created_at`) | Insertion time |
+| Distillation from Jan 15 session | `2026-01-15` (Unix) | Feb 16 (insertion) |
+| Backfill from `[2026-01-15]` prefix | Parsed from text | Insertion time |
+
+**Ordering:** Lookup, search, and recall use `COALESCE(source_date, created_at)` for temporal ordering.
+
+**memory_store tool:** Optional `sourceDate` (ISO-8601 or Unix seconds).
+**CLI:** `openclaw hybrid-mem store --text "..." --source-date 2026-01-15`
+
+---
+
+## Auto-Tagging (FR-001)
+
+Facts can have optional **tags** for topic filtering, inferred at write time via regex.
+
+**Auto-tagging:** When `tags` are omitted, `extractTags(text, entity)` infers topics from the text. Supported patterns include: `nibe`, `zigbee`, `z-wave`, `auth`, `homeassistant`, `openclaw`, `postgres`, `sqlite`, `lancedb`, `api`, `docker`, `kubernetes`, and others. Tags are stored lowercase.
+
+**Tag-filtered queries:** Search and lookup accept `--tag <tag>`. `memory_recall(tag="nibe")` skips LanceDB and uses only SQLite with the tag filter.
+
+**memory_store tool:** Optional `tags` (array or comma-separated string).
+**CLI:** `openclaw hybrid-mem store --tags "nibe,homeassistant"` or `openclaw hybrid-mem search "..." --tag nibe`.
+
+---
+
+## Related docs
+
+- [CONFIGURATION.md](CONFIGURATION.md) — Config reference for all features
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System design overview
