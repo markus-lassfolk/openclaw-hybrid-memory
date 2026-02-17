@@ -165,5 +165,5 @@ This repo combines both approaches into a unified system (v3.0) and adds:
 - **Evidence requirements** — proposals must include session references and meet minimum confidence thresholds
 - **Audit trail** — all proposal actions logged to `memory/decisions/` with full history
 - **Safety rails** — identity files never auto-modified; proposals auto-expire if not reviewed; rollback via git history
-- **Tools**: `persona_propose`, `persona_proposals_list`, `persona_proposal_review`, `persona_proposal_apply`
+- **Tools**: `persona_propose`, `persona_proposals_list` (review/apply are human-only via CLI: `openclaw proposals review|apply`)
 

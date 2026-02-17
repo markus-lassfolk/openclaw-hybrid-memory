@@ -14,7 +14,7 @@ import * as lancedb from "@lancedb/lancedb";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -1403,12 +1403,22 @@ class WriteAheadLog {
   /**
    * Write a pending memory operation to the WAL.
    * This is a synchronous operation to ensure durability before proceeding.
+   * Uses atomic write (temp file + rename) to prevent corruption on crash.
+   * 
+   * Note: For maximum durability guarantees, this could use fsync before rename
+   * (via fs.openSync + fs.writeSync + fs.fsyncSync + fs.closeSync), but the
+   * current atomic rename approach provides good crash-safety for most use cases.
    */
   write(entry: WALEntry): void {
     try {
       const entries = this.readAll();
       entries.push(entry);
-      writeFileSync(this.walPath, JSON.stringify(entries, null, 2), "utf-8");
+      const content = JSON.stringify(entries, null, 2);
+      
+      // Atomic write: write to temp file, then rename
+      const tempPath = `${this.walPath}.tmp`;
+      writeFileSync(tempPath, content, "utf-8");
+      renameSync(tempPath, this.walPath);
     } catch (err) {
       throw new Error(`WAL write failed: ${err}`);
     }
@@ -1435,6 +1445,7 @@ class WriteAheadLog {
 
   /**
    * Remove a specific entry from the WAL after successful commit.
+   * Uses atomic write (temp file + rename) to prevent corruption on crash.
    */
   remove(id: string): void {
     try {
@@ -1443,7 +1454,10 @@ class WriteAheadLog {
       if (filtered.length === 0) {
         this.clear();
       } else {
-        writeFileSync(this.walPath, JSON.stringify(filtered, null, 2), "utf-8");
+        const content = JSON.stringify(filtered, null, 2);
+        const tempPath = `${this.walPath}.tmp`;
+        writeFileSync(tempPath, content, "utf-8");
+        renameSync(tempPath, this.walPath);
       }
     } catch (err) {
       throw new Error(`WAL remove failed: ${err}`);
@@ -2743,7 +2757,7 @@ const memoryHybridPlugin = {
               ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
 
-          // Generate vector first (needed for WAL)
+          // Generate vector first (this can take time and may fail)
           let vector: number[] | undefined;
           try {
             vector = await embeddings.embed(textToStore);
@@ -2751,13 +2765,15 @@ const memoryHybridPlugin = {
             api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
           }
 
-          // WAL: Write pending operation before committing to storage
+          // WAL: Write pending operation AFTER embedding generation, BEFORE storage
+          // Timestamp now reflects when we're ready to commit (not when we started)
+          // This prevents slow embeddings from causing entries to age out
           const walEntryId = randomUUID();
           if (wal) {
             try {
               wal.write({
                 id: walEntryId,
-                timestamp: Date.now(),
+                timestamp: Date.now(), // Captured after embedding completes
                 operation: "store",
                 data: {
                   text: textToStore,
@@ -2770,7 +2786,7 @@ const memoryHybridPlugin = {
                   decayClass: paramDecayClass,
                   summary,
                   tags,
-                  vector,
+                  vector, // Include the computed vector
                 },
               });
             } catch (err) {
@@ -5146,7 +5162,7 @@ const memoryHybridPlugin = {
 
     api.registerService({
       id: PLUGIN_ID,
-      start: () => {
+      start: async () => {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
@@ -5158,11 +5174,13 @@ const memoryHybridPlugin = {
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
         }
 
-        // WAL Recovery: replay uncommitted operations from previous session
+        // WAL Recovery: replay uncommitted operations from previous session (blocking)
+        // This must complete before service starts to ensure consistent state
         if (wal) {
           const pendingEntries = wal.getValidEntries();
           if (pendingEntries.length > 0) {
             api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
+            
             let recovered = 0;
             let failed = 0;
 
@@ -5187,16 +5205,27 @@ const memoryHybridPlugin = {
                       tags,
                     });
 
-                    // Store to LanceDB (async, best effort)
-                    if (entry.data.vector) {
-                      void vectorDb.store({
-                        text,
-                        vector: entry.data.vector,
-                        importance: importance || 0.7,
-                        category: category || "other",
-                      }).catch((err) => {
+                    // Store to LanceDB (generate vector if missing)
+                    let vector = entry.data.vector;
+                    if (!vector) {
+                      try {
+                        vector = await embeddings.embed(text);
+                      } catch (err) {
+                        api.logger.warn(`memory-hybrid: WAL recovery embedding failed for entry ${entry.id}: ${err}`);
+                      }
+                    }
+                    
+                    if (vector) {
+                      try {
+                        await vectorDb.store({
+                          text,
+                          vector,
+                          importance: importance || 0.7,
+                          category: category || "other",
+                        });
+                      } catch (err) {
                         api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
-                      });
+                      }
                     }
 
                     recovered++;
