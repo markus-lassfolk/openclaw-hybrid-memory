@@ -5736,12 +5736,12 @@ const memoryHybridPlugin = {
                       });
                     }
 
-                    recovered++;
-                  }
-                } else {
-                  // Unrecognized operation type
-                  api.logger.warn(`memory-hybrid: WAL recovery found unrecognized operation "${entry.operation}" (entry ${entry.id}), discarding`);
+                  recovered++;
                 }
+              } else {
+                // Known but unhandled operation type (e.g., "delete")
+                api.logger.warn(`memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`);
+              }
                 
                 // Remove successfully processed entry
                 wal.remove(entry.id);
