@@ -4,6 +4,21 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 
 ---
 
+## Feature documentation (by topic)
+
+| Feature | Document | Description |
+|---------|----------|-------------|
+| **Persona proposals** | [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) | Agent self-evolution with human approval: propose identity file changes, review/apply via CLI |
+| **Auto-tagging** | [AUTO-TAGGING.md](AUTO-TAGGING.md) | Regex-inferred topic tags, built-in patterns, tag-filtered search and recall |
+| **Decay & pruning** | [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) | Decay classes, TTLs, refresh-on-access, hard/soft prune, when they run |
+| **Reflection** | [REFLECTION.md](REFLECTION.md) | Pattern synthesis from facts (reflect, reflect-rules, reflect-meta) |
+| **Graph memory** | [GRAPH-MEMORY.md](GRAPH-MEMORY.md) | Typed links between facts, spreading activation |
+| **Session distillation** | [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) | Extracting facts from session logs |
+| **Credentials** | [CREDENTIALS.md](CREDENTIALS.md) | Opt-in encrypted credential vault |
+| **WAL** | [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) | Write-ahead log for crash resilience |
+
+---
+
 ## Categories
 
 ### Default categories
@@ -136,28 +151,11 @@ Without this, custom categories are only assigned via explicit `memory_store` ca
 
 ## Decay and Pruning
 
-**No cron or external jobs are required.** The plugin handles decay automatically:
+**No cron or external jobs are required.** The plugin handles decay automatically: on gateway start (hard-delete expired) and every 60 minutes (hard prune + soft-decay confidence). Decay classes: permanent, stable (90d), active (14d), session (24h), checkpoint (4h). Stable and active facts get their expiry refreshed when recalled.
 
-1. **On gateway start** — Expired facts are hard-deleted.
-2. **Every 60 minutes** — Periodic prune: deletes expired facts and soft-decays confidence for facts past ~75% of their TTL.
+**Manual controls:** `openclaw hybrid-mem prune` (options: `--soft`, `--dry-run`), `openclaw hybrid-mem backfill-decay` to re-classify existing facts.
 
-### Decay classes
-
-| Decay class | TTL | Refresh on access? |
-|-------------|-----|--------------------|
-| permanent   | Never expires | No |
-| stable      | 90 days      | Yes — expiry resets on recall |
-| active      | 14 days      | Yes — expiry resets on recall |
-| session     | 24 hours     | No |
-| checkpoint  | 4 hours      | No |
-
-Classification is automatic (e.g. decisions → permanent; tasks → active; tech details → stable).
-
-**Manual controls:** `openclaw hybrid-mem prune` (options: `--hard`, `--soft`, `--dry-run`), `openclaw hybrid-mem backfill-decay` to re-classify existing facts.
-
-### Changing TTLs or adding decay classes
-
-TTLs and decay class names are defined in `config.ts` (`TTL_DEFAULTS`, `DECAY_CLASSES`). To change a TTL or add a new class, edit those constants and the `classifyDecay` logic, then redeploy. There is no config setting for decay or TTL.
+→ Full detail: [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md)
 
 ---
 
@@ -180,19 +178,17 @@ Facts have an optional `source_date` (Unix seconds): when the fact *originated*,
 
 ## Auto-Tagging (FR-001)
 
-Facts can have optional **tags** for topic filtering, inferred at write time via regex.
+Facts can have optional **tags** for topic filtering. When `tags` are omitted, the plugin infers tags from fact text (and entity) via regex patterns. Tag-filtered search/lookup and `memory_recall(tag="…")` use only SQLite with a tag filter. Manual override: pass `tags` to `memory_store` or `hybrid-mem store --tags "a,b"`.
 
-**Auto-tagging:** When `tags` are omitted, `extractTags(text, entity)` infers topics from the text. Supported patterns include: `nibe`, `zigbee`, `z-wave`, `auth`, `homeassistant`, `openclaw`, `postgres`, `sqlite`, `lancedb`, `api`, `docker`, `kubernetes`, and others. Tags are stored lowercase.
-
-**Tag-filtered queries:** Search and lookup accept `--tag <tag>`. `memory_recall(tag="nibe")` skips LanceDB and uses only SQLite with the tag filter.
-
-**memory_store tool:** Optional `tags` (array or comma-separated string).
-**CLI:** `openclaw hybrid-mem store --tags "nibe,homeassistant"` or `openclaw hybrid-mem search "..." --tag nibe`.
+→ Full detail: [AUTO-TAGGING.md](AUTO-TAGGING.md)
 
 ---
 
 ## Related docs
 
+- [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) — Persona proposals (agent self-evolution, human approval)
+- [AUTO-TAGGING.md](AUTO-TAGGING.md) — Auto-tagging (patterns, storage, filtering)
+- [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) — Decay classes, TTLs, pruning
 - [DEEP-DIVE.md](DEEP-DIVE.md) — Storage internals, search algorithms, tags, links, deduplication
 - [CONFIGURATION.md](CONFIGURATION.md) — Config reference for all features
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands

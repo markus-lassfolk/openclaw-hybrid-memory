@@ -146,6 +146,8 @@ Located in `scripts/distill-sessions/`. See [SESSION-DISTILLATION.md](SESSION-DI
 
 **Important:** After every OpenClaw upgrade, the plugin's native dependencies (`better-sqlite3`, `@lancedb/lancedb`) can break because npm reinstalls the top-level package without touching extension directories.
 
+→ Full guide: [UPGRADE-OPENCLAW.md](UPGRADE-OPENCLAW.md)
+
 ### Upgrade process
 
 ```bash
@@ -179,6 +181,8 @@ Global npm upgrades reinstall the top-level `openclaw` package without running `
 ## Upgrading the hybrid memory plugin
 
 When a new version of this plugin is released:
+
+→ Full guide: [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md)
 
 ### NPM install
 
@@ -245,10 +249,16 @@ These are optional but recommended for long-running systems:
 | Extension directory | `$(npm root -g)/openclaw/extensions/memory-hybrid/` | `OPENCLAW_MEMORY_EXTENSION_DIR` env var |
 | Upgrade scripts | `~/.openclaw/scripts/` | Copy from repo `scripts/` |
 
+For **what to back up** and how to restore, see [BACKUP.md](BACKUP.md).
+
 ---
 
 ## Related docs
 
+- [UPGRADE-OPENCLAW.md](UPGRADE-OPENCLAW.md) — What to do after every OpenClaw upgrade
+- [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md) — Upgrading the hybrid-memory plugin
+- [BACKUP.md](BACKUP.md) — What to back up and how to restore
+- [UNINSTALL.md](UNINSTALL.md) — Uninstalling the solution (revert to default memory)
 - [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — Runtime flow and what happens each turn
 - [QUICKSTART.md](QUICKSTART.md) — Installation
 - [CONFIGURATION.md](CONFIGURATION.md) — Config reference

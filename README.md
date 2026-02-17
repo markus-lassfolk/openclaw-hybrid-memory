@@ -38,7 +38,7 @@ Your OpenClaw agent forgets everything between sessions. Preferences, decisions,
 
 ### Reliability
 - **Write-ahead log (WAL)** — crash-resilient memory operations with automatic recovery ([docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))
-- **Decay & pruning** — TTL-based expiry (permanent / stable / active / session / checkpoint); automatic hourly prune
+- **Decay & pruning** — TTL-based expiry (permanent / stable / active / session / checkpoint); automatic hourly prune ([DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md))
 - **Deduplication** — fuzzy text hashing + embedding similarity detection + LLM-powered consolidation
 - **Compaction flush** — saves to both `memory_store` and daily files before context is truncated
 
@@ -51,7 +51,7 @@ Your OpenClaw agent forgets everything between sessions. Preferences, decisions,
 ### Optional features
 - **Credential vault** — opt-in encrypted storage for API keys, tokens, passwords ([docs/CREDENTIALS.md](docs/CREDENTIALS.md))
 - **Persona proposals** — agent self-evolution with human approval (proposes identity file changes; human reviews via CLI)
-- **Auto-tagging** — regex-inferred topic tags for filtered queries
+- **Auto-tagging** — regex-inferred topic tags for filtered queries ([AUTO-TAGGING.md](docs/AUTO-TAGGING.md))
 - **Source dates** — preserve when facts originated, not just when they were stored
 
 ---
@@ -105,7 +105,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 |----------|-------------|
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap files |
 | **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference |
-| **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates |
+| **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates; index of [per-feature docs](docs/FEATURES.md#feature-documentation-by-topic) |
 | **[CLI-REFERENCE.md](docs/CLI-REFERENCE.md)** | All 21 `openclaw hybrid-mem` commands |
 | **[MEMORY-PROTOCOL.md](docs/MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md block |
 
@@ -114,8 +114,20 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 | Document | Description |
 |----------|-------------|
 | **[OPERATIONS.md](docs/OPERATIONS.md)** | Background jobs, cron, scripts, upgrading OpenClaw and the plugin |
+| **[UNINSTALL.md](docs/UNINSTALL.md)** | How to uninstall: revert to default memory, optional data removal |
+| **[UPGRADE-OPENCLAW.md](docs/UPGRADE-OPENCLAW.md)** | What to do after every OpenClaw upgrade (native deps, post-upgrade script) |
+| **[UPGRADE-PLUGIN.md](docs/UPGRADE-PLUGIN.md)** | Upgrading the hybrid-memory plugin: NPM/manual, migrations, config |
+| **[BACKUP.md](docs/BACKUP.md)** | What to back up (SQLite, LanceDB, vault, etc.) and how to restore |
 | **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | Common issues, API key behaviour, diagnostics |
 | **[MAINTENANCE.md](docs/MAINTENANCE.md)** | File hygiene, periodic review |
+
+### Feature deep-dives
+
+| Document | Description |
+|----------|-------------|
+| [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) | Persona proposals: agent self-evolution with human approval |
+| [AUTO-TAGGING.md](docs/AUTO-TAGGING.md) | Auto-tagging: patterns, storage, tag-filtered search and recall |
+| [DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md) | Decay classes, TTLs, refresh-on-access, hard/soft prune |
 
 ### Specialized
 
@@ -132,22 +144,9 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Persona Proposals (opt-in)
 
-**Agent self-evolution with human approval** — agents propose changes to identity files based on observed patterns; humans review and approve via CLI.
+**Agent self-evolution with human approval** — agents propose changes to identity files based on observed patterns; humans review and approve via CLI. Enable with `"personaProposals": { "enabled": true }`. Agent tools: `persona_propose`, `persona_proposals_list`. Human-only CLI: `openclaw proposals review <id> <approve|reject>`, `openclaw proposals apply <id>`.
 
-1. Enable: add `"personaProposals": { "enabled": true }` to plugin config
-2. **Agent tools**: `persona_propose`, `persona_proposals_list`
-3. **Human-only CLI**: `openclaw proposals review <id> <approve|reject>`, `openclaw proposals apply <id>`
-
-Safety: identity files never auto-modified, rate-limited (5/week), evidence requirements, auto-expiry, full audit trail.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `false` | Enable feature |
-| `allowedFiles` | `["SOUL.md", "IDENTITY.md", "USER.md"]` | Files that can be modified |
-| `maxProposalsPerWeek` | `5` | Rate limit |
-| `minConfidence` | `0.7` | Min confidence (0-1) |
-| `proposalTTLDays` | `30` | Days before expiry |
-| `minSessionEvidence` | `10` | Min session refs required |
+→ Full doc: [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) (config, safety, workflow).
 
 ---
 

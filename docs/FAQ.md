@@ -172,7 +172,7 @@ openclaw-upgrade  # if you set up the alias
 ~/.openclaw/scripts/post-upgrade.sh
 ```
 
-See [OPERATIONS.md](OPERATIONS.md) for full upgrade details.
+See [UPGRADE-OPENCLAW.md](UPGRADE-OPENCLAW.md) for the full guide.
 
 ---
 
