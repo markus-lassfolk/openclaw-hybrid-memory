@@ -29,8 +29,8 @@ export type AutoClassifyConfig = {
   minFactsForNewCategory?: number;
 };
 
-/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only */
-export type AutoRecallInjectionFormat = "full" | "short" | "minimal";
+/** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index */
+export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive";
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
@@ -60,6 +60,20 @@ export type AutoRecallConfig = {
 /** Store options: fuzzy dedupe (2.3) uses normalized-text hash to skip near-duplicate facts. */
 export type StoreConfig = {
   fuzzyDedupe: boolean;
+  /** FR-008: When true, classify incoming facts as ADD/UPDATE/DELETE/NOOP before storing (default true). Uses a cheap LLM call. */
+  classifyBeforeWrite: boolean;
+  /** FR-008: Model to use for memory operation classification (default: same as autoClassify.model). */
+  classifyModel: string;
+};
+
+/** Write-Ahead Log (WAL) configuration for crash resilience */
+export type WALConfig = {
+  /** Enable WAL for crash resilience (default: true) */
+  enabled: boolean;
+  /** Path to WAL file (default: same directory as SQLite DB) */
+  walPath?: string;
+  /** Maximum age of WAL entries before they're considered stale (ms, default: 5 minutes) */
+  maxAge?: number;
 };
 
 /** Graph-based spreading activation (FR-007): auto-linking and traversal settings */
@@ -70,6 +84,17 @@ export type GraphConfig = {
   autoLinkLimit: number;        // Max similar facts to link per storage (default 3)
   maxTraversalDepth: number;    // Max hops for graph traversal in recall (default 2)
   useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
+};
+
+/** Reflection: analyze facts to extract behavioral patterns and meta-insights */
+export type ReflectionConfig = {
+  enabled: boolean;
+  /** Model for reflection analysis (default gpt-4o-mini) */
+  model: string;
+  /** Default time window in days for reflection (default 14) */
+  defaultWindow: number;
+  /** Minimum observations required to generate a pattern (default 2) */
+  minObservations: number;
 };
 
 /** Credential types supported by the credentials store */
@@ -95,15 +120,6 @@ export type CredentialsConfig = {
   expiryWarningDays?: number;
 };
 
-/** Write-Ahead Log (WAL) configuration for crash resilience */
-export type WALConfig = {
-  /** Enable WAL for crash resilience (default: true) */
-  enabled: boolean;
-  /** Path to WAL file (default: same directory as SQLite DB) */
-  walPath?: string;
-  /** Maximum age of WAL entries before they're considered stale (ms, default: 5 minutes) */
-  maxAge?: number;
-};
 
 export type HybridMemoryConfig = {
   embedding: {
@@ -127,6 +143,8 @@ export type HybridMemoryConfig = {
   graph: GraphConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
+  /** Reflection: analyze facts to extract behavioral patterns (FR-011) */
+  reflection: ReflectionConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -135,6 +153,8 @@ export const DEFAULT_MEMORY_CATEGORIES = [
   "fact",
   "decision",
   "entity",
+  "pattern",
+  "rule",
   "other",
 ] as const;
 
@@ -224,7 +244,7 @@ export const hybridConfigSchema = {
 
     // Parse autoRecall: boolean (legacy) or { enabled?, maxTokens?, maxPerMemoryChars?, injectionFormat? }
     const arRaw = cfg.autoRecall;
-    const VALID_FORMATS = ["full", "short", "minimal"] as const;
+    const VALID_FORMATS = ["full", "short", "minimal", "progressive"] as const;
     let autoRecall: AutoRecallConfig;
     if (typeof arRaw === "object" && arRaw !== null && !Array.isArray(arRaw)) {
       const ar = arRaw as Record<string, unknown>;
@@ -296,6 +316,8 @@ export const hybridConfigSchema = {
     const storeRaw = cfg.store as Record<string, unknown> | undefined;
     const store: StoreConfig = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
+      classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
+      classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : "gpt-4o-mini",
     };
 
     // Parse WAL config (enabled by default for crash resilience)
@@ -364,6 +386,19 @@ export const hybridConfigSchema = {
       useInRecall: graphRaw?.useInRecall !== false,
     };
 
+    // Parse reflection config (FR-011)
+    const reflRaw = cfg.reflection as Record<string, unknown> | undefined;
+    const reflection: ReflectionConfig = {
+      enabled: reflRaw?.enabled === true,
+      model: typeof reflRaw?.model === "string" ? reflRaw.model : "gpt-4o-mini",
+      defaultWindow: typeof reflRaw?.defaultWindow === "number" && reflRaw.defaultWindow > 0
+        ? Math.floor(reflRaw.defaultWindow)
+        : 14,
+      minObservations: typeof reflRaw?.minObservations === "number" && reflRaw.minObservations >= 1
+        ? Math.floor(reflRaw.minObservations)
+        : 2,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -383,6 +418,7 @@ export const hybridConfigSchema = {
       credentials,
       graph,
       wal,
+      reflection,
     };
   },
 };

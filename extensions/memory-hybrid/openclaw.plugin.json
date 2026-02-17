@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.2.172",
+  "version": "2026.2.16",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",
@@ -114,6 +114,15 @@
       "label": "Store fuzzy dedupe",
       "help": "Skip storing when normalized text (trim, collapse whitespace, lowercase) matches an existing fact (2.3)"
     },
+    "store.classifyBeforeWrite": {
+      "label": "Classify before write",
+      "help": "Use LLM to classify incoming facts as ADD/UPDATE/DELETE/NOOP before storing (FR-008, default true)"
+    },
+    "store.classifyModel": {
+      "label": "Classification model",
+      "placeholder": "gpt-4o-mini",
+      "help": "Model for memory operation classification (default: same as autoClassify.model)"
+    },
     "credentials.enabled": {
       "label": "Credentials",
       "help": "Opt-in encrypted credential store for API keys, tokens, passwords"
@@ -155,6 +164,23 @@
     "graph.useInRecall": {
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
+    },
+    "reflection.enabled": {
+      "label": "Reflection",
+      "help": "Enable reflection layer to analyze facts and extract behavioral patterns (FR-011)"
+    },
+    "reflection.model": {
+      "label": "Reflection model",
+      "placeholder": "gpt-4o-mini",
+      "help": "Model for reflection analysis (default gpt-4o-mini)"
+    },
+    "reflection.defaultWindow": {
+      "label": "Reflection window (days)",
+      "help": "Default time window in days for reflection analysis (default 14)"
+    },
+    "reflection.minObservations": {
+      "label": "Min observations for pattern",
+      "help": "Minimum observations required to generate a pattern (default 2)"
     }
   },
   "configSchema": {
@@ -233,7 +259,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "fuzzyDedupe": { "type": "boolean" }
+          "fuzzyDedupe": { "type": "boolean" },
+          "classifyBeforeWrite": { "type": "boolean" },
+          "classifyModel": { "type": "string" }
         }
       },
       "credentials": {
@@ -260,6 +288,17 @@
           "useInRecall": { "type": "boolean", "description": "Enable graph traversal in memory_recall (default true)" }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
+      },
+      "reflection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "model": { "type": "string" },
+          "defaultWindow": { "type": "number" },
+          "minObservations": { "type": "number" }
+        },
+        "description": "Reflection layer: analyze facts to extract behavioral patterns (FR-011)"
       }
     },
     "required": ["embedding"]
