@@ -407,4 +407,22 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(result.autoRecall.progressiveIndexMaxTokens).toBe(500);
   });
+
+  it("parses optional distill config (Gemini for session distillation)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      distill: {
+        apiKey: "env:GOOGLE_API_KEY",
+        defaultModel: "gemini-2.0-flash",
+      },
+    });
+    expect(result.distill).toBeDefined();
+    expect(result.distill?.apiKey).toBe("env:GOOGLE_API_KEY");
+    expect(result.distill?.defaultModel).toBe("gemini-2.0-flash");
+  });
+
+  it("distill is undefined when omitted", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.distill).toBeUndefined();
+  });
 });

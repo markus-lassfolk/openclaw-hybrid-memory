@@ -8,7 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **distill: chunk oversized sessions instead of truncating** — Sessions exceeding `--max-session-tokens` are now split into overlapping windows (10% overlap) rather than truncated. Each chunk is tagged as `SESSION: <file> (chunk N/M)`. Existing dedup (DISTILL_DEDUP_THRESHOLD 0.85) handles cross-chunk duplicates. New CLI flag: `--max-session-tokens <n>` (default: batch limit). Tests: `distill-chunk.test.ts`; docs: CLI-REFERENCE, SESSION-DISTILLATION. See [issue #32](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/32).
 
 ---
 

@@ -218,6 +218,16 @@
     "graph.useInRecall": {
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
+    },
+    "distill.apiKey": {
+      "label": "Gemini API Key (distill)",
+      "sensitive": true,
+      "help": "For session distillation with Gemini (1M context). Or set GOOGLE_API_KEY env."
+    },
+    "distill.defaultModel": {
+      "label": "Distill default model",
+      "placeholder": "gemini-2.0-flash",
+      "help": "Default LLM for hybrid-mem distill (e.g. gemini-2.0-flash, gemini-1.5-pro)"
     }
   },
   "configSchema": {
@@ -316,6 +326,15 @@
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
         "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
+      },
+      "distill": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Gemini for session distillation (1M context). Optional; use env GOOGLE_API_KEY if not set.",
+        "properties": {
+          "apiKey": { "type": "string", "description": "Gemini/Google API key or env:VAR_NAME" },
+          "defaultModel": { "type": "string", "description": "Default model for distill (e.g. gemini-2.0-flash, gemini-1.5-pro)" }
+        }
       },
       "wal": {
         "type": "object",

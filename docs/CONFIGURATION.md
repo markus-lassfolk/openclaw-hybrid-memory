@@ -322,6 +322,38 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
 
 ---
 
+## Session distillation (Gemini)
+
+Session distillation uses an LLM to extract durable facts from conversation logs. Configure **Gemini** (recommended for its 1M+ context) or stick with OpenAI via `--model`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "distill": {
+            "apiKey": "YOUR_GOOGLE_API_KEY",
+            "defaultModel": "gemini-2.0-flash"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `apiKey` | (none) | Raw Google API key, or `env:VAR_NAME` to read from env |
+| `defaultModel` | `gpt-4o-mini` | Model used when `openclaw hybrid-mem distill` is run without `--model` |
+
+**API key resolution:** If `apiKey` is unset, the plugin uses `GOOGLE_API_KEY` or `GEMINI_API_KEY` env vars.
+
+**Batch size:** Gemini models use larger batches (500k tokens); OpenAI defaults to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.
+
+---
+
 ## Custom categories
 
 ```json
