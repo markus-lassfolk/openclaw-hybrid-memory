@@ -31,3 +31,39 @@ export function estimateTokensForDisplay(text: string): number {
   const words = text.split(/\s+/).filter(Boolean);
   return words.reduce((sum, w) => sum + Math.max(1, Math.ceil(w.length / 4)), 0);
 }
+
+/**
+ * Chunk session text into overlapping windows. No content is dropped.
+ * Used by distill CLI for oversized sessions (issue #32).
+ *
+ * @param text - Full session text
+ * @param maxTokens - Max tokens per chunk (~4 chars per token)
+ * @param overlapRatio - Fraction of chunk to overlap (default 0.1)
+ */
+export function chunkSessionText(text: string, maxTokens: number, overlapRatio = 0.1): string[] {
+  const maxChars = maxTokens * 4;
+  if (text.length <= maxChars) return [text];
+  const overlapChars = Math.floor(maxChars * overlapRatio);
+  const chunks: string[] = [];
+  let offset = 0;
+  while (offset < text.length) {
+    const end = Math.min(offset + maxChars, text.length);
+    chunks.push(text.slice(offset, end));
+    if (end >= text.length) break;
+    offset = end - overlapChars;
+  }
+  return chunks;
+}
+
+/**
+ * FR-009: Format a single progressive index line as "[category] title (N tok)".
+ * Used by auto-recall when injectionFormat is progressive or progressive_hybrid.
+ */
+export function formatProgressiveIndexLine(
+  category: string,
+  title: string,
+  tokenCost: number,
+  position: number,
+): string {
+  return `  ${position}. [${category}] ${title} (${tokenCost} tok)`;
+}

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Deep Dive
+parent: Architecture & Internals
+nav_order: 4
+---
 # Deep Dive — Storage, Search, Tags, Links, and Context
 
 How facts are stored, searched, linked, and injected — the internals explained.
@@ -89,9 +95,10 @@ When you search for "database performance":
    - **BM25 rank** (60%) — text relevance from FTS5
    - **Freshness** (25%) — how far from expiry (1.0 = not expiring, 0.0 = expired)
    - **Confidence** (15%) — decays over time; refreshed on access
+   - **FR-005 Dynamic salience** — access boost (frequently recalled facts score higher) and time decay (older unused memories fade). See [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md).
 4. **Filtering** — excludes expired facts, superseded facts, and optionally filters by tag
 5. **Sorting** — by composite score, then by effective date (newer first) on ties
-6. **Access tracking** — bumps `recall_count` and `last_accessed` for returned facts; extends TTL for stable/active facts
+6. **Access tracking** — bumps `recall_count` and `last_accessed` for returned facts; extends TTL for stable/active facts; drives salience scoring
 
 ### Vector search (LanceDB)
 
@@ -277,7 +284,7 @@ If `store.classifyBeforeWrite` is enabled:
 
 ### Manual
 
-The `memory_store` tool accepts a `supersedes` parameter (fact ID). When provided, the specified fact is marked as superseded and the new fact is linked.
+The `memory_store` tool accepts a `supersedes` parameter (fact ID). When provided, the specified fact is marked as superseded and the new fact is linked. The CLI supports the same: `hybrid-mem store --text "..." --supersedes <fact-id>`.
 
 ### Bi-temporal queries
 

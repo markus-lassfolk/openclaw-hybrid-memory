@@ -9,9 +9,11 @@ import { randomUUID } from "node:crypto";
 
 import type { MemoryCategory, DecayClass } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
-import type { MemoryEntry, ProcedureEntry, SearchResult } from "../types/memory.js";
+import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter } from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
+import { computeDynamicSalience } from "../utils/salience.js";
+import { estimateTokensForDisplay } from "../utils/text.js";
 
 export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
@@ -118,9 +120,45 @@ export class FactsDB {
     // ---- FR-007: Graph-based spreading activation ----
     this.migrateMemoryLinksTable();
 
+    // ---- FR-004: Dynamic memory tiering (hot/warm/cold) ----
+    this.migrateTierColumn();
+
+    // ---- FR-006: Memory scoping (global, user, agent, session) ----
+    this.migrateScopeColumns();
+
     // ---- Procedural memory (issue #23): procedure columns on facts + procedures table ----
     this.migrateProcedureColumns();
     this.migrateProceduresTable();
+  }
+
+  /** FR-004: Add tier column for dynamic memory tiering. */
+  private migrateTierColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("tier")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tier TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_tier ON facts(tier) WHERE tier IS NOT NULL`,
+    );
+  }
+
+  /** FR-006: Add scope and scope_target columns for memory scoping. */
+  private migrateScopeColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("scope")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN scope_target TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope)`,
+    );
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_scope_target ON facts(scope, scope_target) WHERE scope_target IS NOT NULL`,
+    );
   }
 
   /** Procedural memory: add procedure_type, success_count, last_validated, source_sessions to facts. */
@@ -182,6 +220,77 @@ export class FactsDB {
         INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
       END
     `);
+  }
+
+  /**
+   * FR-006: Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId.
+   * ⚠️ SECURITY: Callers MUST derive scope filter values from trusted runtime identity (authenticated user/agent/session).
+   * Do NOT pass arbitrary caller-controlled tool/CLI parameters here — that enables cross-tenant data leakage
+   * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
+   * (set by integration layer) rather than user-supplied parameters. See docs/MEMORY-SCOPING.md.
+   */
+  private scopeFilterClause(filter: ScopeFilter | null | undefined): { clause: string; params: Record<string, unknown> } {
+    if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
+      return { clause: "", params: {} };
+    }
+    const parts: string[] = ["("];
+    parts.push("scope = 'global'");
+    const params: Record<string, unknown> = {};
+    if (filter.userId) {
+      parts.push("OR (scope = 'user' AND scope_target = @scopeUserId)");
+      params.scopeUserId = filter.userId;
+    }
+    if (filter.agentId) {
+      parts.push("OR (scope = 'agent' AND scope_target = @scopeAgentId)");
+      params.scopeAgentId = filter.agentId;
+    }
+    if (filter.sessionId) {
+      parts.push("OR (scope = 'session' AND scope_target = @scopeSessionId)");
+      params.scopeSessionId = filter.sessionId;
+    }
+    parts.push(")");
+    return { clause: "AND " + parts.join(" "), params };
+  }
+
+  /**
+   * FR-006: Build SQL fragment for scope filtering with positional params (for lookup/getAll).
+   * Same security constraints as scopeFilterClause — derive from trusted identity only.
+   */
+  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: unknown[] } {
+    if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
+      return { clause: "", params: [] };
+    }
+    const parts: string[] = ["("];
+    parts.push("scope = 'global'");
+    const params: unknown[] = [];
+    if (filter.userId) {
+      parts.push("OR (scope = 'user' AND scope_target = ?)");
+      params.push(filter.userId);
+    }
+    if (filter.agentId) {
+      parts.push("OR (scope = 'agent' AND scope_target = ?)");
+      params.push(filter.agentId);
+    }
+    if (filter.sessionId) {
+      parts.push("OR (scope = 'session' AND scope_target = ?)");
+      params.push(filter.sessionId);
+    }
+    parts.push(")");
+    return { clause: " AND " + parts.join(" "), params };
+  }
+
+  /** FR-004: Add tier column; default 'warm' for existing rows. */
+  private migrateTierColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "tier")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tier TEXT DEFAULT 'warm'`);
+    this.liveDb.exec(`UPDATE facts SET tier = 'warm' WHERE tier IS NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_tier ON facts(tier) WHERE tier IS NOT NULL`,
+    );
+>>>>>>> origin/main
   }
 
   private migrateTagsColumn(): void {
@@ -385,6 +494,10 @@ export class FactsDB {
       successCount?: number;
       lastValidated?: number | null;
       sourceSessions?: string | null;
+      /** FR-006: Memory scope — global, user, agent, or session. Default global. */
+      scope?: "global" | "user" | "agent" | "session";
+      /** FR-006: Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
+      scopeTarget?: string | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -414,6 +527,8 @@ export class FactsDB {
     const validFrom = entry.validFrom ?? sourceDate ?? nowSec;
     const validUntil = entry.validUntil ?? null;
     const supersedesId = entry.supersedesId ?? null;
+    const scope = entry.scope ?? "global";
+    const scopeTarget = entry.scopeTarget ?? (scope === "global" ? null : null);
     const procedureType = entry.procedureType ?? null;
     const successCount = entry.successCount ?? 0;
     const lastValidated = entry.lastValidated ?? null;
@@ -425,10 +540,11 @@ export class FactsDB {
           ? sourceSessionsRaw
           : JSON.stringify(sourceSessionsRaw);
 
+    const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, procedure_type, success_count, last_validated, source_sessions)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -451,6 +567,9 @@ export class FactsDB {
         validFrom,
         validUntil,
         supersedesId,
+        tier,
+        scope,
+        scopeTarget,
         procedureType,
         successCount,
         lastValidated,
@@ -467,10 +586,13 @@ export class FactsDB {
       confidence,
       summary: summary ?? undefined,
       sourceDate,
+      scope,
+      scopeTarget: scopeTarget ?? undefined,
       tags: tags ?? undefined,
       validFrom,
       validUntil: validUntil ?? undefined,
       supersedesId: supersedesId ?? undefined,
+      tier,
       procedureType: procedureType ?? undefined,
       successCount,
       lastValidated: lastValidated ?? undefined,
@@ -507,6 +629,123 @@ export class FactsDB {
     tx();
   }
 
+  /** FR-004: Get HOT-tier facts for session context, capped by token budget. */
+  getHotFacts(maxTokens: number, scopeFilter?: ScopeFilter | null): SearchResult[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts
+         WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         ${scopeClause}
+         ORDER BY COALESCE(last_accessed, last_confirmed_at, created_at) DESC`,
+      )
+      .all(nowSec, ...scopeParams) as Array<Record<string, unknown>>;
+    const hotRows = rows;
+    const results: SearchResult[] = [];
+    let usedTokens = 0;
+    for (const row of hotRows) {
+      if (usedTokens >= maxTokens) break;
+      const entry = this.rowToEntry(row);
+      const tokens = estimateTokensForDisplay(entry.summary || entry.text);
+      if (usedTokens + tokens > maxTokens) {
+        // Skip oversized entry and continue scanning for smaller facts that might fit
+        continue;
+      }
+      usedTokens += tokens;
+      results.push({ entry, score: 1.0, backend: "sqlite" as const });
+    }
+    return results;
+  }
+
+  /** FR-004: Set a fact's tier. */
+  setTier(id: string, tier: MemoryTier): boolean {
+    const result = this.liveDb
+      .prepare(`UPDATE facts SET tier = ? WHERE id = ?`)
+      .run(tier, id);
+    return result.changes > 0;
+  }
+
+  /** FR-004: Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
+  runCompaction(opts: {
+    inactivePreferenceDays: number;
+    hotMaxTokens: number;
+    hotMaxFacts: number;
+  }): { hot: number; warm: number; cold: number } {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const inactiveCutoff = nowSec - opts.inactivePreferenceDays * 86400;
+    const counts = { hot: 0, warm: 0, cold: 0 };
+
+    // 1) Completed tasks -> COLD (decision category or tag 'task')
+    const taskRows = this.liveDb
+      .prepare(
+        `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         AND (category = 'decision' OR (',' || COALESCE(tags,'') || ',') LIKE '%,task,%')
+         AND (tier IS NULL OR tier != 'cold')`,
+      )
+      .all(nowSec) as Array<{ id: string }>;
+    for (const { id } of taskRows) {
+      if (this.setTier(id, "cold")) counts.cold++;
+    }
+
+    // 2) Inactive preferences -> WARM (preference + not accessed recently)
+    const prefRows = this.liveDb
+      .prepare(
+        `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         AND category = 'preference' AND COALESCE(last_accessed, last_confirmed_at, created_at) < ?
+         AND tier = 'hot'`,
+      )
+      .all(nowSec, inactiveCutoff) as Array<{ id: string }>;
+    for (const { id } of prefRows) {
+      if (this.setTier(id, "warm")) counts.warm++;
+    }
+
+    // 2b) Collect existing HOT facts with blocker tag (avoid N+1 in step 4)
+    const existingHotBlockerRows = this.liveDb
+      .prepare(
+        `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'`,
+      )
+      .all(nowSec) as Array<{ id: string }>;
+    const allBlockerIdSet = new Set(existingHotBlockerRows.map((r) => r.id));
+
+    // 3) Active blockers -> HOT (tag 'blocker'); cap HOT tier by hotMaxFacts and hotMaxTokens
+    const blockerRows = this.liveDb
+      .prepare(
+        `SELECT id, text, summary FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
+         AND (tier IS NULL OR tier != 'hot')`,
+      )
+      .all(nowSec) as Array<{ id: string; text: string; summary: string | null }>;
+    let hotTokens = 0;
+    const hotIds: string[] = [];
+    for (const row of blockerRows) {
+      if (hotIds.length >= opts.hotMaxFacts) break;
+      const len = (row.summary || row.text).length;
+      const tokens = Math.ceil(len / 4);
+      if (hotTokens + tokens > opts.hotMaxTokens) continue;
+      hotTokens += tokens;
+      hotIds.push(row.id);
+    }
+    for (const id of hotIds) {
+      allBlockerIdSet.add(id);
+      if (this.setTier(id, "hot")) counts.hot++;
+    }
+
+    // 4) Demote HOT facts that are not blockers (so HOT stays small)
+    const hotRows = this.liveDb
+      .prepare(
+        `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .all(nowSec) as Array<{ id: string }>;
+    for (const { id } of hotRows) {
+      if (allBlockerIdSet.has(id)) continue;
+      if (this.setTier(id, "warm")) counts.warm++;
+    }
+
+    return counts;
+  }
+
   search(
     query: string,
     limit = 5,
@@ -516,9 +755,13 @@ export class FactsDB {
       includeSuperseded?: boolean;
       /** FR-010: Point-in-time: only facts valid at this epoch second. */
       asOf?: number;
+      /** FR-004: 'warm' = only warm tier (default), 'all' = warm + cold. */
+      tierFilter?: "warm" | "all";
+      /** FR-006: Scope filter — only return global + matching user/agent/session. */
+      scopeFilter?: ScopeFilter | null;
     } = {},
   ): SearchResult[] {
-    const { includeExpired = false, tag, includeSuperseded = false, asOf } = options;
+    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter } = options;
 
     const safeQuery = query
       .replace(/['"]/g, "")
@@ -544,6 +787,11 @@ export class FactsDB {
         ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern"
         : "";
     const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
+    const tierFilterClause =
+      tierFilter === "warm"
+        ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')"
+        : "";
+    const { clause: scopeFilterClauseStr, params: scopeParams } = this.scopeFilterClause(scopeFilter);
 
     const rows = this.liveDb
       .prepare(
@@ -559,6 +807,8 @@ export class FactsDB {
            ${expiryFilter}
            ${temporalFilter}
            ${tagFilter}
+           ${tierFilterClause}
+           ${scopeFilterClauseStr}
          ORDER BY rank
          LIMIT @limit`,
       )
@@ -569,6 +819,7 @@ export class FactsDB {
         limit: limit * 2,
         decay_window: 7 * 24 * 3600,
         ...(tagPattern ? { tagPattern } : {}),
+        ...scopeParams,
       }) as Array<Record<string, unknown>>;
 
     if (rows.length === 0) return [];
@@ -583,10 +834,13 @@ export class FactsDB {
       const freshness = (row.freshness as number) || 1.0;
       const confidence = (row.confidence as number) || 1.0;
       const composite = bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15;
+      const entry = this.rowToEntry(row);
+      // FR-005: Apply dynamic salience (access boost + time decay)
+      const salienceScore = computeDynamicSalience(composite, entry);
 
       return {
-        entry: this.rowToEntry(row),
-        score: composite,
+        entry,
+        score: salienceScore,
         backend: "sqlite" as const,
       };
     });
@@ -609,10 +863,10 @@ export class FactsDB {
     entity: string,
     key?: string,
     tag?: string,
-    options?: { includeSuperseded?: boolean; asOf?: number },
+    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null },
   ): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
-    const { includeSuperseded = false, asOf } = options ?? {};
+    const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
     const temporalFilter =
       asOf != null
         ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
@@ -624,35 +878,42 @@ export class FactsDB {
         ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?"
         : "";
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
+    const { clause: scopeClause, params: scopeParamsArr } = this.scopeFilterClausePositional(scopeFilter);
 
     const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
 
     const params = key
       ? tagParam !== null
         ? asOf != null
-          ? [entity, key, nowSec, asOf, asOf, tagParam]
-          : [entity, key, nowSec, tagParam]
+          ? [...[entity, key, nowSec, asOf, asOf, tagParam], ...scopeParamsArr]
+          : [...[entity, key, nowSec, tagParam], ...scopeParamsArr]
         : asOf != null
-          ? [entity, key, nowSec, asOf, asOf]
-          : [entity, key, nowSec]
+          ? [...[entity, key, nowSec, asOf, asOf], ...scopeParamsArr]
+          : [...[entity, key, nowSec], ...scopeParamsArr]
       : tagParam !== null
         ? asOf != null
-          ? [entity, nowSec, asOf, asOf, tagParam]
-          : [entity, nowSec, tagParam]
+          ? [...[entity, nowSec, asOf, asOf, tagParam], ...scopeParamsArr]
+          : [...[entity, nowSec, tagParam], ...scopeParamsArr]
         : asOf != null
-          ? [entity, nowSec, asOf, asOf]
-          : [entity, nowSec];
+          ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
+          : [...[entity, nowSec], ...scopeParamsArr];
     const rows = this.liveDb.prepare(base).all(...params) as Array<
       Record<string, unknown>
     >;
 
-    const results = rows.map((row) => ({
-      entry: this.rowToEntry(row),
-      score: (row.confidence as number) || 1.0,
-      backend: "sqlite" as const,
-    }));
+    const results = rows.map((row) => {
+      const entry = this.rowToEntry(row);
+      const baseScore = (row.confidence as number) || 1.0;
+      // FR-005: Apply dynamic salience (access boost + time decay)
+      const salienceScore = computeDynamicSalience(baseScore, entry);
+      return {
+        entry,
+        score: salienceScore,
+        backend: "sqlite" as const,
+      };
+    });
 
     this.refreshAccessedFacts(results.map((r) => r.entry.id));
 
@@ -795,6 +1056,9 @@ export class FactsDB {
       validFrom: (row.valid_from as number) ?? undefined,
       validUntil: (row.valid_until as number) ?? undefined,
       supersedesId: (row.supersedes_id as string) ?? undefined,
+      tier: (row.tier as MemoryTier) ?? undefined,
+      scope: (row.scope as "global" | "user" | "agent" | "session") ?? "global",
+      scopeTarget: (row.scope_target as string) || null,
       procedureType: (row.procedure_type as "positive" | "negative") ?? undefined,
       successCount: (row.success_count as number) ?? undefined,
       lastValidated: (row.last_validated as number) ?? undefined,
@@ -802,13 +1066,13 @@ export class FactsDB {
     };
   }
 
-  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. */
+  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded (FR-010). */
   getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
     const nowSec = Math.floor(Date.now() / 1000);
     const rows = this.liveDb
       .prepare(
         `SELECT id, text, category, entity, key FROM facts
-         WHERE (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`,
+         WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL ORDER BY created_at DESC LIMIT ?`,
       )
       .all(nowSec, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
@@ -820,11 +1084,29 @@ export class FactsDB {
     }));
   }
 
-  /** Get one fact by id (for merge category). Returns null if not found. */
-  getById(id: string): MemoryEntry | null {
+  /** Get one fact by id (for merge category). Returns null if not found. FR-010: when asOf is set, returns null if the fact was not valid at that time. FR-006: when scopeFilter is set, returns null if the fact is not in scope. */
+  getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
     const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
-    return this.rowToEntry(row);
+    const entry = this.rowToEntry(row);
+    const asOf = options?.asOf;
+    if (asOf != null) {
+      const vf = entry.validFrom ?? entry.createdAt;
+      const vu = entry.validUntil ?? null;
+      if (vf > asOf || (vu != null && vu <= asOf)) return null;
+    }
+    const scopeFilter = options?.scopeFilter;
+    if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
+      const scope = entry.scope ?? "global";
+      if (scope === "global") return entry;
+      const target = entry.scopeTarget ?? null;
+      const matches =
+        (scope === "user" && (scopeFilter.userId ?? null) === target) ||
+        (scope === "agent" && (scopeFilter.agentId ?? null) === target) ||
+        (scope === "session" && (scopeFilter.sessionId ?? null) === target);
+      if (!matches) return null;
+    }
+    return entry;
   }
 
   /** FR-007: Create a typed link between two facts. Returns link id. */
@@ -842,6 +1124,31 @@ export class FactsDB {
       )
       .run(id, sourceFactId, targetFactId, linkType, Math.max(0, Math.min(1, strength)), now);
     return id;
+  }
+
+  /** FR-005 Hebbian: Create or strengthen RELATED_TO link between two facts recalled together. */
+  createOrStrengthenRelatedLink(
+    factIdA: string,
+    factIdB: string,
+    deltaStrength = 0.1,
+  ): void {
+    if (factIdA === factIdB) return;
+    const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
+
+    const existing = this.liveDb
+      .prepare(
+        `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+      )
+      .get(source, target) as { id: string; strength: number } | undefined;
+
+    const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
+    if (existing) {
+      this.liveDb
+        .prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`)
+        .run(newStrength, existing.id);
+    } else {
+      this.createLink(source, target, "RELATED_TO", newStrength);
+    }
   }
 
   /** FR-007: Get links from a fact (outgoing). */
@@ -906,20 +1213,38 @@ export class FactsDB {
     return [...seen];
   }
 
-  /** Get all non-expired facts (for reflection). Optional FR-010 point-in-time / include superseded. */
-  getAll(options?: { includeSuperseded?: boolean; asOf?: number }): MemoryEntry[] {
+  /** FR-011: Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */
+  getRecentFacts(days: number, options?: { excludeCategories?: string[] }): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
-    const { includeSuperseded = false, asOf } = options ?? {};
+    const windowStartSec = nowSec - Math.max(1, Math.min(90, days)) * 86400;
+    const exclude = options?.excludeCategories ?? ["pattern", "rule"];
+    const placeholders = exclude.map(() => "?").join(",");
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL
+         AND (COALESCE(source_date, created_at) >= ?)
+         AND category NOT IN (${placeholders})
+         ORDER BY COALESCE(source_date, created_at) DESC`,
+      )
+      .all(nowSec, windowStartSec, ...exclude) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
+  /** Get all non-expired facts (for reflection). Optional FR-010 point-in-time / include superseded. FR-006: optional scope filter. */
+  getAll(options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
     const temporalFilter =
       asOf != null
         ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
         : includeSuperseded
           ? ""
           : " AND superseded_at IS NULL";
-    const params = asOf != null ? [nowSec, asOf, asOf] : [nowSec];
+    const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
+    const params = asOf != null ? [...[nowSec, asOf, asOf], ...scopeParams] : [...[nowSec], ...scopeParams];
     const rows = this.liveDb
       .prepare(
-        `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter} ORDER BY created_at DESC`,
+        `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}${scopeClause} ORDER BY created_at DESC`,
       )
       .all(...params) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToEntry(row));
@@ -958,6 +1283,23 @@ export class FactsDB {
       .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
       .run(nowSec);
     return result.changes;
+  }
+
+  /** FR-006: Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
+  pruneSessionScope(sessionId: string): number {
+    const result = this.liveDb
+      .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?`)
+      .run(sessionId);
+    return result.changes;
+  }
+
+  /** FR-006: Promote a fact's scope (e.g. session → global or agent). Returns true if updated. */
+  promoteScope(factId: string, newScope: "global" | "user" | "agent" | "session", newScopeTarget: string | null): boolean {
+    const scopeTarget = newScope === "global" ? null : newScopeTarget;
+    const result = this.liveDb
+      .prepare(`UPDATE facts SET scope = ?, scope_target = ? WHERE id = ?`)
+      .run(newScope, scopeTarget, factId);
+    return result.changes > 0;
   }
 
   decayConfidence(): number {
@@ -1058,6 +1400,62 @@ export class FactsDB {
       stats[row.decay_class || "unknown"] = row.cnt;
     }
     return stats;
+  }
+
+  /** FR-004: Tier breakdown (hot/warm/cold) for non-superseded facts. */
+  statsBreakdownByTier(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT COALESCE(tier, 'warm') as tier, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY tier`,
+      )
+      .all() as Array<{ tier: string; cnt: number }>;
+    const stats: Record<string, number> = { hot: 0, warm: 0, cold: 0 };
+    for (const row of rows) {
+      stats[row.tier || "warm"] = row.cnt;
+    }
+    return stats;
+  }
+
+  /** Source breakdown (conversation, cli, distillation, reflection, etc.) for non-superseded facts. */
+  statsBreakdownBySource(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT source, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY source`,
+      )
+      .all() as Array<{ source: string; cnt: number }>;
+    const stats: Record<string, number> = {};
+    for (const row of rows) {
+      stats[row.source || "unknown"] = row.cnt;
+    }
+    return stats;
+  }
+
+  /** Estimated total tokens stored (summary or text) for non-superseded facts. Uses same heuristic as auto-recall. */
+  estimateStoredTokens(): number {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT summary, text FROM facts WHERE superseded_at IS NULL`,
+      )
+      .all() as Array<{ summary: string | null; text: string }>;
+    return rows.reduce((sum, r) => sum + estimateTokensForDisplay(r.summary || r.text), 0);
+  }
+
+  /** Estimated tokens by tier (hot/warm/cold) for non-superseded facts. */
+  estimateStoredTokensByTier(): { hot: number; warm: number; cold: number } {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`,
+      )
+      .all() as Array<{ tier: string; summary: string | null; text: string }>;
+    const out = { hot: 0, warm: 0, cold: 0 };
+    for (const r of rows) {
+      const tok = estimateTokensForDisplay(r.summary || r.text);
+      const t = r.tier || "warm";
+      if (t === "hot") out.hot += tok;
+      else if (t === "cold") out.cold += tok;
+      else out.warm += tok;
+    }
+    return out;
   }
 
   countExpired(): number {

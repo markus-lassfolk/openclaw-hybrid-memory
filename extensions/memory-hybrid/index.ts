@@ -13,9 +13,10 @@ import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { stringEnum } from "openclaw/plugin-sdk";
@@ -40,14 +41,16 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
+import { chatComplete, distillBatchTokenLimit } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
-import { mergeResults } from "./services/merge-results.js";
-import type { MemoryEntry, SearchResult } from "./types/memory.js";
+import { mergeResults, filterByScope } from "./services/merge-results.js";
+import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
+import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
-import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay } from "./utils/text.js";
+import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, chunkSessionText } from "./utils/text.js";
 import {
   REFLECTION_MAX_FACT_LENGTH,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
@@ -78,6 +81,7 @@ import {
 } from "./utils/tags.js";
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
+import { computeDynamicSalience } from "./utils/salience.js";
 
 // ============================================================================
 // Credentials Store (opt-in, encrypted)
@@ -456,6 +460,36 @@ type MemoryClassification = {
 };
 
 /**
+ * FR-008: Parse LLM classification response into MemoryClassification.
+ * Format: "ACTION [id] | reason". Exported for tests.
+ */
+function parseClassificationResponse(
+  content: string,
+  existingFacts: MemoryEntry[],
+): MemoryClassification {
+  const match = content.match(/^(ADD|UPDATE|DELETE|NOOP)\s*([a-f0-9-]*)\s*\|\s*(.+)$/i);
+  if (!match) {
+    return { action: "ADD", reason: `unparseable LLM response: ${content.slice(0, 80)}` };
+  }
+
+  const action = match[1].toUpperCase() as MemoryClassification["action"];
+  const targetId = match[2]?.trim() || undefined;
+  const reason = match[3].trim();
+
+  if (action === "UPDATE" || action === "DELETE") {
+    if (!targetId) {
+      return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
+    }
+    const validTarget = existingFacts.find((f) => f.id === targetId);
+    if (!validTarget) {
+      return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
+    }
+  }
+
+  return { action, targetId, reason };
+}
+
+/**
  * FR-008: Classify an incoming fact against existing similar facts.
  * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
  * Falls back to ADD on error.
@@ -497,29 +531,7 @@ async function classifyMemoryOperation(
       max_tokens: 100,
     });
     const content = (resp.choices[0]?.message?.content ?? "").trim();
-
-    // Parse: "ACTION [id] | reason"
-    const match = content.match(/^(ADD|UPDATE|DELETE|NOOP)\s*([a-f0-9-]*)\s*\|\s*(.+)$/i);
-    if (!match) {
-      return { action: "ADD", reason: `unparseable LLM response: ${content.slice(0, 80)}` };
-    }
-
-    const action = match[1].toUpperCase() as MemoryClassification["action"];
-    const targetId = match[2]?.trim() || undefined;
-    const reason = match[3].trim();
-
-    // Validate targetId if UPDATE or DELETE - must have a valid targetId
-    if (action === "UPDATE" || action === "DELETE") {
-      if (!targetId) {
-        return { action: "ADD", reason: `missing targetId for ${action}; treating as ADD` };
-      }
-      const validTarget = existingFacts.find((f) => f.id === targetId);
-      if (!validTarget) {
-        return { action: "ADD", reason: `LLM referenced unknown id ${targetId}; treating as ADD` };
-      }
-    }
-
-    return { action, targetId, reason };
+    return parseClassificationResponse(content, existingFacts);
   } catch (err) {
     logger.warn(`memory-hybrid: classify operation failed: ${err}`);
     return { action: "ADD", reason: "classification failed; defaulting to ADD" };
@@ -1071,6 +1083,28 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return a.reduce((s, x, i) => s + x * b[i], 0);
 }
 
+/** FR-011: Parse PATTERN: lines from reflection LLM response. Exported for tests. */
+function parsePatternsFromReflectionResponse(rawResponse: string): string[] {
+  const patterns: string[] = [];
+  for (const line of rawResponse.split(/\n/)) {
+    const m = line.match(/^\s*PATTERN:\s*(.+)/);
+    if (!m) continue;
+    const text = m[1].trim();
+    if (text.length >= REFLECTION_PATTERN_MIN_CHARS && text.length <= REFLECTION_PATTERN_MAX_CHARS) {
+      patterns.push(text);
+    }
+  }
+  const seenInBatch = new Set<string>();
+  const unique: string[] = [];
+  for (const p of patterns) {
+    const key = p.toLowerCase().replace(/\s+/g, " ");
+    if (seenInBatch.has(key)) continue;
+    seenInBatch.add(key);
+    unique.push(p);
+  }
+  return unique;
+}
+
 /**
  * FR-011: Run reflection — gather recent facts, call LLM to extract patterns, dedupe, store.
  */
@@ -1084,13 +1118,7 @@ async function runReflection(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }> {
   const windowDays = Math.min(90, Math.max(1, opts.window));
-  const windowStartSec = Math.floor(Date.now() / 1000) - windowDays * SECONDS_PER_DAY;
-
-  const allFacts = factsDb.getAll();
-  const recentFacts = allFacts.filter((f) => {
-    const ts = f.sourceDate ?? f.createdAt;
-    return ts >= windowStartSec && f.category !== "pattern" && f.category !== "rule";
-  });
+  const recentFacts = factsDb.getRecentFacts(windowDays);
 
   if (recentFacts.length < config.minObservations) {
     logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
@@ -1132,29 +1160,11 @@ async function runReflection(
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
-  const patterns: string[] = [];
-  for (const line of rawResponse.split(/\n/)) {
-    const m = line.match(/^\s*PATTERN:\s*(.+)/);
-    if (!m) continue;
-    const text = m[1].trim();
-    if (text.length >= REFLECTION_PATTERN_MIN_CHARS && text.length <= REFLECTION_PATTERN_MAX_CHARS) {
-      patterns.push(text);
-    }
-  }
-
-  // Deduplicate within batch (first occurrence wins)
-  const seenInBatch = new Set<string>();
-  const uniqueNewPatterns: string[] = [];
-  for (const p of patterns) {
-    const key = p.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
-    seenInBatch.add(key);
-    uniqueNewPatterns.push(p);
-  }
+  const uniqueNewPatterns = parsePatternsFromReflectionResponse(rawResponse);
 
   if (uniqueNewPatterns.length === 0) {
     logger.info(`memory-hybrid: reflection — 0 patterns extracted from LLM`);
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: patterns.length, patternsStored: 0, window: windowDays };
+    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
   // Existing patterns (non-superseded, still valid) for dedupe
@@ -1226,7 +1236,7 @@ async function runReflection(
 
   return {
     factsAnalyzed: recentFacts.length,
-    patternsExtracted: patterns.length,
+    patternsExtracted: uniqueNewPatterns.length,
     patternsStored: stored,
     window: windowDays,
   };
@@ -2008,6 +2018,26 @@ const memoryHybridPlugin = {
               description: "FR-010: Point-in-time query: ISO date (YYYY-MM-DD) or epoch seconds. Return only facts valid at that time.",
             }),
           ),
+          userId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include user-private memories for this user.",
+            }),
+          ),
+          agentId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include agent-specific memories for this agent.",
+            }),
+          ),
+          sessionId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include session-scoped memories for this session.",
+            }),
+          ),
+          includeCold: Type.Optional(
+            Type.Boolean({
+              description: "FR-004: Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
@@ -2018,6 +2048,10 @@ const memoryHybridPlugin = {
             tag,
             includeSuperseded = false,
             asOf: asOfParam,
+            includeCold = false,
+            userId,
+            agentId,
+            sessionId,
           } = params as {
             query?: string;
             id?: string | number;
@@ -2026,8 +2060,23 @@ const memoryHybridPlugin = {
             tag?: string;
             includeSuperseded?: boolean;
             asOf?: string;
+            includeCold?: boolean;
+            userId?: string;
+            agentId?: string;
+            sessionId?: string;
           };
           const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
+          
+          // FR-006: Scope filtering
+          // ⚠️ SECURITY WARNING: userId/agentId/sessionId are caller-controlled parameters.
+          // In multi-tenant production environments, these should be derived from authenticated
+          // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
+          // Accepting arbitrary scope filters allows users to access other users' private memories.
+          // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
+          const scopeFilter: ScopeFilter | undefined =
+            userId || agentId || sessionId
+              ? { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null }
+              : undefined;
 
           // FR-009: Fetch by id (fact id or 1-based index from last progressive index)
           if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -2051,8 +2100,11 @@ const memoryHybridPlugin = {
               }
             }
             if (factId) {
-              const entry = factsDb.getById(factId);
+              const getByIdOpts = { asOf: asOfSec, scopeFilter };
+              const entry = factsDb.getById(factId, asOfSec != null || scopeFilter ? getByIdOpts : undefined);
               if (entry) {
+                // FR-005: Access boost — update recall_count and last_accessed on fetch by id
+                factsDb.refreshAccessedFacts([entry.id]);
                 const text = `[${entry.category}] ${entry.text}`;
                 return {
                   content: [
@@ -2109,7 +2161,14 @@ const memoryHybridPlugin = {
             };
           }
 
-          const recallOpts = { tag, includeSuperseded, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+          const tierFilter: "warm" | "all" = includeCold ? "all" : "warm";
+          const recallOpts = {
+            tag,
+            includeSuperseded,
+            tierFilter,
+            scopeFilter,
+            ...(asOfSec != null ? { asOf: asOfSec } : {}),
+          };
           let sqliteResults: SearchResult[] = [];
           if (entity) {
             sqliteResults = factsDb.lookup(entity, undefined, tag, recallOpts);
@@ -2122,7 +2181,8 @@ const memoryHybridPlugin = {
           if (!tag) {
             try {
               const vector = await embeddings.embed(query);
-              lanceResults = await vectorDb.search(vector, limit, 0.3);
+              lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
+              lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
             } catch (err) {
               api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
             }
@@ -2130,13 +2190,34 @@ const memoryHybridPlugin = {
 
           let results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
 
+          // FR-004: Exclude COLD tier when includeCold is false (Lance results may include cold facts)
+          if (!includeCold && results.length > 0) {
+            const filtered: SearchResult[] = [];
+            for (const r of results) {
+              const full = factsDb.getById(r.entry.id);
+              if (full && full.tier !== "cold") filtered.push({ ...r, entry: full });
+            }
+            results = filtered.slice(0, limit);
+          }
+
+          // FR-010: When asOf is set, filter so only facts valid at that time (Lance results lack temporal filter)
+          if (asOfSec != null && results.length > 0) {
+            const filtered: SearchResult[] = [];
+            for (const r of results) {
+              const full = factsDb.getById(r.entry.id, { asOf: asOfSec });
+              if (full) filtered.push({ ...r, entry: full });
+            }
+            results = filtered.slice(0, limit);
+          }
+
           // FR-007: Graph traversal — expand results with connected facts when enabled
           if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
             const initialIds = new Set(results.map((r) => r.entry.id));
             const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
             const extraIds = connectedIds.filter((id) => !initialIds.has(id));
+            const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
             for (const id of extraIds) {
-              const entry = factsDb.getById(id);
+              const entry = factsDb.getById(id, getByIdOpts);
               if (entry) {
                 results.push({
                   entry,
@@ -2315,6 +2396,15 @@ const memoryHybridPlugin = {
               description: "FR-010: Fact id this one supersedes (replaces). Marks the old fact as superseded and links the new one.",
             }),
           ),
+          scope: Type.Optional(
+            stringEnum(MEMORY_SCOPES as unknown as readonly string[]),
+          ),
+          scopeTarget: Type.Optional(
+            Type.String({
+              description:
+                "FR-006: Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const {
@@ -2327,6 +2417,8 @@ const memoryHybridPlugin = {
             decayClass: paramDecayClass,
             tags: paramTags,
             supersedes,
+            scope: paramScope,
+            scopeTarget: paramScopeTarget,
           } = params as {
             text: string;
             importance?: number;
@@ -2337,6 +2429,8 @@ const memoryHybridPlugin = {
             decayClass?: DecayClass;
             tags?: string[];
             supersedes?: string;
+            scope?: "global" | "user" | "agent" | "session";
+            scopeTarget?: string;
           };
 
           let textToStore = text;
@@ -2519,7 +2613,23 @@ const memoryHybridPlugin = {
             source: "conversation", decayClass: paramDecayClass, summary, tags, vector,
           }, api.logger);
 
-          // Now commit to actual storage (FR-010: optional supersedes for manual supersession)
+          // Now commit to actual storage (FR-010: optional supersedes for manual supersession; FR-006: scope)
+          const scope = paramScope ?? "global";
+          const scopeTarget =
+            scope === "global"
+              ? null
+              : (paramScopeTarget?.trim() ?? null);
+          if (scope !== "global" && !scopeTarget) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId).`,
+                },
+              ],
+              details: { error: "scope_target_required" },
+            };
+          }
           const nowSec = Math.floor(Date.now() / 1000);
           const entry = factsDb.store({
             text: textToStore,
@@ -2532,6 +2642,8 @@ const memoryHybridPlugin = {
             decayClass: paramDecayClass,
             summary,
             tags,
+            scope,
+            scopeTarget,
             ...(supersedes?.trim()
               ? { validFrom: nowSec, supersedesId: supersedes.trim() }
               : {}),
@@ -2596,6 +2708,66 @@ const memoryHybridPlugin = {
         },
       },
       { name: "memory_store" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_promote",
+        label: "Memory Promote",
+        description:
+          "FR-006: Promote a session-scoped memory to global or agent scope (so it persists after session end).",
+        parameters: Type.Object({
+          memoryId: Type.String({ description: "Fact id to promote" }),
+          scope: Type.Union([
+            Type.Literal("global"),
+            Type.Literal("agent"),
+          ], {
+            description: "New scope: global (available to all) or agent (this agent only).",
+          }),
+          scopeTarget: Type.Optional(
+            Type.String({
+              description: "Required when scope is agent: agent identifier.",
+            }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { memoryId, scope, scopeTarget } = params as {
+            memoryId: string;
+            scope: "global" | "agent";
+            scopeTarget?: string;
+          };
+          const entry = factsDb.getById(memoryId);
+          if (!entry) {
+            return {
+              content: [{ type: "text", text: `No memory found with id: ${memoryId}.` }],
+              details: { error: "not_found" },
+            };
+          }
+          if (scope === "agent" && !scopeTarget?.trim()) {
+            return {
+              content: [{ type: "text", text: "Scope 'agent' requires scopeTarget (agent identifier)." }],
+              details: { error: "scope_target_required" },
+            };
+          }
+          const ok = factsDb.promoteScope(memoryId, scope, scope === "agent" ? scopeTarget!.trim() : null);
+          if (!ok) {
+            return {
+              content: [{ type: "text", text: `Could not promote memory ${memoryId}.` }],
+              details: { error: "promote_failed" },
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Promoted memory ${memoryId} to scope "${scope}"${scope === "agent" ? ` (agent: ${scopeTarget})` : ""}. It will persist after session end.`,
+              },
+            ],
+            details: { action: "promoted", id: memoryId, scope, scopeTarget: scope === "agent" ? scopeTarget : undefined },
+          };
+        },
+      },
+      { name: "memory_promote" },
     );
 
     api.registerTool(
@@ -3742,6 +3914,10 @@ const memoryHybridPlugin = {
             }
           }
 
+          const scope = opts.scope ?? "global";
+          const scopeTarget = scope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
+          const supersedesId = opts.supersedes?.trim();
+          const nowSec = supersedesId ? Math.floor(Date.now() / 1000) : undefined;
           const entry = factsDb.store({
             text,
             category,
@@ -3752,7 +3928,11 @@ const memoryHybridPlugin = {
             source: "cli",
             sourceDate,
             tags: tags ?? extractTags(text, entity),
+            scope,
+            scopeTarget,
+            ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
           });
+          if (supersedesId) factsDb.supersede(supersedesId, entry.id);
           try {
             const vector = await embeddings.embed(text);
             if (!(await vectorDb.hasDuplicate(vector))) {
@@ -3761,11 +3941,11 @@ const memoryHybridPlugin = {
           } catch (err) {
             log.warn(`memory-hybrid: vector store failed: ${err}`);
           }
-          return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : "") };
+          return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : ""), ...(supersedesId ? { supersededId: supersedesId } : {}) };
         }
 
         function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
-          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const openclawDir = join(homedir(), ".openclaw");
           const configPath = join(openclawDir, "openclaw.json");
           mkdirSync(openclawDir, { recursive: true });
           mkdirSync(join(openclawDir, "memory"), { recursive: true });
@@ -3813,19 +3993,8 @@ const memoryHybridPlugin = {
                     prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
                   },
                 },
-                pruning: { ttl: "30m" },
               },
             },
-            jobs: [
-              {
-                name: "nightly-memory-sweep",
-                schedule: "0 2 * * *",
-                channel: "system",
-                message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
-                isolated: true,
-                model: "gemini",
-              },
-            ],
           };
 
           function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
@@ -3834,14 +4003,6 @@ const memoryHybridPlugin = {
               const tgtVal = target[key];
               if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
                 deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
-              } else if (key === "jobs" && Array.isArray(srcVal)) {
-                const arr = (Array.isArray(tgtVal) ? [...tgtVal] : []) as unknown[];
-                const hasNightly = arr.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                if (!hasNightly) {
-                  const nightly = (srcVal as unknown[]).find((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                  if (nightly) arr.push(nightly);
-                }
-                (target as Record<string, unknown>)[key] = arr;
               } else if (tgtVal === undefined && !Array.isArray(srcVal)) {
                 (target as Record<string, unknown>)[key] = srcVal;
               }
@@ -3900,27 +4061,44 @@ const memoryHybridPlugin = {
             fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large" in plugin config');
             configOk = false;
           }
-          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const openclawDir = join(homedir(), ".openclaw");
           const defaultConfigPath = join(openclawDir, "openclaw.json");
           if (configOk) log("Config: embedding.apiKey and model present");
           else log("Config: issues found");
+          const extDir = dirname(fileURLToPath(import.meta.url));
+          const isBindingsError = (msg: string) =>
+            /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(msg);
+          let sqliteBindingsFailed = false;
+          let lanceBindingsFailed = false;
           try {
             const n = factsDb.count();
             sqliteOk = true;
             log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
           } catch (e) {
-            issues.push(`SQLite: ${String(e)}`);
-            fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
-            log(`SQLite: FAIL — ${String(e)}`);
+            const msg = String(e);
+            issues.push(`SQLite: ${msg}`);
+            if (isBindingsError(msg)) {
+              sqliteBindingsFailed = true;
+              fixes.push(`Native module (better-sqlite3) needs rebuild. Run: cd ${extDir} && npm rebuild better-sqlite3`);
+            } else {
+              fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
+            }
+            log(`SQLite: FAIL — ${msg}`);
           }
           try {
             const n = await vectorDb.count();
             lanceOk = true;
             log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
           } catch (e) {
-            issues.push(`LanceDB: ${String(e)}`);
-            fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
-            log(`LanceDB: FAIL — ${String(e)}`);
+            const msg = String(e);
+            issues.push(`LanceDB: ${msg}`);
+            if (isBindingsError(msg)) {
+              lanceBindingsFailed = true;
+              fixes.push(`Native module (@lancedb/lancedb) needs rebuild. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
+            } else {
+              fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
+            }
+            log(`LanceDB: FAIL — ${msg}`);
           }
           try {
             await embeddings.embed("verify test");
@@ -4028,12 +4206,41 @@ const memoryHybridPlugin = {
               // ignore
             }
           }
+          let weeklyReflectionDefined = false;
+          if (existsSync(cronStorePath)) {
+            try {
+              const raw = readFileSync(cronStorePath, "utf-8");
+              const store = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = store.jobs;
+              if (Array.isArray(jobs)) {
+                const weekly = jobs.find((j: unknown) => /weekly-reflection|memory reflection|pattern synthesis/.test(String((j as Record<string, unknown>)?.name ?? ""))) as Record<string, unknown> | undefined;
+                if (weekly) weeklyReflectionDefined = true;
+              }
+            } catch { /* ignore */ }
+          }
+          if (!weeklyReflectionDefined && existsSync(defaultConfigPath)) {
+            try {
+              const raw = readFileSync(defaultConfigPath, "utf-8");
+              const root = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = root.jobs;
+              if (Array.isArray(jobs)) {
+                const weekly = jobs.find((j: unknown) => (j as Record<string, unknown>)?.name === "weekly-reflection");
+                if (weekly) weeklyReflectionDefined = true;
+              }
+            } catch { /* ignore */ }
+          }
           log("\nOptional / suggested jobs (cron store or openclaw.json):");
           if (nightlySweepDefined) {
             log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
           } else {
             log("  nightly-memory-sweep (session distillation): not defined");
             fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
+          }
+          if (weeklyReflectionDefined) {
+            log("  weekly-reflection (FR-011 pattern synthesis): defined");
+          } else {
+            log("  weekly-reflection (FR-011 pattern synthesis): not defined");
+            fixes.push("Optional: Set up weekly reflection via jobs. See docs/REFLECTION.md § Scheduled Job. Run 'openclaw hybrid-mem verify --fix' to add.");
           }
           log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
           if (opts.logFile && existsSync(opts.logFile)) {
@@ -4072,6 +4279,21 @@ const memoryHybridPlugin = {
           }
           if (opts.fix) {
             const applied: string[] = [];
+            if (sqliteBindingsFailed || lanceBindingsFailed) {
+              const { spawnSync } = await import("node:child_process");
+              const pkgs = [
+                ...(sqliteBindingsFailed ? ["better-sqlite3"] : []),
+                ...(lanceBindingsFailed ? ["@lancedb/lancedb"] : []),
+              ];
+              for (const pkg of pkgs) {
+                const r = spawnSync("npm", ["rebuild", pkg], { cwd: extDir, shell: true });
+                if (r.status === 0) {
+                  applied.push(`Rebuilt native module: ${pkg}`);
+                } else {
+                  log(`Rebuild ${pkg} failed (exit ${r.status}). Run manually: cd ${extDir} && npm rebuild ${pkg}`);
+                }
+              }
+            }
             if (existsSync(defaultConfigPath)) {
               try {
                 const raw = readFileSync(defaultConfigPath, "utf-8");
@@ -4090,26 +4312,10 @@ const memoryHybridPlugin = {
                 const curKey = emb.apiKey;
                 const placeholder = typeof curKey !== "string" || curKey.length < 10 || curKey === "YOUR_OPENAI_API_KEY" || curKey === "<OPENAI_API_KEY>";
                 if (placeholder) {
-                  emb.apiKey = process.env.OPENAI_API_KEY || "YOUR_OPENAI_API_KEY";
+                  emb.apiKey = "YOUR_OPENAI_API_KEY";
                   emb.model = emb.model || "text-embedding-3-small";
                   changed = true;
-                  applied.push("Set embedding.apiKey and model (replace YOUR_OPENAI_API_KEY with your key if not using env)");
-                }
-                const jobs = Array.isArray(fixConfig.jobs) ? fixConfig.jobs : [];
-                const hasNightly = jobs.some((j: unknown) => (j as Record<string, unknown>)?.name === "nightly-memory-sweep");
-                if (!hasNightly) {
-                  jobs.push({
-                    name: "nightly-memory-sweep",
-                    schedule: "0 2 * * *",
-                    channel: "system",
-                    message:
-                      "Run nightly session distillation: last 3 days, Gemini model, isolated session. Log to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.log",
-                    isolated: true,
-                    model: "gemini",
-                  });
-                  (fixConfig as Record<string, unknown>).jobs = jobs;
-                  changed = true;
-                  applied.push("Added nightly-memory-sweep job for session distillation");
+                  applied.push("Set embedding.apiKey and model (use your key or ${OPENAI_API_KEY} in config)");
                 }
                 const memoryDirPath = dirname(resolvedSqlitePath);
                 if (!existsSync(memoryDirPath)) {
@@ -4127,7 +4333,7 @@ const memoryHybridPlugin = {
               } catch (e) {
                 log("\nCould not apply fixes to config: " + String(e));
                 const snippet = {
-                  embedding: { apiKey: process.env.OPENAI_API_KEY || "<set your key>", model: "text-embedding-3-small" },
+                  embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },
                   autoCapture: true,
                   autoRecall: true,
                   captureMaxChars: 5000,
@@ -4412,6 +4618,358 @@ const memoryHybridPlugin = {
           return { totalExtracted, totalStored, daysBack, dryRun: opts.dryRun };
         }
 
+        function gatherBackfillFiles(workspaceRoot: string): Array<{ path: string; label: string }> {
+          const memoryDir = join(workspaceRoot, "memory");
+          const memoryMd = join(workspaceRoot, "MEMORY.md");
+          const out: Array<{ path: string; label: string }> = [];
+          if (existsSync(memoryMd)) out.push({ path: memoryMd, label: "MEMORY.md" });
+          if (!existsSync(memoryDir)) return out;
+          function walk(dir: string, rel = "memory"): void {
+            const entries = readdirSync(dir, { withFileTypes: true });
+            for (const e of entries) {
+              const full = join(dir, e.name);
+              const relPath = join(rel, e.name);
+              if (e.isDirectory()) walk(full, relPath);
+              else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
+            }
+          }
+          walk(memoryDir);
+          return out;
+        }
+
+        function extractBackfillFact(line: string): { text: string; category: string; entity: string | null; key: string | null; value: string; source_date: string | null } | null {
+          let t = line.replace(/^[-*#>\s]+/, "").trim();
+          const datePrefix = /^\[(\d{4}-\d{2}-\d{2})\]\s*/;
+          let source_date: string | null = null;
+          const match = t.match(datePrefix);
+          if (match) {
+            source_date = match[1];
+            t = t.slice(match[0].length).trim();
+          }
+          if (t.length < 10 || t.length > 500) return null;
+          const lower = t.toLowerCase();
+          if (/\b(api[_-]?key|password|secret|token)\s*[:=]/i.test(t)) return null;
+          if (/^(see\s|---|```|\s*$)/.test(t) || t.split(/\s+/).length < 2) return null;
+
+          let entity: string | null = null;
+          let key: string | null = null;
+          let value: string;
+          let category = "other";
+
+          const decisionMatch = t.match(
+            /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i
+          );
+          if (decisionMatch) {
+            entity = "decision";
+            key = decisionMatch[1].trim().slice(0, 100);
+            value = (decisionMatch[2] || "no rationale").trim();
+            category = "decision";
+          } else {
+            const ruleMatch = t.match(/(?:always|never)\s+(.+?)\.?$/i);
+            if (ruleMatch) {
+              entity = "convention";
+              key = ruleMatch[1].trim().slice(0, 100);
+              value = lower.includes("never") ? "never" : "always";
+              category = "preference";
+            } else {
+              const possessiveMatch = t.match(
+                /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/
+              );
+              if (possessiveMatch) {
+                entity = possessiveMatch[1] || "user";
+                key = possessiveMatch[2].trim();
+                value = possessiveMatch[3].trim();
+                category = "fact";
+              } else {
+                const preferMatch = t.match(
+                  /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/
+                );
+                if (preferMatch) {
+                  entity = "user";
+                  key = preferMatch[1];
+                  value = preferMatch[2].trim();
+                  category = "preference";
+                } else {
+                  value = t.slice(0, 200);
+                }
+              }
+            }
+          }
+          return { text: t, category, entity, key, value, source_date };
+        }
+
+        async function runBackfillForCli(
+          opts: { dryRun: boolean; workspace?: string; limit?: number },
+          sink: BackfillCliSink,
+        ): Promise<BackfillCliResult> {
+          const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          const files = gatherBackfillFiles(workspaceRoot);
+          if (files.length === 0) {
+            sink.log(`No MEMORY.md or memory/**/*.md under ${workspaceRoot}`);
+            return { stored: 0, skipped: 0, candidates: 0, files: 0, dryRun: opts.dryRun };
+          }
+          const allCandidates: Array<{ text: string; category: string; entity: string | null; key: string | null; value: string; source_date: string | null; source: string }> = [];
+          for (const { path: filePath, label } of files) {
+            const content = readFileSync(filePath, "utf-8");
+            const lines = content.split("\n");
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("#")) continue;
+              const fact = extractBackfillFact(trimmed);
+              if (fact) allCandidates.push({ ...fact, source: label });
+            }
+          }
+          if (opts.dryRun) {
+            sink.log(`Would process ${allCandidates.length} facts from ${files.length} files under ${workspaceRoot}`);
+            return { stored: 0, skipped: 0, candidates: allCandidates.length, files: files.length, dryRun: true };
+          }
+          const limit = opts.limit ?? 0;
+          let stored = 0;
+          let skipped = 0;
+          const sourceDateSec = (s: string | null) => {
+            if (!s || typeof s !== "string") return null;
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+            if (!m) return null;
+            const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+            const sec = Math.floor(ms / 1000);
+            return isNaN(sec) ? null : sec;
+          };
+          for (const fact of allCandidates) {
+            if (limit > 0 && stored >= limit) break;
+            if (factsDb.hasDuplicate(fact.text)) {
+              skipped++;
+              continue;
+            }
+            const entry = factsDb.store({
+              text: fact.text,
+              category: fact.category as MemoryCategory,
+              importance: 0.8,
+              entity: fact.entity,
+              key: fact.key,
+              value: fact.value,
+              source: `backfill:${fact.source}`,
+              sourceDate: sourceDateSec(fact.source_date),
+            });
+            try {
+              const vector = await embeddings.embed(fact.text);
+              if (!(await vectorDb.hasDuplicate(vector))) {
+                await vectorDb.store({
+                  text: fact.text,
+                  vector,
+                  importance: 0.8,
+                  category: fact.category,
+                  id: entry.id,
+                });
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: backfill vector store failed for "${fact.text.slice(0, 50)}...": ${err}`);
+            }
+            stored++;
+          }
+          return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: false };
+        }
+
+        const DISTILL_DEDUP_THRESHOLD = 0.85;
+
+        function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string }): Array<{ path: string; mtime: number }> {
+          const openclawDir = join(homedir(), ".openclaw");
+          const agentsDir = join(openclawDir, "agents");
+          if (!existsSync(agentsDir)) return [];
+          const cutoffMs =
+            opts.since
+              ? new Date(opts.since).getTime()
+              : Date.now() - (opts.all ? 90 : (opts.days ?? 3)) * 24 * 60 * 60 * 1000;
+          const out: Array<{ path: string; mtime: number }> = [];
+          for (const agentName of readdirSync(agentsDir, { withFileTypes: true })) {
+            if (!agentName.isDirectory()) continue;
+            const sessionsDir = join(agentsDir, agentName.name, "sessions");
+            if (!existsSync(sessionsDir)) continue;
+            for (const f of readdirSync(sessionsDir, { withFileTypes: true })) {
+              if (!f.isFile() || !f.name.endsWith(".jsonl") || f.name.startsWith(".deleted.")) continue;
+              const fp = join(sessionsDir, f.name);
+              try {
+                const stat = statSync(fp);
+                if (stat.mtimeMs >= cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
+              } catch { /* ignore */ }
+            }
+          }
+          out.sort((a, b) => a.mtime - b.mtime);
+          return out;
+        }
+
+        function extractTextFromSessionJsonl(filePath: string): string {
+          const lines = readFileSync(filePath, "utf-8").split("\n");
+          const parts: string[] = [];
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
+              if (obj.type !== "message" || !obj.message) continue;
+              const msg = obj.message;
+              if (msg.role !== "user" && msg.role !== "assistant") continue;
+              const content = msg.content;
+              if (!Array.isArray(content)) continue;
+              for (const block of content) {
+                if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) {
+                  parts.push(block.text.trim());
+                }
+              }
+            } catch { /* skip malformed lines */ }
+          }
+          return parts.join("\n\n");
+        }
+
+        async function runDistillForCli(
+          opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number },
+          sink: DistillCliSink,
+        ): Promise<DistillCliResult> {
+          const sessionFiles = gatherSessionFiles({
+            all: opts.all,
+            days: opts.days ?? (opts.all ? 90 : 3),
+            since: opts.since,
+          });
+          const maxSessions = opts.maxSessions ?? 0;
+          const filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
+          if (filesToProcess.length === 0) {
+            sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
+            return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
+          }
+          const model = opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          const batches: string[] = [];
+          let currentBatch = "";
+          const batchTokenLimit = distillBatchTokenLimit(model);
+          const maxSessionTokens = opts.maxSessionTokens ?? batchTokenLimit;
+          for (let i = 0; i < filesToProcess.length; i++) {
+            const { path: fp } = filesToProcess[i];
+            const text = extractTextFromSessionJsonl(fp);
+            if (!text.trim()) continue;
+            const chunks = chunkSessionText(text, maxSessionTokens);
+            for (let c = 0; c < chunks.length; c++) {
+              const header =
+                chunks.length === 1
+                  ? `\n--- SESSION: ${basename(fp)} ---\n\n`
+                  : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${chunks.length}) ---\n\n`;
+              const block = header + chunks[c];
+              const blockTokens = Math.ceil(block.length / 4);
+              if (currentBatch.length > 0 && (estimateTokens(currentBatch) + blockTokens > batchTokenLimit)) {
+                batches.push(currentBatch);
+                currentBatch = block;
+              } else {
+                currentBatch += (currentBatch ? "\n" : "") + block;
+              }
+            }
+          }
+          if (currentBatch.trim()) batches.push(currentBatch);
+          const distillPrompt = loadPrompt("distill-sessions");
+          const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; source_date?: string; tags?: string[] }> = [];
+          for (let b = 0; b < batches.length; b++) {
+            sink.log(`Processing batch ${b + 1}/${batches.length}...`);
+            const userContent = distillPrompt + "\n\n" + batches[b];
+            try {
+              const content = await chatComplete({
+                model,
+                content: userContent,
+                temperature: 0.2,
+                maxTokens: 8000,
+                openai,
+                geminiApiKey: cfg.distill?.apiKey,
+              });
+              const lines = content.split("\n").filter((l) => l.trim());
+              for (const line of lines) {
+                const jsonMatch = line.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) continue;
+                try {
+                  const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+                  const category = String(obj.category || "other").toLowerCase();
+                  const text = String(obj.text || "").trim();
+                  if (!text || text.length < 10) continue;
+                  const entity = typeof obj.entity === "string" ? obj.entity : null;
+                  const key = typeof obj.key === "string" ? obj.key : null;
+                  const value = typeof obj.value === "string" ? obj.value : (entity && key ? text.slice(0, 200) : "");
+                  const source_date = typeof obj.source_date === "string" ? obj.source_date : null;
+                  const tags = Array.isArray(obj.tags) ? (obj.tags as string[]).filter((t) => typeof t === "string") : undefined;
+                  allFacts.push({ category, text, entity: entity ?? undefined, key: key ?? undefined, value, source_date: source_date ?? undefined, tags });
+                } catch { /* skip malformed JSON */ }
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: distill LLM batch ${b + 1} failed: ${err}`);
+            }
+          }
+          if (opts.dryRun) {
+            sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
+            return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored: 0, skipped: 0, dryRun: true };
+          }
+          const sourceDateSec = (s: string | null | undefined) => {
+            if (!s || typeof s !== "string") return null;
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+            if (!m) return null;
+            return Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 1000);
+          };
+          let stored = 0;
+          let skipped = 0;
+          for (const fact of allFacts) {
+            const isCred = fact.entity === "Credentials" || (fact.key && /^(api_key|token|password|secret)/i.test(fact.key));
+            if (isCred && cfg.credentials.enabled && credentialsDb) {
+              const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
+              if (parsed) {
+                if (!opts.dryRun) {
+                  credentialsDb.store({ service: parsed.service, type: parsed.type, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
+                  const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
+                  const entry = factsDb.store({
+                    text: pointerText,
+                    category: "technical",
+                    importance: BATCH_STORE_IMPORTANCE,
+                    entity: "Credentials",
+                    key: parsed.service,
+                    value: VAULT_POINTER_PREFIX + parsed.service,
+                    source: "distillation",
+                    sourceDate: sourceDateSec(fact.source_date),
+                  });
+                  try {
+                    const vector = await embeddings.embed(pointerText);
+                    if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+                      await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
+                    }
+                  } catch { /* ignore */ }
+                  stored++;
+                  if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
+                }
+                continue;
+              }
+            }
+            if (factsDb.hasDuplicate(fact.text)) {
+              skipped++;
+              continue;
+            }
+            try {
+              const vector = await embeddings.embed(fact.text);
+              if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
+                skipped++;
+                continue;
+              }
+              const entry = factsDb.store({
+                text: fact.text,
+                category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
+                importance: BATCH_STORE_IMPORTANCE,
+                entity: fact.entity ?? null,
+                key: fact.key ?? null,
+                value: fact.value ?? fact.text.slice(0, 200),
+                source: "distillation",
+                sourceDate: sourceDateSec(fact.source_date),
+                tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
+              });
+              await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
+              stored++;
+              if (opts.verbose) sink.log(`  stored: [${fact.category}] ${fact.text.slice(0, 60)}...`);
+            } catch (err) {
+              sink.warn(`memory-hybrid: distill store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+            }
+          }
+          runRecordDistillForCli();
+          return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
+        }
+
         async function runMigrateToVaultForCli(): Promise<MigrateToVaultResult | null> {
           if (!credentialsDb) return null;
           const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
@@ -4425,8 +4983,37 @@ const memoryHybridPlugin = {
           });
         }
 
+        async function runUpgradeForCli(): Promise<UpgradeCliResult> {
+          const extDir = dirname(fileURLToPath(import.meta.url));
+          const { spawnSync } = await import("node:child_process");
+          try {
+            rmSync(extDir, { recursive: true, force: true });
+          } catch (e) {
+            return { ok: false, error: `Could not remove plugin directory: ${e}. Run: rm -rf ${extDir} && openclaw plugins install openclaw-hybrid-memory@latest` };
+          }
+          const r = spawnSync("openclaw", ["plugins", "install", "openclaw-hybrid-memory@latest"], {
+            stdio: "inherit",
+            cwd: homedir(),
+            shell: true,
+          });
+          if (r.status !== 0) {
+            return { ok: false, error: `Install failed (exit ${r.status}). Run manually: openclaw plugins install openclaw-hybrid-memory@latest` };
+          }
+          let version = "latest";
+          try {
+            const pkgPath = join(extDir, "package.json");
+            if (existsSync(pkgPath)) {
+              const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
+              version = pkg.version ?? version;
+            }
+          } catch {
+            // ignore
+          }
+          return { ok: true, version, pluginDir: extDir };
+        }
+
         function runUninstallForCli(opts: { cleanAll: boolean; leaveConfig: boolean }): UninstallCliResult {
-          const openclawDir = process.env.OPENCLAW_HOME || join(homedir(), ".openclaw");
+          const openclawDir = join(homedir(), ".openclaw");
           const configPath = join(openclawDir, "openclaw.json");
           const cleaned: string[] = [];
           let outcome: UninstallCliResult["outcome"];
@@ -4496,8 +5083,11 @@ const memoryHybridPlugin = {
           runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
           runExtractProcedures: (opts) => runExtractProceduresForCli(opts),
           runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
+          runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
+          runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
+          runUpgrade: () => runUpgradeForCli(),
           runFindDuplicates: (opts) =>
             runFindDuplicates(factsDb, embeddings, opts, api.logger),
           runConsolidate: (opts) =>
@@ -4527,10 +5117,18 @@ const memoryHybridPlugin = {
               { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) },
             ),
           autoClassifyConfig: cfg.autoClassify,
+          runCompaction: () =>
+            Promise.resolve(
+              factsDb.runCompaction({
+                inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+                hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+                hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+              }),
+            ),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -4581,11 +5179,45 @@ const memoryHybridPlugin = {
             : cfg.autoRecall.limit;
           const { minScore } = cfg.autoRecall;
           const limit = searchLimit;
-          const ftsResults = factsDb.search(e.prompt, limit);
+          const tierFilter = cfg.memoryTiering.enabled ? "warm" : "all";
+          const scopeFilter =
+            cfg.autoRecall.scopeFilter &&
+            (cfg.autoRecall.scopeFilter.userId || cfg.autoRecall.scopeFilter.agentId || cfg.autoRecall.scopeFilter.sessionId)
+              ? {
+                  userId: cfg.autoRecall.scopeFilter.userId ?? null,
+                  agentId: cfg.autoRecall.scopeFilter.agentId ?? null,
+                  sessionId: cfg.autoRecall.scopeFilter.sessionId ?? null,
+                }
+              : undefined;
+
+          // FR-004: HOT tier — always inject first (cap by hotMaxTokens)
+          let hotBlock = "";
+          if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
+            const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens, scopeFilter);
+            if (hotResults.length > 0) {
+              const hotLines = hotResults.map((r) => `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`);
+              hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
+            }
+          }
+
+          const ftsResults = factsDb.search(e.prompt, limit, { tierFilter, scopeFilter });
           let lanceResults: SearchResult[] = [];
           try {
             const vector = await embeddings.embed(e.prompt);
-            lanceResults = await vectorDb.search(vector, limit, minScore);
+            lanceResults = await vectorDb.search(vector, limit * 2, minScore);
+            lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+            // FR-005: Enrich lance results with full entry and apply dynamic salience
+            lanceResults = lanceResults.map((r) => {
+              const fullEntry = factsDb.getById(r.entry.id);
+              if (fullEntry) {
+                return {
+                  ...r,
+                  entry: fullEntry,
+                  score: computeDynamicSalience(r.score, fullEntry),
+                };
+              }
+              return r;
+            });
           } catch (err) {
             api.logger.warn(
               `memory-hybrid: vector recall failed: ${err}`,
@@ -4594,13 +5226,21 @@ const memoryHybridPlugin = {
 
           let candidates = mergeResults(ftsResults, lanceResults, limit, factsDb);
 
+          // FR-004: Exclude COLD tier from auto-recall (only HOT + WARM)
+          if (cfg.memoryTiering.enabled && candidates.length > 0) {
+            candidates = candidates.filter((r) => {
+              const full = factsDb.getById(r.entry.id);
+              return full && full.tier !== "cold";
+            }).slice(0, limit);
+          }
+
           const { entityLookup } = cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
             const promptLower = e.prompt.toLowerCase();
             const seenIds = new Set(candidates.map((c) => c.entry.id));
             for (const entity of entityLookup.entities) {
               if (!promptLower.includes(entity.toLowerCase())) continue;
-              const entityResults = factsDb.lookup(entity).slice(0, entityLookup.maxFactsPerEntity);
+              const entityResults = factsDb.lookup(entity, undefined, undefined, { scopeFilter }).slice(0, entityLookup.maxFactsPerEntity);
               for (const r of entityResults) {
                 if (!seenIds.has(r.entry.id)) {
                   seenIds.add(r.entry.id);
@@ -4618,7 +5258,7 @@ const memoryHybridPlugin = {
             candidates = candidates.slice(0, limit);
           }
 
-          if (candidates.length === 0) return;
+          if (candidates.length === 0) return hotBlock ? { prependContext: hotBlock } : undefined;
 
           {
             const nowSec = Math.floor(Date.now() / 1000);
@@ -4679,7 +5319,7 @@ const memoryHybridPlugin = {
               const t = r.entry.summary || r.entry.text;
               return sum + estimateTokensForDisplay(t);
             }, 0);
-            const header = `Available memories (${list.length} matches, ~${totalTokens} tokens total):\n`;
+            const header = `📋 Available memories (${list.length} matches, ~${totalTokens} tokens total):\n`;
             let usedTokens = estimateTokens(header);
             const indexEntries: { line: string; id: string; category: string; position: number }[] = [];
             for (let i = 0; i < list.length; i++) {
@@ -4689,7 +5329,7 @@ const memoryHybridPlugin = {
                 : (r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : ""));
               const tokenCost = estimateTokensForDisplay(r.entry.summary || r.entry.text);
               const pos = startPosition + indexEntries.length;
-              const line = `  ${pos}. [${r.entry.category}] ${title} (${tokenCost} tok)`;
+              const line = formatProgressiveIndexLine(r.entry.category, title, tokenCost, pos);
               const lineTokens = estimateTokens(line + "\n");
               if (usedTokens + lineTokens > cap) break;
               indexEntries.push({ line, id: r.entry.id, category: r.entry.category, position: pos });
@@ -4754,7 +5394,7 @@ const memoryHybridPlugin = {
             }
             const indexIntro = pinnedPart.length > 0
               ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
-              : `<relevant-memories format="index">\nAvailable memories (${rest.length} matches):\n`;
+              : `<relevant-memories format="index">\n`;
             const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
             const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
             const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(
@@ -4769,6 +5409,15 @@ const memoryHybridPlugin = {
             if (indexIds.length > 0) {
               factsDb.refreshAccessedFacts(indexIds);
             }
+            // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+            const allIds = [...pinned.map((r) => r.entry.id), ...indexIds];
+            if (cfg.graph.enabled && allIds.length >= 2) {
+              for (let i = 0; i < allIds.length; i++) {
+                for (let j = i + 1; j < allIds.length; j++) {
+                  factsDb.createOrStrengthenRelatedLink(allIds[i], allIds[j]);
+                }
+              }
+            }
             const indexContent = indexLines.join("\n");
             const fullContent =
               pinnedPart.length > 0
@@ -4777,7 +5426,7 @@ const memoryHybridPlugin = {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: withProcedures(fullContent) };
+            return { prependContext: hotBlock + withProcedures(fullContent) };
           }
 
           if (injectionFormat === "progressive") {
@@ -4797,12 +5446,20 @@ const memoryHybridPlugin = {
             lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
             factsDb.refreshAccessedFacts(includedIds);
+            // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+            if (cfg.graph.enabled && includedIds.length >= 2) {
+              for (let i = 0; i < includedIds.length; i++) {
+                for (let j = i + 1; j < includedIds.length; j++) {
+                  factsDb.createOrStrengthenRelatedLink(includedIds[i], includedIds[j]);
+                }
+              }
+            }
             const indexContent = indexLines.join("\n");
             api.logger.info?.(
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
             );
             return {
-              prependContext: withProcedures(`${indexHeader}${indexContent}${indexFooter}`),
+              prependContext: hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`),
             };
           }
 
@@ -4811,6 +5468,7 @@ const memoryHybridPlugin = {
           let usedTokens = estimateTokens(header + footer);
 
           const lines: string[] = [];
+          const injectedIds: string[] = [];
           for (const r of candidates) {
             let text =
               useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
@@ -4826,6 +5484,7 @@ const memoryHybridPlugin = {
             const lineTokens = estimateTokens(line + "\n");
             if (usedTokens + lineTokens > maxTokens) break;
             lines.push(line);
+            injectedIds.push(r.entry.id);
             usedTokens += lineTokens;
           }
 
@@ -4834,6 +5493,17 @@ const memoryHybridPlugin = {
               return { prependContext: procedureBlock };
             }
             return;
+          }
+
+          // FR-005: Access tracking for injected memories
+          factsDb.refreshAccessedFacts(injectedIds);
+          // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+          if (cfg.graph.enabled && injectedIds.length >= 2) {
+            for (let i = 0; i < injectedIds.length; i++) {
+              for (let j = i + 1; j < injectedIds.length; j++) {
+                factsDb.createOrStrengthenRelatedLink(injectedIds[i], injectedIds[j]);
+              }
+            }
           }
 
           let memoryContext = lines.join("\n");
@@ -4892,10 +5562,28 @@ const memoryHybridPlugin = {
           }
 
           return {
-            prependContext: withProcedures(`${header}${memoryContext}${footer}`),
+            prependContext: hotBlock + withProcedures(`${header}${memoryContext}${footer}`),
           };
         } catch (err) {
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
+        }
+      });
+    }
+
+    // FR-004: Compaction on session end — migrate completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT
+    if (cfg.memoryTiering.enabled && cfg.memoryTiering.compactionOnSessionEnd) {
+      api.on("agent_end", async () => {
+        try {
+          const counts = factsDb.runCompaction({
+            inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+            hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+            hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+          });
+          if (counts.hot + counts.warm + counts.cold > 0) {
+            api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
+          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: compaction failed: ${err}`);
         }
       });
     }
@@ -4967,9 +5655,11 @@ const memoryHybridPlugin = {
               api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
 
-            // FR-008: Classify before auto-capture using embedding similarity (issue #8)
-            if (cfg.store.classifyBeforeWrite && vector) {
-              let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 3);
+            // FR-008: Classify before auto-capture using embedding similarity, fallback to entity/key (issue #8)
+            if (cfg.store.classifyBeforeWrite) {
+              let similarFacts: MemoryEntry[] = vector
+                ? await findSimilarByEmbedding(vectorDb, factsDb, vector, 3)
+                : [];
               if (similarFacts.length === 0) {
                 similarFacts = factsDb.findSimilarForClassification(
                   textToStore, extracted.entity, extracted.key, 3,
@@ -5315,6 +6005,7 @@ export const _testing = {
   parseSourceDate,
   estimateTokens,
   estimateTokensForDisplay,
+  formatProgressiveIndexLine,
   classifyDecay,
   calculateExpiry,
   extractStructuredFields,
@@ -5328,6 +6019,7 @@ export const _testing = {
   unionFind,
   getRoot,
   mergeResults,
+  filterByScope,
   safeEmbed,
   // Encryption primitives (used by CredentialsDB)
   deriveKey,
@@ -5341,7 +6033,10 @@ export const _testing = {
   Embeddings,
   WriteAheadLog,
   // FR-008 classification (for tests)
+  parseClassificationResponse,
   findSimilarByEmbedding,
+  // FR-011 reflection parsing (for tests)
+  parsePatternsFromReflectionResponse,
 };
 
 export { versionInfo } from "./versionInfo.js";

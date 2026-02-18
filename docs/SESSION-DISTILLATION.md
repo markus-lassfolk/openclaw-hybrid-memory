@@ -1,6 +1,33 @@
+---
+layout: default
+title: Session Distillation
+parent: Features
+nav_order: 3
+---
 # Session Distillation Pipeline
 
 **Extract durable knowledge from historical OpenClaw conversation logs**
+
+## Native CLI: `openclaw hybrid-mem distill`
+
+The simplest way to run distillation:
+
+```bash
+openclaw hybrid-mem distill              # Last 3 days (default)
+openclaw hybrid-mem distill --all        # Last 90 days (full backfill)
+openclaw hybrid-mem distill --days 14    # Last 14 days
+openclaw hybrid-mem distill --since 2026-01-01
+openclaw hybrid-mem distill --dry-run    # Preview without storing
+openclaw hybrid-mem distill --model gemini-2.0-flash   # Use Gemini (1M context, larger batches)
+openclaw hybrid-mem distill --max-sessions 10  # Limit for cost control
+openclaw hybrid-mem distill --max-session-tokens 20000  # Chunk oversized sessions (default: batch limit)
+```
+
+**Model choice:** Pass `--model gemini-2.0-flash` (or `gemini-1.5-pro`) to use Google Gemini. Gemini has a 1M+ token context, so batches can be up to ~500k tokens (vs 80k for GPT). Set `distill.apiKey` and optionally `distill.defaultModel` in config (see [CONFIGURATION.md](CONFIGURATION.md)) so `openclaw hybrid-mem distill` defaults to Gemini without `--model`.
+
+This command scans `~/.openclaw/agents/*/sessions/*.jsonl`, extracts text, sends it to the LLM for fact extraction, deduplicates by embedding similarity, stores net-new facts, and records the run automatically. Cron-friendly: `openclaw hybrid-mem distill` via exec — no complex agent prompts needed.
+
+---
 
 ## What the distill job actually does
 
@@ -11,11 +38,12 @@ When you run the pipeline (manually or via the nightly job), it:
    - **If last run is not empty**: **incremental** — process from the **earlier** of (last run date, today − 3 days) through today. So you never miss a gap, and you get at least a 3-day overlap.
 2. **Finds** session logs in that window — e.g. OpenClaw conversation JSONL under `~/.openclaw/agents/.../sessions/` (use `mtimeDays` from distill-window: `find ... -mtime -<mtimeDays>`).
 3. **Extracts text** — turns each session into readable conversation text (skips raw tool payloads/system noise).
-4. **Extracts facts** — sends batches of that text to an LLM (e.g. Gemini) with a prompt that asks for structured facts: category (`preference`, `fact`, `decision`, `technical`, `person`, `project`, etc.), entity, key, value, and optional source date.
-5. **Dedupes** — for each candidate fact, checks existing memory (e.g. via `memory_recall`) and **skips** it if something substantially similar is already stored.
-6. **Stores** only **net new** facts via `memory_store` (and thus into SQLite + LanceDB), tagged with date so you know when they were distilled.
-7. **Logs** — writes a short summary (sessions scanned, facts extracted, new facts stored) to e.g. `scripts/distill-sessions/nightly-logs/YYYY-MM-DD.md`.
-8. **Records the run** — always run `openclaw hybrid-mem record-distill` at the end so the next run uses the correct incremental window and `verify` shows “last run”.
+4. **Chunks oversized sessions** — if a session exceeds `--max-session-tokens` (default: batch limit), it is split into overlapping windows (10% overlap). No content is dropped; each chunk is tagged with `(chunk N/M)`. Dedup handles cross-chunk duplicates.
+5. **Extracts facts** — sends batches of that text to an LLM (e.g. Gemini) with a prompt that asks for structured facts: category (`preference`, `fact`, `decision`, `technical`, `person`, `project`, etc.), entity, key, value, and optional source date.
+6. **Dedupes** — for each candidate fact, checks existing memory (e.g. via `memory_recall`) and **skips** it if something substantially similar is already stored.
+7. **Stores** only **net new** facts via `memory_store` (and thus into SQLite + LanceDB), tagged with date so you know when they were distilled.
+8. **Logs** — writes a short summary (sessions scanned, facts extracted, new facts stored) to e.g. `scripts/distill-sessions/nightly-logs/YYYY-MM-DD.md`.
+9. **Records the run** — always run `openclaw hybrid-mem record-distill` at the end so the next run uses the correct incremental window and `verify` shows “last run”.
 
 So in one sentence: **it re-reads conversation logs in a chosen window (full or incremental), has an LLM pull out durable facts, dedupes against what’s already in memory, stores only the new ones, and records the run.**
 

@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.2.172",
+  "version": "2026.2.176",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -13,6 +13,7 @@
     "utils",
     "types",
     "prompts",
+    "scripts",
     "openclaw.plugin.json",
     "package.json",
     "README.md"
@@ -21,29 +22,22 @@
     "type": "git",
     "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git"
   },
-  "keywords": [
-    "openclaw",
-    "plugin",
-    "memory",
-    "sqlite",
-    "lancedb",
-    "embeddings"
-  ],
+  "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
   "dependencies": {
+    "@google/genai": "^1.41.0",
     "@lancedb/lancedb": "^0.23.0",
     "@sinclair/typebox": "0.34.47",
     "better-sqlite3": "^11.0.0",
     "openai": "^6.16.0"
   },
-  "openclaw": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
+  "openclaw": { "extensions": ["./index.ts"] },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "postinstall": "node scripts/postinstall-rebuild.cjs",
+    "verify:publish": "node scripts/verify-publish.cjs",
+    "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -52,7 +46,5 @@
     "vitest": "^4.0.18"
   },
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme",
-  "bugs": {
-    "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues"
-  }
+  "bugs": { "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues" }
 }

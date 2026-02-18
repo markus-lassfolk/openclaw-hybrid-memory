@@ -1,3 +1,9 @@
+---
+layout: default
+title: Upgrade OpenClaw
+parent: Operations & Maintenance
+nav_order: 4
+---
 # Upgrading OpenClaw (and What to Do After)
 
 When you upgrade the **OpenClaw** CLI/platform (e.g. `npm update -g openclaw`), the hybrid memory plugin's native dependencies can break. This doc explains why and what to do every time you upgrade OpenClaw.

@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.2.16",
+  "version": "2026.2.176",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",
@@ -91,7 +91,7 @@
     },
     "autoRecall.progressiveIndexMaxTokens": {
       "label": "Progressive index max tokens",
-      "help": "Token cap for the index block in progressive mode (default: same as maxTokens)"
+      "help": "Token cap for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid)"
     },
     "autoRecall.progressiveGroupByCategory": {
       "label": "Progressive group by category",
@@ -129,6 +129,15 @@
     "store.fuzzyDedupe": {
       "label": "Store fuzzy dedupe",
       "help": "Skip storing when normalized text (trim, collapse whitespace, lowercase) matches an existing fact (2.3)"
+    },
+    "store.classifyBeforeWrite": {
+      "label": "Classify before write (FR-008)",
+      "help": "Classify each new fact as ADD/UPDATE/DELETE/NOOP against similar facts before storing; reduces duplicates and contradictions"
+    },
+    "store.classifyModel": {
+      "label": "Classification model",
+      "placeholder": "gpt-4o-mini",
+      "help": "Chat model for memory operation classification (default: gpt-4o-mini)"
     },
     "credentials.enabled": {
       "label": "Credentials",
@@ -233,6 +242,16 @@
     "procedures.skillsAutoPath": {
       "label": "Auto-skills path",
       "help": "Path for auto-generated skills (default: skills/auto)"
+    },
+    "distill.apiKey": {
+      "label": "Gemini API Key (distill)",
+      "sensitive": true,
+      "help": "For session distillation with Gemini (1M context). Or set GOOGLE_API_KEY env."
+    },
+    "distill.defaultModel": {
+      "label": "Distill default model",
+      "placeholder": "gemini-2.0-flash",
+      "help": "Default LLM for hybrid-mem distill (e.g. gemini-2.0-flash, gemini-1.5-pro)"
     }
   },
   "configSchema": {
@@ -331,6 +350,15 @@
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
         "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
+      },
+      "distill": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Gemini for session distillation (1M context). Optional; use env GOOGLE_API_KEY if not set.",
+        "properties": {
+          "apiKey": { "type": "string", "description": "Gemini/Google API key or env:VAR_NAME" },
+          "defaultModel": { "type": "string", "description": "Default model for distill (e.g. gemini-2.0-flash, gemini-1.5-pro)" }
+        }
       },
       "wal": {
         "type": "object",

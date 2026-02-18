@@ -57,12 +57,14 @@ export type AutoRecallConfig = {
   summarizeModel: string;        // model for summarize-when-over-budget (default gpt-4o-mini)
   /** FR-009: Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
   progressiveMaxCandidates?: number;
-  /** FR-009: Max tokens for the index block in progressive mode (default: use maxTokens). */
+  /** FR-009: Max tokens for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid). */
   progressiveIndexMaxTokens?: number;
   /** FR-009: Group index lines by category (e.g. "Preferences (3):") for readability (default false). */
   progressiveGroupByCategory?: boolean;
   /** FR-009: Min recall count or permanent decay to treat as "pinned" in progressive_hybrid (default 3). */
   progressivePinnedRecallCount?: number;
+  /** FR-006: Scope filter for auto-recall (userId, agentId, sessionId). When set, only global + matching scopes are injected. */
+  scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
 };
 
 /** Store options: fuzzy dedupe (2.3) and optional FR-008 classify-before-write. */
@@ -142,6 +144,19 @@ export type ProceduresConfig = {
   requireApprovalForPromote: boolean;
 };
 
+/** FR-004: Dynamic memory tiering (hot/warm/cold). */
+export type MemoryTieringConfig = {
+  enabled: boolean;
+  /** Max tokens for HOT tier always loaded at session start (default: 2000). */
+  hotMaxTokens: number;
+  /** Run compaction on agent_end (default: true). */
+  compactionOnSessionEnd: boolean;
+  /** Days without access to treat preference as inactive -> warm (default: 7). */
+  inactivePreferenceDays: number;
+  /** Cap HOT tier to this many facts when promoting blockers (default: 50). */
+  hotMaxFacts: number;
+};
+
 /** Credential types supported by the credentials store */
 export const CREDENTIAL_TYPES = [
   "token",
@@ -194,6 +209,10 @@ export type HybridMemoryConfig = {
   reflection: ReflectionConfig;
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
   procedures: ProceduresConfig;
+  /** FR-004: Dynamic memory tiering — hot/warm/cold (default: enabled) */
+  memoryTiering: MemoryTieringConfig;
+  /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
+  distill?: { apiKey?: string; defaultModel?: string };
 };
 
 /** Default categories — can be extended via config.categories */
@@ -326,15 +345,28 @@ export const hybridConfigSchema = {
         typeof ar.progressiveMaxCandidates === "number" && ar.progressiveMaxCandidates > 0
           ? Math.floor(ar.progressiveMaxCandidates)
           : 15;
-      const progressiveIndexMaxTokens =
+      let progressiveIndexMaxTokens: number | undefined =
         typeof ar.progressiveIndexMaxTokens === "number" && ar.progressiveIndexMaxTokens > 0
           ? Math.floor(ar.progressiveIndexMaxTokens)
           : undefined;
+      // FR-009: default index cap to 300 when using progressive disclosure (keeps index ~150–300 tokens)
+      if ((format === "progressive" || format === "progressive_hybrid") && progressiveIndexMaxTokens === undefined) {
+        progressiveIndexMaxTokens = 300;
+      }
       const progressiveGroupByCategory = ar.progressiveGroupByCategory === true;
       const progressivePinnedRecallCount =
         typeof ar.progressivePinnedRecallCount === "number" && ar.progressivePinnedRecallCount >= 0
           ? Math.floor(ar.progressivePinnedRecallCount)
           : 3;
+      const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;
+      const scopeFilter =
+        scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
+          ? {
+              userId: typeof scopeFilterRaw.userId === "string" && scopeFilterRaw.userId.trim().length > 0 ? scopeFilterRaw.userId.trim() : undefined,
+              agentId: typeof scopeFilterRaw.agentId === "string" && scopeFilterRaw.agentId.trim().length > 0 ? scopeFilterRaw.agentId.trim() : undefined,
+              sessionId: typeof scopeFilterRaw.sessionId === "string" && scopeFilterRaw.sessionId.trim().length > 0 ? scopeFilterRaw.sessionId.trim() : undefined,
+            }
+          : undefined;
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
@@ -354,6 +386,7 @@ export const hybridConfigSchema = {
         progressiveIndexMaxTokens,
         progressiveGroupByCategory,
         progressivePinnedRecallCount,
+        scopeFilter,
       };
     } else {
       autoRecall = {
@@ -520,6 +553,32 @@ export const hybridConfigSchema = {
       requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     };
 
+    // Parse optional distill config (Gemini for session distillation)
+    const distillRaw = cfg.distill as Record<string, unknown> | undefined;
+    const distill =
+      distillRaw && typeof distillRaw === "object"
+        ? {
+            apiKey: typeof distillRaw.apiKey === "string" ? distillRaw.apiKey : undefined,
+            defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
+          }
+        : undefined;
+
+    // Parse FR-004 memory tiering config
+    const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
+    const memoryTiering: MemoryTieringConfig = {
+      enabled: tierRaw?.enabled !== false,
+      hotMaxTokens: typeof tierRaw?.hotMaxTokens === "number" && tierRaw.hotMaxTokens > 0
+        ? Math.floor(tierRaw.hotMaxTokens)
+        : 2000,
+      compactionOnSessionEnd: tierRaw?.compactionOnSessionEnd !== false,
+      inactivePreferenceDays: typeof tierRaw?.inactivePreferenceDays === "number" && tierRaw.inactivePreferenceDays >= 0
+        ? Math.floor(tierRaw.inactivePreferenceDays)
+        : 7,
+      hotMaxFacts: typeof tierRaw?.hotMaxFacts === "number" && tierRaw.hotMaxFacts > 0
+        ? Math.floor(tierRaw.hotMaxFacts)
+        : 50,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -542,6 +601,8 @@ export const hybridConfigSchema = {
       personaProposals,
       reflection,
       procedures,
+      memoryTiering,
+      distill,
     };
   },
 };

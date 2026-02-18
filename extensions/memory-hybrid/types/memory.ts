@@ -4,6 +4,9 @@
 
 import type { MemoryCategory, DecayClass } from "../config.js";
 
+/** FR-004: Memory tier for dynamic tiering (hot = always loaded, warm = semantic search, cold = archived). */
+export type MemoryTier = "hot" | "warm" | "cold";
+
 export type MemoryEntry = {
   id: string;
   text: string;
@@ -31,11 +34,28 @@ export type MemoryEntry = {
   validUntil?: number | null;
   /** FR-010: Id of the fact this one supersedes (replaces). */
   supersedesId?: string | null;
+  /** FR-004: Dynamic tier — hot (session), warm (recent), cold (archived). */
+  tier?: MemoryTier | null;
+  /** FR-006: Memory scope — global, user, agent, or session. */
+  scope?: MemoryScope;
+  /** FR-006: Scope target (e.g. userId for user scope, agentId for agent scope, sessionId for session scope). Null for global. */
+  scopeTarget?: string | null;
   /** Procedural memory (issue #23): fact is a procedure summary. */
   procedureType?: "positive" | "negative" | null;
   successCount?: number;
   lastValidated?: number | null;
   sourceSessions?: string | null;
+};
+
+/** FR-006: Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */
+export const MEMORY_SCOPES = ["global", "user", "agent", "session"] as const;
+export type MemoryScope = (typeof MEMORY_SCOPES)[number];
+
+/** FR-006: Scope filter for recall — include global + matching user/agent/session. Empty = all (backward compat). */
+export type ScopeFilter = {
+  userId?: string | null;
+  agentId?: string | null;
+  sessionId?: string | null;
 };
 
 /** One step in a procedure recipe. */

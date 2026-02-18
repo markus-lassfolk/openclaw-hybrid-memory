@@ -1,6 +1,6 @@
 # OpenClaw memory-hybrid plugin
 
-Your OpenClaw agent forgets after each session. This plugin gives it **lasting memory**: structured facts (SQLite + FTS5) and semantic search (LanceDB), with auto-capture, auto-recall, TTL-based decay, LLM auto-classification, graph-based spreading activation for zero-LLM recall, and an optional credential vault. One install, one config—then your agent remembers preferences, decisions, and context across conversations.
+Your OpenClaw agent forgets after each session. This plugin gives it **lasting memory**: structured facts (SQLite + FTS5) and semantic search (LanceDB), with auto-capture, auto-recall, TTL-based decay, **dynamic memory tiering (FR-004: hot/warm/cold)**, LLM auto-classification, graph-based spreading activation for zero-LLM recall, and an optional credential vault. **Progressive disclosure (FR-009)** lets you inject a lightweight memory index instead of full texts—the agent uses `memory_recall` to fetch only what it needs, saving tokens. One install, one config—then your agent remembers preferences, decisions, and context across conversations.
 
 Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw-hybrid-memory) v3 deployment.
 
@@ -13,11 +13,21 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Installation
 
-**1. Install the plugin** (OpenClaw will place it in your extensions directory and run `npm install`):
+**1. Install the plugin** (OpenClaw installs to `~/.openclaw/extensions` and runs `npm install`; a `postinstall` script rebuilds `better-sqlite3` for your platform):
 
 ```bash
 openclaw plugins install openclaw-hybrid-memory
 ```
+
+If you see **"duplicate plugin id detected"**, remove the global copy once so only the NPM copy is used: run `./scripts/use-npm-only.sh` from the [repo root](https://github.com/markus-lassfolk/openclaw-hybrid-memory). Then use `openclaw hybrid-mem upgrade` for upgrades.
+
+**Upgrade to latest** — One command, no fighting:
+
+```bash
+openclaw hybrid-mem upgrade
+```
+
+Then restart the gateway. The upgrade command removes the current install, fetches the latest from npm, rebuilds native deps, and tells you to restart.
 
 Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
 

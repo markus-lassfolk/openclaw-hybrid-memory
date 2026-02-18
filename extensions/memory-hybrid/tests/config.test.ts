@@ -161,6 +161,15 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.enabled).toBe(true);
   });
 
+  it("FR-004: memoryTiering defaults when omitted", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.memoryTiering.enabled).toBe(true);
+    expect(result.memoryTiering.hotMaxTokens).toBe(2000);
+    expect(result.memoryTiering.compactionOnSessionEnd).toBe(true);
+    expect(result.memoryTiering.inactivePreferenceDays).toBe(7);
+    expect(result.memoryTiering.hotMaxFacts).toBe(50);
+  });
+
   it("throws on missing embedding.apiKey", () => {
     expect(() => hybridConfigSchema.parse({})).toThrow(/apiKey/);
   });
@@ -219,6 +228,23 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.minScore).toBe(0.5);
   });
 
+  it("parses autoRecall.scopeFilter (FR-006)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        scopeFilter: {
+          userId: "alice",
+          agentId: "support-bot",
+          sessionId: "sess-xyz",
+        },
+      },
+    });
+    expect(result.autoRecall.scopeFilter).toBeDefined();
+    expect(result.autoRecall.scopeFilter?.userId).toBe("alice");
+    expect(result.autoRecall.scopeFilter?.agentId).toBe("support-bot");
+    expect(result.autoRecall.scopeFilter?.sessionId).toBe("sess-xyz");
+  });
+
   it("uses defaults for autoRecall when boolean false", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
@@ -245,6 +271,25 @@ describe("hybridConfigSchema.parse", () => {
   it("defaults store.fuzzyDedupe to false", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.fuzzyDedupe).toBe(false);
+  });
+
+  it("defaults store.classifyBeforeWrite to false (FR-008)", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.store.classifyBeforeWrite).toBe(false);
+  });
+
+  it("defaults store.classifyModel to gpt-4o-mini (FR-008)", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.store.classifyModel).toBe("gpt-4o-mini");
+  });
+
+  it("respects store.classifyBeforeWrite and store.classifyModel when set (FR-008)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      store: { fuzzyDedupe: false, classifyBeforeWrite: true, classifyModel: "gpt-4.1-nano" },
+    });
+    expect(result.store.classifyBeforeWrite).toBe(true);
+    expect(result.store.classifyModel).toBe("gpt-4.1-nano");
   });
 
   it("WAL is enabled by default", () => {
@@ -312,5 +357,72 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.entityLookup.enabled).toBe(true);
     expect(result.autoRecall.entityLookup.entities).toEqual(["user", "owner"]);
     expect(result.autoRecall.entityLookup.maxFactsPerEntity).toBe(3);
+  });
+
+  it("parses progressive disclosure config (FR-009)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        injectionFormat: "progressive",
+        progressiveMaxCandidates: 20,
+        progressiveIndexMaxTokens: 400,
+        progressiveGroupByCategory: true,
+      },
+    });
+    expect(result.autoRecall.injectionFormat).toBe("progressive");
+    expect(result.autoRecall.progressiveMaxCandidates).toBe(20);
+    expect(result.autoRecall.progressiveIndexMaxTokens).toBe(400);
+    expect(result.autoRecall.progressiveGroupByCategory).toBe(true);
+  });
+
+  it("defaults progressiveIndexMaxTokens to 300 when injectionFormat is progressive", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        injectionFormat: "progressive",
+      },
+    });
+    expect(result.autoRecall.injectionFormat).toBe("progressive");
+    expect(result.autoRecall.progressiveIndexMaxTokens).toBe(300);
+    expect(result.autoRecall.progressiveMaxCandidates).toBe(15);
+  });
+
+  it("defaults progressiveIndexMaxTokens to 300 when injectionFormat is progressive_hybrid", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        injectionFormat: "progressive_hybrid",
+      },
+    });
+    expect(result.autoRecall.progressiveIndexMaxTokens).toBe(300);
+  });
+
+  it("respects explicit progressiveIndexMaxTokens when format is progressive", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        injectionFormat: "progressive",
+        progressiveIndexMaxTokens: 500,
+      },
+    });
+    expect(result.autoRecall.progressiveIndexMaxTokens).toBe(500);
+  });
+
+  it("parses optional distill config (Gemini for session distillation)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      distill: {
+        apiKey: "env:GOOGLE_API_KEY",
+        defaultModel: "gemini-2.0-flash",
+      },
+    });
+    expect(result.distill).toBeDefined();
+    expect(result.distill?.apiKey).toBe("env:GOOGLE_API_KEY");
+    expect(result.distill?.defaultModel).toBe("gemini-2.0-flash");
+  });
+
+  it("distill is undefined when omitted", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.distill).toBeUndefined();
   });
 });

@@ -1,3 +1,9 @@
+---
+layout: default
+title: WAL Crash Resilience
+parent: Features
+nav_order: 5
+---
 # Write-Ahead Log (WAL) for Crash Resilience
 
 ## Overview
