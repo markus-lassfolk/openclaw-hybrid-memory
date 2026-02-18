@@ -30,7 +30,8 @@ export async function chatComplete(opts: {
   openai: OpenAI;
   geminiApiKey?: string;
 }): Promise<string> {
-  const { model, content, temperature = 0.2, maxTokens = 8000 } = opts;
+  const { model, content, temperature = 0.2, maxTokens } = opts;
+  const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
 
   if (isGeminiModel(model)) {
     const apiKey = resolveGeminiApiKey(opts.geminiApiKey);
@@ -47,7 +48,7 @@ export async function chatComplete(opts: {
       contents: content,
       config: {
         temperature,
-        maxOutputTokens: maxTokens,
+        maxOutputTokens: effectiveMaxTokens,
       },
     });
     const text = response.text;
@@ -61,7 +62,7 @@ export async function chatComplete(opts: {
     model,
     messages: [{ role: "user", content }],
     temperature,
-    max_tokens: maxTokens,
+    max_tokens: effectiveMaxTokens,
   });
   return resp.choices[0]?.message?.content?.trim() ?? "";
 }

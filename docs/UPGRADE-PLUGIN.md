@@ -43,7 +43,7 @@ The upgrade command removes the current install, fetches the requested version (
 
 **Automatic after restart:** On the first gateway start after an upgrade, the plugin runs a one-time *post-upgrade pipeline* (about 20 seconds after start): build-languages (if the language file is missing), self-correction-run, reflection and reflect-rules (if reflection is enabled), extract-procedures, and generate-auto-skills. You do not need to run these manually. The pipeline runs once per plugin version; its version is stored in `~/.openclaw/memory/.last-post-upgrade-version`.
 
-**When you see "plugin already exists"** — OpenClaw’s `plugins install` refuses to overwrite. Use the upgrade command above, or the standalone installer:
+**When you see "plugin already exists"** — OpenClaw’s `plugins install` refuses to overwrite. For **this plugin**, use **`openclaw hybrid-mem upgrade`** (in-place upgrade). A generic **`openclaw plugins upgrade`** for all plugins is requested in [issue #35](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/35) (OpenClaw CLI). Meanwhile use the upgrade command above, or the standalone installer:
 
 ```bash
 npx -y openclaw-hybrid-memory-install              # latest
@@ -60,7 +60,9 @@ openclaw gateway stop && openclaw gateway start
 
 Then run `openclaw hybrid-mem verify` to confirm.
 
-**First install or when plugin dir is missing:** `openclaw plugins install openclaw-hybrid-memory@latest` (or `@VERSION`) works. Use upgrade or the standalone installer when the folder already exists.
+**First install or when plugin dir is missing:** `openclaw plugins install openclaw-hybrid-memory@latest` (or `@VERSION`) works. Use **`openclaw hybrid-mem upgrade`** or the standalone installer when the folder already exists.
+
+**Note (issue [#35](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/35)):** A generic `openclaw plugins upgrade [@version]` command for in-place plugin updates would live in the OpenClaw CLI; for the hybrid-memory plugin, **`openclaw hybrid-mem upgrade`** provides that workflow today.
 
 ---
 
