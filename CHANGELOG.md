@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.2.180] - 2026-02-18
+
+### Added
+
+- **Self-correction analysis (issue #34):** Nightly pipeline to detect user corrections in session logs and auto-remediate. Multi-language correction detection via `.language-keywords.json` (run `build-languages` first for non-English). CLI: `openclaw hybrid-mem self-correction-extract [--days N] [--output path]`, `openclaw hybrid-mem self-correction-run [--extract path] [--approve] [--no-apply-tools] [--model M]`. Phases: (1) extract incidents from session JSONL using correction signals, (2) LLM analyze (category, severity, remediation type), (3) remediate: MEMORY_STORE with semantic dedup, TOOLS.md rules under configurable section (default apply; opt-out with `applyToolsByDefault: false` or `--no-apply-tools`), AGENTS/SKILL as proposals. Optional: `autoRewriteTools: true` for LLM rewrite of TOOLS.md; `analyzeViaSpawn` for Phase 2 via `openclaw sessions spawn` (Gemini, large batches). Config: `selfCorrection.semanticDedup`, `semanticDedupThreshold`, `toolsSection`, `applyToolsByDefault`, `autoRewriteTools`, `analyzeViaSpawn`, `spawnThreshold`, `spawnModel`. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. Docs: SELF-CORRECTION-PIPELINE.md, CONFIGURATION.md. Optional cron job `self-correction-analysis` in install script.
+
+### Fixed
+
+- **CLI:** Removed duplicate registration of `extract-procedures` and `generate-auto-skills` in `registerHybridMemCli` (copy-paste had registered each command two extra times).
+
+---
+
 ## [Unreleased]
 
 ### Added
