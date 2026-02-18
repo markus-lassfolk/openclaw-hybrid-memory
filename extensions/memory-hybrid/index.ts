@@ -43,7 +43,7 @@ import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
 import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type IngestFilesResult, type IngestFilesSink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
-import { chatComplete, distillBatchTokenLimit } from "./services/chat.js";
+import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
@@ -1841,6 +1841,7 @@ let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
 let languageKeywordsTimer: ReturnType<typeof setInterval> | null = null;
 let languageKeywordsStartupTimeout: ReturnType<typeof setTimeout> | null = null;
+let postUpgradeTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /** FR-009: Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
 let lastProgressiveIndexIds: string[] = [];
@@ -4030,6 +4031,7 @@ const memoryHybridPlugin = {
                   enabled: true,
                   config: {
                     embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
+                    distill: { defaultModel: "gemini-3-pro-preview" },
                     autoCapture: true,
                     autoRecall: true,
                     captureMaxChars: 5000,
@@ -4038,6 +4040,14 @@ const memoryHybridPlugin = {
                     categories: [] as string[],
                     credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
                     languageKeywords: { autoBuild: true, weeklyIntervalDays: 7 },
+                    reflection: { enabled: true, model: "gpt-4o-mini", defaultWindow: 14, minObservations: 2 },
+                    selfCorrection: {
+                      semanticDedup: true,
+                      semanticDedupThreshold: 0.92,
+                      toolsSection: "Self-correction rules",
+                      applyToolsByDefault: true,
+                      autoRewriteTools: false,
+                    },
                   },
                 },
               },
@@ -4894,7 +4904,7 @@ const memoryHybridPlugin = {
             return { stored: 0, skipped: 0, extracted: 0, files: 0, dryRun: opts.dryRun };
           }
 
-          const model = cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          const model = cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
           const ingestPrompt = loadPrompt("ingest-files");
           const batches: string[] = [];
           let currentBatch = "";
@@ -4931,7 +4941,7 @@ const memoryHybridPlugin = {
                 model,
                 content: userContent,
                 temperature: 0.2,
-                maxTokens: 8000,
+                maxTokens: distillMaxOutputTokens(model),
                 openai,
                 geminiApiKey: cfg.distill?.apiKey,
               });
@@ -5071,7 +5081,7 @@ const memoryHybridPlugin = {
             sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
             return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
           }
-          const model = opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          const model = opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
           const batches: string[] = [];
           let currentBatch = "";
           const batchTokenLimit = distillBatchTokenLimit(model);
@@ -5107,7 +5117,7 @@ const memoryHybridPlugin = {
                 model,
                 content: userContent,
                 temperature: 0.2,
-                maxTokens: 8000,
+                maxTokens: distillMaxOutputTokens(model),
                 openai,
                 geminiApiKey: cfg.distill?.apiKey,
               });
@@ -5308,7 +5318,7 @@ const memoryHybridPlugin = {
           const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
             incidents_json: JSON.stringify(incidents),
           });
-          const model = opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          const model = opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
           let analysed: Array<{
             category: string;
             severity: string;
@@ -5340,7 +5350,7 @@ const memoryHybridPlugin = {
                 model,
                 content: prompt,
                 temperature: 0.2,
-                maxTokens: 8000,
+                maxTokens: distillMaxOutputTokens(model),
                 openai,
                 geminiApiKey: cfg.distill?.apiKey,
               });
@@ -5420,7 +5430,7 @@ const memoryHybridPlugin = {
                   new_rules: toolsSuggestions.join("\n"),
                 });
                 const rewritten = await chatComplete({
-                  model: opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini",
+                  model: opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview",
                   content: rewritePrompt,
                   temperature: 0.2,
                   maxTokens: 16000,
@@ -5478,33 +5488,42 @@ const memoryHybridPlugin = {
           };
         }
 
-        async function runUpgradeForCli(): Promise<UpgradeCliResult> {
+        async function runUpgradeForCli(requestedVersion?: string): Promise<UpgradeCliResult> {
           const extDir = dirname(fileURLToPath(import.meta.url));
           const { spawnSync } = await import("node:child_process");
+          const version = requestedVersion?.trim() || "latest";
           try {
             rmSync(extDir, { recursive: true, force: true });
           } catch (e) {
-            return { ok: false, error: `Could not remove plugin directory: ${e}. Run: rm -rf ${extDir} && openclaw plugins install openclaw-hybrid-memory@latest` };
+            return {
+              ok: false,
+              error: `Could not remove plugin directory: ${e}. Use standalone installer: npx -y openclaw-hybrid-memory-install ${version}`,
+            };
           }
-          const r = spawnSync("openclaw", ["plugins", "install", "openclaw-hybrid-memory@latest"], {
+          // Use standalone installer so upgrade works even when config is invalid (plugin missing).
+          const npxArgs = ["-y", "openclaw-hybrid-memory-install", version];
+          const r = spawnSync("npx", npxArgs, {
             stdio: "inherit",
             cwd: homedir(),
             shell: true,
           });
           if (r.status !== 0) {
-            return { ok: false, error: `Install failed (exit ${r.status}). Run manually: openclaw plugins install openclaw-hybrid-memory@latest` };
+            return {
+              ok: false,
+              error: `Install failed (exit ${r.status}). Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
+            };
           }
-          let version = "latest";
+          let installedVersion = version;
           try {
             const pkgPath = join(extDir, "package.json");
             if (existsSync(pkgPath)) {
               const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
-              version = pkg.version ?? version;
+              installedVersion = pkg.version ?? installedVersion;
             }
           } catch {
             // ignore
           }
-          return { ok: true, version, pluginDir: extDir };
+          return { ok: true, version: installedVersion, pluginDir: extDir };
         }
 
         function runUninstallForCli(opts: { cleanAll: boolean; leaveConfig: boolean }): UninstallCliResult {
@@ -5583,7 +5602,7 @@ const memoryHybridPlugin = {
           runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
-          runUpgrade: () => runUpgradeForCli(),
+          runUpgrade: (v?: string) => runUpgradeForCli(v),
           runFindDuplicates: (opts) =>
             runFindDuplicates(factsDb, embeddings, opts, api.logger),
           runConsolidate: (opts) =>
@@ -6546,6 +6565,51 @@ const memoryHybridPlugin = {
             `memory-hybrid: language keywords auto-build enabled (every ${cfg.languageKeywords.weeklyIntervalDays} days)`,
           );
         }
+
+        // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
+        const versionFile = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
+        postUpgradeTimeout = setTimeout(() => {
+          postUpgradeTimeout = null;
+          let lastVer = "";
+          try {
+            lastVer = readFileSync(versionFile, "utf-8").trim();
+          } catch {
+            /* ignore */
+          }
+          if (lastVer === versionInfo.pluginVersion) return;
+          api.logger.info(
+            "memory-hybrid: post-upgrade pipeline starting (build-languages, self-correction, reflection, procedures)…",
+          );
+          void (async () => {
+            const { spawnSync } = await import("node:child_process");
+            const runCli = (args: string[]) => {
+              const r = spawnSync("openclaw", ["hybrid-mem", ...args], {
+                encoding: "utf-8",
+                timeout: 120_000,
+                cwd: homedir(),
+              });
+              if (r.status !== 0 && r.stderr) {
+                api.logger.warn?.(`memory-hybrid: post-upgrade ${args[0]} failed: ${(r.stderr as string).slice(0, 200)}`);
+              }
+              return r.status === 0;
+            };
+            try {
+              const langPath = getLanguageKeywordsFilePath();
+              if (langPath && !existsSync(langPath)) runCli(["build-languages"]);
+              runCli(["self-correction-run"]);
+              if (cfg.reflection.enabled) {
+                runCli(["reflect", "--window", String(cfg.reflection.defaultWindow)]);
+                runCli(["reflect-rules"]);
+              }
+              runCli(["extract-procedures"]);
+              runCli(["generate-auto-skills"]);
+              writeFileSync(versionFile, versionInfo.pluginVersion, "utf-8");
+              api.logger.info("memory-hybrid: post-upgrade pipeline done.");
+            } catch (e) {
+              api.logger.warn?.(`memory-hybrid: post-upgrade pipeline error: ${e}`);
+            }
+          })();
+        }, 20000);
       },
       stop: () => {
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
@@ -6557,6 +6621,10 @@ const memoryHybridPlugin = {
           languageKeywordsStartupTimeout = null;
         }
         if (languageKeywordsTimer) { clearInterval(languageKeywordsTimer); languageKeywordsTimer = null; }
+        if (postUpgradeTimeout) {
+          clearTimeout(postUpgradeTimeout);
+          postUpgradeTimeout = null;
+        }
         factsDb.close();
         vectorDb.close();
         if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }

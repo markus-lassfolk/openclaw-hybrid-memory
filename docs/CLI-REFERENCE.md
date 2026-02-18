@@ -33,7 +33,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `reflect-rules [--dry-run] [--model M] [--force]` | Synthesize patterns into actionable rules. |
 | `reflect-meta [--dry-run] [--model M] [--force]` | Synthesize higher-level meta-patterns. |
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and optional jobs. Idempotent. |
-| `upgrade` | Upgrade to latest from npm. Removes current install, fetches latest, rebuilds native deps. Restart gateway afterward. |
+| `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. |
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. `--model M` picks the LLM (e.g. `gemini-2.0-flash` for Gemini; config `distill.defaultModel` used when omitted). Gemini uses larger batches (500k tokens). Oversized sessions chunked with 10% overlap. |
 | `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |

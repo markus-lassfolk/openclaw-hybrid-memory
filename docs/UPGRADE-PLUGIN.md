@@ -32,17 +32,35 @@ openclaw hybrid-mem upgrade
 openclaw gateway stop && openclaw gateway start
 ```
 
-The upgrade command removes the current install, fetches the latest from npm, rebuilds native deps, and tells you to restart. Then run `openclaw hybrid-mem verify` to confirm.
-
-**Alternative** — if the plugin folder is already removed or you prefer manual control:
+To install a **specific version** (e.g. 2026.2.181):
 
 ```bash
-openclaw plugins install openclaw-hybrid-memory@latest
+openclaw hybrid-mem upgrade 2026.2.181
 openclaw gateway stop && openclaw gateway start
-openclaw hybrid-mem verify
 ```
 
-This fails with "plugin already exists" if the folder is present; use `openclaw hybrid-mem upgrade` in that case.
+The upgrade command removes the current install, fetches the requested version (or latest) from npm via the standalone installer, rebuilds native deps, and tells you to restart. Then run `openclaw hybrid-mem verify` to confirm.
+
+**Automatic after restart:** On the first gateway start after an upgrade, the plugin runs a one-time *post-upgrade pipeline* (about 20 seconds after start): build-languages (if the language file is missing), self-correction-run, reflection and reflect-rules (if reflection is enabled), extract-procedures, and generate-auto-skills. You do not need to run these manually. The pipeline runs once per plugin version; its version is stored in `~/.openclaw/memory/.last-post-upgrade-version`.
+
+**When you see "plugin already exists"** — OpenClaw’s `plugins install` refuses to overwrite. Use the upgrade command above, or the standalone installer:
+
+```bash
+npx -y openclaw-hybrid-memory-install              # latest
+npx -y openclaw-hybrid-memory-install 2026.2.181   # specific version
+openclaw gateway stop && openclaw gateway start
+```
+
+**If the gateway then reports "Could not locate the bindings file" (better_sqlite3)** — the native rebuild may have been interrupted. Run:
+
+```bash
+cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3 @lancedb/lancedb
+openclaw gateway stop && openclaw gateway start
+```
+
+Then run `openclaw hybrid-mem verify` to confirm.
+
+**First install or when plugin dir is missing:** `openclaw plugins install openclaw-hybrid-memory@latest` (or `@VERSION`) works. Use upgrade or the standalone installer when the folder already exists.
 
 ---
 
