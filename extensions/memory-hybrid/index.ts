@@ -13,7 +13,7 @@ import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,7 +91,12 @@ import {
   getCategoryPreferenceRegex,
   getCategoryEntityRegex,
   getCategoryFactRegex,
+  getExtractionTemplates,
+  getCorrectionSignalRegex,
 } from "./utils/language-keywords.js";
+import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "./services/self-correction-extract.js";
+import { insertRulesUnderSection } from "./services/tools-md-section.js";
+import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./services/language-keywords-build.js";
 
 // ============================================================================
@@ -674,6 +679,9 @@ function extractStructuredFields(
       value: heterMatch[1].trim(),
     };
   }
+
+  const templateResult = tryExtractionFromTemplates(getExtractionTemplates(), text);
+  if (templateResult) return templateResult;
 
   const emailMatch = text.match(/([\w.-]+@[\w.-]+\.\w+)/);
   if (emailMatch) {
@@ -4773,7 +4781,18 @@ const memoryHybridPlugin = {
                   value = preferMatchSv[2].trim();
                   category = "preference";
                 } else {
-                  value = t.slice(0, 200);
+                  const templateResult = tryExtractionFromTemplates(getExtractionTemplates(), t);
+                  if (templateResult && templateResult.entity && templateResult.value) {
+                    entity = templateResult.entity;
+                    key = templateResult.key;
+                    value = templateResult.value;
+                    if (entity === "decision") category = "decision";
+                    else if (entity === "convention") category = "preference";
+                    else if (entity === "user" && key) category = "preference";
+                    else category = "fact";
+                  } else {
+                    value = t.slice(0, 200);
+                  }
                 }
               }
             }
@@ -5200,6 +5219,265 @@ const memoryHybridPlugin = {
           });
         }
 
+        const SELF_CORRECTION_CAP = 5;
+
+        function runSelfCorrectionExtractForCli(opts: {
+          days?: number;
+          outputPath?: string;
+        }): SelfCorrectionExtractResult {
+          const sessionFiles = gatherSessionFiles({
+            days: opts.days ?? 3,
+          });
+          const filePaths = sessionFiles.map((f) => f.path);
+          if (filePaths.length === 0) {
+            return { incidents: [], sessionsScanned: 0 };
+          }
+          const result = runSelfCorrectionExtract({
+            filePaths,
+            correctionRegex: getCorrectionSignalRegex(),
+          });
+          if (opts.outputPath && result.incidents.length > 0) {
+            try {
+              mkdirSync(dirname(opts.outputPath), { recursive: true });
+              writeFileSync(opts.outputPath, JSON.stringify(result.incidents, null, 2), "utf-8");
+            } catch (e) {
+              api.logger.warn?.(`memory-hybrid: could not write self-correction extract: ${e}`);
+            }
+          }
+          return result;
+        }
+
+        type SelfCorrectionRunResult = {
+          incidentsFound: number;
+          analysed: number;
+          autoFixed: number;
+          proposals: string[];
+          reportPath: string | null;
+          toolsSuggestions?: string[];
+          toolsApplied?: number;
+          error?: string;
+        };
+
+        const DEFAULT_SELF_CORRECTION = {
+          semanticDedup: true,
+          semanticDedupThreshold: 0.92,
+          toolsSection: "Self-correction rules",
+          applyToolsByDefault: true,
+          autoRewriteTools: false,
+          analyzeViaSpawn: false,
+          spawnThreshold: 15,
+          spawnModel: "gemini",
+        } as const;
+
+        async function runSelfCorrectionRunForCli(opts: {
+          extractPath?: string;
+          incidents?: CorrectionIncident[];
+          workspace?: string;
+          dryRun?: boolean;
+          model?: string;
+          approve?: boolean;
+          noApplyTools?: boolean;
+        }): Promise<SelfCorrectionRunResult> {
+          const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
+          const reportDir = join(workspaceRoot, "memory", "reports");
+          const today = new Date().toISOString().slice(0, 10);
+          const reportPath = join(reportDir, `self-correction-${today}.md`);
+          let incidents: CorrectionIncident[];
+          if (opts.incidents && opts.incidents.length > 0) {
+            incidents = opts.incidents;
+          } else if (opts.extractPath) {
+            try {
+              const raw = readFileSync(opts.extractPath, "utf-8");
+              incidents = JSON.parse(raw) as CorrectionIncident[];
+            } catch (e) {
+              return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, error: String(e) };
+            }
+          } else {
+            const extractResult = runSelfCorrectionExtractForCli({ days: 3 });
+            incidents = extractResult.incidents;
+          }
+          if (incidents.length === 0) {
+            const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: 3 days.\nIncidents found: 0.\n`;
+            try {
+              mkdirSync(reportDir, { recursive: true });
+              writeFileSync(reportPath, emptyReport, "utf-8");
+            } catch { /* ignore */ }
+            return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
+          }
+          const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+            incidents_json: JSON.stringify(incidents),
+          });
+          const model = opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          let analysed: Array<{
+            category: string;
+            severity: string;
+            remediationType: string;
+            remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[] };
+            repeated?: boolean;
+          }> = [];
+          const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
+          try {
+            let content: string;
+            if (useSpawn) {
+              const { spawnSync } = await import("node:child_process");
+              const { tmpdir: osTmp } = await import("node:os");
+              const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
+              writeFileSync(promptPath, prompt, "utf-8");
+              const spawnModel = scCfg.spawnModel ?? "gemini";
+              const r = spawnSync(
+                "openclaw",
+                ["sessions", "spawn", "--model", spawnModel, "--message", "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.", "--attach", promptPath],
+                { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
+              );
+              try {
+                if (existsSync(promptPath)) rmSync(promptPath, { force: true });
+              } catch { /* ignore */ }
+              content = (r.stdout ?? "") + (r.stderr ?? "");
+              if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
+            } else {
+              content = await chatComplete({
+                model,
+                content: prompt,
+                temperature: 0.2,
+                maxTokens: 8000,
+                openai,
+                geminiApiKey: cfg.distill?.apiKey,
+              });
+            }
+            const jsonMatch = content.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+              analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
+            }
+          } catch (e) {
+            return {
+              incidentsFound: incidents.length,
+              analysed: 0,
+              autoFixed: 0,
+              proposals: [],
+              reportPath: null,
+              error: String(e),
+            };
+          }
+          const proposals: string[] = [];
+          const toolsSuggestions: string[] = [];
+          let autoFixed = 0;
+          let toolsApplied = 0;
+          const toApply = analysed.filter((a) => a.remediationType !== "NO_ACTION" && !a.repeated).slice(0, SELF_CORRECTION_CAP);
+          const toolsPath = join(workspaceRoot, "TOOLS.md");
+          const toolsSection = scCfg.toolsSection;
+          const semanticThreshold = scCfg.semanticDedupThreshold ?? 0.92;
+
+          for (const a of toApply) {
+            if (a.remediationType === "MEMORY_STORE") {
+              const c = a.remediationContent;
+              const obj = typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
+              const text = (obj.text ?? "").trim();
+              if (!text || factsDb.hasDuplicate(text)) continue;
+              let vector: number[] | null = null;
+              if (scCfg.semanticDedup || !opts.dryRun) {
+                try {
+                  vector = await embeddings.embed(text);
+                  if (scCfg.semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
+                } catch (err) {
+                  api.logger.warn?.(`memory-hybrid: self-correction embed/semantic dedup failed: ${err}`);
+                  continue;
+                }
+              }
+              if (opts.dryRun) continue;
+              try {
+                const entry = factsDb.store({
+                  text,
+                  category: "technical",
+                  importance: CLI_STORE_IMPORTANCE,
+                  entity: obj.entity ?? null,
+                  key: typeof obj.key === "string" ? obj.key : null,
+                  value: text.slice(0, 200),
+                  source: "self-correction",
+                  tags: Array.isArray(obj.tags) ? obj.tags : [],
+                });
+                if (vector) await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+                autoFixed++;
+              } catch (err) {
+                api.logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
+              }
+            } else if (a.remediationType === "TOOLS_RULE") {
+              const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
+              if (line.trim()) toolsSuggestions.push(line.trim());
+            } else if (a.remediationType === "AGENTS_RULE" || a.remediationType === "SKILL_UPDATE") {
+              const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
+              if (line.trim()) proposals.push(`[${a.remediationType}] ${line.trim()}`);
+            }
+          }
+
+          const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !opts.noApplyTools;
+          if (toolsSuggestions.length > 0 && !opts.dryRun) {
+            if (scCfg.autoRewriteTools && existsSync(toolsPath)) {
+              try {
+                const currentTools = readFileSync(toolsPath, "utf-8");
+                const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
+                  current_tools: currentTools,
+                  new_rules: toolsSuggestions.join("\n"),
+                });
+                const rewritten = await chatComplete({
+                  model: opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini",
+                  content: rewritePrompt,
+                  temperature: 0.2,
+                  maxTokens: 16000,
+                  openai,
+                  geminiApiKey: cfg.distill?.apiKey,
+                });
+                const cleaned = rewritten.trim().replace(/^```\w*\n?|```\s*$/g, "").trim();
+                if (cleaned.length > 50) {
+                  writeFileSync(toolsPath, cleaned, "utf-8");
+                  toolsApplied = toolsSuggestions.length;
+                  autoFixed += toolsApplied;
+                }
+              } catch (err) {
+                api.logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
+              }
+            } else if (shouldApplyTools && existsSync(toolsPath)) {
+              const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
+              toolsApplied = inserted;
+              autoFixed += inserted;
+            }
+          }
+
+          const reportLines = [
+            `# Self-Correction Analysis (${today})`,
+            "",
+            `Scanned: last 3 days. Incidents found: ${incidents.length}.`,
+            `Analysed: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
+            "",
+            ...(autoFixed > 0 ? ["## Auto-applied", "", `- ${autoFixed} memory store(s) and/or TOOLS.md rule(s).`, ""] : []),
+            ...(toolsSuggestions.length > 0 && toolsApplied === 0 && !scCfg.autoRewriteTools
+              ? [
+                  "## Suggested TOOLS.md rules (not applied this run). To apply: config applyToolsByDefault is true by default, or use --approve. To skip applying: --no-apply-tools.",
+                  "",
+                  ...toolsSuggestions.map((s) => `- ${s}`),
+                  "",
+                ]
+              : []),
+            ...(toolsApplied > 0 ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section \"${toolsSection}\".`, ""] : []),
+            ...(proposals.length > 0 ? ["## Proposed (review before applying)", "", ...proposals.map((p) => `- ${p}`), ""] : []),
+          ];
+          try {
+            mkdirSync(reportDir, { recursive: true });
+            writeFileSync(reportPath, reportLines.join("\n"), "utf-8");
+          } catch (e) {
+            api.logger.warn?.(`memory-hybrid: could not write report: ${e}`);
+          }
+          return {
+            incidentsFound: incidents.length,
+            analysed: analysed.length,
+            autoFixed,
+            proposals,
+            reportPath,
+            toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
+            toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
+          };
+        }
+
         async function runUpgradeForCli(): Promise<UpgradeCliResult> {
           const extDir = dirname(fileURLToPath(import.meta.url));
           const { spawnSync } = await import("node:child_process");
@@ -5350,10 +5628,19 @@ const memoryHybridPlugin = {
               dirname(resolvedSqlitePath),
               { model: opts.model ?? cfg.autoClassify.model, dryRun: opts.dryRun },
             ),
+          runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) =>
+            Promise.resolve(runSelfCorrectionExtractForCli(opts)),
+          runSelfCorrectionRun: (opts: {
+            extractPath?: string;
+            incidents?: CorrectionIncident[];
+            workspace?: string;
+            dryRun?: boolean;
+            model?: string;
+          }) => runSelfCorrectionRunForCli(opts),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================

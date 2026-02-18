@@ -85,9 +85,9 @@ export type MergedKeywords = Record<KeywordGroup, string[]>;
 
 let keywordsPath: string | null = null;
 
-/** Set directory containing .language-keywords.json (e.g. dirname of facts.db). Call at plugin init. */
+/** Set directory containing .language-keywords.json (e.g. dirname of facts.db). Call at plugin init. Pass empty string to clear (e.g. in tests). */
 export function setKeywordsPath(dirPath: string): void {
-  keywordsPath = dirPath;
+  keywordsPath = dirPath === "" ? null : dirPath;
 }
 
 export function getKeywordsPath(): string | null {
@@ -125,6 +125,7 @@ function mergeGroup(
 export function loadMergedKeywords(): MergedKeywords {
   const path = keywordsPath;
   if (!path) {
+    cache = null;
     return Object.fromEntries(
       (Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]).map((k) => [k, [...ENGLISH_KEYWORDS[k]]]),
     ) as MergedKeywords;

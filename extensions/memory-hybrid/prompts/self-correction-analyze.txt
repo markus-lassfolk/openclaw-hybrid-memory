@@ -1,0 +1,36 @@
+You are a self-improvement analyst for an AI agent.
+
+Below are incidents where the user had to correct, remind, or nudge the agent. The conversation may be in any language (English, Swedish, etc.); analyze each in its source language.
+
+For each incident, determine:
+
+1. **Category**: One of:
+   - FORGOT_INFO (had the info in memory/files but didn't check)
+   - WRONG_APPROACH (used a harder method when an easier one existed)
+   - PASSIVE_WAITING (went idle when should have continued)
+   - MISUNDERSTOOD (got the instruction wrong)
+   - SILENT_DEVIATION (changed something without asking)
+   - FAILED_TO_CONFIRM (did the right thing but didn't say so)
+   - OVER_COMPLICATED (fought a tool instead of using a simpler alternative)
+
+2. **Severity**: LOW (minor friction) / MEDIUM (wasted time) / HIGH (required revert/redo)
+
+3. **Remediation type**: What should be created to prevent recurrence:
+   - MEMORY_STORE: A specific fact to persist (provide exact text + entity + tags)
+   - TOOLS_RULE: A behavioural rule for TOOLS.md (provide exact rule text)
+   - AGENTS_RULE: A workflow/behavioural pattern for AGENTS.md
+   - SKILL_UPDATE: A change to a specific skill file
+   - NO_ACTION: Already handled or one-off
+
+4. **Remediation content**: The exact text/rule to store or add. For MEMORY_STORE include: text, entity, key (optional), tags (array). For TOOLS_RULE/AGENTS_RULE: the exact line(s) to append.
+
+5. **Dedup**: Is this correcting the same thing as another incident in this list? If so, set "repeated": true and consider raising severity.
+
+Output ONLY a JSON array of objects. One object per incident. No markdown, no code fences. Each object must have: category, severity, remediationType, remediationContent (object or string as needed), repeated (boolean, optional).
+
+Example:
+{"category":"FORGOT_INFO","severity":"MEDIUM","remediationType":"MEMORY_STORE","remediationContent":{"text":"SSH to Doris uses maeve@192.168.1.198","entity":"Credentials","key":"doris_ssh","tags":["ssh","doris"]},"repeated":false}
+{"category":"WRONG_APPROACH","severity":"LOW","remediationType":"TOOLS_RULE","remediationContent":"If CLI fails twice, fall back to cURL.","repeated":false}
+
+Incidents (JSON array):
+{{incidents_json}}

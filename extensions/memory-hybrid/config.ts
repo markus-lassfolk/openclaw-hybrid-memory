@@ -237,6 +237,28 @@ export type HybridMemoryConfig = {
   ingest?: IngestConfig;
   /** Optional: search tweaks (HyDE query expansion) */
   search?: SearchConfig;
+  /** Optional: self-correction analysis (issue #34) — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
+  selfCorrection?: SelfCorrectionConfig;
+};
+
+/** Self-correction pipeline (issue #34): semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
+export type SelfCorrectionConfig = {
+  /** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
+  semanticDedup: boolean;
+  /** Similarity threshold for semantic dedup, 0–1 (default: 0.92). */
+  semanticDedupThreshold: number;
+  /** TOOLS.md section heading for new rules, e.g. "Self-correction rules" (default: "Self-correction rules"). */
+  toolsSection: string;
+  /** When true (default), insert suggested TOOLS rules under toolsSection. Set false to only suggest in report (then use --approve to apply). */
+  applyToolsByDefault: boolean;
+  /** When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (or suggest if applyToolsByDefault is false) (default: false). */
+  autoRewriteTools: boolean;
+  /** When true and incident count > spawnThreshold, run Phase 2 via `openclaw sessions spawn --model gemini` for large context (default: false). */
+  analyzeViaSpawn: boolean;
+  /** Use spawn for Phase 2 when incidents exceed this count (default: 15). */
+  spawnThreshold: number;
+  /** Model for spawn when analyzeViaSpawn is true (default: gemini). */
+  spawnModel: string;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -640,6 +662,31 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
+    // Parse optional self-correction config (issue #34)
+    const scRaw = cfg.selfCorrection as Record<string, unknown> | undefined;
+    const selfCorrection: SelfCorrectionConfig | undefined =
+      scRaw && typeof scRaw === "object"
+        ? {
+            semanticDedup: scRaw.semanticDedup !== false,
+            semanticDedupThreshold:
+              typeof scRaw.semanticDedupThreshold === "number" && scRaw.semanticDedupThreshold >= 0 && scRaw.semanticDedupThreshold <= 1
+                ? scRaw.semanticDedupThreshold
+                : 0.92,
+            toolsSection:
+              typeof scRaw.toolsSection === "string" && scRaw.toolsSection.trim().length > 0
+                ? scRaw.toolsSection.trim()
+                : "Self-correction rules",
+            applyToolsByDefault: scRaw.applyToolsByDefault !== false,
+            autoRewriteTools: scRaw.autoRewriteTools === true,
+            analyzeViaSpawn: scRaw.analyzeViaSpawn === true,
+            spawnThreshold:
+              typeof scRaw.spawnThreshold === "number" && scRaw.spawnThreshold >= 1
+                ? Math.floor(scRaw.spawnThreshold)
+                : 15,
+            spawnModel: typeof scRaw.spawnModel === "string" ? scRaw.spawnModel : "gemini",
+          }
+        : undefined;
+
     return {
       embedding: {
         provider: "openai",
@@ -667,6 +714,7 @@ export const hybridConfigSchema = {
       languageKeywords,
       ingest,
       search,
+      selfCorrection,
     };
   },
 };

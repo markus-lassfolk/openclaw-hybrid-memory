@@ -2,66 +2,51 @@
 
 **Issue:** [Feature: Nightly Self-Correction Analysis — Automated Failure Detection & Remediation #34](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/34)
 
-**Last checked:** 2026-02-18
+**Last updated:** 2026-02-18
 
 ---
 
-## Current status: **Not implemented**
+## Current status: **Implemented (multi-language)**
 
-The nightly self-correction pipeline (extract → analyse → remediate → report) is **not** present in the repo. Session distillation and procedural memory are separate features and do not implement user-correction detection or TOOLS.md/AGENTS.md remediation.
+The pipeline is implemented in the **memory-hybrid** extension with **multi-language support** via `.language-keywords.json` (see **`openclaw hybrid-mem build-languages`**).
 
----
+| Component | Status |
+|-----------|--------|
+| **Phase 1: Extract** | ✅ `openclaw hybrid-mem self-correction-extract` — uses merged correction signals (English + translated from `.language-keywords.json`) |
+| **Phase 2: Analyse** | ✅ Prompt `self-correction-analyze.txt`; LLM via `self-correction-run` |
+| **Phase 3: Remediate** | ✅ MEMORY_STORE + TOOLS.md append (cap 5); AGENTS/SKILL as proposals only |
+| **Phase 4: Report** | ✅ `memory/reports/self-correction-YYYY-MM-DD.md` |
+| **Protocol doc** | ✅ [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md) |
+| **Cron job** | Optional — add to OpenClaw jobs; see pipeline doc |
+| **Tests** | ✅ Extract (`self-correction-extract.test.ts`), TOOLS section (`tools-md-section.test.ts`), config (`config.test.ts` for `selfCorrection`) |
+| **Semantic dedup** | ✅ Optional (default on): skip MEMORY_STORE when embedding similarity ≥ threshold (config `selfCorrection.semanticDedup`, `semanticDedupThreshold`). |
+| **TOOLS sectioning** | ✅ Rules inserted under configurable section (e.g. “Self-correction rules”), not appended at end. Dedup within section. |
+| **Auto-rewrite vs approve** | ✅ Default: suggest TOOLS rules in report; apply with `--approve`. Opt-in `autoRewriteTools: true`: LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). |
+| **Phase 2 via spawn** | ✅ Optional: `analyzeViaSpawn: true` + `spawnThreshold` → Phase 2 runs via `openclaw sessions spawn` (e.g. Gemini) for large batches. |
 
-## What exists vs what’s missing
-
-| Component | Issue #34 spec | In repo |
-|-----------|----------------|--------|
-| **Phase 1: Extract** | `scripts/self-correction/extract.py` — regex on user messages, output structured extract | ❌ No `scripts/self-correction/` |
-| **Phase 2: Analyse** | `scripts/self-correction/analyze-prompt.md` — LLM (Gemini) for category, severity, remediation type | ❌ Missing |
-| **Phase 3: Remediate** | Auto memory_store, append TOOLS.md, propose AGENTS/SKILL, guardrails | ❌ Missing |
-| **Phase 4: Report** | Summary to user channel (e.g. `memory/reports/self-correction-YYYY-MM-DD.md`) | ❌ Missing |
-| **Protocol doc** | `memory/technical/self-correction-pipeline.md` | ❌ Missing |
-| **Cron job** | “Self-Correction Analysis” at 02:30 Europe/Stockholm, payload per issue | ❌ Only `nightly-memory-sweep` (distillation) and `weekly-reflection` exist |
-| **Tests** | Unit/integration for extract + remediate | ❌ No self-correction tests |
-
-**Related but different:**
-
-- **Session distillation** (`openclaw hybrid-mem distill`, `scripts/distill-sessions/`) — extracts *facts* from session logs; does not detect correction phrases or remediate TOOLS/AGENTS.
-- **Procedural memory** (`extract-procedures`, PROCEDURAL-MEMORY.md) — learns from *tool-call sequences*; does not use user correction patterns.
-- **nightly-memory-sweep** — runs session distillation, not self-correction analysis.
+**Multi-language:** Run **`openclaw hybrid-mem build-languages`** once (or when you add languages). Correction phrases are translated into your top languages so detection works in all of them.
 
 ---
 
-## Implementation plan (checklist)
+## Implementation checklist (done)
 
-1. **Phase 1 — Extract**
-   - [ ] Add `scripts/self-correction/` directory.
-   - [ ] Implement extract script (Python or Node): scan last 3 days of session JSONL, `type: "message"`, `role: "user"`.
-   - [ ] Apply issue’s regex correction patterns (and skip filters: heartbeat, cron definitions, system, pre-compaction, sub-agent).
-   - [ ] For each match: user message (≤800 chars), preceding assistant (≤500), following assistant (≤500), timestamp, session file.
-   - [ ] Output structured extract (JSON or Markdown) for Phase 2.
+1. **Phase 1 — Extract** ✅  
+   Implemented in `services/self-correction-extract.ts`; CLI `self-correction-extract`. Uses `getCorrectionSignalRegex()` (English + `.language-keywords.json` translations). Skip filters applied.
 
-2. **Phase 2 — Analyse**
-   - [ ] Add `scripts/self-correction/analyze-prompt.md` with the issue’s analyst prompt (categories, severity, remediation type/content, dedup).
-   - [ ] Wire to LLM (Gemini recommended): feed extract, get JSON array of analysed incidents.
+2. **Phase 2 — Analyse** ✅  
+   Prompt `prompts/self-correction-analyze.txt`; invoked inside `self-correction-run` with configurable model.
 
-3. **Phase 3 — Remediate**
-   - [ ] MEMORY_STORE: call memory_store with provided text/entity/tags; dedup against existing memories (e.g. semantic search).
-   - [ ] TOOLS_RULE: append-only to TOOLS.md under appropriate section.
-   - [ ] AGENTS_RULE / SKILL_UPDATE: produce proposals only, notify user (no auto-apply).
-   - [ ] Guardrails: cap 5 remediations per run; never delete/overwrite; log to `memory/reports/self-correction-YYYY-MM-DD.md`.
+3. **Phase 3 — Remediate** ✅  
+   MEMORY_STORE (with dedup), TOOLS_RULE (append-only), AGENTS_RULE/SKILL_UPDATE as proposals; cap 5.
 
-4. **Phase 4 — Report**
-   - [ ] Generate short summary (scanned sessions, incidents found, auto-fixed count, needs-review count, skipped).
-   - [ ] Write report to `memory/reports/self-correction-YYYY-MM-DD.md` and deliver to user’s channel (per OpenClaw job config).
+4. **Phase 4 — Report** ✅  
+   Written to `memory/reports/self-correction-YYYY-MM-DD.md`.
 
-5. **Documentation & automation**
-   - [ ] Add `memory/technical/self-correction-pipeline.md` (or equivalent under `docs/`) with full protocol for the cron agent.
-   - [ ] Add “Self-Correction Analysis” job to install/snippet (schedule `30 2 * * *`, Europe/Stockholm; payload as in issue; `sessionTarget: isolated`, Sonnet for execution, Gemini for Phase 2).
+5. **Documentation** ✅  
+   [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md) — protocol and multi-language usage. Cron job is optional (user/add-on).
 
-6. **Tests**
-   - [ ] Tests for Phase 1: sample JSONL → correct extraction and no false positives on skip filters.
-   - [ ] Tests for Phase 3: append-only TOOLS.md, cap, dedup behaviour (mocked memory_store/recall).
+6. **Tests** ✅  
+   `self-correction-extract.test.ts` — extraction and skip filters.
 
 ---
 

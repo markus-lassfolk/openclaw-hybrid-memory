@@ -81,6 +81,14 @@ const fullDefaults = {
       isolated: true,
       model: "gemini",
     },
+    {
+      name: "self-correction-analysis",
+      schedule: "30 2 * * *",
+      channel: "system",
+      message: "Run nightly self-correction analysis: openclaw hybrid-mem self-correction-run. Uses last 3 days of sessions; multi-language correction detection from .language-keywords.json (run build-languages first for non-English). Report: workspace memory/reports/self-correction-YYYY-MM-DD.md.",
+      isolated: true,
+      model: "sonnet",
+    },
   ],
 };
 
@@ -92,7 +100,7 @@ function deepMerge(target, source) {
       deepMerge(tgtVal, srcVal);
     } else if (key === "jobs" && Array.isArray(srcVal)) {
       const arr = Array.isArray(tgtVal) ? [...tgtVal] : [];
-      for (const def of ["nightly-memory-sweep", "weekly-reflection"]) {
+      for (const def of ["nightly-memory-sweep", "weekly-reflection", "self-correction-analysis"]) {
         if (!arr.some((j) => j?.name === def)) {
           const job = srcVal.find((j) => j?.name === def);
           if (job) arr.push(job);
