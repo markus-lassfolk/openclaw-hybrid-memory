@@ -46,6 +46,22 @@ This fails with "plugin already exists" if the folder is present; use `openclaw 
 
 ---
 
+## When "plugin not found" blocks install
+
+If you see **"plugin not found: openclaw-hybrid-memory"** and `openclaw plugins install` fails (because OpenClaw validates config before running commands), use one of these **standalone installers** — they bypass OpenClaw entirely:
+
+```bash
+# Option A: npx (recommended)
+npx -y openclaw-hybrid-memory-install
+
+# Option B: curl (no Node required in path for the installer itself)
+curl -sSL https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh | bash
+```
+
+Then restart: `openclaw gateway stop && openclaw gateway start`
+
+---
+
 ## Manual upgrade (copy from repo)
 
 If you install by copying files from this repo:

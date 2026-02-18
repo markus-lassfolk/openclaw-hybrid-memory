@@ -80,6 +80,8 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 - [Autonomous setup](docs/SETUP-AUTONOMOUS.md) — let an OpenClaw agent install it for you
 - [Manual install](docs/QUICKSTART.md) — copy extension files and configure by hand
 
+**If "plugin not found" blocks install:** Use `npx -y openclaw-hybrid-memory-install` or the [curl installer](https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh). See [UPGRADE-PLUGIN.md](docs/UPGRADE-PLUGIN.md#when-plugin-not-found-blocks-install).
+
 ---
 
 ## Prerequisites
