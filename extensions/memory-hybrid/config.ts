@@ -248,8 +248,8 @@ export type HybridMemoryConfig = {
   memoryTiering: MemoryTieringConfig;
   /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
   distill?: { apiKey?: string; defaultModel?: string };
-  /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
-  procedures: ProceduresConfig;
+  /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
+  languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };
   /** Optional: ingest workspace markdown files as facts (skills, TOOLS.md, etc.) */
   ingest?: IngestConfig;
   /** Optional: search tweaks (HyDE query expansion) */
@@ -604,6 +604,18 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
+    const langKwRaw = cfg.languageKeywords as Record<string, unknown> | undefined;
+    const languageKeywords =
+      langKwRaw && typeof langKwRaw === "object"
+        ? {
+            autoBuild: langKwRaw.autoBuild !== false,
+            weeklyIntervalDays:
+              typeof langKwRaw.weeklyIntervalDays === "number" && langKwRaw.weeklyIntervalDays >= 1
+                ? Math.min(30, Math.floor(langKwRaw.weeklyIntervalDays))
+                : 7,
+          }
+        : { autoBuild: true, weeklyIntervalDays: 7 };
+
     // Parse FR-004 memory tiering config
     const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
     const memoryTiering: MemoryTieringConfig = {
@@ -669,6 +681,7 @@ export const hybridConfigSchema = {
       procedures,
       memoryTiering,
       distill,
+      languageKeywords,
       ingest,
       search,
     };

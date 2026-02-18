@@ -426,6 +426,20 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill).toBeUndefined();
   });
 
+  it("languageKeywords defaults when omitted", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.languageKeywords).toEqual({ autoBuild: true, weeklyIntervalDays: 7 });
+  });
+
+  it("parses languageKeywords when provided", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      languageKeywords: { autoBuild: false, weeklyIntervalDays: 14 },
+    });
+    expect(result.languageKeywords.autoBuild).toBe(false);
+    expect(result.languageKeywords.weeklyIntervalDays).toBe(14);
+  });
+
   it("parses optional ingest config (issue #33)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
