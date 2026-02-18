@@ -136,7 +136,23 @@ export function parseSessionJsonl(
 }
 
 const SECRET_KEYS = new Set([
-  "apikey", "api_key", "password", "token", "secret", "authorization",
+  "apikey",
+  "api_key",
+  "password",
+  "token",
+  "secret",
+  "authorization",
+  "bearer",
+  "oauth",
+  "access_token",
+  "refresh_token",
+  "client_secret",
+  "client_id",
+  "private_key",
+  "ssh_key",
+  "credentials",
+  "auth",
+  "authentication",
 ]);
 
 /** Build a minimal recipe for storage (strip noisy args, never store secrets). */
