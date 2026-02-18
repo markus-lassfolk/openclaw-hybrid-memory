@@ -354,6 +354,64 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 ---
 
+## Ingest workspace files (issue #33)
+
+Index workspace markdown (skills, TOOLS.md, AGENTS.md) as facts. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) for full docs.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "ingest": {
+            "paths": ["skills/**/*.md", "TOOLS.md", "AGENTS.md"],
+            "chunkSize": 800,
+            "overlap": 100
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `paths` | — | Glob patterns relative to workspace; required |
+| `chunkSize` | 800 | Chars per chunk for LLM extraction |
+| `overlap` | 100 | Overlap between chunks |
+
+---
+
+## Search (HyDE query expansion, issue #33)
+
+Opt-in HyDE generates a hypothetical answer before embedding for vector search. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md).
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "search": {
+            "hydeEnabled": false,
+            "hydeModel": "gpt-4o-mini"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `hydeEnabled` | `false` | Generate hypothetical answer before embedding |
+| `hydeModel` | `gpt-4o-mini` | Model for HyDE generation |
+
+---
+
 ## Custom categories
 
 ```json

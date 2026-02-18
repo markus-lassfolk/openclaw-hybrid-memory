@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **RRF and search improvements (issue #33):**
+  - **Reciprocal Rank Fusion (RRF)** — Replaced naive score-based merge in `services/merge-results.ts` with RRF. BM25 (SQLite) and cosine (LanceDB) scores are on incompatible scales; RRF uses rank-based fusion `rrf_score = sum(1/(k+rank))` so items ranking well in both keyword and semantic search naturally float to the top. Default k=60. Optional `mergeResults(..., { k })`.
+  - **`openclaw hybrid-mem ingest-files`** — Index workspace markdown (skills, TOOLS.md, AGENTS.md) as facts via LLM extraction. Config `ingest.paths`, `ingest.chunkSize`, `ingest.overlap`. Facts stored with `category: technical`, `decayClass: stable`, tags include `ingest`.
+  - **HyDE query expansion** — Opt-in: `search.hydeEnabled: true` generates a hypothetical answer before embedding for vector search (memory_recall + auto-recall). Config `search.hydeModel` (default gpt-4o-mini). Adds latency/API cost per search.
+
 - **Procedural memory (issue #23):** Auto-generated skills from learned patterns. Three layers:
   - **Layer 1 — Procedure tagging:** During session processing, multi-step tool-call sequences are extracted from session JSONL; successful runs are stored as positive procedures, failures as negative procedures. New `procedures` table and optional columns on `facts` (`procedure_type`, `success_count`, `last_validated`, `source_sessions`). CLI: `openclaw hybrid-mem extract-procedures [--dir path] [--days N] [--dry-run]` to scan session logs and upsert procedures. Secrets are never stored in recipes (redacted in procedure-extractor).
   - **Layer 2 — Procedure-aware recall:** `memory_recall_procedures(taskDescription)` tool returns "Last time this worked" steps and "⚠️ Known issue" warnings. Auto-recall injects a `<relevant-procedures>` block when the prompt matches stored procedures (positive and negative). Config: `procedures.enabled` (default true), `procedures.sessionsDir`, `procedures.minSteps`, etc.

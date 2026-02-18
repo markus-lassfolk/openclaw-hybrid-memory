@@ -34,6 +34,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `upgrade` | Upgrade to latest from npm. Removes current install, fetches latest, rebuilds native deps. Restart gateway afterward. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. |
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. `--model M` picks the LLM (e.g. `gemini-2.0-flash` for Gemini; config `distill.defaultModel` used when omitted). Gemini uses larger batches (500k tokens). Oversized sessions chunked with 10% overlap. |
+| `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
 | `record-distill` | Record that session distillation was run (timestamp for `verify`). |
 | `extract-procedures [--dir path] [--days N] [--dry-run]` | Extract tool-call procedures from session JSONL; store positive/negative procedures. |
@@ -42,6 +43,24 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `scope prune-session <session-id>` | **(FR-006)** Delete session-scoped memories for a given session (cleared on session end). |
 | `scope promote --id <fact-id> --scope global or agent [--scope-target <target>]` | **(FR-006)** Promote a session-scoped memory to global or agent scope (persists after session end). |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
+
+---
+
+## Ingest-files
+
+```
+openclaw hybrid-mem ingest-files [--dry-run] [--workspace <path>] [--paths <glob1,glob2,...>]
+```
+
+Index workspace markdown as facts via LLM extraction. Default patterns: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md` (or config `ingest.paths`).
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Preview without storing |
+| `--workspace <path>` | Workspace root (default: `OPENCLAW_WORKSPACE` or cwd) |
+| `--paths <globs>` | Comma-separated globs (overrides config) |
+
+→ Full docs: [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md)
 
 ---
 
@@ -122,5 +141,6 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 - [REFLECTION.md](REFLECTION.md) — Reflection layer (`reflect`, `reflect-rules`, `reflect-meta`)
 - [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault (`credentials migrate-to-vault`)
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation (`distill-window`, `record-distill`)
+- [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) — RRF merge, `ingest-files`, HyDE
 - [MEMORY-SCOPING.md](MEMORY-SCOPING.md) — **(FR-006)** Scope types, store/recall filters, session cleanup, promote
 - [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) — Procedural memory (`extract-procedures`, `generate-auto-skills`)

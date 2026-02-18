@@ -41,16 +41,17 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type IngestFilesResult, type IngestFilesSink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
+import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
-import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, chunkSessionText } from "./utils/text.js";
+import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, chunkSessionText, chunkTextByChars } from "./utils/text.js";
 import {
   REFLECTION_MAX_FACT_LENGTH,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
@@ -2180,7 +2181,25 @@ const memoryHybridPlugin = {
           let lanceResults: SearchResult[] = [];
           if (!tag) {
             try {
-              const vector = await embeddings.embed(query);
+              let textToEmbed = query;
+              if (cfg.search?.hydeEnabled) {
+                try {
+                  const hydeModel = cfg.search.hydeModel ?? "gpt-4o-mini";
+                  const hydeContent = await chatComplete({
+                    model: hydeModel,
+                    content: `Write a short factual statement (1-2 sentences) that answers: ${query}\n\nOutput only the statement, no preamble.`,
+                    temperature: 0.3,
+                    maxTokens: 150,
+                    openai,
+                    geminiApiKey: cfg.distill?.apiKey,
+                  });
+                  const hydeText = hydeContent.trim();
+                  if (hydeText.length > 10) textToEmbed = hydeText;
+                } catch (err) {
+                  api.logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);
+                }
+              }
+              const vector = await embeddings.embed(textToEmbed);
               lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
               lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
             } catch (err) {
@@ -4769,7 +4788,141 @@ const memoryHybridPlugin = {
           return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: false };
         }
 
+        const DEFAULT_INGEST_PATHS = ["skills/**/*.md", "TOOLS.md", "AGENTS.md"];
         const DISTILL_DEDUP_THRESHOLD = 0.85;
+
+        async function runIngestFilesForCli(
+          opts: { dryRun: boolean; workspace?: string; paths?: string[] },
+          sink: IngestFilesSink,
+        ): Promise<IngestFilesResult> {
+          const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+          const ingestCfg = cfg.ingest;
+          const patterns = opts.paths?.length
+            ? opts.paths
+            : ingestCfg?.paths?.length
+              ? ingestCfg.paths
+              : DEFAULT_INGEST_PATHS;
+          const chunkSize = ingestCfg?.chunkSize ?? 800;
+          const overlap = ingestCfg?.overlap ?? 100;
+
+          const files = gatherIngestFiles(workspaceRoot, patterns);
+          if (files.length === 0) {
+            sink.log(`No markdown files found for patterns: ${patterns.join(", ")} under ${workspaceRoot}`);
+            return { stored: 0, skipped: 0, extracted: 0, files: 0, dryRun: opts.dryRun };
+          }
+
+          const model = cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          const ingestPrompt = loadPrompt("ingest-files");
+          const batches: string[] = [];
+          let currentBatch = "";
+          const batchTokenLimit = distillBatchTokenLimit(model);
+
+          for (const fp of files) {
+            const content = readFileSync(fp, "utf-8");
+            if (!content.trim()) continue;
+            const relPath = fp.startsWith(workspaceRoot) ? fp.slice(workspaceRoot.length).replace(/^\//, "") : basename(fp);
+            const chunks = chunkTextByChars(content, chunkSize, overlap);
+            for (let c = 0; c < chunks.length; c++) {
+              const header =
+                chunks.length === 1
+                  ? `\n--- FILE: ${relPath} ---\n\n`
+                  : `\n--- FILE: ${relPath} (chunk ${c + 1}/${chunks.length}) ---\n\n`;
+              const block = header + chunks[c];
+              const blockTokens = Math.ceil(block.length / 4);
+              if (currentBatch.length > 0 && estimateTokens(currentBatch) + blockTokens > batchTokenLimit) {
+                batches.push(currentBatch);
+                currentBatch = block;
+              } else {
+                currentBatch += (currentBatch ? "\n" : "") + block;
+              }
+            }
+          }
+          if (currentBatch.trim()) batches.push(currentBatch);
+
+          const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; tags?: string[] }> = [];
+          for (let b = 0; b < batches.length; b++) {
+            sink.log(`Processing batch ${b + 1}/${batches.length}...`);
+            const userContent = ingestPrompt + "\n\n" + batches[b];
+            try {
+              const content = await chatComplete({
+                model,
+                content: userContent,
+                temperature: 0.2,
+                maxTokens: 8000,
+                openai,
+                geminiApiKey: cfg.distill?.apiKey,
+              });
+              const lines = content.split("\n").filter((l) => l.trim());
+              for (const line of lines) {
+                const jsonMatch = line.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) continue;
+                try {
+                  const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+                  const category = String(obj.category || "technical").toLowerCase();
+                  const text = String(obj.text || "").trim();
+                  if (!text || text.length < 10) continue;
+                  const entity = typeof obj.entity === "string" ? obj.entity : null;
+                  const key = typeof obj.key === "string" ? obj.key : null;
+                  const value = typeof obj.value === "string" ? obj.value : (entity && key ? text.slice(0, 200) : "");
+                  const tags = Array.isArray(obj.tags) ? (obj.tags as string[]).filter((t) => typeof t === "string") : [];
+                  allFacts.push({
+                    category: isValidCategory(category) ? category : "technical",
+                    text,
+                    entity: entity ?? undefined,
+                    key: key ?? undefined,
+                    value,
+                    tags: [...tags, "ingest"],
+                  });
+                } catch { /* skip malformed JSON */ }
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: ingest-files LLM batch ${b + 1} failed: ${err}`);
+            }
+          }
+
+          if (opts.dryRun) {
+            sink.log(`Would extract ${allFacts.length} facts from ${files.length} files`);
+            return { stored: 0, skipped: 0, extracted: allFacts.length, files: files.length, dryRun: true };
+          }
+
+          let stored = 0;
+          let skipped = 0;
+          for (const fact of allFacts) {
+            if (factsDb.hasDuplicate(fact.text)) {
+              skipped++;
+              continue;
+            }
+            try {
+              const vector = await embeddings.embed(fact.text);
+              if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
+                skipped++;
+                continue;
+              }
+              const entry = factsDb.store({
+                text: fact.text,
+                category: (isValidCategory(fact.category) ? fact.category : "technical") as MemoryCategory,
+                importance: BATCH_STORE_IMPORTANCE,
+                entity: fact.entity ?? null,
+                key: fact.key ?? null,
+                value: fact.value ?? fact.text.slice(0, 200),
+                source: "ingest",
+                decayClass: "stable",
+                tags: fact.tags,
+              });
+              await vectorDb.store({
+                text: fact.text,
+                vector,
+                importance: BATCH_STORE_IMPORTANCE,
+                category: fact.category,
+                id: entry.id,
+              });
+              stored++;
+            } catch (err) {
+              sink.warn(`memory-hybrid: ingest-files store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+            }
+          }
+          return { stored, skipped, extracted: allFacts.length, files: files.length, dryRun: false };
+        }
 
         function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string }): Array<{ path: string; mtime: number }> {
           const openclawDir = join(homedir(), ".openclaw");
@@ -5082,6 +5235,7 @@ const memoryHybridPlugin = {
           runRecordDistill: () => Promise.resolve(runRecordDistillForCli()),
           runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
           runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
+          runIngestFiles: (opts, sink) => runIngestFilesForCli(opts, sink),
           runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runExtractProcedures: (opts) => runExtractProceduresForCli(opts),
           runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
@@ -5128,7 +5282,7 @@ const memoryHybridPlugin = {
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -5203,7 +5357,25 @@ const memoryHybridPlugin = {
           const ftsResults = factsDb.search(e.prompt, limit, { tierFilter, scopeFilter });
           let lanceResults: SearchResult[] = [];
           try {
-            const vector = await embeddings.embed(e.prompt);
+            let textToEmbed = e.prompt;
+            if (cfg.search?.hydeEnabled) {
+              try {
+                const hydeModel = cfg.search.hydeModel ?? "gpt-4o-mini";
+                const hydeContent = await chatComplete({
+                  model: hydeModel,
+                  content: `Write a short factual statement (1-2 sentences) that answers: ${e.prompt}\n\nOutput only the statement, no preamble.`,
+                  temperature: 0.3,
+                  maxTokens: 150,
+                  openai,
+                  geminiApiKey: cfg.distill?.apiKey,
+                });
+                const hydeText = hydeContent.trim();
+                if (hydeText.length > 10) textToEmbed = hydeText;
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: HyDE generation failed, using raw prompt: ${err}`);
+              }
+            }
+            const vector = await embeddings.embed(textToEmbed);
             lanceResults = await vectorDb.search(vector, limit * 2, minScore);
             lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
             // FR-005: Enrich lance results with full entry and apply dynamic salience

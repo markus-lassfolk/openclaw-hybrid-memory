@@ -140,6 +140,24 @@ export type MemoryTieringConfig = {
   hotMaxFacts: number;
 };
 
+/** Search options (issue #33): HyDE query expansion */
+export type SearchConfig = {
+  /** Generate hypothetical answer before embedding for vector search (default false) */
+  hydeEnabled: boolean;
+  /** Model for HyDE generation (default gpt-4o-mini) */
+  hydeModel: string;
+};
+
+/** Ingest workspace files (issue #33): index markdown files as facts for search */
+export type IngestConfig = {
+  /** Glob patterns relative to workspace (e.g. ["skills/**\/*.md", "TOOLS.md"]) */
+  paths: string[];
+  /** Chunk size in characters for LLM extraction (default 800) */
+  chunkSize: number;
+  /** Overlap between chunks (default 100) */
+  overlap: number;
+};
+
 /** Procedural memory (issue #23): auto-generated skills from learned patterns */
 export type ProceduresConfig = {
   enabled: boolean;
@@ -213,6 +231,10 @@ export type HybridMemoryConfig = {
   distill?: { apiKey?: string; defaultModel?: string };
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
   procedures: ProceduresConfig;
+  /** Optional: ingest workspace markdown files as facts (skills, TOOLS.md, etc.) */
+  ingest?: IngestConfig;
+  /** Optional: search tweaks (HyDE query expansion) */
+  search?: SearchConfig;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -579,6 +601,31 @@ export const hybridConfigSchema = {
       requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     };
 
+    // Parse optional ingest config (issue #33)
+    const ingestRaw = cfg.ingest as Record<string, unknown> | undefined;
+    const ingest: IngestConfig | undefined =
+      ingestRaw && Array.isArray(ingestRaw.paths) && ingestRaw.paths.length > 0
+        ? {
+            paths: (ingestRaw.paths as string[]).filter((p) => typeof p === "string" && p.length > 0),
+            chunkSize: typeof ingestRaw.chunkSize === "number" && ingestRaw.chunkSize > 0
+              ? Math.floor(ingestRaw.chunkSize)
+              : 800,
+            overlap: typeof ingestRaw.overlap === "number" && ingestRaw.overlap >= 0
+              ? Math.floor(ingestRaw.overlap)
+              : 100,
+          }
+          : undefined;
+
+    // Parse optional search config (issue #33 - HyDE)
+    const searchRaw = cfg.search as Record<string, unknown> | undefined;
+    const search: SearchConfig | undefined =
+      searchRaw && typeof searchRaw === "object"
+        ? {
+            hydeEnabled: searchRaw.hydeEnabled === true,
+            hydeModel: typeof searchRaw.hydeModel === "string" ? searchRaw.hydeModel : "gpt-4o-mini",
+          }
+        : undefined;
+
     return {
       embedding: {
         provider: "openai",
@@ -603,6 +650,8 @@ export const hybridConfigSchema = {
       memoryTiering,
       distill,
       procedures,
+      ingest,
+      search,
     };
   },
 };
