@@ -20,6 +20,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Reflection** | [REFLECTION.md](REFLECTION.md) | Pattern synthesis from facts (reflect, reflect-rules, reflect-meta) |
 | **Graph memory** | [GRAPH-MEMORY.md](GRAPH-MEMORY.md) | Typed links between facts, spreading activation |
 | **Session distillation** | [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) | Extracting facts from session logs |
+| **Procedural memory** | [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) | Procedure tagging, recall, auto-skills from session tool sequences (issue #23) |
 | **Credentials** | [CREDENTIALS.md](CREDENTIALS.md) | Opt-in encrypted credential vault |
 | **WAL** | [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) | Write-ahead log for crash resilience |
 | **Conflicting memories** | [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) | Classify-before-write (ADD/UPDATE/DELETE/NOOP), supersession, bi-temporal |
@@ -211,6 +212,7 @@ Facts can have optional **tags** for topic filtering. When `tags` are omitted, t
 - [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph-based spreading activation (fact linking)
 - [CREDENTIALS.md](CREDENTIALS.md) — Credential vault (opt-in encrypted store)
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Extracting facts from session logs
+- [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) — Procedural memory (procedure tagging, recall, auto-skills)
 - [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) — Conflicting/contradictory memories (classify-before-write, supersession)
 - [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md) — Automatic category discovery
 - [DYNAMIC-DERIVED-DATA.md](DYNAMIC-DERIVED-DATA.md) — Overview of tags, categories, decay, and other derived data

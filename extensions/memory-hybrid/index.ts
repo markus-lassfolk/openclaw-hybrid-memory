@@ -13,7 +13,7 @@ import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { createHash, randomUUID, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,14 +41,17 @@ import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type IngestFilesResult, type IngestFilesSink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit } from "./services/chat.js";
+import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
+import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
+import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
-import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, chunkSessionText } from "./utils/text.js";
+import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, chunkSessionText, chunkTextByChars } from "./utils/text.js";
 import {
   REFLECTION_MAX_FACT_LENGTH,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
@@ -80,6 +83,21 @@ import {
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
 import { computeDynamicSalience } from "./utils/salience.js";
+import {
+  setKeywordsPath,
+  getLanguageKeywordsFilePath,
+  getMemoryTriggerRegexes,
+  getCategoryDecisionRegex,
+  getCategoryPreferenceRegex,
+  getCategoryEntityRegex,
+  getCategoryFactRegex,
+  getExtractionTemplates,
+  getCorrectionSignalRegex,
+} from "./utils/language-keywords.js";
+import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "./services/self-correction-extract.js";
+import { insertRulesUnderSection } from "./services/tools-md-section.js";
+import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
+import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./services/language-keywords-build.js";
 
 // ============================================================================
 // Credentials Store (opt-in, encrypted)
@@ -574,6 +592,17 @@ function extractStructuredFields(
     };
   }
 
+  const decisionMatchSv = text.match(
+    /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i,
+  );
+  if (decisionMatchSv) {
+    return {
+      entity: "decision",
+      key: decisionMatchSv[1].trim().slice(0, 100),
+      value: decisionMatchSv[2]?.trim() || "no rationale recorded",
+    };
+  }
+
   const choiceMatch = text.match(
     /(?:use|using|chose|prefer|picked)\s+(.+?)\s+(?:over|instead of|rather than)\s+(.+?)(?:\s+(?:because|since|for|due to)\s+(.+?))?\.?$/i,
   );
@@ -586,13 +615,13 @@ function extractStructuredFields(
   }
 
   const ruleMatch = text.match(
-    /(?:always|never|must|should always|should never)\s+(.+?)\.?$/i,
+    /(?:always|never|must|should always|should never|alltid|aldrig)\s+(.+?)\.?$/i,
   );
   if (ruleMatch) {
     return {
       entity: "convention",
       key: ruleMatch[1].trim().slice(0, 100),
-      value: lower.includes("never") ? "never" : "always",
+      value: lower.includes("never") || lower.includes("aldrig") ? "never" : "always",
     };
   }
 
@@ -607,6 +636,17 @@ function extractStructuredFields(
     };
   }
 
+  const possessiveMatchSv = text.match(
+    /(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i,
+  );
+  if (possessiveMatchSv) {
+    return {
+      entity: "user",
+      key: possessiveMatchSv[1].trim(),
+      value: possessiveMatchSv[2].trim(),
+    };
+  }
+
   const preferMatch = text.match(
     /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/,
   );
@@ -617,6 +657,31 @@ function extractStructuredFields(
       value: preferMatch[2].trim(),
     };
   }
+
+  const preferMatchSv = text.match(
+    /jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i,
+  );
+  if (preferMatchSv) {
+    return {
+      entity: "user",
+      key: preferMatchSv[1],
+      value: preferMatchSv[2].trim(),
+    };
+  }
+
+  const heterMatch = text.match(
+    /heter\s+(.+?)\.?$/i,
+  );
+  if (heterMatch) {
+    return {
+      entity: "entity",
+      key: "name",
+      value: heterMatch[1].trim(),
+    };
+  }
+
+  const templateResult = tryExtractionFromTemplates(getExtractionTemplates(), text);
+  if (templateResult) return templateResult;
 
   const emailMatch = text.match(/([\w.-]+@[\w.-]+\.\w+)/);
   if (emailMatch) {
@@ -630,7 +695,8 @@ function extractStructuredFields(
 
   if (category === "entity") {
     const words = text.split(/\s+/);
-    const properNouns = words.filter((w) => /^[A-Z][a-z]+/.test(w));
+    // Include Swedish/Nordic letters (åäö) and other Unicode letters so names like Doris, Lotta, Åsa match
+    const properNouns = words.filter((w) => /^\p{Lu}\p{L}+$/u.test(w));
     if (properNouns.length > 0) {
       return { entity: properNouns[0], key: null, value: null };
     }
@@ -643,22 +709,10 @@ function extractStructuredFields(
 // Auto-capture Filters
 // ============================================================================
 
-const MEMORY_TRIGGERS = [
-  /remember|zapamatuj si|pamatuj/i,
-  /prefer|radši|nechci/i,
-  /decided|rozhodli jsme|budeme používat/i,
-  /\+\d{10,}/,
-  /[\w.-]+@[\w.-]+\.\w+/,
-  /my\s+\w+\s+is|is\s+my/i,
-  /i (like|prefer|hate|love|want|need)/i,
-  /always|never|important/i,
-  /born on|birthday|lives in|works at/i,
-  /password is|api key|token is/i,
-  /chose|selected|went with|picked/i,
-  /over.*because|instead of.*since/i,
-  /\balways\b.*\buse\b|\bnever\b.*\buse\b/i,
-  /architecture|stack|approach/i,
-];
+/** Memory triggers: English + dynamic languages from .language-keywords.json (see build-languages command). */
+function getMemoryTriggers(): RegExp[] {
+  return getMemoryTriggerRegexes();
+}
 
 const SENSITIVE_PATTERNS = [
   /password/i,
@@ -881,18 +935,15 @@ function shouldCapture(text: string): boolean {
   const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
   if (emojiCount > 3) return false;
   if (SENSITIVE_PATTERNS.some((r) => r.test(text))) return false;
-  return MEMORY_TRIGGERS.some((r) => r.test(text));
+  return getMemoryTriggers().some((r) => r.test(text));
 }
 
 function detectCategory(text: string): MemoryCategory {
   const lower = text.toLowerCase();
-  if (/decided|chose|went with|selected|always use|never use|over.*because|instead of.*since|rozhodli|will use|budeme/i.test(lower))
-    return "decision";
-  if (/prefer|radši|like|love|hate|want/i.test(lower)) return "preference";
-  if (/\+\d{10,}|@[\w.-]+\.\w+|is called|jmenuje se/i.test(lower))
-    return "entity";
-  if (/born|birthday|lives|works|is\s|are\s|has\s|have\s/i.test(lower))
-    return "fact";
+  if (getCategoryDecisionRegex().test(lower)) return "decision";
+  if (getCategoryPreferenceRegex().test(lower)) return "preference";
+  if (/\+\d{10,}|@[\w.-]+\.\w+/.test(lower) || getCategoryEntityRegex().test(lower)) return "entity";
+  if (getCategoryFactRegex().test(lower)) return "fact";
   return "other";
 }
 
@@ -1788,6 +1839,8 @@ let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
+let languageKeywordsTimer: ReturnType<typeof setInterval> | null = null;
+let languageKeywordsStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /** FR-009: Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
 let lastProgressiveIndexIds: string[] = [];
@@ -1870,6 +1923,7 @@ const memoryHybridPlugin = {
     cfg = hybridConfigSchema.parse(api.pluginConfig);
     resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
     resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
+    setKeywordsPath(dirname(resolvedSqlitePath));
     const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
     factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
@@ -2178,7 +2232,25 @@ const memoryHybridPlugin = {
           let lanceResults: SearchResult[] = [];
           if (!tag) {
             try {
-              const vector = await embeddings.embed(query);
+              let textToEmbed = query;
+              if (cfg.search?.hydeEnabled) {
+                try {
+                  const hydeModel = cfg.search.hydeModel ?? "gpt-4o-mini";
+                  const hydeContent = await chatComplete({
+                    model: hydeModel,
+                    content: `Write a short factual statement (1-2 sentences) that answers: ${query}\n\nOutput only the statement, no preamble.`,
+                    temperature: 0.3,
+                    maxTokens: 150,
+                    openai,
+                    geminiApiKey: cfg.distill?.apiKey,
+                  });
+                  const hydeText = hydeContent.trim();
+                  if (hydeText.length > 10) textToEmbed = hydeText;
+                } catch (err) {
+                  api.logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);
+                }
+              }
+              const vector = await embeddings.embed(textToEmbed);
               lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
               lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
             } catch (err) {
@@ -2269,6 +2341,88 @@ const memoryHybridPlugin = {
       },
       { name: "memory_recall" },
     );
+
+    if (cfg.procedures.enabled) {
+      api.registerTool(
+        {
+          name: "memory_recall_procedures",
+          label: "Recall Procedures",
+          description:
+            "Search for learned procedures (positive: what worked; negative: known failures) matching a task description.",
+          parameters: Type.Object({
+            taskDescription: Type.String({
+              description: "What you are trying to do (e.g. 'check Moltbook', 'HA health checks')",
+            }),
+            limit: Type.Optional(
+              Type.Number({ description: "Max procedures to return (default: 5)" }),
+            ),
+          }),
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
+            const { taskDescription, limit = 5 } = params as {
+              taskDescription: string;
+              limit?: number;
+            };
+            const q = typeof taskDescription === "string" && taskDescription.trim().length > 0
+              ? taskDescription.trim()
+              : null;
+            if (!q) {
+              return {
+                content: [{ type: "text" as const, text: "Provide a task description to recall procedures." }],
+                details: { count: 0 },
+              };
+            }
+            const procedures = factsDb.searchProcedures(q, limit);
+            const negatives = factsDb.getNegativeProceduresMatching(q, 3);
+            const lines: string[] = [];
+            const positiveList = procedures.filter((p) => p.procedureType === "positive");
+            if (positiveList.length > 0) {
+              lines.push("Last time this worked:");
+              for (const p of positiveList) {
+                let recipe: unknown;
+                try {
+                  recipe = JSON.parse(p.recipeJson);
+                } catch {
+                  recipe = [];
+                }
+                const steps = Array.isArray(recipe)
+                  ? (recipe as Array<{ tool?: string; args?: Record<string, unknown> }>).map(
+                      (s) => s.tool + (s.args && Object.keys(s.args).length > 0 ? `(${JSON.stringify(s.args).slice(0, 80)}…)` : ""),
+                    ).join(" → ")
+                  : p.recipeJson.slice(0, 200);
+                lines.push(`- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x)`);
+              }
+            }
+            if (negatives.length > 0) {
+              lines.push("");
+              lines.push("⚠️ Known issues (avoid):");
+              for (const p of negatives) {
+                let recipe: unknown;
+                try {
+                  recipe = JSON.parse(p.recipeJson);
+                } catch {
+                  recipe = [];
+                }
+                const steps = Array.isArray(recipe)
+                  ? (recipe as Array<{ tool?: string }>).map((s) => s.tool).filter(Boolean).join(" → ")
+                  : "";
+                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}`);
+              }
+            }
+            if (lines.length === 0) {
+              return {
+                content: [{ type: "text" as const, text: "No procedures found for this task." }],
+                details: { count: 0 },
+              };
+            }
+            return {
+              content: [{ type: "text" as const, text: lines.join("\n") }],
+              details: { count: positiveList.length + negatives.length, procedures: positiveList.length, warnings: negatives.length },
+            };
+          },
+        },
+        { name: "memory_recall_procedures" },
+      );
+    }
 
     api.registerTool(
       {
@@ -3883,6 +4037,7 @@ const memoryHybridPlugin = {
                     autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
                     categories: [] as string[],
                     credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
+                    languageKeywords: { autoBuild: true, weeklyIntervalDays: 7 },
                   },
                 },
               },
@@ -4332,6 +4487,51 @@ const memoryHybridPlugin = {
           return { path, timestamp: ts };
         }
 
+        async function runExtractProceduresForCli(
+          opts: { sessionDir?: string; days?: number; dryRun: boolean },
+        ): Promise<ExtractProceduresResult> {
+          const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
+          let filePaths: string[] | undefined;
+          if (opts.days != null && opts.days > 0) {
+            const fs = await import("node:fs");
+            const pathMod = await import("node:path");
+            if (!fs.existsSync(sessionDir)) {
+              return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
+            }
+            const cutoff = Date.now() - opts.days * 24 * 60 * 60 * 1000;
+            const files = fs.readdirSync(sessionDir);
+            filePaths = files
+              .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
+              .map((f) => pathMod.join(sessionDir, f))
+              .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+          }
+          return extractProceduresFromSessions(
+            factsDb,
+            {
+              sessionDir: filePaths ? undefined : sessionDir,
+              filePaths,
+              minSteps: cfg.procedures.minSteps,
+              dryRun: opts.dryRun,
+            },
+            { info: (s) => api.logger.info?.(s) ?? console.log(s), warn: (s) => api.logger.warn?.(s) ?? console.warn(s) },
+          );
+        }
+
+        async function runGenerateAutoSkillsForCli(
+          opts: { dryRun: boolean },
+        ): Promise<GenerateAutoSkillsResult> {
+          return generateAutoSkills(
+            factsDb,
+            {
+              skillsAutoPath: cfg.procedures.skillsAutoPath,
+              validationThreshold: cfg.procedures.validationThreshold,
+              skillTTLDays: cfg.procedures.skillTTLDays,
+              dryRun: opts.dryRun,
+            },
+            { info: (s) => api.logger.info?.(s) ?? console.log(s), warn: (s) => api.logger.warn?.(s) ?? console.warn(s) },
+          );
+        }
+
         async function runExtractDailyForCli(
           opts: { days: number; dryRun: boolean },
           sink: ExtractDailySink,
@@ -4530,38 +4730,69 @@ const memoryHybridPlugin = {
           const decisionMatch = t.match(
             /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i
           );
+          const decisionMatchSv = t.match(
+            /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i
+          );
           if (decisionMatch) {
             entity = "decision";
             key = decisionMatch[1].trim().slice(0, 100);
             value = (decisionMatch[2] || "no rationale").trim();
             category = "decision";
+          } else if (decisionMatchSv) {
+            entity = "decision";
+            key = decisionMatchSv[1].trim().slice(0, 100);
+            value = (decisionMatchSv[2] || "no rationale").trim();
+            category = "decision";
           } else {
-            const ruleMatch = t.match(/(?:always|never)\s+(.+?)\.?$/i);
+            const ruleMatch = t.match(/(?:always|never|alltid|aldrig)\s+(.+?)\.?$/i);
             if (ruleMatch) {
               entity = "convention";
               key = ruleMatch[1].trim().slice(0, 100);
-              value = lower.includes("never") ? "never" : "always";
+              value = lower.includes("never") || lower.includes("aldrig") ? "never" : "always";
               category = "preference";
             } else {
               const possessiveMatch = t.match(
                 /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/
               );
+              const possessiveMatchSv = t.match(/(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i);
               if (possessiveMatch) {
                 entity = possessiveMatch[1] || "user";
                 key = possessiveMatch[2].trim();
                 value = possessiveMatch[3].trim();
                 category = "fact";
+              } else if (possessiveMatchSv) {
+                entity = "user";
+                key = possessiveMatchSv[1].trim();
+                value = possessiveMatchSv[2].trim();
+                category = "fact";
               } else {
                 const preferMatch = t.match(
                   /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/
                 );
+                const preferMatchSv = t.match(/jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i);
                 if (preferMatch) {
                   entity = "user";
                   key = preferMatch[1];
                   value = preferMatch[2].trim();
                   category = "preference";
+                } else if (preferMatchSv) {
+                  entity = "user";
+                  key = preferMatchSv[1];
+                  value = preferMatchSv[2].trim();
+                  category = "preference";
                 } else {
-                  value = t.slice(0, 200);
+                  const templateResult = tryExtractionFromTemplates(getExtractionTemplates(), t);
+                  if (templateResult && templateResult.entity && templateResult.value) {
+                    entity = templateResult.entity;
+                    key = templateResult.key;
+                    value = templateResult.value;
+                    if (entity === "decision") category = "decision";
+                    else if (entity === "convention") category = "preference";
+                    else if (entity === "user" && key) category = "preference";
+                    else category = "fact";
+                  } else {
+                    value = t.slice(0, 200);
+                  }
                 }
               }
             }
@@ -4640,7 +4871,141 @@ const memoryHybridPlugin = {
           return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: false };
         }
 
+        const DEFAULT_INGEST_PATHS = ["skills/**/*.md", "TOOLS.md", "AGENTS.md"];
         const DISTILL_DEDUP_THRESHOLD = 0.85;
+
+        async function runIngestFilesForCli(
+          opts: { dryRun: boolean; workspace?: string; paths?: string[] },
+          sink: IngestFilesSink,
+        ): Promise<IngestFilesResult> {
+          const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+          const ingestCfg = cfg.ingest;
+          const patterns = opts.paths?.length
+            ? opts.paths
+            : ingestCfg?.paths?.length
+              ? ingestCfg.paths
+              : DEFAULT_INGEST_PATHS;
+          const chunkSize = ingestCfg?.chunkSize ?? 800;
+          const overlap = ingestCfg?.overlap ?? 100;
+
+          const files = gatherIngestFiles(workspaceRoot, patterns);
+          if (files.length === 0) {
+            sink.log(`No markdown files found for patterns: ${patterns.join(", ")} under ${workspaceRoot}`);
+            return { stored: 0, skipped: 0, extracted: 0, files: 0, dryRun: opts.dryRun };
+          }
+
+          const model = cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          const ingestPrompt = loadPrompt("ingest-files");
+          const batches: string[] = [];
+          let currentBatch = "";
+          const batchTokenLimit = distillBatchTokenLimit(model);
+
+          for (const fp of files) {
+            const content = readFileSync(fp, "utf-8");
+            if (!content.trim()) continue;
+            const relPath = fp.startsWith(workspaceRoot) ? fp.slice(workspaceRoot.length).replace(/^\//, "") : basename(fp);
+            const chunks = chunkTextByChars(content, chunkSize, overlap);
+            for (let c = 0; c < chunks.length; c++) {
+              const header =
+                chunks.length === 1
+                  ? `\n--- FILE: ${relPath} ---\n\n`
+                  : `\n--- FILE: ${relPath} (chunk ${c + 1}/${chunks.length}) ---\n\n`;
+              const block = header + chunks[c];
+              const blockTokens = Math.ceil(block.length / 4);
+              if (currentBatch.length > 0 && estimateTokens(currentBatch) + blockTokens > batchTokenLimit) {
+                batches.push(currentBatch);
+                currentBatch = block;
+              } else {
+                currentBatch += (currentBatch ? "\n" : "") + block;
+              }
+            }
+          }
+          if (currentBatch.trim()) batches.push(currentBatch);
+
+          const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; tags?: string[] }> = [];
+          for (let b = 0; b < batches.length; b++) {
+            sink.log(`Processing batch ${b + 1}/${batches.length}...`);
+            const userContent = ingestPrompt + "\n\n" + batches[b];
+            try {
+              const content = await chatComplete({
+                model,
+                content: userContent,
+                temperature: 0.2,
+                maxTokens: 8000,
+                openai,
+                geminiApiKey: cfg.distill?.apiKey,
+              });
+              const lines = content.split("\n").filter((l) => l.trim());
+              for (const line of lines) {
+                const jsonMatch = line.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) continue;
+                try {
+                  const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+                  const category = String(obj.category || "technical").toLowerCase();
+                  const text = String(obj.text || "").trim();
+                  if (!text || text.length < 10) continue;
+                  const entity = typeof obj.entity === "string" ? obj.entity : null;
+                  const key = typeof obj.key === "string" ? obj.key : null;
+                  const value = typeof obj.value === "string" ? obj.value : (entity && key ? text.slice(0, 200) : "");
+                  const tags = Array.isArray(obj.tags) ? (obj.tags as string[]).filter((t) => typeof t === "string") : [];
+                  allFacts.push({
+                    category: isValidCategory(category) ? category : "technical",
+                    text,
+                    entity: entity ?? undefined,
+                    key: key ?? undefined,
+                    value,
+                    tags: [...tags, "ingest"],
+                  });
+                } catch { /* skip malformed JSON */ }
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: ingest-files LLM batch ${b + 1} failed: ${err}`);
+            }
+          }
+
+          if (opts.dryRun) {
+            sink.log(`Would extract ${allFacts.length} facts from ${files.length} files`);
+            return { stored: 0, skipped: 0, extracted: allFacts.length, files: files.length, dryRun: true };
+          }
+
+          let stored = 0;
+          let skipped = 0;
+          for (const fact of allFacts) {
+            if (factsDb.hasDuplicate(fact.text)) {
+              skipped++;
+              continue;
+            }
+            try {
+              const vector = await embeddings.embed(fact.text);
+              if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
+                skipped++;
+                continue;
+              }
+              const entry = factsDb.store({
+                text: fact.text,
+                category: (isValidCategory(fact.category) ? fact.category : "technical") as MemoryCategory,
+                importance: BATCH_STORE_IMPORTANCE,
+                entity: fact.entity ?? null,
+                key: fact.key ?? null,
+                value: fact.value ?? fact.text.slice(0, 200),
+                source: "ingest",
+                decayClass: "stable",
+                tags: fact.tags,
+              });
+              await vectorDb.store({
+                text: fact.text,
+                vector,
+                importance: BATCH_STORE_IMPORTANCE,
+                category: fact.category,
+                id: entry.id,
+              });
+              stored++;
+            } catch (err) {
+              sink.warn(`memory-hybrid: ingest-files store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+            }
+          }
+          return { stored, skipped, extracted: allFacts.length, files: files.length, dryRun: false };
+        }
 
         function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string }): Array<{ path: string; mtime: number }> {
           const openclawDir = join(homedir(), ".openclaw");
@@ -4854,6 +5219,265 @@ const memoryHybridPlugin = {
           });
         }
 
+        const SELF_CORRECTION_CAP = 5;
+
+        function runSelfCorrectionExtractForCli(opts: {
+          days?: number;
+          outputPath?: string;
+        }): SelfCorrectionExtractResult {
+          const sessionFiles = gatherSessionFiles({
+            days: opts.days ?? 3,
+          });
+          const filePaths = sessionFiles.map((f) => f.path);
+          if (filePaths.length === 0) {
+            return { incidents: [], sessionsScanned: 0 };
+          }
+          const result = runSelfCorrectionExtract({
+            filePaths,
+            correctionRegex: getCorrectionSignalRegex(),
+          });
+          if (opts.outputPath && result.incidents.length > 0) {
+            try {
+              mkdirSync(dirname(opts.outputPath), { recursive: true });
+              writeFileSync(opts.outputPath, JSON.stringify(result.incidents, null, 2), "utf-8");
+            } catch (e) {
+              api.logger.warn?.(`memory-hybrid: could not write self-correction extract: ${e}`);
+            }
+          }
+          return result;
+        }
+
+        type SelfCorrectionRunResult = {
+          incidentsFound: number;
+          analysed: number;
+          autoFixed: number;
+          proposals: string[];
+          reportPath: string | null;
+          toolsSuggestions?: string[];
+          toolsApplied?: number;
+          error?: string;
+        };
+
+        const DEFAULT_SELF_CORRECTION = {
+          semanticDedup: true,
+          semanticDedupThreshold: 0.92,
+          toolsSection: "Self-correction rules",
+          applyToolsByDefault: true,
+          autoRewriteTools: false,
+          analyzeViaSpawn: false,
+          spawnThreshold: 15,
+          spawnModel: "gemini",
+        } as const;
+
+        async function runSelfCorrectionRunForCli(opts: {
+          extractPath?: string;
+          incidents?: CorrectionIncident[];
+          workspace?: string;
+          dryRun?: boolean;
+          model?: string;
+          approve?: boolean;
+          noApplyTools?: boolean;
+        }): Promise<SelfCorrectionRunResult> {
+          const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
+          const reportDir = join(workspaceRoot, "memory", "reports");
+          const today = new Date().toISOString().slice(0, 10);
+          const reportPath = join(reportDir, `self-correction-${today}.md`);
+          let incidents: CorrectionIncident[];
+          if (opts.incidents && opts.incidents.length > 0) {
+            incidents = opts.incidents;
+          } else if (opts.extractPath) {
+            try {
+              const raw = readFileSync(opts.extractPath, "utf-8");
+              incidents = JSON.parse(raw) as CorrectionIncident[];
+            } catch (e) {
+              return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, error: String(e) };
+            }
+          } else {
+            const extractResult = runSelfCorrectionExtractForCli({ days: 3 });
+            incidents = extractResult.incidents;
+          }
+          if (incidents.length === 0) {
+            const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: 3 days.\nIncidents found: 0.\n`;
+            try {
+              mkdirSync(reportDir, { recursive: true });
+              writeFileSync(reportPath, emptyReport, "utf-8");
+            } catch { /* ignore */ }
+            return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
+          }
+          const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+            incidents_json: JSON.stringify(incidents),
+          });
+          const model = opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini";
+          let analysed: Array<{
+            category: string;
+            severity: string;
+            remediationType: string;
+            remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[] };
+            repeated?: boolean;
+          }> = [];
+          const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
+          try {
+            let content: string;
+            if (useSpawn) {
+              const { spawnSync } = await import("node:child_process");
+              const { tmpdir: osTmp } = await import("node:os");
+              const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
+              writeFileSync(promptPath, prompt, "utf-8");
+              const spawnModel = scCfg.spawnModel ?? "gemini";
+              const r = spawnSync(
+                "openclaw",
+                ["sessions", "spawn", "--model", spawnModel, "--message", "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.", "--attach", promptPath],
+                { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
+              );
+              try {
+                if (existsSync(promptPath)) rmSync(promptPath, { force: true });
+              } catch { /* ignore */ }
+              content = (r.stdout ?? "") + (r.stderr ?? "");
+              if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
+            } else {
+              content = await chatComplete({
+                model,
+                content: prompt,
+                temperature: 0.2,
+                maxTokens: 8000,
+                openai,
+                geminiApiKey: cfg.distill?.apiKey,
+              });
+            }
+            const jsonMatch = content.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+              analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
+            }
+          } catch (e) {
+            return {
+              incidentsFound: incidents.length,
+              analysed: 0,
+              autoFixed: 0,
+              proposals: [],
+              reportPath: null,
+              error: String(e),
+            };
+          }
+          const proposals: string[] = [];
+          const toolsSuggestions: string[] = [];
+          let autoFixed = 0;
+          let toolsApplied = 0;
+          const toApply = analysed.filter((a) => a.remediationType !== "NO_ACTION" && !a.repeated).slice(0, SELF_CORRECTION_CAP);
+          const toolsPath = join(workspaceRoot, "TOOLS.md");
+          const toolsSection = scCfg.toolsSection;
+          const semanticThreshold = scCfg.semanticDedupThreshold ?? 0.92;
+
+          for (const a of toApply) {
+            if (a.remediationType === "MEMORY_STORE") {
+              const c = a.remediationContent;
+              const obj = typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
+              const text = (obj.text ?? "").trim();
+              if (!text || factsDb.hasDuplicate(text)) continue;
+              let vector: number[] | null = null;
+              if (scCfg.semanticDedup || !opts.dryRun) {
+                try {
+                  vector = await embeddings.embed(text);
+                  if (scCfg.semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
+                } catch (err) {
+                  api.logger.warn?.(`memory-hybrid: self-correction embed/semantic dedup failed: ${err}`);
+                  continue;
+                }
+              }
+              if (opts.dryRun) continue;
+              try {
+                const entry = factsDb.store({
+                  text,
+                  category: "technical",
+                  importance: CLI_STORE_IMPORTANCE,
+                  entity: obj.entity ?? null,
+                  key: typeof obj.key === "string" ? obj.key : null,
+                  value: text.slice(0, 200),
+                  source: "self-correction",
+                  tags: Array.isArray(obj.tags) ? obj.tags : [],
+                });
+                if (vector) await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+                autoFixed++;
+              } catch (err) {
+                api.logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
+              }
+            } else if (a.remediationType === "TOOLS_RULE") {
+              const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
+              if (line.trim()) toolsSuggestions.push(line.trim());
+            } else if (a.remediationType === "AGENTS_RULE" || a.remediationType === "SKILL_UPDATE") {
+              const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
+              if (line.trim()) proposals.push(`[${a.remediationType}] ${line.trim()}`);
+            }
+          }
+
+          const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !opts.noApplyTools;
+          if (toolsSuggestions.length > 0 && !opts.dryRun) {
+            if (scCfg.autoRewriteTools && existsSync(toolsPath)) {
+              try {
+                const currentTools = readFileSync(toolsPath, "utf-8");
+                const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
+                  current_tools: currentTools,
+                  new_rules: toolsSuggestions.join("\n"),
+                });
+                const rewritten = await chatComplete({
+                  model: opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini",
+                  content: rewritePrompt,
+                  temperature: 0.2,
+                  maxTokens: 16000,
+                  openai,
+                  geminiApiKey: cfg.distill?.apiKey,
+                });
+                const cleaned = rewritten.trim().replace(/^```\w*\n?|```\s*$/g, "").trim();
+                if (cleaned.length > 50) {
+                  writeFileSync(toolsPath, cleaned, "utf-8");
+                  toolsApplied = toolsSuggestions.length;
+                  autoFixed += toolsApplied;
+                }
+              } catch (err) {
+                api.logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
+              }
+            } else if (shouldApplyTools && existsSync(toolsPath)) {
+              const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
+              toolsApplied = inserted;
+              autoFixed += inserted;
+            }
+          }
+
+          const reportLines = [
+            `# Self-Correction Analysis (${today})`,
+            "",
+            `Scanned: last 3 days. Incidents found: ${incidents.length}.`,
+            `Analysed: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
+            "",
+            ...(autoFixed > 0 ? ["## Auto-applied", "", `- ${autoFixed} memory store(s) and/or TOOLS.md rule(s).`, ""] : []),
+            ...(toolsSuggestions.length > 0 && toolsApplied === 0 && !scCfg.autoRewriteTools
+              ? [
+                  "## Suggested TOOLS.md rules (not applied this run). To apply: config applyToolsByDefault is true by default, or use --approve. To skip applying: --no-apply-tools.",
+                  "",
+                  ...toolsSuggestions.map((s) => `- ${s}`),
+                  "",
+                ]
+              : []),
+            ...(toolsApplied > 0 ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section \"${toolsSection}\".`, ""] : []),
+            ...(proposals.length > 0 ? ["## Proposed (review before applying)", "", ...proposals.map((p) => `- ${p}`), ""] : []),
+          ];
+          try {
+            mkdirSync(reportDir, { recursive: true });
+            writeFileSync(reportPath, reportLines.join("\n"), "utf-8");
+          } catch (e) {
+            api.logger.warn?.(`memory-hybrid: could not write report: ${e}`);
+          }
+          return {
+            incidentsFound: incidents.length,
+            analysed: analysed.length,
+            autoFixed,
+            proposals,
+            reportPath,
+            toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
+            toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
+          };
+        }
+
         async function runUpgradeForCli(): Promise<UpgradeCliResult> {
           const extDir = dirname(fileURLToPath(import.meta.url));
           const { spawnSync } = await import("node:child_process");
@@ -4952,7 +5576,10 @@ const memoryHybridPlugin = {
           runDistillWindow: (opts) => Promise.resolve(runDistillWindowForCli(opts)),
           runRecordDistill: () => Promise.resolve(runRecordDistillForCli()),
           runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
+          runExtractProcedures: (opts) => runExtractProceduresForCli(opts),
+          runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
           runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
+          runIngestFiles: (opts, sink) => runIngestFilesForCli(opts, sink),
           runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
@@ -4994,10 +5621,26 @@ const memoryHybridPlugin = {
                 hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
               }),
             ),
+          runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) =>
+            runBuildLanguageKeywordsService(
+              factsDb.getFactsForConsolidation(300),
+              openai,
+              dirname(resolvedSqlitePath),
+              { model: opts.model ?? cfg.autoClassify.model, dryRun: opts.dryRun },
+            ),
+          runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) =>
+            Promise.resolve(runSelfCorrectionExtractForCli(opts)),
+          runSelfCorrectionRun: (opts: {
+            extractPath?: string;
+            incidents?: CorrectionIncident[];
+            workspace?: string;
+            dryRun?: boolean;
+            model?: string;
+          }) => runSelfCorrectionRunForCli(opts),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -5010,6 +5653,36 @@ const memoryHybridPlugin = {
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
+          // Procedural memory: inject relevant procedures and negative warnings (issue #23)
+          let procedureBlock = "";
+          if (cfg.procedures.enabled) {
+            const procs = factsDb.searchProcedures(e.prompt, 3);
+            const negs = factsDb.getNegativeProceduresMatching(e.prompt, 2);
+            const procLines: string[] = [];
+            const positiveList = procs.filter((p) => p.procedureType === "positive");
+            if (positiveList.length > 0) {
+              procLines.push("Last time this worked:");
+              for (const p of positiveList.slice(0, 2)) {
+                try {
+                  const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>).map((s) => s.tool).filter(Boolean).join(" → ");
+                  procLines.push(`- ${p.taskPattern.slice(0, 60)}…: ${steps}`);
+                } catch {
+                  procLines.push(`- ${p.taskPattern.slice(0, 80)}`);
+                }
+              }
+            }
+            if (negs.length > 0) {
+              procLines.push("⚠️ Known issue (avoid):");
+              for (const n of negs.slice(0, 2)) {
+                procLines.push(`- ${n.taskPattern.slice(0, 70)}…`);
+              }
+            }
+            if (procLines.length > 0) {
+              procedureBlock = "<relevant-procedures>\n" + procLines.join("\n") + "\n</relevant-procedures>";
+            }
+          }
+          const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
+
           // FR-009: Use configurable candidate pool for progressive disclosure
           const fmt = cfg.autoRecall.injectionFormat;
           const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -5042,7 +5715,25 @@ const memoryHybridPlugin = {
           const ftsResults = factsDb.search(e.prompt, limit, { tierFilter, scopeFilter });
           let lanceResults: SearchResult[] = [];
           try {
-            const vector = await embeddings.embed(e.prompt);
+            let textToEmbed = e.prompt;
+            if (cfg.search?.hydeEnabled) {
+              try {
+                const hydeModel = cfg.search.hydeModel ?? "gpt-4o-mini";
+                const hydeContent = await chatComplete({
+                  model: hydeModel,
+                  content: `Write a short factual statement (1-2 sentences) that answers: ${e.prompt}\n\nOutput only the statement, no preamble.`,
+                  temperature: 0.3,
+                  maxTokens: 150,
+                  openai,
+                  geminiApiKey: cfg.distill?.apiKey,
+                });
+                const hydeText = hydeContent.trim();
+                if (hydeText.length > 10) textToEmbed = hydeText;
+              } catch (err) {
+                api.logger.warn(`memory-hybrid: HyDE generation failed, using raw prompt: ${err}`);
+              }
+            }
+            const vector = await embeddings.embed(textToEmbed);
             lanceResults = await vectorDb.search(vector, limit * 2, minScore);
             lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
             // FR-005: Enrich lance results with full entry and apply dynamic salience
@@ -5265,7 +5956,7 @@ const memoryHybridPlugin = {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: hotBlock + fullContent };
+            return { prependContext: hotBlock + withProcedures(fullContent) };
           }
 
           if (injectionFormat === "progressive") {
@@ -5276,7 +5967,12 @@ const memoryHybridPlugin = {
               indexCap - estimateTokens(indexHeader + indexFooter),
               1,
             );
-            if (indexLines.length === 0) return;
+            if (indexLines.length === 0) {
+              if (procedureBlock) {
+                return { prependContext: hotBlock + procedureBlock };
+              }
+              return hotBlock ? { prependContext: hotBlock } : undefined;
+            }
             lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
             factsDb.refreshAccessedFacts(includedIds);
@@ -5293,7 +5989,7 @@ const memoryHybridPlugin = {
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
             );
             return {
-              prependContext: hotBlock + `${indexHeader}${indexContent}${indexFooter}`,
+              prependContext: hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`),
             };
           }
 
@@ -5322,7 +6018,12 @@ const memoryHybridPlugin = {
             usedTokens += lineTokens;
           }
 
-          if (lines.length === 0) return;
+          if (lines.length === 0) {
+            if (procedureBlock) {
+              return { prependContext: hotBlock + procedureBlock };
+            }
+            return hotBlock ? { prependContext: hotBlock } : undefined;
+          }
 
           // FR-005: Access tracking for injected memories
           factsDb.refreshAccessedFacts(injectedIds);
@@ -5377,7 +6078,12 @@ const memoryHybridPlugin = {
             }
           }
 
-          if (!memoryContext) return;
+          if (!memoryContext) {
+            if (procedureBlock) {
+              return { prependContext: hotBlock + procedureBlock };
+            }
+            return hotBlock ? { prependContext: hotBlock } : undefined;
+          }
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
             api.logger.info?.(
@@ -5386,7 +6092,7 @@ const memoryHybridPlugin = {
           }
 
           return {
-            prependContext: hotBlock + `${header}${memoryContext}${footer}`,
+            prependContext: hotBlock + withProcedures(`${header}${memoryContext}${footer}`),
           };
         } catch (err) {
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
@@ -5799,12 +6505,58 @@ const memoryHybridPlugin = {
             `memory-hybrid: auto-classify enabled (model: ${cfg.autoClassify.model}, interval: 24h, batch: ${cfg.autoClassify.batchSize})`,
           );
         }
+
+        // Auto-build multilingual keywords: run once at startup if no file, then weekly (captures language drift)
+        if (cfg.languageKeywords.autoBuild) {
+          const langFilePath = getLanguageKeywordsFilePath();
+          const runBuild = async () => {
+            try {
+              const facts = factsDb.getFactsForConsolidation(300);
+              const result = await runBuildLanguageKeywordsService(
+                facts,
+                openai,
+                dirname(resolvedSqlitePath),
+                { model: cfg.autoClassify.model, dryRun: false },
+              );
+              if (result.ok && result.languagesAdded > 0) {
+                api.logger.info(
+                  `memory-hybrid: language keywords updated (${result.topLanguages.join(", ")}, +${result.languagesAdded} languages)`,
+                );
+              } else if (result.ok) {
+                api.logger.info(`memory-hybrid: language keywords build done (${result.topLanguages.join(", ")})`);
+              } else {
+                api.logger.warn(`memory-hybrid: language keywords build failed: ${result.error}`);
+              }
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: language keywords build failed: ${err}`);
+            }
+          };
+
+          if (langFilePath && !existsSync(langFilePath)) {
+            api.logger.info("memory-hybrid: no language keywords file; building from memory samples in 3s…");
+            languageKeywordsStartupTimeout = setTimeout(() => {
+              void runBuild();
+              languageKeywordsStartupTimeout = null;
+            }, 3000);
+          }
+
+          const weeklyMs = cfg.languageKeywords.weeklyIntervalDays * 24 * 60 * 60 * 1000;
+          languageKeywordsTimer = setInterval(() => void runBuild(), weeklyMs);
+          api.logger.info(
+            `memory-hybrid: language keywords auto-build enabled (every ${cfg.languageKeywords.weeklyIntervalDays} days)`,
+          );
+        }
       },
       stop: () => {
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
         if (proposalsPruneTimer) { clearInterval(proposalsPruneTimer); proposalsPruneTimer = null; }
+        if (languageKeywordsStartupTimeout) {
+          clearTimeout(languageKeywordsStartupTimeout);
+          languageKeywordsStartupTimeout = null;
+        }
+        if (languageKeywordsTimer) { clearInterval(languageKeywordsTimer); languageKeywordsTimer = null; }
         factsDb.close();
         vectorDb.close();
         if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }

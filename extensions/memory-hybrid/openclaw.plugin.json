@@ -219,6 +219,30 @@
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
     },
+    "procedures.enabled": {
+      "label": "Procedural memory",
+      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills (issue #23)"
+    },
+    "procedures.sessionsDir": {
+      "label": "Session directory",
+      "help": "Path to session JSONL files (default: ~/.openclaw/agents/main/sessions)"
+    },
+    "procedures.minSteps": {
+      "label": "Min steps",
+      "help": "Minimum tool steps to count as a procedure (default: 2)"
+    },
+    "procedures.validationThreshold": {
+      "label": "Validation threshold",
+      "help": "Success count before auto-generating a skill (default: 3)"
+    },
+    "procedures.skillTTLDays": {
+      "label": "Skill TTL (days)",
+      "help": "Procedure confidence TTL / revalidation window (default: 30)"
+    },
+    "procedures.skillsAutoPath": {
+      "label": "Auto-skills path",
+      "help": "Path for auto-generated skills (default: skills/auto)"
+    },
     "distill.apiKey": {
       "label": "Gemini API Key (distill)",
       "sensitive": true,
@@ -228,6 +252,30 @@
       "label": "Distill default model",
       "placeholder": "gemini-2.0-flash",
       "help": "Default LLM for hybrid-mem distill (e.g. gemini-2.0-flash, gemini-1.5-pro)"
+    },
+    "procedures.enabled": {
+      "label": "Procedural memory",
+      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills (issue #23)"
+    },
+    "procedures.sessionsDir": {
+      "label": "Session directory",
+      "help": "Path to session JSONL files (default: ~/.openclaw/agents/main/sessions)"
+    },
+    "procedures.minSteps": {
+      "label": "Min steps",
+      "help": "Minimum tool steps to count as a procedure (default: 2)"
+    },
+    "procedures.validationThreshold": {
+      "label": "Validation threshold",
+      "help": "Success count before auto-generating a skill (default: 3)"
+    },
+    "procedures.skillTTLDays": {
+      "label": "Skill TTL (days)",
+      "help": "Procedure confidence TTL / revalidation window (default: 30)"
+    },
+    "procedures.skillsAutoPath": {
+      "label": "Auto-skills path",
+      "help": "Path for auto-generated skills (default: skills/auto)"
     }
   },
   "configSchema": {
@@ -375,6 +423,35 @@
           "useInRecall": { "type": "boolean", "description": "Enable graph traversal in memory_recall (default: true)" }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
+      },
+      "procedures": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable procedural memory (default: true)" },
+          "sessionsDir": { "type": "string", "description": "Session JSONL directory (default: ~/.openclaw/agents/main/sessions)" },
+          "minSteps": { "type": "number", "description": "Min tool steps per procedure (default: 2)" },
+          "validationThreshold": { "type": "number", "description": "Validations before auto-skill (default: 3)" },
+          "skillTTLDays": { "type": "number", "description": "Procedure TTL days (default: 30)" },
+          "skillsAutoPath": { "type": "string", "description": "Path for auto-generated skills (default: skills/auto)" },
+          "requireApprovalForPromote": { "type": "boolean", "description": "Require human move to promote auto-skill (default: true)" }
+        },
+        "description": "Procedural memory: auto-generated skills from learned patterns (issue #23)"
+      },
+      "selfCorrection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "semanticDedup": { "type": "boolean", "description": "Skip storing facts that are semantically similar to existing ones (default: true)" },
+          "semanticDedupThreshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "Similarity threshold for semantic dedup, 0-1 (default: 0.92)" },
+          "toolsSection": { "type": "string", "description": "TOOLS.md section heading for new rules (default: Self-correction rules)" },
+          "applyToolsByDefault": { "type": "boolean", "description": "When true (default), insert suggested TOOLS rules under toolsSection. Set false to only suggest (use --approve to apply). Use --no-apply-tools to skip applying for one run." },
+          "autoRewriteTools": { "type": "boolean", "description": "When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (default: false)" },
+          "analyzeViaSpawn": { "type": "boolean", "description": "When true and incidents > spawnThreshold, run Phase 2 via openclaw sessions spawn (Gemini, large context) (default: false)" },
+          "spawnThreshold": { "type": "number", "description": "Use spawn for Phase 2 when incident count exceeds this (default: 15)" },
+          "spawnModel": { "type": "string", "description": "Model for spawn when analyzeViaSpawn is true (default: gemini)" }
+        },
+        "description": "Self-correction analysis (issue #34): semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
       }
     },
     "required": ["embedding"]

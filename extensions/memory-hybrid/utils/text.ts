@@ -56,6 +56,22 @@ export function chunkSessionText(text: string, maxTokens: number, overlapRatio =
 }
 
 /**
+ * Chunk text by character size with overlap. Used by ingest-files.
+ */
+export function chunkTextByChars(text: string, chunkSize: number, overlap: number): string[] {
+  if (chunkSize <= 0 || text.length <= chunkSize) return text ? [text] : [""];
+  const step = Math.max(1, chunkSize - overlap);
+  const chunks: string[] = [];
+  let offset = 0;
+  while (offset < text.length) {
+    chunks.push(text.slice(offset, offset + chunkSize));
+    offset += step;
+    if (offset >= text.length) break;
+  }
+  return chunks;
+}
+
+/**
  * FR-009: Format a single progressive index line as "[category] title (N tok)".
  * Used by auto-recall when injectionFormat is progressive or progressive_hybrid.
  */
