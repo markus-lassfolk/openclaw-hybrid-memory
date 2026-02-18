@@ -175,23 +175,6 @@ export type IngestConfig = {
   overlap: number;
 };
 
-/** Procedural memory (issue #23): auto-generated skills from learned patterns */
-export type ProceduresConfig = {
-  enabled: boolean;
-  /** Session JSONL directory (default: ~/.openclaw/agents/main/sessions) */
-  sessionsDir: string;
-  /** Min tool steps to consider a procedure (default: 2) */
-  minSteps: number;
-  /** Validations before auto-generating a skill (default: 3) */
-  validationThreshold: number;
-  /** TTL days for procedure confidence / revalidation (default: 30) */
-  skillTTLDays: number;
-  /** Path to auto-generated skills (default: workspace/skills/auto) */
-  skillsAutoPath: string;
-  /** Require human approval before promoting auto-skill to permanent (default: true) */
-  requireApprovalForPromote: boolean;
-};
-
 /** Credential types supported by the credentials store */
 export const CREDENTIAL_TYPES = [
   "token",
