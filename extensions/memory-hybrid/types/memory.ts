@@ -81,6 +81,7 @@ export type ProcedureEntry = {
   skillPath: string | null;
   createdAt: number;
   updatedAt: number;
+  sourceSessions?: string;
 };
 
 export type SearchResult = {

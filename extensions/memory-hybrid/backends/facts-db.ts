@@ -197,6 +197,13 @@ export class FactsDB {
         updated_at INTEGER
       )
     `);
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(procedures)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("source_sessions")) {
+      this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN source_sessions TEXT`);
+    }
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_procedures_type ON procedures(procedure_type)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_procedures_validated ON procedures(last_validated)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_procedures_confidence ON procedures(confidence)`);
@@ -1519,6 +1526,7 @@ export class FactsDB {
       skillPath: (row.skill_path as string) ?? null,
       createdAt: (row.created_at as number) ?? 0,
       updatedAt: (row.updated_at as number) ?? 0,
+      sourceSessions: (row.source_sessions as string) ?? undefined,
     };
   }
 
@@ -1564,8 +1572,8 @@ export class FactsDB {
     }
     this.liveDb
       .prepare(
-        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, last_validated, last_failed, confidence, ttl_days, promoted_to_skill, skill_path, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
+        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, last_validated, last_failed, confidence, ttl_days, promoted_to_skill, skill_path, source_sessions, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)`,
       )
       .run(
         id,
@@ -1578,6 +1586,7 @@ export class FactsDB {
         proc.lastFailed ?? null,
         proc.confidence ?? 0.5,
         proc.ttlDays ?? 30,
+        proc.sourceSessionId ?? null,
         now,
         now,
       );
@@ -1641,47 +1650,101 @@ export class FactsDB {
   }
 
   /** Record a successful use of a procedure (bump success_count, last_validated). */
-  recordProcedureSuccess(id: string, recipeJson?: string): boolean {
+  recordProcedureSuccess(id: string, recipeJson?: string, sessionId?: string): boolean {
     const now = Math.floor(Date.now() / 1000);
     const proc = this.getProcedureById(id);
     if (!proc) return false;
-    const successCount = proc.successCount + 1;
-    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount)));
-    if (recipeJson !== undefined) {
-      this.liveDb
-        .prepare(
-          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', recipe_json = ?, updated_at = ? WHERE id = ?`,
-        )
-        .run(successCount, now, confidence, recipeJson, now, id);
+    
+    // Check if this session has already been counted
+    if (sessionId) {
+      const sourceSessions = proc.sourceSessions ? proc.sourceSessions.split(",") : [];
+      if (sourceSessions.includes(sessionId)) {
+        return false;
+      }
+      sourceSessions.push(sessionId);
+      const newSourceSessions = sourceSessions.join(",");
+      
+      const successCount = proc.successCount + 1;
+      const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount)));
+      if (recipeJson !== undefined) {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', recipe_json = ?, source_sessions = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(successCount, now, confidence, recipeJson, newSourceSessions, now, id);
+      } else {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', source_sessions = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(successCount, now, confidence, newSourceSessions, now, id);
+      }
     } else {
-      this.liveDb
-        .prepare(
-          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
-        )
-        .run(successCount, now, confidence, now, id);
+      const successCount = proc.successCount + 1;
+      const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount)));
+      if (recipeJson !== undefined) {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', recipe_json = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(successCount, now, confidence, recipeJson, now, id);
+      } else {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
+          )
+          .run(successCount, now, confidence, now, id);
+      }
     }
     return true;
   }
 
   /** Record a failed use (bump failure_count, last_failed). */
-  recordProcedureFailure(id: string, recipeJson?: string): boolean {
+  recordProcedureFailure(id: string, recipeJson?: string, sessionId?: string): boolean {
     const now = Math.floor(Date.now() / 1000);
     const proc = this.getProcedureById(id);
     if (!proc) return false;
-    const failureCount = proc.failureCount + 1;
-    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - failureCount)));
-    if (recipeJson !== undefined) {
-      this.liveDb
-        .prepare(
-          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', recipe_json = ?, updated_at = ? WHERE id = ?`,
-        )
-        .run(failureCount, now, confidence, recipeJson, now, id);
+    
+    // Check if this session has already been counted
+    if (sessionId) {
+      const sourceSessions = proc.sourceSessions ? proc.sourceSessions.split(",") : [];
+      if (sourceSessions.includes(sessionId)) {
+        return false;
+      }
+      sourceSessions.push(sessionId);
+      const newSourceSessions = sourceSessions.join(",");
+      
+      const failureCount = proc.failureCount + 1;
+      const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - failureCount)));
+      if (recipeJson !== undefined) {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', recipe_json = ?, source_sessions = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(failureCount, now, confidence, recipeJson, newSourceSessions, now, id);
+      } else {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', source_sessions = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(failureCount, now, confidence, newSourceSessions, now, id);
+      }
     } else {
-      this.liveDb
-        .prepare(
-          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
-        )
-        .run(failureCount, now, confidence, now, id);
+      const failureCount = proc.failureCount + 1;
+      const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - failureCount)));
+      if (recipeJson !== undefined) {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', recipe_json = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(failureCount, now, confidence, recipeJson, now, id);
+      } else {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
+          )
+          .run(failureCount, now, confidence, now, id);
+      }
     }
     return true;
   }
