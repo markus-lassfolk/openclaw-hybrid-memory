@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   chatComplete,
   distillBatchTokenLimit,
+  distillMaxOutputTokens,
   isGeminiModel,
 } from "../services/chat.js";
 
@@ -31,6 +32,19 @@ describe("distillBatchTokenLimit", () => {
   it("returns 80_000 for non-Gemini models", () => {
     expect(distillBatchTokenLimit("gpt-4o-mini")).toBe(80_000);
     expect(distillBatchTokenLimit("gpt-4")).toBe(80_000);
+  });
+});
+
+describe("distillMaxOutputTokens", () => {
+  it("returns 65_536 for Gemini models", () => {
+    expect(distillMaxOutputTokens("gemini-2.0-flash")).toBe(65_536);
+    expect(distillMaxOutputTokens("gemini-1.5-pro")).toBe(65_536);
+    expect(distillMaxOutputTokens("models/gemini-2.0-flash")).toBe(65_536);
+  });
+
+  it("returns 8000 for non-Gemini models", () => {
+    expect(distillMaxOutputTokens("gpt-4o-mini")).toBe(8000);
+    expect(distillMaxOutputTokens("gpt-4")).toBe(8000);
   });
 });
 
@@ -67,6 +81,33 @@ describe("chatComplete", () => {
       expect.objectContaining({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: "test" }],
+      }),
+    );
+  });
+
+  it("uses 8000 max_tokens for OpenAI when maxTokens not provided", async () => {
+    await chatComplete({
+      model: "gpt-4o-mini",
+      content: "test",
+      openai: mockOpenai,
+    });
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        max_tokens: 8000,
+      }),
+    );
+  });
+
+  it("uses explicit maxTokens when provided", async () => {
+    await chatComplete({
+      model: "gpt-4o-mini",
+      content: "test",
+      maxTokens: 4000,
+      openai: mockOpenai,
+    });
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        max_tokens: 4000,
       }),
     );
   });
