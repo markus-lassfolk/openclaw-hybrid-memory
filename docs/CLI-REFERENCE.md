@@ -23,7 +23,9 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `prune [--hard] [--soft] [--dry-run]` | Remove expired facts (decay/TTL). `--hard` only expired; `--soft` only confidence decay. |
 | `checkpoint` | Create a checkpoint (pre-flight state). |
 | `backfill-decay` | Backfill decay classes for existing rows. |
+| `build-languages [--dry-run] [--model M]` | Detect top 3 languages from fact samples, generate multilingual trigger/category/decay keywords via LLM, write `.language-keywords.json`. See [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md). |
 | `classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. |
+| `build-languages [--dry-run] [--model M]` | Detect top languages from memory samples, generate multilingual keyword equivalents via LLM, write `.language-keywords.json`. Used automatically when `languageKeywords.autoBuild` is true; run manually to refresh now. See [LANGUAGE-KEYWORDS.md](LANGUAGE-KEYWORDS.md). |
 | `categories` | List all configured categories with per-category fact counts. |
 | `find-duplicates [--threshold 0.92] [--include-structured] [--limit 300]` | Report pairs of facts with embedding similarity ≥ threshold. Report-only; no merge. |
 | `consolidate [--threshold 0.92] [--include-structured] [--dry-run] [--limit 300] [--model M]` | Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster. |
@@ -34,12 +36,52 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `upgrade` | Upgrade to latest from npm. Removes current install, fetches latest, rebuilds native deps. Restart gateway afterward. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. |
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. `--model M` picks the LLM (e.g. `gemini-2.0-flash` for Gemini; config `distill.defaultModel` used when omitted). Gemini uses larger batches (500k tokens). Oversized sessions chunked with 10% overlap. |
+| `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
 | `record-distill` | Record that session distillation was run (timestamp for `verify`). |
+| `extract-procedures [--dir path] [--days N] [--dry-run]` | Extract tool-call procedures from session JSONL; store positive/negative procedures. |
+| `self-correction-extract [--days N] [--output path]` | **(Issue #34)** Extract user correction incidents from session JSONL (last N days). Uses multi-language correction signals from `.language-keywords.json` — run `build-languages` first for non-English. |
+| `self-correction-run [--extract path] [--workspace path] [--dry-run] [--approve] [--model M]` | **(Issue #34)** Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Semantic dedup for memory store. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
+| `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
 | `scope prune-session <session-id>` | **(FR-006)** Delete session-scoped memories for a given session (cleared on session end). |
 | `scope promote --id <fact-id> --scope global or agent [--scope-target <target>]` | **(FR-006)** Promote a session-scoped memory to global or agent scope (persists after session end). |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
+
+---
+
+## Ingest-files
+
+```
+openclaw hybrid-mem ingest-files [--dry-run] [--workspace <path>] [--paths <glob1,glob2,...>]
+```
+
+Index workspace markdown as facts via LLM extraction. Default patterns: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md` (or config `ingest.paths`).
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Preview without storing |
+| `--workspace <path>` | Workspace root (default: `OPENCLAW_WORKSPACE` or cwd) |
+| `--paths <globs>` | Comma-separated globs (overrides config) |
+
+→ Full docs: [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md)
+
+---
+
+## Build-languages (multilingual)
+
+```
+openclaw hybrid-mem build-languages [--dry-run] [--model <model>]
+```
+
+Detect the top 3 languages in your stored facts, then generate intent-based trigger/category/decay keywords for those languages and write `~/.openclaw/memory/.language-keywords.json`. Used for multi-language capture, category detection, and decay classification.
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Detect languages and generate keywords but do not write the file |
+| `--model <model>` | LLM for detection and generation (default: same as autoClassify, e.g. gpt-4o-mini) |
+
+→ Full docs: [LANGUAGE-KEYWORDS.md](LANGUAGE-KEYWORDS.md)
 
 ---
 
@@ -120,4 +162,7 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 - [REFLECTION.md](REFLECTION.md) — Reflection layer (`reflect`, `reflect-rules`, `reflect-meta`)
 - [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault (`credentials migrate-to-vault`)
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation (`distill-window`, `record-distill`)
+- [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) — RRF merge, `ingest-files`, HyDE
 - [MEMORY-SCOPING.md](MEMORY-SCOPING.md) — **(FR-006)** Scope types, store/recall filters, session cleanup, promote
+- [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) — Procedural memory (`extract-procedures`, `generate-auto-skills`)
+- [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md) — Multi-language triggers, categories, decay (`build-languages`)

@@ -76,38 +76,58 @@ function extractFact(line) {
   const decisionMatch = t.match(
     /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i
   );
+  const decisionMatchSv = t.match(
+    /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i
+  );
   if (decisionMatch) {
     entity = "decision";
     key = decisionMatch[1].trim().slice(0, 100);
     value = (decisionMatch[2] || "no rationale").trim();
     category = "decision";
+  } else if (decisionMatchSv) {
+    entity = "decision";
+    key = decisionMatchSv[1].trim().slice(0, 100);
+    value = (decisionMatchSv[2] || "no rationale").trim();
+    category = "decision";
   }
 
-  const ruleMatch = t.match(/(?:always|never)\s+(.+?)\.?$/i);
+  const ruleMatch = t.match(/(?:always|never|alltid|aldrig)\s+(.+?)\.?$/i);
   if (ruleMatch) {
     entity = "convention";
     key = ruleMatch[1].trim().slice(0, 100);
-    value = lower.includes("never") ? "never" : "always";
+    value = lower.includes("never") || lower.includes("aldrig") ? "never" : "always";
     category = "preference";
   }
 
   const possessiveMatch = t.match(
     /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/
   );
+  const possessiveMatchSv = t.match(/(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i);
   if (possessiveMatch) {
     entity = possessiveMatch[1] || "user";
     key = possessiveMatch[2].trim();
     value = possessiveMatch[3].trim();
+    category = "fact";
+  } else if (possessiveMatchSv) {
+    entity = "user";
+    key = possessiveMatchSv[1].trim();
+    value = possessiveMatchSv[2].trim();
     category = "fact";
   }
 
   const preferMatch = t.match(
     /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/
   );
+  const preferMatchSv = t.match(/jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i);
   if (preferMatch) {
     entity = "user";
     key = preferMatch[1];
     value = preferMatch[2].trim();
+    category = "preference";
+  } else if (preferMatchSv) {
+    entity = "user";
+    key = preferMatchSv[1];
+    value = preferMatchSv[2].trim();
     category = "preference";
   }
 

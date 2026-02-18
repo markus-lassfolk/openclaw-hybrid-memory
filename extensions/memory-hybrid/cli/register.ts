@@ -56,12 +56,44 @@ export type RecordDistillResult = { path: string; timestamp: string };
 export type ExtractDailyResult = { totalExtracted: number; totalStored: number; daysBack: number; dryRun: boolean };
 export type ExtractDailySink = { log: (s: string) => void; warn: (s: string) => void };
 
+export type ExtractProceduresResult = {
+  sessionsScanned: number;
+  proceduresStored: number;
+  positiveCount: number;
+  negativeCount: number;
+  dryRun: boolean;
+};
+
+export type GenerateAutoSkillsResult = {
+  generated: number;
+  skipped: number;
+  dryRun: boolean;
+  paths: string[];
+};
+
 export type BackfillCliResult = { stored: number; skipped: number; candidates: number; files: number; dryRun: boolean };
 export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => void };
+
+export type IngestFilesResult = { stored: number; skipped: number; extracted: number; files: number; dryRun: boolean };
+export type IngestFilesSink = { log: (s: string) => void; warn: (s: string) => void };
 
 export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; skipped: number; dryRun: boolean };
 export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
+export type SelfCorrectionExtractResult = {
+  incidents: Array<{ userMessage: string; precedingAssistant: string; followingAssistant: string; timestamp?: string; sessionFile: string }>;
+  sessionsScanned: number;
+};
+export type SelfCorrectionRunResult = {
+  incidentsFound: number;
+  analysed: number;
+  autoFixed: number;
+  proposals: string[];
+  reportPath: string | null;
+  toolsSuggestions?: string[];
+  toolsApplied?: number;
+  error?: string;
+};
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
 export type UpgradeCliResult =
@@ -88,7 +120,10 @@ export type HybridMemCliContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (opts: { days: number; dryRun: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
+  runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean }) => Promise<ExtractProceduresResult>;
+  runGenerateAutoSkills: (opts: { dryRun: boolean }) => Promise<GenerateAutoSkillsResult>;
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
+  runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
@@ -122,6 +157,23 @@ export type HybridMemCliContext = {
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   /** FR-004: Run memory tier compaction (completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT). */
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  /** Detect top 3 languages from memory text; LLM produces intent-based natural equivalents (triggers, extraction patterns) and writes .language-keywords.json. */
+  runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
+    | { ok: true; path: string; topLanguages: string[]; languagesAdded: number }
+    | { ok: false; error: string }
+  >;
+  /** Self-correction (issue #34): extract incidents from session JSONL using multi-language correction signals from .language-keywords.json. */
+  runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
+  /** Self-correction: analyze extracted incidents and auto-remediate (memory store, TOOLS.md); report to memory/reports. */
+  runSelfCorrectionRun: (opts: {
+    extractPath?: string;
+    incidents?: Array<{ userMessage: string; precedingAssistant: string; followingAssistant: string; timestamp?: string; sessionFile: string }>;
+    workspace?: string;
+    dryRun?: boolean;
+    model?: string;
+    approve?: boolean;
+    noApplyTools?: boolean;
+  }) => Promise<SelfCorrectionRunResult>;
 };
 
 /** Chainable command type (Commander-style). */
@@ -148,7 +200,10 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runDistillWindow,
     runRecordDistill,
     runExtractDaily,
+    runExtractProcedures,
+    runGenerateAutoSkills,
     runBackfill,
+    runIngestFiles,
     runDistill,
     runMigrateToVault,
     runUninstall,
@@ -161,7 +216,10 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     reflectionConfig,
     runClassify,
     autoClassifyConfig,
+    runSelfCorrectionExtract,
+    runSelfCorrectionRun,
     runCompaction,
+    runBuildLanguageKeywords,
   } = ctx;
 
   mem
@@ -573,6 +631,42 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     });
 
   mem
+    .command("extract-procedures")
+    .description("Procedural memory: extract tool-call sequences from session JSONL and store as procedures")
+    .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
+    .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
+    .option("--dry-run", "Show what would be stored without writing")
+    .action(async (opts: { dir?: string; days?: string; dryRun?: boolean }) => {
+      const days = opts.days ? parseInt(opts.days, 10) : undefined;
+      const result = await runExtractProcedures({
+        sessionDir: opts.dir,
+        days: Number.isFinite(days) ? days : undefined,
+        dryRun: !!opts.dryRun,
+      });
+      if (result.dryRun) {
+        console.log(`\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`);
+      } else {
+        console.log(
+          `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
+        );
+      }
+    });
+
+  mem
+    .command("generate-auto-skills")
+    .description("Generate SKILL.md + recipe.json in skills/auto/ for procedures validated enough times")
+    .option("--dry-run", "Show what would be generated without writing")
+    .action(async (opts: { dryRun?: boolean }) => {
+      const result = await runGenerateAutoSkills({ dryRun: !!opts.dryRun });
+      if (result.dryRun) {
+        console.log(`\n[dry-run] Would generate ${result.generated} auto-skills`);
+      } else {
+        console.log(`\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`);
+        for (const p of result.paths) console.log(`  ${p}`);
+      }
+    });
+
+  mem
     .command("backfill")
     .description("Index MEMORY.md and memory/**/*.md into SQLite + LanceDB (fast bulk import)")
     .option("--dry-run", "Show what would be indexed without storing")
@@ -590,6 +684,28 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       } else {
         console.log(
           `\nBackfill done: ${result.stored} new facts stored, ${result.skipped} duplicates skipped (${result.candidates} candidates from ${result.files} files)`,
+        );
+      }
+    });
+
+  mem
+    .command("ingest-files")
+    .description("Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction (issue #33)")
+    .option("--dry-run", "Show what would be processed without storing")
+    .option("--workspace <path>", "Workspace root (default: OPENCLAW_WORKSPACE or cwd)")
+    .option("--paths <globs>", "Comma-separated globs (default: config ingest.paths or skills/**/*.md,TOOLS.md,AGENTS.md)")
+    .action(async (opts: { dryRun?: boolean; workspace?: string; paths?: string }) => {
+      const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
+      const paths = opts.paths?.split(",").map((p) => p.trim()).filter(Boolean);
+      const result = await runIngestFiles(
+        { dryRun: !!opts.dryRun, workspace: opts.workspace?.trim() || undefined, paths: paths?.length ? paths : undefined },
+        sink,
+      );
+      if (result.dryRun) {
+        console.log(`\nWould extract ~${result.extracted} facts from ${result.files} files`);
+      } else {
+        console.log(
+          `\nIngest done: ${result.stored} stored, ${result.skipped} skipped (${result.extracted} extracted from ${result.files} files)`,
         );
       }
     });
@@ -737,6 +853,78 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         for (const [cat, count] of Object.entries(result.breakdown)) {
           console.log(`  ${cat}: ${count}`);
         }
+      }
+    });
+
+  mem
+    .command("build-languages")
+    .description("Detect top 3 languages from memory text; use English as intent template and generate natural triggers, structural phrases, and extraction patterns per language (not literal translation). Writes .language-keywords.json (v2). Run once or when you add new languages.")
+    .option("--dry-run", "Detect and translate but do not write file")
+    .option("--model <model>", "LLM model for detection and translation", "gpt-4o-mini")
+    .action(async (opts: { dryRun?: boolean; model?: string }) => {
+      const result = await runBuildLanguageKeywords({
+        model: opts.model || autoClassifyConfig.model,
+        dryRun: !!opts.dryRun,
+      });
+      if (!result.ok) {
+        console.error("build-languages failed:", result.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Detected languages: ${result.topLanguages.join(", ")}`);
+      console.log(`Languages added (translations): ${result.languagesAdded}`);
+      console.log(`Path: ${result.path}${opts.dryRun ? " (dry run, not written)" : ""}`);
+    });
+
+  mem
+    .command("self-correction-extract")
+    .description("Issue #34: Extract user correction incidents from session JSONL (last N days). Uses multi-language correction signals from .language-keywords.json — run build-languages first for non-English. Output JSON to file or stdout.")
+    .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
+    .option("--output <path>", "Write incidents JSON to file (optional)")
+    .action(async (opts: { days?: string; output?: string }) => {
+      const days = opts.days ? parseInt(opts.days, 10) : 3;
+      const result = await runSelfCorrectionExtract({
+        days: Number.isFinite(days) ? days : 3,
+        outputPath: opts.output?.trim() || undefined,
+      });
+      console.log(`Sessions scanned: ${result.sessionsScanned}; incidents: ${result.incidents.length}`);
+      if (result.incidents.length > 0 && !opts.output) {
+        console.log(JSON.stringify(result.incidents, null, 2));
+      }
+    });
+
+  mem
+    .command("self-correction-run")
+    .description("Issue #34: Analyze incidents, auto-remediate (memory + TOOLS section or rewrite). TOOLS rules are applied by default; use --no-apply-tools to only suggest.")
+    .option("--extract <path>", "Path to incidents JSON from self-correction-extract --output (else runs extract in memory)")
+    .option("--workspace <path>", "Workspace root for TOOLS.md and memory/reports (default: OPENCLAW_WORKSPACE or ~/.openclaw/workspace)")
+    .option("--dry-run", "Analyze and report only; do not store or append")
+    .option("--approve", "Force apply suggested TOOLS rules (when config applyToolsByDefault is false)")
+    .option("--no-apply-tools", "Do not apply TOOLS rules this run (only suggest in report). Opt-out from default apply.")
+    .option("--model <model>", "LLM for analysis (default: config.distill.defaultModel or gpt-4o-mini)", "gpt-4o-mini")
+    .action(async (opts: { extract?: string; workspace?: string; dryRun?: boolean; approve?: boolean; applyTools?: boolean; model?: string }) => {
+      const result = await runSelfCorrectionRun({
+        extractPath: opts.extract?.trim(),
+        workspace: opts.workspace?.trim(),
+        dryRun: !!opts.dryRun,
+        approve: !!opts.approve,
+        noApplyTools: opts.applyTools === false,
+        model: opts.model?.trim(),
+      });
+      if (result.error) {
+        console.error("self-correction-run error:", result.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Incidents: ${result.incidentsFound}; analysed: ${result.analysed}; auto-fixed: ${result.autoFixed}; proposals: ${result.proposals.length}`);
+      if (result.toolsSuggestions?.length && result.toolsApplied === 0) {
+        console.log("TOOLS suggestions (run with --approve to apply):", result.toolsSuggestions.length);
+      }
+      if (result.toolsApplied) console.log(`TOOLS.md: ${result.toolsApplied} rule(s) applied.`);
+      if (result.reportPath) console.log(`Report: ${result.reportPath}`);
+      if (result.proposals.length > 0) {
+        console.log("Proposed (review before applying):");
+        result.proposals.forEach((p) => console.log(`  - ${p}`));
       }
     });
 

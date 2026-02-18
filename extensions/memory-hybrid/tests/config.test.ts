@@ -425,4 +425,100 @@ describe("hybridConfigSchema.parse", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeUndefined();
   });
+
+  it("parses optional selfCorrection config (issue #34)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      selfCorrection: {
+        semanticDedup: false,
+        semanticDedupThreshold: 0.88,
+        toolsSection: "My rules",
+        autoRewriteTools: true,
+        analyzeViaSpawn: true,
+        spawnThreshold: 20,
+        spawnModel: "gemini-1.5-pro",
+      },
+    });
+    expect(result.selfCorrection).toBeDefined();
+    expect(result.selfCorrection?.semanticDedup).toBe(false);
+    expect(result.selfCorrection?.semanticDedupThreshold).toBe(0.88);
+    expect(result.selfCorrection?.toolsSection).toBe("My rules");
+    expect(result.selfCorrection?.applyToolsByDefault).toBe(true);
+    expect(result.selfCorrection?.autoRewriteTools).toBe(true);
+    expect(result.selfCorrection?.analyzeViaSpawn).toBe(true);
+    expect(result.selfCorrection?.spawnThreshold).toBe(20);
+    expect(result.selfCorrection?.spawnModel).toBe("gemini-1.5-pro");
+  });
+
+  it("selfCorrection applyToolsByDefault defaults to true when block present", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      selfCorrection: { toolsSection: "Rules" },
+    });
+    expect(result.selfCorrection?.applyToolsByDefault).toBe(true);
+  });
+
+  it("selfCorrection applyToolsByDefault can be set false to opt out", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      selfCorrection: { applyToolsByDefault: false },
+    });
+    expect(result.selfCorrection?.applyToolsByDefault).toBe(false);
+  });
+
+  it("selfCorrection is undefined when omitted", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.selfCorrection).toBeUndefined();
+  });
+
+  it("languageKeywords defaults when omitted", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.languageKeywords).toEqual({ autoBuild: true, weeklyIntervalDays: 7 });
+  });
+
+  it("parses languageKeywords when provided", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      languageKeywords: { autoBuild: false, weeklyIntervalDays: 14 },
+    });
+    expect(result.languageKeywords.autoBuild).toBe(false);
+    expect(result.languageKeywords.weeklyIntervalDays).toBe(14);
+  });
+
+  it("parses optional ingest config (issue #33)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      ingest: {
+        paths: ["skills/**/*.md", "TOOLS.md"],
+        chunkSize: 800,
+        overlap: 100,
+      },
+    });
+    expect(result.ingest).toBeDefined();
+    expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md"]);
+    expect(result.ingest?.chunkSize).toBe(800);
+    expect(result.ingest?.overlap).toBe(100);
+  });
+
+  it("ingest uses defaults for chunkSize and overlap", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      ingest: { paths: ["docs/*.md"] },
+    });
+    expect(result.ingest?.chunkSize).toBe(800);
+    expect(result.ingest?.overlap).toBe(100);
+  });
+
+  it("parses optional search config (HyDE)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      search: {
+        hydeEnabled: true,
+        hydeModel: "gpt-4o-mini",
+      },
+    });
+    expect(result.search).toBeDefined();
+    expect(result.search?.hydeEnabled).toBe(true);
+    expect(result.search?.hydeModel).toBe("gpt-4o-mini");
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { _testing } from "../index.js";
+import { mergeResults as mergeResultsModule, RRF_K_DEFAULT } from "../services/merge-results.js";
 
 const { mergeResults, filterByScope } = _testing;
 
@@ -34,11 +35,12 @@ function makeResult(overrides: Partial<SearchResult["entry"]> & { score?: number
 // ---------------------------------------------------------------------------
 
 describe("mergeResults", () => {
-  it("prioritizes sqlite results over lancedb by default insertion order", () => {
+  it("RRF: prioritizes sqlite over lancedb when RRF ties (each appears in one list only)", () => {
     const sqlite = [makeResult({ text: "sqlite fact", score: 0.9, backend: "sqlite" })];
     const lance = [makeResult({ text: "lance fact", score: 0.8, backend: "lancedb" })];
     const merged = mergeResults(sqlite, lance, 10);
     expect(merged.length).toBe(2);
+    // Both rank 1 in their list → same RRF; tie-break prefers sqlite
     expect(merged[0].entry.text).toBe("sqlite fact");
   });
 
@@ -72,15 +74,20 @@ describe("mergeResults", () => {
     expect(merged.length).toBe(3);
   });
 
-  it("sorts by score descending", () => {
-    const sqlite = [makeResult({ text: "low", score: 0.3, backend: "sqlite" })];
-    const lance = [makeResult({ text: "high", score: 0.9, backend: "lancedb" })];
+  it("RRF: boosts items appearing in both keyword and semantic results", () => {
+    const sharedId = "in-both";
+    const inBoth = makeResult({ id: sharedId, text: "in both lists", score: 0.5, backend: "sqlite" });
+    const sqlite = [inBoth, makeResult({ text: "sqlite only", score: 0.9, backend: "sqlite" })];
+    const lance = [
+      makeResult({ id: sharedId, text: "in both lists", score: 0.8, backend: "lancedb" }),
+      makeResult({ text: "lance only", score: 0.9, backend: "lancedb" }),
+    ];
     const merged = mergeResults(sqlite, lance, 10);
-    expect(merged[0].entry.text).toBe("high");
-    expect(merged[1].entry.text).toBe("low");
+    // "in both lists" gets RRF = 1/61 + 1/61 (rank 1 in each); others get 1/61
+    expect(merged[0].entry.text).toBe("in both lists");
   });
 
-  it("breaks score ties by sourceDate (newest first)", () => {
+  it("RRF: breaks ties by sourceDate (newest first)", () => {
     const now = Math.floor(Date.now() / 1000);
     const sqlite = [
       makeResult({ text: "old fact", score: 0.8, createdAt: now - 1000, backend: "sqlite" }),
@@ -89,6 +96,7 @@ describe("mergeResults", () => {
       makeResult({ text: "new fact", score: 0.8, createdAt: now, backend: "lancedb" }),
     ];
     const merged = mergeResults(sqlite, lance, 10);
+    // Same RRF; newer fact wins
     expect(merged[0].entry.text).toBe("new fact");
   });
 
@@ -122,7 +130,34 @@ describe("mergeResults", () => {
     (a.entry as Record<string, unknown>).sourceDate = now;
     const b = makeResult({ text: "B", score: 0.7, createdAt: now, backend: "lancedb" });
     const merged = mergeResults([a], [b], 10);
+    // Same RRF; A has sourceDate now (newer) so wins
     expect(merged[0].entry.text).toBe("A");
+  });
+
+  it("RRF: returned score is RRF score (not raw)", () => {
+    const sharedId = "rrf-score-test";
+    const inBoth = makeResult({ id: sharedId, text: "in both", score: 0.5, backend: "sqlite" });
+    const sqlite = [inBoth, makeResult({ text: "sqlite only", score: 0.99, backend: "sqlite" })];
+    const lance = [
+      makeResult({ id: sharedId, text: "in both", score: 0.99, backend: "lancedb" }),
+      makeResult({ text: "lance only", score: 0.99, backend: "lancedb" }),
+    ];
+    const merged = mergeResults(sqlite, lance, 10);
+    // "in both" has RRF = 1/61 + 1/61; others have 1/61
+    expect(merged[0].entry.text).toBe("in both");
+    expect(merged[0].score).toBeGreaterThan(merged[1].score);
+  });
+
+  it("RRF: optional k parameter changes scores", () => {
+    const sharedId = "k-param";
+    const inBoth = makeResult({ id: sharedId, text: "both", score: 0.5, backend: "sqlite" });
+    const sqlite = [inBoth];
+    const lance = [makeResult({ id: sharedId, text: "both", score: 0.5, backend: "lancedb" })];
+    const mergedK60 = mergeResultsModule(sqlite, lance, 10, undefined, { k: 60 });
+    const mergedK10 = mergeResultsModule(sqlite, lance, 10, undefined, { k: 10 });
+    expect(mergedK60[0].score).toBe(2 / (60 + 1));
+    expect(mergedK10[0].score).toBe(2 / (10 + 1));
+    expect(RRF_K_DEFAULT).toBe(60);
   });
 });
 

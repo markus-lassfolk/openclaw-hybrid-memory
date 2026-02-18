@@ -127,6 +127,23 @@ export type ReflectionConfig = {
   minObservations: number;   // Min observations to support a pattern (default: 2)
 };
 
+/** Procedural memory (issue #23): auto-generated skills from learned patterns */
+export type ProceduresConfig = {
+  enabled: boolean;
+  /** Session JSONL directory (default: ~/.openclaw/agents/main/sessions) */
+  sessionsDir: string;
+  /** Min tool steps to consider a procedure (default: 2) */
+  minSteps: number;
+  /** Validations before auto-generating a skill (default: 3) */
+  validationThreshold: number;
+  /** TTL days for procedure confidence / revalidation (default: 30) */
+  skillTTLDays: number;
+  /** Path to auto-generated skills (default: workspace/skills/auto) */
+  skillsAutoPath: string;
+  /** Require human approval before promoting auto-skill to permanent (default: true) */
+  requireApprovalForPromote: boolean;
+};
+
 /** FR-004: Dynamic memory tiering (hot/warm/cold). */
 export type MemoryTieringConfig = {
   enabled: boolean;
@@ -138,6 +155,24 @@ export type MemoryTieringConfig = {
   inactivePreferenceDays: number;
   /** Cap HOT tier to this many facts when promoting blockers (default: 50). */
   hotMaxFacts: number;
+};
+
+/** Search options (issue #33): HyDE query expansion */
+export type SearchConfig = {
+  /** Generate hypothetical answer before embedding for vector search (default false) */
+  hydeEnabled: boolean;
+  /** Model for HyDE generation (default gpt-4o-mini) */
+  hydeModel: string;
+};
+
+/** Ingest workspace files (issue #33): index markdown files as facts for search */
+export type IngestConfig = {
+  /** Glob patterns relative to workspace (e.g. ["skills/**\/*.md", "TOOLS.md"]) */
+  paths: string[];
+  /** Chunk size in characters for LLM extraction (default 800) */
+  chunkSize: number;
+  /** Overlap between chunks (default 100) */
+  overlap: number;
 };
 
 /** Credential types supported by the credentials store */
@@ -190,10 +225,40 @@ export type HybridMemoryConfig = {
   personaProposals: PersonaProposalsConfig;
   /** FR-011: Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
   reflection: ReflectionConfig;
+  /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
+  procedures: ProceduresConfig;
   /** FR-004: Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
   /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
   distill?: { apiKey?: string; defaultModel?: string };
+  /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
+  languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };
+  /** Optional: ingest workspace markdown files as facts (skills, TOOLS.md, etc.) */
+  ingest?: IngestConfig;
+  /** Optional: search tweaks (HyDE query expansion) */
+  search?: SearchConfig;
+  /** Optional: self-correction analysis (issue #34) — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
+  selfCorrection?: SelfCorrectionConfig;
+};
+
+/** Self-correction pipeline (issue #34): semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
+export type SelfCorrectionConfig = {
+  /** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
+  semanticDedup: boolean;
+  /** Similarity threshold for semantic dedup, 0–1 (default: 0.92). */
+  semanticDedupThreshold: number;
+  /** TOOLS.md section heading for new rules, e.g. "Self-correction rules" (default: "Self-correction rules"). */
+  toolsSection: string;
+  /** When true (default), insert suggested TOOLS rules under toolsSection. Set false to only suggest in report (then use --approve to apply). */
+  applyToolsByDefault: boolean;
+  /** When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (or suggest if applyToolsByDefault is false) (default: false). */
+  autoRewriteTools: boolean;
+  /** When true and incident count > spawnThreshold, run Phase 2 via `openclaw sessions spawn --model gemini` for large context (default: false). */
+  analyzeViaSpawn: boolean;
+  /** Use spawn for Phase 2 when incidents exceed this count (default: 15). */
+  spawnThreshold: number;
+  /** Model for spawn when analyzeViaSpawn is true (default: gemini). */
+  spawnModel: string;
 };
 
 /** Default categories — can be extended via config.categories */
@@ -511,6 +576,29 @@ export const hybridConfigSchema = {
         : 2,
     };
 
+    // Parse procedures config (issue #23)
+    const defaultSessionsDir = join(homedir(), ".openclaw", "agents", "main", "sessions");
+    const proceduresRaw = cfg.procedures as Record<string, unknown> | undefined;
+    const procedures: ProceduresConfig = {
+      enabled: proceduresRaw?.enabled !== false,
+      sessionsDir: typeof proceduresRaw?.sessionsDir === "string" && proceduresRaw.sessionsDir.length > 0
+        ? proceduresRaw.sessionsDir
+        : defaultSessionsDir,
+      minSteps: typeof proceduresRaw?.minSteps === "number" && proceduresRaw.minSteps >= 1
+        ? Math.floor(proceduresRaw.minSteps)
+        : 2,
+      validationThreshold: typeof proceduresRaw?.validationThreshold === "number" && proceduresRaw.validationThreshold >= 1
+        ? Math.floor(proceduresRaw.validationThreshold)
+        : 3,
+      skillTTLDays: typeof proceduresRaw?.skillTTLDays === "number" && proceduresRaw.skillTTLDays >= 1
+        ? Math.floor(proceduresRaw.skillTTLDays)
+        : 30,
+      skillsAutoPath: typeof proceduresRaw?.skillsAutoPath === "string" && proceduresRaw.skillsAutoPath.length > 0
+        ? proceduresRaw.skillsAutoPath
+        : "skills/auto",
+      requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
+    };
+
     // Parse optional distill config (Gemini for session distillation)
     const distillRaw = cfg.distill as Record<string, unknown> | undefined;
     const distill =
@@ -520,6 +608,18 @@ export const hybridConfigSchema = {
             defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
           }
         : undefined;
+
+    const langKwRaw = cfg.languageKeywords as Record<string, unknown> | undefined;
+    const languageKeywords =
+      langKwRaw && typeof langKwRaw === "object"
+        ? {
+            autoBuild: langKwRaw.autoBuild !== false,
+            weeklyIntervalDays:
+              typeof langKwRaw.weeklyIntervalDays === "number" && langKwRaw.weeklyIntervalDays >= 1
+                ? Math.min(30, Math.floor(langKwRaw.weeklyIntervalDays))
+                : 7,
+          }
+        : { autoBuild: true, weeklyIntervalDays: 7 };
 
     // Parse FR-004 memory tiering config
     const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
@@ -536,6 +636,56 @@ export const hybridConfigSchema = {
         ? Math.floor(tierRaw.hotMaxFacts)
         : 50,
     };
+
+    // Parse optional ingest config (issue #33)
+    const ingestRaw = cfg.ingest as Record<string, unknown> | undefined;
+    const ingest: IngestConfig | undefined =
+      ingestRaw && Array.isArray(ingestRaw.paths) && ingestRaw.paths.length > 0
+        ? {
+            paths: (ingestRaw.paths as string[]).filter((p) => typeof p === "string" && p.length > 0),
+            chunkSize: typeof ingestRaw.chunkSize === "number" && ingestRaw.chunkSize > 0
+              ? Math.floor(ingestRaw.chunkSize)
+              : 800,
+            overlap: typeof ingestRaw.overlap === "number" && ingestRaw.overlap >= 0
+              ? Math.floor(ingestRaw.overlap)
+              : 100,
+          }
+          : undefined;
+
+    // Parse optional search config (issue #33 - HyDE)
+    const searchRaw = cfg.search as Record<string, unknown> | undefined;
+    const search: SearchConfig | undefined =
+      searchRaw && typeof searchRaw === "object"
+        ? {
+            hydeEnabled: searchRaw.hydeEnabled === true,
+            hydeModel: typeof searchRaw.hydeModel === "string" ? searchRaw.hydeModel : "gpt-4o-mini",
+          }
+        : undefined;
+
+    // Parse optional self-correction config (issue #34)
+    const scRaw = cfg.selfCorrection as Record<string, unknown> | undefined;
+    const selfCorrection: SelfCorrectionConfig | undefined =
+      scRaw && typeof scRaw === "object"
+        ? {
+            semanticDedup: scRaw.semanticDedup !== false,
+            semanticDedupThreshold:
+              typeof scRaw.semanticDedupThreshold === "number" && scRaw.semanticDedupThreshold >= 0 && scRaw.semanticDedupThreshold <= 1
+                ? scRaw.semanticDedupThreshold
+                : 0.92,
+            toolsSection:
+              typeof scRaw.toolsSection === "string" && scRaw.toolsSection.trim().length > 0
+                ? scRaw.toolsSection.trim()
+                : "Self-correction rules",
+            applyToolsByDefault: scRaw.applyToolsByDefault !== false,
+            autoRewriteTools: scRaw.autoRewriteTools === true,
+            analyzeViaSpawn: scRaw.analyzeViaSpawn === true,
+            spawnThreshold:
+              typeof scRaw.spawnThreshold === "number" && scRaw.spawnThreshold >= 1
+                ? Math.floor(scRaw.spawnThreshold)
+                : 15,
+            spawnModel: typeof scRaw.spawnModel === "string" ? scRaw.spawnModel : "gemini",
+          }
+        : undefined;
 
     return {
       embedding: {
@@ -558,8 +708,13 @@ export const hybridConfigSchema = {
       wal,
       personaProposals,
       reflection,
+      procedures,
       memoryTiering,
       distill,
+      languageKeywords,
+      ingest,
+      search,
+      selfCorrection,
     };
   },
 };

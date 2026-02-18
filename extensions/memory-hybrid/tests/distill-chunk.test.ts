@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chunkSessionText } from "../utils/text.js";
+import { chunkSessionText, chunkTextByChars } from "../utils/text.js";
 
 describe("chunkSessionText", () => {
   it("returns single-element array when text fits in maxTokens", () => {
@@ -64,5 +64,28 @@ describe("chunkSessionText", () => {
     for (let i = 0; i < chunks.length - 1; i++) {
       expect(chunks[i].length).toBeLessThanOrEqual(maxChars);
     }
+  });
+});
+
+describe("chunkTextByChars", () => {
+  it("returns single chunk when text fits", () => {
+    const text = "short";
+    expect(chunkTextByChars(text, 100, 10)).toEqual([text]);
+  });
+
+  it("chunks with overlap", () => {
+    const text = "a".repeat(200);
+    const chunks = chunkTextByChars(text, 80, 20);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0].length).toBe(80);
+    expect(chunks[0][0]).toBe("a");
+    expect(chunks[chunks.length - 1].slice(-1)).toBe("a");
+  });
+
+  it("covers full text (first and last char in chunks)", () => {
+    const text = "abcdefgh";
+    const chunks = chunkTextByChars(text, 4, 2);
+    expect(chunks[0][0]).toBe("a");
+    expect(chunks[chunks.length - 1].slice(-1)).toBe("h");
   });
 });
