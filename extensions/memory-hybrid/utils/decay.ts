@@ -27,19 +27,19 @@ export function classifyDecay(
     "decision", "birthday", "born", "phone", "language", "location",
   ];
   if (permanentKeys.some((k) => keyLower.includes(k))) return "permanent";
-  if (/\b(decided|architecture|always use|never use)\b/i.test(textLower))
+  if (/\b(decided|architecture|always use|never use|bestämde|valde|alltid använda|aldrig använda)\b/i.test(textLower))
     return "permanent";
 
   if (entity === "decision" || entity === "convention") return "permanent";
 
   const sessionKeys = ["current_file", "temp", "debug", "working_on_right_now"];
   if (sessionKeys.some((k) => keyLower.includes(k))) return "session";
-  if (/\b(currently debugging|right now|this session)\b/i.test(textLower))
+  if (/\b(currently debugging|right now|this session|just nu|denna session)\b/i.test(textLower))
     return "session";
 
   const activeKeys = ["task", "todo", "wip", "branch", "sprint", "blocker"];
   if (activeKeys.some((k) => keyLower.includes(k))) return "active";
-  if (/\b(working on|need to|todo|blocker|sprint)\b/i.test(textLower))
+  if (/\b(working on|need to|todo|blocker|sprint|behöver|just nu)\b/i.test(textLower))
     return "active";
 
   if (keyLower.includes("checkpoint") || keyLower.includes("preflight"))

@@ -44,44 +44,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Postinstall:** Replaced shell rebuild with `scripts/postinstall-rebuild.cjs`. No more silent failures (`2>/dev/null || true`); clear errors on rebuild failure. Script included in published package via `scripts` in `files`.
-
-### Changed
-
-- **Documentation:** CLI-REFERENCE lists `upgrade`; UPGRADE-PLUGIN recommends `openclaw hybrid-mem upgrade` as primary method; extension README updated.
-- **Tests:** Added `postinstall.test.ts` to verify postinstall script and `scripts` in package files.
-
----
-
-## [2026.2.174] - 2026-02-17
-
-### Added
-
-- **`openclaw hybrid-mem distill`** — Native CLI for session distillation. Scans `~/.openclaw/agents/*/sessions/*.jsonl`, extracts text, sends to LLM for fact extraction, deduplicates by embedding similarity (0.85 threshold), stores net-new facts, runs `record-distill` automatically. Options: `--days` (default 3), `--all` (90 days), `--since`, `--dry-run`, `--model`, `--verbose`, `--max-sessions`. Cron-friendly: single exec, no complex agent prompts. See [issue #31](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/31).
-- **`openclaw hybrid-mem backfill`** — Index `MEMORY.md` and `memory/**/*.md` into SQLite + LanceDB. Options: `--dry-run`, `--workspace`, `--limit`.
-
-### Fixed
-
-- **[#27](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/27)** — Postinstall now rebuilds both `better-sqlite3` and `@lancedb/lancedb`; added `verify:publish` script.
-- **[#28](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/28)** — `verify --fix` detects native bindings failures and runs `npm rebuild` automatically.
-- **[#29](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/29)** — TROUBLESHOOTING documents config nesting when keys are at wrong level.
-- **[#30](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/30)** — `hybrid-mem install` and `verify --fix` no longer add `agents.defaults.pruning` or top-level `jobs` (OpenClaw 2026.2.14 compat).
-
-### Changed
-
-- **Session distillation:** Cron example in OPERATIONS simplified to `openclaw hybrid-mem distill`.
-- **Deploy snippet:** Removed top-level `jobs` array for OpenClaw config compatibility.
-
----
-
-## [2026.2.173] - 2026-02-17
-
-### Added
-
-- **Explicit Memory Scoping (FR-006):** Four scope types for stored memories: **Global** (available to all), **User-Private** (only when talking to a specific user), **Agent-Specific** (only by this agent), **Session-Scoped** (ephemeral, cleared on session end unless promoted). New `scope` and `scope_target` columns in facts table; migration adds them with default `global`. `memory_store` accepts optional `scope` and `scopeTarget`; `memory_recall` accepts `userId`, `agentId`, `sessionId` to filter results. New tool `memory_promote` promotes session-scoped memories to global or agent scope. CLI: `hybrid-mem store --scope user --scope-target alice`, `hybrid-mem search --user-id alice`, `hybrid-mem scope prune-session <session-id>`, `hybrid-mem scope promote --id <fact-id> --scope global`. Config: `autoRecall.scopeFilter: { userId?, agentId?, sessionId? }` for auto-recall filtering in multi-user environments. See [docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md) and [issue #6](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/6).
-
-### Fixed
-
 - **Stability:** Plugin now closes LanceDB (VectorDB) on stop to avoid resource leaks; VectorDB has a `close()` method and closed guard.
 - **Stability:** WAL writes are durable: fsync is performed after each write, remove, and pruneStale compact so power loss does not corrupt the log.
 - **Stability:** LanceDB failures no longer crash the plugin: search/count/hasDuplicate return empty/0/false and log; store/delete log and rethrow; CLI and tool paths wrap vector calls in try/catch with logging.
@@ -122,8 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Reflection Layer (FR-011)**: Analyze facts to extract behavioral patterns and meta-insights. New `pattern` and `rule` categories for storing synthesized patterns. CLI command `openclaw hybrid-mem reflect [--window N] [--dry-run] [--model MODEL]` and agent tool `memory_reflect` for on-demand pattern synthesis. Patterns are stored with high importance (0.9) and permanent decay class. Semantic deduplication at 85% similarity threshold. Config: `reflection.enabled`, `reflection.model` (default gpt-4o-mini), `reflection.defaultWindow` (default 14 days), `reflection.minObservations` (default 2). See [docs/REFLECTION.md](docs/REFLECTION.md) for full documentation. Inspired by Claude-Diary and Generative Agents paper.
 - **Memory Operation Classification (FR-008)**: LLM-based pre-write classification of memory operations as `ADD`, `UPDATE`, `DELETE`, or `NOOP`. When enabled, the system analyzes new facts against existing memories to determine if they should be added as new facts, update/supersede existing facts, mark facts as deleted, or be skipped as duplicates. This prevents contradictory duplicates and maintains an audit trail of how facts evolve. **Similar-fact retrieval now uses embedding similarity** (top-N by vector search, then resolved via SQLite) as in Mem0-style pipelines; entity+key/FTS fallback is used when vector search returns no candidates. LanceDB stores the SQLite fact id when provided so classification can target the correct fact. New database fields `superseded_at` and `superseded_by` track supersession relationships. Deleted facts are soft-deleted (superseded with NULL) and excluded from recall. Config: `store.classifyBeforeWrite` (default false, opt-in), `store.classifyModel` (default gpt-4o-mini). Classification results are exposed in tool responses and nightly jobs. See [issue #8](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/8).
 - **Progressive Disclosure for auto-recall (FR-009)**: Auto-recall can now inject a lightweight memory index instead of full memory texts, allowing the agent to decide what to fetch. When `autoRecall.injectionFormat` is set to `progressive`, the system injects a compact list showing available memories with their categories, titles, and token costs. The agent can then use `memory_recall` to fetch specific memories on demand. This reduces prompt bloat, prevents over-disclosure of marginal information, and gives agents more control over context usage. Access tracking (recall count and last accessed timestamp) is updated for all injected memories to support salience-based ranking.
-- **Bi-temporal fact tracking (FR-010)**: Contradiction resolution and point-in-time queries. New columns: `valid_from`, `valid_until`, `supersedes_id`. When a fact is superseded (UPDATE/DELETE classification or manual `supersedes`), the old fact gets `valid_until = now` and the new fact gets `valid_from` and `supersedes_id`. Default recall returns only current facts (`superseded_at IS NULL`). Optional: `memory_recall(..., includeSuperseded: true)` or `asOf: "YYYY-MM-DD"` for point-in-time ("what did we know as of date X?"). `memory_store` accepts optional `supersedes` (fact id to replace). CLI: `hybrid-mem search` / `lookup` support `--as-of` and `--include-superseded`; `hybrid-mem store` supports `--supersedes <fact-id>`. Session distillation (extract-daily) uses session/file date as `valid_from`. See [issue #10](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/10).
-- **Dynamic Salience Scoring (FR-005)**: Access-based importance for memories. (1) **Access Boost:** Every recall (via `memory_recall` or auto-recall) increments `recall_count` and updates `last_accessed`; frequently recalled facts score higher. (2) **Time Decay:** Effective importance decays with `(now - last_accessed)` so older, unused memories fade. (3) **Hebbian Reinforcement:** When two or more memories are recalled together in the same session, `RELATED_TO` links are created or strengthened between them. Requires `graph.enabled` (default true). See [issue #5](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/5).
+- **Bi-temporal fact tracking (FR-010)**: Contradiction resolution and point-in-time queries. New columns: `valid_from`, `valid_until`, `supersedes_id`. When a fact is superseded (UPDATE/DELETE classification or manual `supersedes`), the old fact gets `valid_until = now` and the new fact gets `valid_from` and `supersedes_id`. Default recall returns only current facts (`superseded_at IS NULL`). Optional: `memory_recall(..., includeSuperseded: true)` or `asOf: "YYYY-MM-DD"` for point-in-time ("what did we know as of date X?"). `memory_store` accepts optional `supersedes` (fact id to replace). CLI: `hybrid-mem search "query" --as-of 2026-01-20`, `--include-superseded`. Session distillation (extract-daily) uses session/file date as `valid_from`. See [issue #10](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/10).
 
 ---
 
@@ -229,10 +190,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.175...HEAD
-[2026.2.175]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.174...v2026.2.175
-[2026.2.174]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.173...v2026.2.174
-[2026.2.173]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.172...v2026.2.173
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.172...HEAD
 [2026.2.172]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.172
 [2026.2.17.1]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.17.1
 [2026.2.17.0]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.17.0

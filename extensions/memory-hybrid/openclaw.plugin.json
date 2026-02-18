@@ -219,6 +219,30 @@
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
     },
+    "procedures.enabled": {
+      "label": "Procedural memory",
+      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills (issue #23)"
+    },
+    "procedures.sessionsDir": {
+      "label": "Session directory",
+      "help": "Path to session JSONL files (default: ~/.openclaw/agents/main/sessions)"
+    },
+    "procedures.minSteps": {
+      "label": "Min steps",
+      "help": "Minimum tool steps to count as a procedure (default: 2)"
+    },
+    "procedures.validationThreshold": {
+      "label": "Validation threshold",
+      "help": "Success count before auto-generating a skill (default: 3)"
+    },
+    "procedures.skillTTLDays": {
+      "label": "Skill TTL (days)",
+      "help": "Procedure confidence TTL / revalidation window (default: 30)"
+    },
+    "procedures.skillsAutoPath": {
+      "label": "Auto-skills path",
+      "help": "Path for auto-generated skills (default: skills/auto)"
+    },
     "distill.apiKey": {
       "label": "Gemini API Key (distill)",
       "sensitive": true,

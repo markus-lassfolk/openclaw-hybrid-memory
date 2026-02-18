@@ -127,6 +127,23 @@ export type ReflectionConfig = {
   minObservations: number;   // Min observations to support a pattern (default: 2)
 };
 
+/** Procedural memory (issue #23): auto-generated skills from learned patterns */
+export type ProceduresConfig = {
+  enabled: boolean;
+  /** Session JSONL directory (default: ~/.openclaw/agents/main/sessions) */
+  sessionsDir: string;
+  /** Min tool steps to consider a procedure (default: 2) */
+  minSteps: number;
+  /** Validations before auto-generating a skill (default: 3) */
+  validationThreshold: number;
+  /** TTL days for procedure confidence / revalidation (default: 30) */
+  skillTTLDays: number;
+  /** Path to auto-generated skills (default: workspace/skills/auto) */
+  skillsAutoPath: string;
+  /** Require human approval before promoting auto-skill to permanent (default: true) */
+  requireApprovalForPromote: boolean;
+};
+
 /** FR-004: Dynamic memory tiering (hot/warm/cold). */
 export type MemoryTieringConfig = {
   enabled: boolean;
@@ -225,6 +242,8 @@ export type HybridMemoryConfig = {
   personaProposals: PersonaProposalsConfig;
   /** FR-011: Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
   reflection: ReflectionConfig;
+  /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
+  procedures: ProceduresConfig;
   /** FR-004: Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
   /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
@@ -552,6 +571,29 @@ export const hybridConfigSchema = {
         : 2,
     };
 
+    // Parse procedures config (issue #23)
+    const defaultSessionsDir = join(homedir(), ".openclaw", "agents", "main", "sessions");
+    const proceduresRaw = cfg.procedures as Record<string, unknown> | undefined;
+    const procedures: ProceduresConfig = {
+      enabled: proceduresRaw?.enabled !== false,
+      sessionsDir: typeof proceduresRaw?.sessionsDir === "string" && proceduresRaw.sessionsDir.length > 0
+        ? proceduresRaw.sessionsDir
+        : defaultSessionsDir,
+      minSteps: typeof proceduresRaw?.minSteps === "number" && proceduresRaw.minSteps >= 1
+        ? Math.floor(proceduresRaw.minSteps)
+        : 2,
+      validationThreshold: typeof proceduresRaw?.validationThreshold === "number" && proceduresRaw.validationThreshold >= 1
+        ? Math.floor(proceduresRaw.validationThreshold)
+        : 3,
+      skillTTLDays: typeof proceduresRaw?.skillTTLDays === "number" && proceduresRaw.skillTTLDays >= 1
+        ? Math.floor(proceduresRaw.skillTTLDays)
+        : 30,
+      skillsAutoPath: typeof proceduresRaw?.skillsAutoPath === "string" && proceduresRaw.skillsAutoPath.length > 0
+        ? proceduresRaw.skillsAutoPath
+        : "skills/auto",
+      requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
+    };
+
     // Parse optional distill config (Gemini for session distillation)
     const distillRaw = cfg.distill as Record<string, unknown> | undefined;
     const distill =
@@ -576,29 +618,6 @@ export const hybridConfigSchema = {
       hotMaxFacts: typeof tierRaw?.hotMaxFacts === "number" && tierRaw.hotMaxFacts > 0
         ? Math.floor(tierRaw.hotMaxFacts)
         : 50,
-    };
-
-    // Parse procedures config (issue #23)
-    const defaultSessionsDir = join(homedir(), ".openclaw", "agents", "main", "sessions");
-    const proceduresRaw = cfg.procedures as Record<string, unknown> | undefined;
-    const procedures: ProceduresConfig = {
-      enabled: proceduresRaw?.enabled !== false,
-      sessionsDir: typeof proceduresRaw?.sessionsDir === "string" && proceduresRaw.sessionsDir.length > 0
-        ? proceduresRaw.sessionsDir
-        : defaultSessionsDir,
-      minSteps: typeof proceduresRaw?.minSteps === "number" && proceduresRaw.minSteps >= 1
-        ? Math.floor(proceduresRaw.minSteps)
-        : 2,
-      validationThreshold: typeof proceduresRaw?.validationThreshold === "number" && proceduresRaw.validationThreshold >= 1
-        ? Math.floor(proceduresRaw.validationThreshold)
-        : 3,
-      skillTTLDays: typeof proceduresRaw?.skillTTLDays === "number" && proceduresRaw.skillTTLDays >= 1
-        ? Math.floor(proceduresRaw.skillTTLDays)
-        : 30,
-      skillsAutoPath: typeof proceduresRaw?.skillsAutoPath === "string" && proceduresRaw.skillsAutoPath.length > 0
-        ? proceduresRaw.skillsAutoPath
-        : "skills/auto",
-      requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     };
 
     // Parse optional ingest config (issue #33)
@@ -647,9 +666,9 @@ export const hybridConfigSchema = {
       wal,
       personaProposals,
       reflection,
+      procedures,
       memoryTiering,
       distill,
-      procedures,
       ingest,
       search,
     };

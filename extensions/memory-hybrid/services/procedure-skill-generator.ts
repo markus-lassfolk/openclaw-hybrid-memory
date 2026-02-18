@@ -3,7 +3,7 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry } from "../types/memory.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
@@ -49,7 +49,7 @@ export function generateAutoSkills(
 ): GenerateAutoSkillsResult {
   const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
   const dryRun = options.dryRun ?? false;
-  const basePath = isAbsolute(options.skillsAutoPath)
+  const basePath = options.skillsAutoPath.startsWith("/")
     ? options.skillsAutoPath
     : join(process.env.OPENCLAW_WORKSPACE || process.cwd(), options.skillsAutoPath);
 
