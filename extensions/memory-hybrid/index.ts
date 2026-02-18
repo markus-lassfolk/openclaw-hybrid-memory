@@ -577,6 +577,17 @@ function extractStructuredFields(
     };
   }
 
+  const decisionMatchSv = text.match(
+    /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i,
+  );
+  if (decisionMatchSv) {
+    return {
+      entity: "decision",
+      key: decisionMatchSv[1].trim().slice(0, 100),
+      value: decisionMatchSv[2]?.trim() || "no rationale recorded",
+    };
+  }
+
   const choiceMatch = text.match(
     /(?:use|using|chose|prefer|picked)\s+(.+?)\s+(?:over|instead of|rather than)\s+(.+?)(?:\s+(?:because|since|for|due to)\s+(.+?))?\.?$/i,
   );
@@ -589,13 +600,13 @@ function extractStructuredFields(
   }
 
   const ruleMatch = text.match(
-    /(?:always|never|must|should always|should never)\s+(.+?)\.?$/i,
+    /(?:always|never|must|should always|should never|alltid|aldrig)\s+(.+?)\.?$/i,
   );
   if (ruleMatch) {
     return {
       entity: "convention",
       key: ruleMatch[1].trim().slice(0, 100),
-      value: lower.includes("never") ? "never" : "always",
+      value: lower.includes("never") || lower.includes("aldrig") ? "never" : "always",
     };
   }
 
@@ -610,6 +621,17 @@ function extractStructuredFields(
     };
   }
 
+  const possessiveMatchSv = text.match(
+    /(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i,
+  );
+  if (possessiveMatchSv) {
+    return {
+      entity: "user",
+      key: possessiveMatchSv[1].trim(),
+      value: possessiveMatchSv[2].trim(),
+    };
+  }
+
   const preferMatch = text.match(
     /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/,
   );
@@ -618,6 +640,28 @@ function extractStructuredFields(
       entity: "user",
       key: preferMatch[1],
       value: preferMatch[2].trim(),
+    };
+  }
+
+  const preferMatchSv = text.match(
+    /jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i,
+  );
+  if (preferMatchSv) {
+    return {
+      entity: "user",
+      key: preferMatchSv[1],
+      value: preferMatchSv[2].trim(),
+    };
+  }
+
+  const heterMatch = text.match(
+    /heter\s+(.+?)\.?$/i,
+  );
+  if (heterMatch) {
+    return {
+      entity: "entity",
+      key: "name",
+      value: heterMatch[1].trim(),
     };
   }
 
@@ -633,7 +677,8 @@ function extractStructuredFields(
 
   if (category === "entity") {
     const words = text.split(/\s+/);
-    const properNouns = words.filter((w) => /^[A-Z][a-z]+/.test(w));
+    // Include Swedish/Nordic letters (åäö) and other Unicode letters so names like Doris, Lotta, Åsa match
+    const properNouns = words.filter((w) => /^\p{Lu}\p{L}+$/u.test(w));
     if (properNouns.length > 0) {
       return { entity: properNouns[0], key: null, value: null };
     }
@@ -647,20 +692,20 @@ function extractStructuredFields(
 // ============================================================================
 
 const MEMORY_TRIGGERS = [
-  /remember|zapamatuj si|pamatuj/i,
-  /prefer|radši|nechci/i,
-  /decided|rozhodli jsme|budeme používat/i,
+  /remember|zapamatuj si|pamatuj|kom ihåg|glöm inte/i,
+  /prefer|radši|nechci|föredrar|gillar|ogillar|vill ha/i,
+  /decided|rozhodli jsme|budeme používat|bestämde|valde|vi använder/i,
   /\+\d{10,}/,
   /[\w.-]+@[\w.-]+\.\w+/,
-  /my\s+\w+\s+is|is\s+my/i,
-  /i (like|prefer|hate|love|want|need)/i,
-  /always|never|important/i,
-  /born on|birthday|lives in|works at/i,
-  /password is|api key|token is/i,
-  /chose|selected|went with|picked/i,
-  /over.*because|instead of.*since/i,
-  /\balways\b.*\buse\b|\bnever\b.*\buse\b/i,
-  /architecture|stack|approach/i,
+  /my\s+\w+\s+is|is\s+my|mitt\s+\w+\s+är|min\s+\w+\s+är|heter\s/i,
+  /i (like|prefer|hate|love|want|need)|jag (föredrar|gillar|vill|behöver)/i,
+  /always|never|important|alltid|aldrig|viktigt/i,
+  /born on|birthday|lives in|works at|född|födelsedag|bor (i|på)|jobbar (i|på)/i,
+  /password is|api key|token is|lösenord|api-nyckel/i,
+  /chose|selected|went with|picked|valde|bestämde/i,
+  /over.*because|instead of.*since|eftersom|för att/i,
+  /\balways\b.*\buse\b|\bnever\b.*\buse\b|alltid.*använda|aldrig.*använda/i,
+  /architecture|stack|approach|arkitektur|stack|tillvägagångssätt/i,
 ];
 
 const SENSITIVE_PATTERNS = [
@@ -889,12 +934,12 @@ function shouldCapture(text: string): boolean {
 
 function detectCategory(text: string): MemoryCategory {
   const lower = text.toLowerCase();
-  if (/decided|chose|went with|selected|always use|never use|over.*because|instead of.*since|rozhodli|will use|budeme/i.test(lower))
+  if (/decided|chose|went with|selected|always use|never use|over.*because|instead of.*since|rozhodli|will use|budeme|bestämde|valde|alltid använda|aldrig använda|eftersom|för att/i.test(lower))
     return "decision";
-  if (/prefer|radši|like|love|hate|want/i.test(lower)) return "preference";
-  if (/\+\d{10,}|@[\w.-]+\.\w+|is called|jmenuje se/i.test(lower))
+  if (/prefer|radši|like|love|hate|want|föredrar|gillar|ogillar|vill/i.test(lower)) return "preference";
+  if (/\+\d{10,}|@[\w.-]+\.\w+|is called|jmenuje se|heter\s/i.test(lower))
     return "entity";
-  if (/born|birthday|lives|works|is\s|are\s|has\s|have\s/i.test(lower))
+  if (/born|birthday|lives|works|is\s|are\s|has\s|have\s|född|födelsedag|bor\s|jobbar\s/i.test(lower))
     return "fact";
   return "other";
 }
@@ -4678,35 +4723,55 @@ const memoryHybridPlugin = {
           const decisionMatch = t.match(
             /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i
           );
+          const decisionMatchSv = t.match(
+            /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i
+          );
           if (decisionMatch) {
             entity = "decision";
             key = decisionMatch[1].trim().slice(0, 100);
             value = (decisionMatch[2] || "no rationale").trim();
             category = "decision";
+          } else if (decisionMatchSv) {
+            entity = "decision";
+            key = decisionMatchSv[1].trim().slice(0, 100);
+            value = (decisionMatchSv[2] || "no rationale").trim();
+            category = "decision";
           } else {
-            const ruleMatch = t.match(/(?:always|never)\s+(.+?)\.?$/i);
+            const ruleMatch = t.match(/(?:always|never|alltid|aldrig)\s+(.+?)\.?$/i);
             if (ruleMatch) {
               entity = "convention";
               key = ruleMatch[1].trim().slice(0, 100);
-              value = lower.includes("never") ? "never" : "always";
+              value = lower.includes("never") || lower.includes("aldrig") ? "never" : "always";
               category = "preference";
             } else {
               const possessiveMatch = t.match(
                 /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/
               );
+              const possessiveMatchSv = t.match(/(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i);
               if (possessiveMatch) {
                 entity = possessiveMatch[1] || "user";
                 key = possessiveMatch[2].trim();
                 value = possessiveMatch[3].trim();
                 category = "fact";
+              } else if (possessiveMatchSv) {
+                entity = "user";
+                key = possessiveMatchSv[1].trim();
+                value = possessiveMatchSv[2].trim();
+                category = "fact";
               } else {
                 const preferMatch = t.match(
                   /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/
                 );
+                const preferMatchSv = t.match(/jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i);
                 if (preferMatch) {
                   entity = "user";
                   key = preferMatch[1];
                   value = preferMatch[2].trim();
+                  category = "preference";
+                } else if (preferMatchSv) {
+                  entity = "user";
+                  key = preferMatchSv[1];
+                  value = preferMatchSv[2].trim();
                   category = "preference";
                 } else {
                   value = t.slice(0, 200);
@@ -5234,6 +5299,8 @@ const memoryHybridPlugin = {
           runDistillWindow: (opts) => Promise.resolve(runDistillWindowForCli(opts)),
           runRecordDistill: () => Promise.resolve(runRecordDistillForCli()),
           runExtractDaily: (opts, sink) => runExtractDailyForCli(opts, sink),
+          runExtractProcedures: (opts) => runExtractProceduresForCli(opts),
+          runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
           runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
           runIngestFiles: (opts, sink) => runIngestFilesForCli(opts, sink),
           runDistill: (opts, sink) => runDistillForCli(opts, sink),

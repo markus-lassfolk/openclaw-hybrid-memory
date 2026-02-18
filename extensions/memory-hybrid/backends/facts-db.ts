@@ -131,6 +131,19 @@ export class FactsDB {
     this.migrateProceduresTable();
   }
 
+  /** FR-004: Add tier column; default 'warm' for existing rows. */
+  private migrateTierColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "tier")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tier TEXT DEFAULT 'warm'`);
+    this.liveDb.exec(`UPDATE facts SET tier = 'warm' WHERE tier IS NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_tier ON facts(tier) WHERE tier IS NOT NULL`,
+    );
+  }
+
   /** FR-006: Add scope and scope_target columns for memory scoping. */
   private migrateScopeColumns(): void {
     const cols = this.liveDb
@@ -145,76 +158,6 @@ export class FactsDB {
     );
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_scope_target ON facts(scope, scope_target) WHERE scope_target IS NOT NULL`,
-    );
-  }
-
-  /**
-   * FR-006: Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId.
-   * ⚠️ SECURITY: Callers MUST derive scope filter values from trusted runtime identity (authenticated user/agent/session).
-   * Do NOT pass arbitrary caller-controlled tool/CLI parameters here — that enables cross-tenant data leakage
-   * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
-   * (set by integration layer) rather than user-supplied parameters. See docs/MEMORY-SCOPING.md.
-   */
-  private scopeFilterClause(filter: ScopeFilter | null | undefined): { clause: string; params: Record<string, unknown> } {
-    if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
-      return { clause: "", params: {} };
-    }
-    const parts: string[] = ["("];
-    parts.push("scope = 'global'");
-    const params: Record<string, unknown> = {};
-    if (filter.userId) {
-      parts.push("OR (scope = 'user' AND scope_target = @scopeUserId)");
-      params.scopeUserId = filter.userId;
-    }
-    if (filter.agentId) {
-      parts.push("OR (scope = 'agent' AND scope_target = @scopeAgentId)");
-      params.scopeAgentId = filter.agentId;
-    }
-    if (filter.sessionId) {
-      parts.push("OR (scope = 'session' AND scope_target = @scopeSessionId)");
-      params.scopeSessionId = filter.sessionId;
-    }
-    parts.push(")");
-    return { clause: "AND " + parts.join(" "), params };
-  }
-
-  /**
-   * FR-006: Build SQL fragment for scope filtering with positional params (for lookup/getAll).
-   * Same security constraints as scopeFilterClause — derive from trusted identity only.
-   */
-  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: unknown[] } {
-    if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
-      return { clause: "", params: [] };
-    }
-    const parts: string[] = ["("];
-    parts.push("scope = 'global'");
-    const params: unknown[] = [];
-    if (filter.userId) {
-      parts.push("OR (scope = 'user' AND scope_target = ?)");
-      params.push(filter.userId);
-    }
-    if (filter.agentId) {
-      parts.push("OR (scope = 'agent' AND scope_target = ?)");
-      params.push(filter.agentId);
-    }
-    if (filter.sessionId) {
-      parts.push("OR (scope = 'session' AND scope_target = ?)");
-      params.push(filter.sessionId);
-    }
-    parts.push(")");
-    return { clause: " AND " + parts.join(" "), params };
-  }
-
-  /** FR-004: Add tier column; default 'warm' for existing rows. */
-  private migrateTierColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === "tier")) return;
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tier TEXT DEFAULT 'warm'`);
-    this.liveDb.exec(`UPDATE facts SET tier = 'warm' WHERE tier IS NULL`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_tier ON facts(tier) WHERE tier IS NOT NULL`,
     );
   }
 
@@ -277,6 +220,63 @@ export class FactsDB {
         INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
       END
     `);
+  }
+
+  /**
+   * FR-006: Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId.
+   * ⚠️ SECURITY: Callers MUST derive scope filter values from trusted runtime identity (authenticated user/agent/session).
+   * Do NOT pass arbitrary caller-controlled tool/CLI parameters here — that enables cross-tenant data leakage
+   * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
+   * (set by integration layer) rather than user-supplied parameters. See docs/MEMORY-SCOPING.md.
+   */
+  private scopeFilterClause(filter: ScopeFilter | null | undefined): { clause: string; params: Record<string, unknown> } {
+    if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
+      return { clause: "", params: {} };
+    }
+    const parts: string[] = ["("];
+    parts.push("scope = 'global'");
+    const params: Record<string, unknown> = {};
+    if (filter.userId) {
+      parts.push("OR (scope = 'user' AND scope_target = @scopeUserId)");
+      params.scopeUserId = filter.userId;
+    }
+    if (filter.agentId) {
+      parts.push("OR (scope = 'agent' AND scope_target = @scopeAgentId)");
+      params.scopeAgentId = filter.agentId;
+    }
+    if (filter.sessionId) {
+      parts.push("OR (scope = 'session' AND scope_target = @scopeSessionId)");
+      params.scopeSessionId = filter.sessionId;
+    }
+    parts.push(")");
+    return { clause: "AND " + parts.join(" "), params };
+  }
+
+  /**
+   * FR-006: Build SQL fragment for scope filtering with positional params (for lookup/getAll).
+   * Same security constraints as scopeFilterClause — derive from trusted identity only.
+   */
+  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: unknown[] } {
+    if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
+      return { clause: "", params: [] };
+    }
+    const parts: string[] = ["("];
+    parts.push("scope = 'global'");
+    const params: unknown[] = [];
+    if (filter.userId) {
+      parts.push("OR (scope = 'user' AND scope_target = ?)");
+      params.push(filter.userId);
+    }
+    if (filter.agentId) {
+      parts.push("OR (scope = 'agent' AND scope_target = ?)");
+      params.push(filter.agentId);
+    }
+    if (filter.sessionId) {
+      parts.push("OR (scope = 'session' AND scope_target = ?)");
+      params.push(filter.sessionId);
+    }
+    parts.push(")");
+    return { clause: " AND " + parts.join(" "), params };
   }
 
   private migrateTagsColumn(): void {
@@ -475,15 +475,15 @@ export class FactsDB {
       validUntil?: number | null;
       /** FR-010: Id of the fact this one supersedes. */
       supersedesId?: string | null;
-      /** FR-006: Memory scope — global, user, agent, or session. Default global. */
-      scope?: "global" | "user" | "agent" | "session";
-      /** FR-006: Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
-      scopeTarget?: string | null;
       /** Procedural memory: fact as procedure summary. */
       procedureType?: "positive" | "negative" | null;
       successCount?: number;
       lastValidated?: number | null;
       sourceSessions?: string | null;
+      /** FR-006: Memory scope — global, user, agent, or session. Default global. */
+      scope?: "global" | "user" | "agent" | "session";
+      /** FR-006: Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
+      scopeTarget?: string | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
