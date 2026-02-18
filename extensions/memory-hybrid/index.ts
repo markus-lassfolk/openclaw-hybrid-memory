@@ -83,6 +83,16 @@ import {
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
 import { computeDynamicSalience } from "./utils/salience.js";
+import {
+  setKeywordsPath,
+  getLanguageKeywordsFilePath,
+  getMemoryTriggerRegexes,
+  getCategoryDecisionRegex,
+  getCategoryPreferenceRegex,
+  getCategoryEntityRegex,
+  getCategoryFactRegex,
+} from "./utils/language-keywords.js";
+import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./services/language-keywords-build.js";
 
 // ============================================================================
 // Credentials Store (opt-in, encrypted)
@@ -691,22 +701,10 @@ function extractStructuredFields(
 // Auto-capture Filters
 // ============================================================================
 
-const MEMORY_TRIGGERS = [
-  /remember|zapamatuj si|pamatuj|kom ihåg|glöm inte/i,
-  /prefer|radši|nechci|föredrar|gillar|ogillar|vill ha/i,
-  /decided|rozhodli jsme|budeme používat|bestämde|valde|vi använder/i,
-  /\+\d{10,}/,
-  /[\w.-]+@[\w.-]+\.\w+/,
-  /my\s+\w+\s+is|is\s+my|mitt\s+\w+\s+är|min\s+\w+\s+är|heter\s/i,
-  /i (like|prefer|hate|love|want|need)|jag (föredrar|gillar|vill|behöver)/i,
-  /always|never|important|alltid|aldrig|viktigt/i,
-  /born on|birthday|lives in|works at|född|födelsedag|bor (i|på)|jobbar (i|på)/i,
-  /password is|api key|token is|lösenord|api-nyckel/i,
-  /chose|selected|went with|picked|valde|bestämde/i,
-  /over.*because|instead of.*since|eftersom|för att/i,
-  /\balways\b.*\buse\b|\bnever\b.*\buse\b|alltid.*använda|aldrig.*använda/i,
-  /architecture|stack|approach|arkitektur|stack|tillvägagångssätt/i,
-];
+/** Memory triggers: English + dynamic languages from .language-keywords.json (see build-languages command). */
+function getMemoryTriggers(): RegExp[] {
+  return getMemoryTriggerRegexes();
+}
 
 const SENSITIVE_PATTERNS = [
   /password/i,
@@ -929,18 +927,15 @@ function shouldCapture(text: string): boolean {
   const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
   if (emojiCount > 3) return false;
   if (SENSITIVE_PATTERNS.some((r) => r.test(text))) return false;
-  return MEMORY_TRIGGERS.some((r) => r.test(text));
+  return getMemoryTriggers().some((r) => r.test(text));
 }
 
 function detectCategory(text: string): MemoryCategory {
   const lower = text.toLowerCase();
-  if (/decided|chose|went with|selected|always use|never use|over.*because|instead of.*since|rozhodli|will use|budeme|bestämde|valde|alltid använda|aldrig använda|eftersom|för att/i.test(lower))
-    return "decision";
-  if (/prefer|radši|like|love|hate|want|föredrar|gillar|ogillar|vill/i.test(lower)) return "preference";
-  if (/\+\d{10,}|@[\w.-]+\.\w+|is called|jmenuje se|heter\s/i.test(lower))
-    return "entity";
-  if (/born|birthday|lives|works|is\s|are\s|has\s|have\s|född|födelsedag|bor\s|jobbar\s/i.test(lower))
-    return "fact";
+  if (getCategoryDecisionRegex().test(lower)) return "decision";
+  if (getCategoryPreferenceRegex().test(lower)) return "preference";
+  if (/\+\d{10,}|@[\w.-]+\.\w+/.test(lower) || getCategoryEntityRegex().test(lower)) return "entity";
+  if (getCategoryFactRegex().test(lower)) return "fact";
   return "other";
 }
 
@@ -1836,6 +1831,8 @@ let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let classifyTimer: ReturnType<typeof setInterval> | null = null;
 let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
+let languageKeywordsTimer: ReturnType<typeof setInterval> | null = null;
+let languageKeywordsStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /** FR-009: Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
 let lastProgressiveIndexIds: string[] = [];
@@ -1918,6 +1915,7 @@ const memoryHybridPlugin = {
     cfg = hybridConfigSchema.parse(api.pluginConfig);
     resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
     resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
+    setKeywordsPath(dirname(resolvedSqlitePath));
     const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
     factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
@@ -4031,6 +4029,7 @@ const memoryHybridPlugin = {
                     autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
                     categories: [] as string[],
                     credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
+                    languageKeywords: { autoBuild: true, weeklyIntervalDays: 7 },
                   },
                 },
               },
@@ -5304,8 +5303,6 @@ const memoryHybridPlugin = {
           runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
           runIngestFiles: (opts, sink) => runIngestFilesForCli(opts, sink),
           runDistill: (opts, sink) => runDistillForCli(opts, sink),
-          runExtractProcedures: (opts) => runExtractProceduresForCli(opts),
-          runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
           runUpgrade: () => runUpgradeForCli(),
@@ -5346,10 +5343,17 @@ const memoryHybridPlugin = {
                 hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
               }),
             ),
+          runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) =>
+            runBuildLanguageKeywordsService(
+              factsDb.getFactsForConsolidation(300),
+              openai,
+              dirname(resolvedSqlitePath),
+              { model: opts.model ?? cfg.autoClassify.model, dryRun: opts.dryRun },
+            ),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -6214,12 +6218,58 @@ const memoryHybridPlugin = {
             `memory-hybrid: auto-classify enabled (model: ${cfg.autoClassify.model}, interval: 24h, batch: ${cfg.autoClassify.batchSize})`,
           );
         }
+
+        // Auto-build multilingual keywords: run once at startup if no file, then weekly (captures language drift)
+        if (cfg.languageKeywords.autoBuild) {
+          const langFilePath = getLanguageKeywordsFilePath();
+          const runBuild = async () => {
+            try {
+              const facts = factsDb.getFactsForConsolidation(300);
+              const result = await runBuildLanguageKeywordsService(
+                facts,
+                openai,
+                dirname(resolvedSqlitePath),
+                { model: cfg.autoClassify.model, dryRun: false },
+              );
+              if (result.ok && result.languagesAdded > 0) {
+                api.logger.info(
+                  `memory-hybrid: language keywords updated (${result.topLanguages.join(", ")}, +${result.languagesAdded} languages)`,
+                );
+              } else if (result.ok) {
+                api.logger.info(`memory-hybrid: language keywords build done (${result.topLanguages.join(", ")})`);
+              } else {
+                api.logger.warn(`memory-hybrid: language keywords build failed: ${result.error}`);
+              }
+            } catch (err) {
+              api.logger.warn(`memory-hybrid: language keywords build failed: ${err}`);
+            }
+          };
+
+          if (langFilePath && !existsSync(langFilePath)) {
+            api.logger.info("memory-hybrid: no language keywords file; building from memory samples in 3s…");
+            languageKeywordsStartupTimeout = setTimeout(() => {
+              void runBuild();
+              languageKeywordsStartupTimeout = null;
+            }, 3000);
+          }
+
+          const weeklyMs = cfg.languageKeywords.weeklyIntervalDays * 24 * 60 * 60 * 1000;
+          languageKeywordsTimer = setInterval(() => void runBuild(), weeklyMs);
+          api.logger.info(
+            `memory-hybrid: language keywords auto-build enabled (every ${cfg.languageKeywords.weeklyIntervalDays} days)`,
+          );
+        }
       },
       stop: () => {
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
         if (proposalsPruneTimer) { clearInterval(proposalsPruneTimer); proposalsPruneTimer = null; }
+        if (languageKeywordsStartupTimeout) {
+          clearTimeout(languageKeywordsStartupTimeout);
+          languageKeywordsStartupTimeout = null;
+        }
+        if (languageKeywordsTimer) { clearInterval(languageKeywordsTimer); languageKeywordsTimer = null; }
         factsDb.close();
         vectorDb.close();
         if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }

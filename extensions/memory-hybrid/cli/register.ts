@@ -158,6 +158,11 @@ export type HybridMemCliContext = {
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   /** FR-004: Run memory tier compaction (completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT). */
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  /** Detect top 3 languages from memory text, translate English keywords, write .language-keywords.json. */
+  runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
+    | { ok: true; path: string; topLanguages: string[]; languagesAdded: number }
+    | { ok: false; error: string }
+  >;
 };
 
 /** Chainable command type (Commander-style). */
@@ -201,6 +206,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runClassify,
     autoClassifyConfig,
     runCompaction,
+    runBuildLanguageKeywords,
   } = ctx;
 
   mem
@@ -871,6 +877,26 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           console.log(`  ${cat}: ${count}`);
         }
       }
+    });
+
+  mem
+    .command("build-languages")
+    .description("Detect top 3 languages from memory text, translate English trigger/category keywords via LLM, write .language-keywords.json for multilingual capture. Run once or when you add new languages; then nightly runs use the stored file.")
+    .option("--dry-run", "Detect and translate but do not write file")
+    .option("--model <model>", "LLM model for detection and translation", "gpt-4o-mini")
+    .action(async (opts: { dryRun?: boolean; model?: string }) => {
+      const result = await runBuildLanguageKeywords({
+        model: opts.model || autoClassifyConfig.model,
+        dryRun: !!opts.dryRun,
+      });
+      if (!result.ok) {
+        console.error("build-languages failed:", result.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Detected languages: ${result.topLanguages.join(", ")}`);
+      console.log(`Languages added (translations): ${result.languagesAdded}`);
+      console.log(`Path: ${result.path}${opts.dryRun ? " (dry run, not written)" : ""}`);
     });
 
   const cred = mem

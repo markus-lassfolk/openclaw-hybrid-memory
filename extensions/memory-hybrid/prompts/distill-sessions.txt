@@ -6,6 +6,9 @@ You will receive conversation text from session files, each marked with:
 
 The text contains user requests and assistant responses from a personal AI assistant.
 
+## Multi-language
+Conversations may be in any language (e.g. English, Swedish, German). Extract significant facts from text in every language present. Output the extracted fact in the same language as the source (e.g. if the user said something in Swedish, output the fact text in Swedish). Entity/key/value may stay in the source language. Do not skip or ignore non-English segments.
+
 ## Your Task
 Extract significant facts in these categories:
 
