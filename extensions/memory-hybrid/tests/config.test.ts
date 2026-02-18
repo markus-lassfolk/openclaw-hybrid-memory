@@ -426,6 +426,51 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill).toBeUndefined();
   });
 
+  it("parses optional selfCorrection config (issue #34)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      selfCorrection: {
+        semanticDedup: false,
+        semanticDedupThreshold: 0.88,
+        toolsSection: "My rules",
+        autoRewriteTools: true,
+        analyzeViaSpawn: true,
+        spawnThreshold: 20,
+        spawnModel: "gemini-1.5-pro",
+      },
+    });
+    expect(result.selfCorrection).toBeDefined();
+    expect(result.selfCorrection?.semanticDedup).toBe(false);
+    expect(result.selfCorrection?.semanticDedupThreshold).toBe(0.88);
+    expect(result.selfCorrection?.toolsSection).toBe("My rules");
+    expect(result.selfCorrection?.applyToolsByDefault).toBe(true);
+    expect(result.selfCorrection?.autoRewriteTools).toBe(true);
+    expect(result.selfCorrection?.analyzeViaSpawn).toBe(true);
+    expect(result.selfCorrection?.spawnThreshold).toBe(20);
+    expect(result.selfCorrection?.spawnModel).toBe("gemini-1.5-pro");
+  });
+
+  it("selfCorrection applyToolsByDefault defaults to true when block present", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      selfCorrection: { toolsSection: "Rules" },
+    });
+    expect(result.selfCorrection?.applyToolsByDefault).toBe(true);
+  });
+
+  it("selfCorrection applyToolsByDefault can be set false to opt out", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      selfCorrection: { applyToolsByDefault: false },
+    });
+    expect(result.selfCorrection?.applyToolsByDefault).toBe(false);
+  });
+
+  it("selfCorrection is undefined when omitted", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.selfCorrection).toBeUndefined();
+  });
+
   it("languageKeywords defaults when omitted", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.languageKeywords).toEqual({ autoBuild: true, weeklyIntervalDays: 7 });

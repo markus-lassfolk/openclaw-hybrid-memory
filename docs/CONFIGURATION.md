@@ -148,6 +148,30 @@ Dynamic tiering keeps a small **HOT** set always loaded, uses **WARM** for seman
 
 ---
 
+## Multilingual language keywords
+
+Auto-capture, category detection, and decay classification use keyword/phrase patterns. By default only English is in code; other languages are loaded from a generated file (`.language-keywords.json`). You can have the plugin **build that file automatically** so conversations in other languages (e.g. Swedish, German) are captured and classified correctly.
+
+```json
+{
+  "languageKeywords": {
+    "autoBuild": true,
+    "weeklyIntervalDays": 7
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `autoBuild` | `true` | Run language detection + keyword generation once at startup if no file exists, then on a weekly (or configured) interval. Set to `false` to disable automatic build; you can still run `openclaw hybrid-mem build-languages` manually. |
+| `weeklyIntervalDays` | `7` | Days between automatic builds (1–30). |
+
+When `autoBuild` is `true`, the plugin samples recent facts, detects the top languages, calls the LLM to generate intent-based keyword equivalents, and writes `~/.openclaw/memory/.language-keywords.json` (or next to your `sqlitePath`). New and upgraded setups get this **enabled by default** via `openclaw hybrid-mem install`.
+
+→ Full detail: [LANGUAGE-KEYWORDS.md](LANGUAGE-KEYWORDS.md)
+
+---
+
 ## memorySearch (semantic file search)
 
 ```json
@@ -354,6 +378,38 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 ---
 
+## Multi-language keywords
+
+The plugin supports multiple languages for **trigger detection** (should we capture?), **category detection**, and **decay classification**. English is built-in; other languages are added via a generated file `.language-keywords.json` (next to `facts.db`). You can let the plugin build it automatically or run `openclaw hybrid-mem build-languages` manually.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "languageKeywords": {
+            "autoBuild": true,
+            "weeklyIntervalDays": 7
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `autoBuild` | `true` | If true: build `.language-keywords.json` once at startup when missing (after 3s), then every `weeklyIntervalDays` days. Uses fact samples + LLM to detect top 3 languages and generate intent-based keywords. |
+| `weeklyIntervalDays` | `7` | Interval in days for automatic language keyword rebuild (capped at 30). |
+
+Set `autoBuild` to `false` to disable automatic builds; run `openclaw hybrid-mem build-languages` manually when you want to update languages.
+
+→ Full docs: [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md)
+
+---
+
 ## Ingest workspace files (issue #33)
 
 Index workspace markdown (skills, TOOLS.md, AGENTS.md) as facts. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) for full docs.
@@ -409,6 +465,46 @@ Opt-in HyDE generates a hypothetical answer before embedding for vector search. 
 |-----|---------|-------------|
 | `hydeEnabled` | `false` | Generate hypothetical answer before embedding |
 | `hydeModel` | `gpt-4o-mini` | Model for HyDE generation |
+
+---
+
+## Self-correction analysis (issue #34)
+
+Optional config for the self-correction pipeline: semantic dedup before storing facts, TOOLS.md section name, auto-rewrite vs suggest-and-approve, and Phase 2 via spawn for large batches. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md).
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "selfCorrection": {
+            "semanticDedup": true,
+            "semanticDedupThreshold": 0.92,
+            "toolsSection": "Self-correction rules",
+            "applyToolsByDefault": true,
+            "autoRewriteTools": false,
+            "analyzeViaSpawn": false,
+            "spawnThreshold": 15,
+            "spawnModel": "gemini"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `semanticDedup` | `true` | Skip storing facts that are semantically similar to existing ones |
+| `semanticDedupThreshold` | `0.92` | Similarity threshold 0–1 for semantic dedup |
+| `toolsSection` | `"Self-correction rules"` | TOOLS.md section heading for inserted rules |
+| `applyToolsByDefault` | `true` | When true, apply TOOLS rules by default; set false to only suggest (use `--approve` or `--no-apply-tools`) |
+| `autoRewriteTools` | `false` | When true, LLM rewrites TOOLS.md to integrate new rules; when false, use section insert |
+| `analyzeViaSpawn` | `false` | When true and incidents > spawnThreshold, run Phase 2 via `openclaw sessions spawn` |
+| `spawnThreshold` | `15` | Use spawn for Phase 2 when incident count exceeds this |
+| `spawnModel` | `gemini` | Model for spawn when analyzeViaSpawn is true |
 
 ---
 

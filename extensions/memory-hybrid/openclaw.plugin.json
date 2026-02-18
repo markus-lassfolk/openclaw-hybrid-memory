@@ -437,6 +437,21 @@
           "requireApprovalForPromote": { "type": "boolean", "description": "Require human move to promote auto-skill (default: true)" }
         },
         "description": "Procedural memory: auto-generated skills from learned patterns (issue #23)"
+      },
+      "selfCorrection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "semanticDedup": { "type": "boolean", "description": "Skip storing facts that are semantically similar to existing ones (default: true)" },
+          "semanticDedupThreshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "Similarity threshold for semantic dedup, 0-1 (default: 0.92)" },
+          "toolsSection": { "type": "string", "description": "TOOLS.md section heading for new rules (default: Self-correction rules)" },
+          "applyToolsByDefault": { "type": "boolean", "description": "When true (default), insert suggested TOOLS rules under toolsSection. Set false to only suggest (use --approve to apply). Use --no-apply-tools to skip applying for one run." },
+          "autoRewriteTools": { "type": "boolean", "description": "When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (default: false)" },
+          "analyzeViaSpawn": { "type": "boolean", "description": "When true and incidents > spawnThreshold, run Phase 2 via openclaw sessions spawn (Gemini, large context) (default: false)" },
+          "spawnThreshold": { "type": "number", "description": "Use spawn for Phase 2 when incident count exceeds this (default: 15)" },
+          "spawnModel": { "type": "string", "description": "Model for spawn when analyzeViaSpawn is true (default: gemini)" }
+        },
+        "description": "Self-correction analysis (issue #34): semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
       }
     },
     "required": ["embedding"]
