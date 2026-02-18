@@ -902,13 +902,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--approve", "Force apply suggested TOOLS rules (when config applyToolsByDefault is false)")
     .option("--no-apply-tools", "Do not apply TOOLS rules this run (only suggest in report). Opt-out from default apply.")
     .option("--model <model>", "LLM for analysis (default: config.distill.defaultModel or gpt-4o-mini)", "gpt-4o-mini")
-    .action(async (opts: { extract?: string; workspace?: string; dryRun?: boolean; approve?: boolean; noApplyTools?: boolean; model?: string }) => {
+    .action(async (opts: { extract?: string; workspace?: string; dryRun?: boolean; approve?: boolean; applyTools?: boolean; model?: string }) => {
       const result = await runSelfCorrectionRun({
         extractPath: opts.extract?.trim(),
         workspace: opts.workspace?.trim(),
         dryRun: !!opts.dryRun,
         approve: !!opts.approve,
-        noApplyTools: !!opts.noApplyTools,
+        noApplyTools: opts.applyTools === false,
         model: opts.model?.trim(),
       });
       if (result.error) {

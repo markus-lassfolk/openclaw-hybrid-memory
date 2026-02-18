@@ -241,12 +241,15 @@ export async function extractProceduresFromSessions(
 
     const existing = factsDb.findProcedureByTaskPattern(parsed.taskIntent, 1)[0];
     if (existing && taskSimilarity(existing.taskPattern, parsed.taskIntent) >= 0.5) {
+      let recorded = false;
       if (parsed.success) {
-        factsDb.recordProcedureSuccess(existing.id, recipeJson);
+        recorded = factsDb.recordProcedureSuccess(existing.id, recipeJson, sessionId);
       } else {
-        factsDb.recordProcedureFailure(existing.id, recipeJson);
+        recorded = factsDb.recordProcedureFailure(existing.id, recipeJson, sessionId);
       }
-      proceduresStored++;
+      if (recorded) {
+        proceduresStored++;
+      }
     } else {
       factsDb.upsertProcedure({
         taskPattern: parsed.taskIntent,
@@ -258,6 +261,7 @@ export async function extractProceduresFromSessions(
         lastFailed: parsed.success ? null : Math.floor(Date.now() / 1000),
         confidence: parsed.success ? 0.6 : 0.5,
         ttlDays: 30,
+        sourceSessionId: sessionId,
       });
       proceduresStored++;
     }
