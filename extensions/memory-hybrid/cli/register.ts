@@ -127,7 +127,7 @@ export type HybridMemCliContext = {
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
-  runUpgrade: () => Promise<UpgradeCliResult>;
+  runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runFindDuplicates: (opts: {
     threshold: number;
     includeStructured: boolean;
@@ -552,7 +552,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--all", "Process all sessions (last 90 days)")
     .option("--days <n>", "Process sessions from last N days (default: 3)", "3")
     .option("--since <date>", "Process sessions since date (YYYY-MM-DD)")
-    .option("--model <model>", "LLM for extraction: gpt-4o-mini, gemini-2.0-flash, gemini-1.5-pro (1M context), etc. Default: config.distill.defaultModel or gpt-4o-mini", "gpt-4o-mini")
+    .option("--model <model>", "LLM for extraction (recommended: gemini-3-pro-preview for 1M context). Default: config.distill.defaultModel or gemini-3-pro-preview", "gemini-3-pro-preview")
     .option("--verbose", "Log each fact as it is stored")
     .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
     .option("--max-session-tokens <n>", "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)", "0")
@@ -901,7 +901,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--dry-run", "Analyze and report only; do not store or append")
     .option("--approve", "Force apply suggested TOOLS rules (when config applyToolsByDefault is false)")
     .option("--no-apply-tools", "Do not apply TOOLS rules this run (only suggest in report). Opt-out from default apply.")
-    .option("--model <model>", "LLM for analysis (default: config.distill.defaultModel or gpt-4o-mini)", "gpt-4o-mini")
+    .option("--model <model>", "LLM for analysis (default: config.distill.defaultModel or gemini-3-pro-preview)", "gemini-3-pro-preview")
     .action(async (opts: { extract?: string; workspace?: string; dryRun?: boolean; approve?: boolean; applyTools?: boolean; model?: string }) => {
       const result = await runSelfCorrectionRun({
         extractPath: opts.extract?.trim(),
@@ -987,9 +987,10 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
 
   mem
     .command("upgrade")
-    .description("Upgrade to the latest version from npm. Removes current install, fetches latest, rebuilds native deps. Restart the gateway afterward.")
-    .action(async () => {
-      const result = await runUpgrade();
+    .argument("[version]", "Optional version to install (e.g. 2026.2.181); default: latest")
+    .description("Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart the gateway afterward.")
+    .action(async (versionArg: string | undefined) => {
+      const result = await runUpgrade(versionArg);
       if (!result.ok) {
         console.error(result.error);
         process.exitCode = 1;

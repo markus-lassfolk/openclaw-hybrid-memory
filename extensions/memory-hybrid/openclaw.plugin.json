@@ -250,8 +250,33 @@
     },
     "distill.defaultModel": {
       "label": "Distill default model",
-      "placeholder": "gemini-2.0-flash",
-      "help": "Default LLM for hybrid-mem distill (e.g. gemini-2.0-flash, gemini-1.5-pro)"
+      "placeholder": "gemini-3-pro-preview",
+      "help": "Default LLM for hybrid-mem distill (recommended: gemini-3-pro-preview for 1M context and token I/O)"
+    },
+    "languageKeywords.autoBuild": {
+      "label": "Multi-language auto-build",
+      "help": "Build .language-keywords.json from memory samples (triggers, categories, correction signals). Once at startup if missing, then weekly."
+    },
+    "languageKeywords.weeklyIntervalDays": {
+      "label": "Language keywords interval (days)",
+      "help": "Days between auto-builds (1–30, default 7)"
+    },
+    "reflection.enabled": {
+      "label": "Reflection layer (FR-011)",
+      "help": "Synthesize behavioral patterns from facts; memory_reflect, reflect-rules"
+    },
+    "reflection.model": {
+      "label": "Reflection model",
+      "placeholder": "gpt-4o-mini",
+      "help": "LLM for reflection analysis"
+    },
+    "reflection.defaultWindow": {
+      "label": "Reflection window (days)",
+      "help": "Time window for fact gathering (default 14)"
+    },
+    "reflection.minObservations": {
+      "label": "Reflection min observations",
+      "help": "Min observations to support a pattern (default 2)"
     },
     "procedures.enabled": {
       "label": "Procedural memory",
@@ -381,7 +406,27 @@
         "description": "Gemini for session distillation (1M context). Optional; use env GOOGLE_API_KEY if not set.",
         "properties": {
           "apiKey": { "type": "string", "description": "Gemini/Google API key or env:VAR_NAME" },
-          "defaultModel": { "type": "string", "description": "Default model for distill (e.g. gemini-2.0-flash, gemini-1.5-pro)" }
+          "defaultModel": { "type": "string", "description": "Default model for distill (recommended: gemini-3-pro-preview)" }
+        }
+      },
+      "languageKeywords": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Multi-language detection: auto-build .language-keywords.json from memory samples (triggers, categories, correction signals).",
+        "properties": {
+          "autoBuild": { "type": "boolean", "description": "When true, build once at startup if file missing, then weekly (default: true)" },
+          "weeklyIntervalDays": { "type": "number", "minimum": 1, "maximum": 30, "description": "Days between auto-builds (default: 7)" }
+        }
+      },
+      "reflection": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "FR-011: Synthesize behavioral patterns from facts (memory_reflect, reflect-rules).",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable reflection layer (default: false)" },
+          "model": { "type": "string", "description": "LLM for reflection (default: gpt-4o-mini)" },
+          "defaultWindow": { "type": "number", "description": "Time window in days for fact gathering (default: 14)" },
+          "minObservations": { "type": "number", "description": "Min observations to support a pattern (default: 2)" }
         }
       },
       "wal": {

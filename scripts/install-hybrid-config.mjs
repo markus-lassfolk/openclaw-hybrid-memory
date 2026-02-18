@@ -28,6 +28,7 @@ const fullDefaults = {
         enabled: true,
         config: {
           embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
+          distill: { defaultModel: "gemini-3-pro-preview" },
           autoCapture: true,
           autoRecall: true,
           captureMaxChars: 5000,
@@ -35,6 +36,15 @@ const fullDefaults = {
           autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
           categories: [],
           credentials: { enabled: false, store: "sqlite", encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
+          languageKeywords: { autoBuild: true, weeklyIntervalDays: 7 },
+          reflection: { enabled: true, model: "gpt-4o-mini", defaultWindow: 14, minObservations: 2 },
+          selfCorrection: {
+            semanticDedup: true,
+            semanticDedupThreshold: 0.92,
+            toolsSection: "Self-correction rules",
+            applyToolsByDefault: true,
+            autoRewriteTools: false,
+          },
         },
       },
     },

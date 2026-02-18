@@ -72,3 +72,8 @@ export function distillBatchTokenLimit(model: string): number {
   }
   return 80_000;
 }
+
+/** Max output tokens for distill/ingest LLM calls. Gemini supports 65k+ for long fact lists; OpenAI default 8k. */
+export function distillMaxOutputTokens(model: string): number {
+  return isGeminiModel(model) ? 65_536 : 8000;
+}
