@@ -11,10 +11,13 @@
 set -e
 
 EXTENSION_NAME="${OPENCLAW_MEMORY_EXTENSION:-memory-hybrid}"
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 
-# Resolve extension directory
+# Resolve extension directory: prefer NPM-installed copy in ~/.openclaw/extensions
 if [ -n "$OPENCLAW_MEMORY_EXTENSION_DIR" ]; then
   PLUGIN_DIR="$OPENCLAW_MEMORY_EXTENSION_DIR"
+elif [ -d "$OPENCLAW_HOME/extensions/openclaw-hybrid-memory" ]; then
+  PLUGIN_DIR="$OPENCLAW_HOME/extensions/openclaw-hybrid-memory"
 elif [ -d "$(npm root -g 2>/dev/null)/openclaw/extensions/$EXTENSION_NAME" ]; then
   PLUGIN_DIR="$(npm root -g)/openclaw/extensions/$EXTENSION_NAME"
 else

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Decay and Pruning
+parent: Features
+nav_order: 10
+---
 # Decay and Pruning
 
 Facts have a **decay class** and an optional **expiry time**. The plugin automatically **hard-prunes** expired facts and **soft-decays** confidence for facts nearing expiry. No cron or external jobs are required — everything runs inside the gateway process.

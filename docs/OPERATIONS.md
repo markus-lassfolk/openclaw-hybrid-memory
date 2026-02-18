@@ -1,3 +1,9 @@
+---
+layout: default
+title: Operations
+parent: Operations & Maintenance
+nav_order: 2
+---
 # Operations — Background Jobs, Scripts, Cron, and Upgrades
 
 Everything that runs automatically or needs periodic attention.
@@ -28,7 +34,7 @@ These are **not** required for core functionality but enhance the system for lon
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.
 
-**OpenClaw job (recommended):** The `openclaw hybrid-mem install` command adds this to your config:
+**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config:
 
 ```json
 {
@@ -51,7 +57,7 @@ This runs at 2 AM daily as an isolated sub-agent. It processes session logs from
 
 ```bash
 # Add to crontab (crontab -e)
-0 2 * * * cd ~/.openclaw && openclaw sessions spawn --model gemini --isolated --message "Run session distillation for the last 3 days. Use openclaw hybrid-mem distill-window to get the date range. Process sessions, extract facts, dedupe, store. Run openclaw hybrid-mem record-distill when done." >> /var/log/openclaw-distill.log 2>&1
+0 2 * * * cd ~/.openclaw && openclaw hybrid-mem distill >> /var/log/openclaw-distill.log 2>&1
 ```
 
 **After each distillation run**, always execute:
@@ -74,6 +80,23 @@ openclaw hybrid-mem distill-window --json
 ```
 
 See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for the full pipeline details.
+
+### Weekly reflection (FR-011)
+
+Synthesizes behavioral patterns from recent facts. The `openclaw hybrid-mem install` command adds a weekly job; `verify --fix` adds it when missing.
+
+```json
+{
+  "name": "weekly-reflection",
+  "schedule": "0 3 * * 0",
+  "channel": "system",
+  "message": "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.",
+  "isolated": true,
+  "model": "gemini"
+}
+```
+
+Runs at 3 AM Sundays. Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
 
 ---
 

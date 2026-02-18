@@ -1,3 +1,9 @@
+---
+layout: default
+title: Memory Protocol
+parent: Architecture & Internals
+nav_order: 3
+---
 # Memory Protocol — AGENTS.md Block
 
 Add the following block to your **AGENTS.md** so the agent knows how to use the full hybrid memory system and when to update files.

@@ -1,5 +1,7 @@
 # OpenClaw Hybrid Memory
 
+[**Documentation**](https://markus-lassfolk.github.io/openclaw-hybrid-memory/) · [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory)
+
 Your OpenClaw agent forgets everything between sessions. Preferences, decisions, technical context — all gone. You repeat yourself, and the agent can't build on past conversations.
 
 **Hybrid Memory** fixes this. It gives your agent **durable, structured, searchable memory** that persists across sessions, auto-captures what matters, and recalls it when relevant — without you lifting a finger.
@@ -78,6 +80,8 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 **Other install options:**
 - [Autonomous setup](docs/SETUP-AUTONOMOUS.md) — let an OpenClaw agent install it for you
 - [Manual install](docs/QUICKSTART.md) — copy extension files and configure by hand
+
+**If "plugin not found" blocks install:** Use `npx -y openclaw-hybrid-memory-install` or the [curl installer](https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh). See [UPGRADE-PLUGIN.md](docs/UPGRADE-PLUGIN.md#when-plugin-not-found-blocks-install).
 
 ---
 

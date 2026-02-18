@@ -1,3 +1,9 @@
+---
+layout: default
+title: Conflicting Memories
+parent: Features
+nav_order: 7
+---
 # Conflicting and Contradictory Memories
 
 How the plugin handles facts that contradict or update existing ones: **classify-before-write** (ADD/UPDATE/DELETE/NOOP), **supersession**, and **bi-temporal** queries.
@@ -34,7 +40,8 @@ Classification uses a dedicated prompt (e.g. `memory-classify`) and a configurab
 
 - **memory_store** tool (when classifyBeforeWrite is enabled).
 - **Auto-capture** — When a captured message is about to be stored, classification runs; UPDATE/DELETE/NOOP are applied the same way.
-- **Batch / CLI** — e.g. session distillation or bulk store paths that support classify-before-write.
+- **CLI** — `hybrid-mem store` (when classifyBeforeWrite is enabled).
+- **extract-daily** — Daily scan / batch extraction uses classification when classifyBeforeWrite is enabled.
 
 ### Config
 
@@ -67,10 +74,10 @@ So by default, “current” recall never sees superseded facts; they remain in 
 
 ### Manual supersession
 
-The **memory_store** tool accepts an optional **`supersedes`** parameter (a fact ID). If you pass it:
+The **memory_store** tool and the **CLI** accept an optional supersedes target:
 
-- The specified fact is marked as superseded (same fields as above).
-- The new fact is stored with `supersedes_id` set to that ID.
+- **memory_store:** Pass the **`supersedes`** parameter (a fact ID). The specified fact is marked as superseded (same fields as above), and the new fact is stored with `supersedes_id` set to that ID.
+- **CLI:** `hybrid-mem store --text "..." --supersedes <fact-id>` does the same for scripted or manual updates.
 
 Use this when you know explicitly which fact is being replaced (e.g. after reviewing duplicates or after a user correction).
 
@@ -89,13 +96,16 @@ You can ask “what did we know as of date X?” so that superseded facts are st
 
 ```bash
 openclaw hybrid-mem search "database" --as-of 2026-01-15
+openclaw hybrid-mem lookup "user" --key "theme" --as-of 2026-01-15
 ```
 
-The search adds:  
+The search and lookup add:  
 `valid_from <= @asOf AND (valid_until IS NULL OR valid_until > @asOf)`  
 so you see only facts that were valid at that moment.
 
-Lookup and recall can support the same `asOf` semantics where exposed (e.g. API or future CLI flags).
+- **CLI:** `hybrid-mem search` and `hybrid-mem lookup` support `--as-of <date>` (ISO date or epoch seconds) and `--include-superseded`.
+- **memory_recall tool:** Parameters `asOf` (ISO date or epoch) and `includeSuperseded` (default false). When `asOf` is set, only facts valid at that time are returned (including LanceDB results filtered by SQLite validity).
+- **CLI store:** `hybrid-mem store --text "..." --supersedes <fact-id>` marks the given fact as superseded and stores the new fact with `supersedes_id` and `valid_from`.
 
 ---
 

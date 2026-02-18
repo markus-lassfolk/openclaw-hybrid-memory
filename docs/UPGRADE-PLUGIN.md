@@ -1,20 +1,64 @@
+---
+layout: default
+title: Upgrade Plugin
+parent: Operations & Maintenance
+nav_order: 5
+---
 # Upgrading the Hybrid Memory Plugin
 
 When a **new version of the openclaw-hybrid-memory plugin** is released, this is what to do and what to think about.
 
 ---
 
-## Quick upgrade (NPM)
+## Using NPM only (recommended)
 
-If you installed the plugin via OpenClaw's plugin system:
+To avoid **"duplicate plugin id detected"** and have a single upgrade path, use only the plugin installed by OpenClaw into `~/.openclaw/extensions`. Remove the global/bundled copy once:
 
 ```bash
-openclaw plugins install openclaw-hybrid-memory
+# From this repo, or run the same logic manually
+./scripts/use-npm-only.sh
+```
+
+That removes `$(npm root -g)/openclaw/extensions/memory-hybrid` if it exists. After that, only the NPM-installed copy in `~/.openclaw/extensions/openclaw-hybrid-memory` is loaded.
+
+---
+
+## Quick upgrade (NPM)
+
+**Recommended — one command:**
+
+```bash
+openclaw hybrid-mem upgrade
+openclaw gateway stop && openclaw gateway start
+```
+
+The upgrade command removes the current install, fetches the latest from npm, rebuilds native deps, and tells you to restart. Then run `openclaw hybrid-mem verify` to confirm.
+
+**Alternative** — if the plugin folder is already removed or you prefer manual control:
+
+```bash
+openclaw plugins install openclaw-hybrid-memory@latest
 openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
 ```
 
-This fetches the latest version, installs it (and its dependencies), and replaces the previous copy. Restart is required so the gateway loads the new code.
+This fails with "plugin already exists" if the folder is present; use `openclaw hybrid-mem upgrade` in that case.
+
+---
+
+## When "plugin not found" blocks install
+
+If you see **"plugin not found: openclaw-hybrid-memory"** and `openclaw plugins install` fails (because OpenClaw validates config before running commands), use one of these **standalone installers** — they bypass OpenClaw entirely:
+
+```bash
+# Option A: npx (recommended)
+npx -y openclaw-hybrid-memory-install
+
+# Option B: curl (no Node required in path for the installer itself)
+curl -sSL https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh | bash
+```
+
+Then restart: `openclaw gateway stop && openclaw gateway start`
 
 ---
 

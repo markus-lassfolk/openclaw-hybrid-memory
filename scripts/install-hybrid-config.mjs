@@ -73,6 +73,14 @@ const fullDefaults = {
       isolated: true,
       model: "gemini",
     },
+    {
+      name: "weekly-reflection",
+      schedule: "0 3 * * 0",
+      channel: "system",
+      message: "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.",
+      isolated: true,
+      model: "gemini",
+    },
   ],
 };
 
@@ -84,9 +92,11 @@ function deepMerge(target, source) {
       deepMerge(tgtVal, srcVal);
     } else if (key === "jobs" && Array.isArray(srcVal)) {
       const arr = Array.isArray(tgtVal) ? [...tgtVal] : [];
-      if (!arr.some((j) => j?.name === "nightly-memory-sweep")) {
-        const nightly = srcVal.find((j) => j?.name === "nightly-memory-sweep");
-        if (nightly) arr.push(nightly);
+      for (const def of ["nightly-memory-sweep", "weekly-reflection"]) {
+        if (!arr.some((j) => j?.name === def)) {
+          const job = srcVal.find((j) => j?.name === def);
+          if (job) arr.push(job);
+        }
       }
       target[key] = arr;
     } else if (!Array.isArray(srcVal)) {

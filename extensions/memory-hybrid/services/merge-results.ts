@@ -1,12 +1,25 @@
 /**
  * Merge SQLite and LanceDB search results, deduplicate, and apply superseded filter.
+ * FR-006: LanceDB results should be pre-filtered by scope before merging (SQLite results are already filtered).
  */
 
-import type { SearchResult } from "../types/memory.js";
+import type { SearchResult, ScopeFilter } from "../types/memory.js";
 
 /** Optional provider for superseded fact texts (e.g. FactsDB). */
 export interface SupersededProvider {
   getSupersededTexts(): Set<string>;
+}
+
+/** FR-006: Filter LanceDB results by scope. Uses getById(id, { scopeFilter }) — returns null when not in scope. */
+export function filterByScope<T extends SearchResult>(
+  results: T[],
+  getById: (id: string, opts?: { scopeFilter?: ScopeFilter | null }) => unknown,
+  scopeFilter: ScopeFilter | null | undefined,
+): T[] {
+  if (!scopeFilter || (!scopeFilter.userId && !scopeFilter.agentId && !scopeFilter.sessionId)) {
+    return results;
+  }
+  return results.filter((r) => getById(r.entry.id, { scopeFilter }) != null);
 }
 
 export function mergeResults(

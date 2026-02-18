@@ -1,3 +1,9 @@
+---
+layout: default
+title: How It Works
+parent: Architecture & Internals
+nav_order: 2
+---
 # How It Works — Runtime Flow
 
 What actually happens under the hood when you chat with an agent that has hybrid memory enabled.

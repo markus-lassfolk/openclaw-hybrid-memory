@@ -1,5 +1,42 @@
 # Scripts
 
+## Standalone install (when "plugin not found" blocks upgrade)
+
+If you see **"plugin not found: openclaw-hybrid-memory"** and `openclaw plugins install` fails, use one of these — they bypass OpenClaw entirely:
+
+```bash
+# Option A: npx
+npx -y openclaw-hybrid-memory-install
+
+# Option B: curl (from this repo or raw URL)
+./scripts/install.sh
+# Or: curl -sSL https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh | bash
+```
+
+See [docs/UPGRADE-PLUGIN.md](../docs/UPGRADE-PLUGIN.md#when-plugin-not-found-blocks-install).
+
+---
+
+## Use NPM only (avoid duplicate plugin)
+
+If you see **"duplicate plugin id detected"** and want a single, user-friendly upgrade path, use only the NPM-installed plugin in `~/.openclaw/extensions`. Remove the global/bundled copy once:
+
+```bash
+./scripts/use-npm-only.sh
+```
+
+Then install and upgrade with:
+
+```bash
+openclaw plugins install openclaw-hybrid-memory
+openclaw gateway stop && openclaw gateway start
+openclaw hybrid-mem verify
+```
+
+See [docs/UPGRADE-PLUGIN.md](../docs/UPGRADE-PLUGIN.md#using-npm-only-recommended).
+
+---
+
 ## First install: config only (no gateway needed)
 
 **`install-hybrid-config.mjs`** — Writes full Hybrid Memory defaults (plugin slot, memorySearch, compaction prompts, nightly-memory-sweep job) into `~/.openclaw/openclaw.json` so you can get a complete config before the first gateway start.

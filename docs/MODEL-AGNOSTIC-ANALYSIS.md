@@ -1,3 +1,9 @@
+---
+layout: default
+title: Model-Agnostic Analysis
+parent: Analysis & Planning
+nav_order: 1
+---
 # Model-agnostic support: analysis and options
 
 The hybrid-memory plugin currently hardcodes **OpenAI** for embeddings and chat (classify, consolidate, summarize), and **Gemini** is recommended in docs/scripts for session distillation. This document analyzes how much work it would take to support **OpenAI, Gemini, and Claude** (or any combination) in a cleaner way.

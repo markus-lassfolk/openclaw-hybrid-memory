@@ -1,3 +1,9 @@
+---
+layout: default
+title: Troubleshooting
+parent: Operations & Maintenance
+nav_order: 8
+---
 # Troubleshooting
 
 Common issues, causes, and fixes for the memory-hybrid plugin.
@@ -11,6 +17,18 @@ openclaw hybrid-mem verify        # check config, DBs, API key
 openclaw hybrid-mem verify --fix  # apply safe auto-fixes
 openclaw hybrid-mem stats         # show fact/vector counts
 ```
+
+---
+
+## Install warning: "dangerous code patterns" / "credential harvesting"
+
+When you run `openclaw plugins install openclaw-hybrid-memory`, the OpenClaw plugin scanner may show:
+
+```text
+WARNING: Plugin "openclaw-hybrid-memory" contains dangerous code patterns: Environment variable access combined with network send — possible credential harvesting
+```
+
+This is a **false positive**. The plugin only uses your OpenAI API key to call OpenAI’s embedding API; it does not send credentials anywhere else. The scanner flags any plugin that both reads environment variables (e.g. for config) and performs network requests. You can ignore this warning and continue. To use your key from the environment, set `embedding.apiKey` in config to `"${OPENAI_API_KEY}"` (see [CONFIGURATION.md](CONFIGURATION.md)).
 
 ---
 
@@ -30,6 +48,42 @@ openclaw hybrid-mem stats         # show fact/vector counts
 | Memory files not found by search | File index stale | Ensure `sync.onSessionStart: true` and `sync.watch: true`; restart and start a new session |
 | `hybrid-mem stats` still 0 after seed | Seed used wrong paths or schema | Point seed at same DB paths as plugin |
 | `npm install` fails ("openclaw": "workspace:*") | devDependencies reference workspace protocols | Remove devDependencies: `node -e "let p=require('./package.json'); delete p.devDependencies; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2))"` then `npm install` |
+| "plugin not found: openclaw-hybrid-memory" (blocks `plugins install`) | Config references the plugin but folder is missing | Use a standalone installer: `npx -y openclaw-hybrid-memory-install` or `curl -sSL https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh \| bash`. See [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md#when-plugin-not-found-blocks-install). |
+| "duplicate plugin id detected" / two copies of memory-hybrid | Plugin exists in both global openclaw and ~/.openclaw/extensions | Use NPM only: run `./scripts/use-npm-only.sh` (from this repo) to remove the global copy. Then use `openclaw plugins install openclaw-hybrid-memory` for upgrades. See [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md#using-npm-only-recommended). |
+| Could not locate bindings file (better_sqlite3.node) | Native module not built after install | Run `openclaw hybrid-mem verify --fix` to rebuild native modules automatically. Or manually: `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3` (and `npm rebuild @lancedb/lancedb` if LanceDB fails). Restart gateway. The published package includes a `postinstall` that runs rebuild; if it still fails, ensure build tools (e.g. `build-essential`, `python3`) are installed. |
+| "Unrecognized keys: autoCapture, autoRecall, embedding" | Config keys placed at wrong nesting level | Move those keys under `config`. Correct structure: `plugins.entries["openclaw-hybrid-memory"]` = `{ enabled: true, config: { autoCapture, autoRecall, embedding, ... } }`. See [Config nesting](#config-nesting) below. |
+
+---
+
+## Config nesting
+
+If you see an error like **"Unrecognized keys: autoCapture, autoRecall, embedding"**, the plugin config is at the wrong nesting level.
+
+**Wrong** (keys directly under the plugin entry):
+
+```json
+"openclaw-hybrid-memory": {
+  "enabled": true,
+  "autoCapture": true,
+  "autoRecall": true,
+  "embedding": { "apiKey": "...", "model": "text-embedding-3-small" }
+}
+```
+
+**Correct** (keys nested under `config`):
+
+```json
+"openclaw-hybrid-memory": {
+  "enabled": true,
+  "config": {
+    "autoCapture": true,
+    "autoRecall": true,
+    "embedding": { "apiKey": "...", "model": "text-embedding-3-small" }
+  }
+}
+```
+
+Move `autoCapture`, `autoRecall`, `embedding`, and any other plugin settings into `plugins.entries["openclaw-hybrid-memory"].config`. See [CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 

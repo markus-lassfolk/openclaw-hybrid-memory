@@ -15,6 +15,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - **Layer 2 — Procedure-aware recall:** `memory_recall_procedures(taskDescription)` tool returns "Last time this worked" steps and "⚠️ Known issue" warnings. Auto-recall injects a `<relevant-procedures>` block when the prompt matches stored procedures (positive and negative). Config: `procedures.enabled` (default true), `procedures.sessionsDir`, `procedures.minSteps`, etc.
   - **Layer 3 — Skill generation:** When a procedure is validated N times (default 3), auto-generate `skills/auto/{slug}/SKILL.md` and `recipe.json`. CLI: `openclaw hybrid-mem generate-auto-skills [--dry-run]`. Skills are sandboxed under `procedures.skillsAutoPath` (default `skills/auto`). Stale procedures (past `skillTTLDays`) are available for revalidation. Config: `procedures.validationThreshold`, `procedures.skillTTLDays`, `procedures.requireApprovalForPromote`. See [issue #23](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/23).
 
+---
+
+## [2026.2.176] - 2026-02-17
+
+### Added
+
+- **Gemini support for distill** — `openclaw hybrid-mem distill` can use Google Gemini (e.g. `gemini-2.0-flash`) via `--model` or config `distill.defaultModel`. Config `distill.apiKey` (raw or `env:VAR`); env fallback: `GOOGLE_API_KEY` / `GEMINI_API_KEY`. Gemini uses 500k-token batches (vs 80k for OpenAI). New `services/chat.ts` routes by model name; `distillBatchTokenLimit()` returns batch size. See CONFIGURATION.md, SESSION-DISTILLATION.md.
+- **distill: chunk oversized sessions instead of truncating** — Sessions exceeding `--max-session-tokens` are now split into overlapping windows (10% overlap) rather than truncated. Each chunk is tagged as `SESSION: <file> (chunk N/M)`. Existing dedup (0.85 threshold) handles cross-chunk duplicates. New CLI flag: `--max-session-tokens <n>` (default: batch limit). See [issue #32](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/32).
+
+### Changed
+
+- **Documentation:** CONFIGURATION.md adds "Session distillation (Gemini)" section; SESSION-DISTILLATION documents `--model` and Gemini config; CLI-REFERENCE documents distill `--model` and batch sizes.
+- **Tests:** `chat.test.ts` (isGeminiModel, distillBatchTokenLimit, chatComplete routing/errors); config.test.ts (distill parsing); `distill-chunk.test.ts`.
+
+---
+
+## [2026.2.175] - 2026-02-17
+
+### Added
+
+- **`openclaw hybrid-mem upgrade`** — One-command upgrade to latest from npm. Removes current install, fetches latest, rebuilds native deps. Restart gateway afterward. Simplifies the upgrade flow (no more fighting the bull).
+
 ### Fixed
 
 - **Stability:** Plugin now closes LanceDB (VectorDB) on stop to avoid resource leaks; VectorDB has a `close()` method and closed guard.
