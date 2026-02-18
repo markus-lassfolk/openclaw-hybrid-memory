@@ -80,21 +80,6 @@ export type IngestFilesSink = { log: (s: string) => void; warn: (s: string) => v
 export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; skipped: number; dryRun: boolean };
 export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
-export type ExtractProceduresResult = {
-  sessionsScanned: number;
-  proceduresStored: number;
-  positiveCount: number;
-  negativeCount: number;
-  dryRun: boolean;
-};
-
-export type GenerateAutoSkillsResult = {
-  generated: number;
-  skipped: number;
-  dryRun: boolean;
-  paths: string[];
-};
-
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
 export type UpgradeCliResult =

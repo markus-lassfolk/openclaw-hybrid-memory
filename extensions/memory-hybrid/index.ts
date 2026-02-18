@@ -5682,9 +5682,9 @@ const memoryHybridPlugin = {
             );
             if (indexLines.length === 0) {
               if (procedureBlock) {
-                return { prependContext: procedureBlock };
+                return { prependContext: hotBlock + procedureBlock };
               }
-              return;
+              return hotBlock ? { prependContext: hotBlock } : undefined;
             }
             lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
@@ -5733,9 +5733,9 @@ const memoryHybridPlugin = {
 
           if (lines.length === 0) {
             if (procedureBlock) {
-              return { prependContext: procedureBlock };
+              return { prependContext: hotBlock + procedureBlock };
             }
-            return;
+            return hotBlock ? { prependContext: hotBlock } : undefined;
           }
 
           // FR-005: Access tracking for injected memories
@@ -5793,9 +5793,9 @@ const memoryHybridPlugin = {
 
           if (!memoryContext) {
             if (procedureBlock) {
-              return { prependContext: procedureBlock };
+              return { prependContext: hotBlock + procedureBlock };
             }
-            return;
+            return hotBlock ? { prependContext: hotBlock } : undefined;
           }
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
