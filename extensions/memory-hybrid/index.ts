@@ -43,11 +43,12 @@ import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
 import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
+import { chatComplete, distillBatchTokenLimit } from "./services/chat.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
-import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "./utils/text.js";
+import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, chunkSessionText } from "./utils/text.js";
 import {
   REFLECTION_MAX_FACT_LENGTH,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
@@ -4691,7 +4692,7 @@ const memoryHybridPlugin = {
         }
 
         async function runDistillForCli(
-          opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number },
+          opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number },
           sink: DistillCliSink,
         ): Promise<DistillCliResult> {
           const sessionFiles = gatherSessionFiles({
@@ -4705,38 +4706,46 @@ const memoryHybridPlugin = {
             sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
             return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
           }
+          const model = opts.model ?? cfg.distill?.defaultModel ?? "gpt-4o-mini";
           const batches: string[] = [];
           let currentBatch = "";
-          const batchTokenLimit = 80_000;
+          const batchTokenLimit = distillBatchTokenLimit(model);
+          const maxSessionTokens = opts.maxSessionTokens ?? batchTokenLimit;
           for (let i = 0; i < filesToProcess.length; i++) {
             const { path: fp } = filesToProcess[i];
-            const sessionDate = basename(fp).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
             const text = extractTextFromSessionJsonl(fp);
             if (!text.trim()) continue;
-            const block = `\n--- SESSION: ${basename(fp)} ---\n\n${text}`;
-            const blockTokens = Math.ceil(block.length / 4);
-            if (currentBatch.length > 0 && (estimateTokens(currentBatch) + blockTokens > batchTokenLimit)) {
-              batches.push(currentBatch);
-              currentBatch = block;
-            } else {
-              currentBatch += (currentBatch ? "\n" : "") + block;
+            const chunks = chunkSessionText(text, maxSessionTokens);
+            for (let c = 0; c < chunks.length; c++) {
+              const header =
+                chunks.length === 1
+                  ? `\n--- SESSION: ${basename(fp)} ---\n\n`
+                  : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${chunks.length}) ---\n\n`;
+              const block = header + chunks[c];
+              const blockTokens = Math.ceil(block.length / 4);
+              if (currentBatch.length > 0 && (estimateTokens(currentBatch) + blockTokens > batchTokenLimit)) {
+                batches.push(currentBatch);
+                currentBatch = block;
+              } else {
+                currentBatch += (currentBatch ? "\n" : "") + block;
+              }
             }
           }
           if (currentBatch.trim()) batches.push(currentBatch);
           const distillPrompt = loadPrompt("distill-sessions");
-          const model = opts.model ?? "gpt-4o-mini";
           const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; source_date?: string; tags?: string[] }> = [];
           for (let b = 0; b < batches.length; b++) {
             sink.log(`Processing batch ${b + 1}/${batches.length}...`);
             const userContent = distillPrompt + "\n\n" + batches[b];
             try {
-              const resp = await openai.chat.completions.create({
+              const content = await chatComplete({
                 model,
-                messages: [{ role: "user", content: userContent }],
+                content: userContent,
                 temperature: 0.2,
-                max_tokens: 8000,
+                maxTokens: 8000,
+                openai,
+                geminiApiKey: cfg.distill?.apiKey,
               });
-              const content = resp.choices[0]?.message?.content?.trim() || "";
               const lines = content.split("\n").filter((l) => l.trim());
               for (const line of lines) {
                 const jsonMatch = line.match(/\{[\s\S]*\}/);

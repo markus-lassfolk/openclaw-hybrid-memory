@@ -192,6 +192,8 @@ export type HybridMemoryConfig = {
   reflection: ReflectionConfig;
   /** FR-004: Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
+  /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
+  distill?: { apiKey?: string; defaultModel?: string };
 };
 
 /** Default categories — can be extended via config.categories */
@@ -509,6 +511,16 @@ export const hybridConfigSchema = {
         : 2,
     };
 
+    // Parse optional distill config (Gemini for session distillation)
+    const distillRaw = cfg.distill as Record<string, unknown> | undefined;
+    const distill =
+      distillRaw && typeof distillRaw === "object"
+        ? {
+            apiKey: typeof distillRaw.apiKey === "string" ? distillRaw.apiKey : undefined,
+            defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
+          }
+        : undefined;
+
     // Parse FR-004 memory tiering config
     const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
     const memoryTiering: MemoryTieringConfig = {
@@ -547,6 +559,7 @@ export const hybridConfigSchema = {
       personaProposals,
       reflection,
       memoryTiering,
+      distill,
     };
   },
 };

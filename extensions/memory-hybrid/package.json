@@ -24,6 +24,7 @@
   },
   "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
   "dependencies": {
+    "@google/genai": "^1.41.0",
     "@lancedb/lancedb": "^0.23.0",
     "@sinclair/typebox": "0.34.47",
     "better-sqlite3": "^11.0.0",
