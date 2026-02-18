@@ -425,4 +425,41 @@ describe("hybridConfigSchema.parse", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeUndefined();
   });
+
+  it("parses optional ingest config (issue #33)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      ingest: {
+        paths: ["skills/**/*.md", "TOOLS.md"],
+        chunkSize: 800,
+        overlap: 100,
+      },
+    });
+    expect(result.ingest).toBeDefined();
+    expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md"]);
+    expect(result.ingest?.chunkSize).toBe(800);
+    expect(result.ingest?.overlap).toBe(100);
+  });
+
+  it("ingest uses defaults for chunkSize and overlap", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      ingest: { paths: ["docs/*.md"] },
+    });
+    expect(result.ingest?.chunkSize).toBe(800);
+    expect(result.ingest?.overlap).toBe(100);
+  });
+
+  it("parses optional search config (HyDE)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      search: {
+        hydeEnabled: true,
+        hydeModel: "gpt-4o-mini",
+      },
+    });
+    expect(result.search).toBeDefined();
+    expect(result.search?.hydeEnabled).toBe(true);
+    expect(result.search?.hydeModel).toBe("gpt-4o-mini");
+  });
 });

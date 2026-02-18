@@ -59,6 +59,9 @@ export type ExtractDailySink = { log: (s: string) => void; warn: (s: string) => 
 export type BackfillCliResult = { stored: number; skipped: number; candidates: number; files: number; dryRun: boolean };
 export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
+export type IngestFilesResult = { stored: number; skipped: number; extracted: number; files: number; dryRun: boolean };
+export type IngestFilesSink = { log: (s: string) => void; warn: (s: string) => void };
+
 export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; skipped: number; dryRun: boolean };
 export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
@@ -104,6 +107,7 @@ export type HybridMemCliContext = {
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (opts: { days: number; dryRun: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
+  runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean }) => Promise<GenerateAutoSkillsResult>;
@@ -166,6 +170,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runRecordDistill,
     runExtractDaily,
     runBackfill,
+    runIngestFiles,
     runDistill,
     runExtractProcedures,
     runGenerateAutoSkills,
@@ -609,6 +614,28 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       } else {
         console.log(
           `\nBackfill done: ${result.stored} new facts stored, ${result.skipped} duplicates skipped (${result.candidates} candidates from ${result.files} files)`,
+        );
+      }
+    });
+
+  mem
+    .command("ingest-files")
+    .description("Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction (issue #33)")
+    .option("--dry-run", "Show what would be processed without storing")
+    .option("--workspace <path>", "Workspace root (default: OPENCLAW_WORKSPACE or cwd)")
+    .option("--paths <globs>", "Comma-separated globs (default: config ingest.paths or skills/**/*.md,TOOLS.md,AGENTS.md)")
+    .action(async (opts: { dryRun?: boolean; workspace?: string; paths?: string }) => {
+      const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
+      const paths = opts.paths?.split(",").map((p) => p.trim()).filter(Boolean);
+      const result = await runIngestFiles(
+        { dryRun: !!opts.dryRun, workspace: opts.workspace?.trim() || undefined, paths: paths?.length ? paths : undefined },
+        sink,
+      );
+      if (result.dryRun) {
+        console.log(`\nWould extract ~${result.extracted} facts from ${result.files} files`);
+      } else {
+        console.log(
+          `\nIngest done: ${result.stored} stored, ${result.skipped} skipped (${result.extracted} extracted from ${result.files} files)`,
         );
       }
     });
