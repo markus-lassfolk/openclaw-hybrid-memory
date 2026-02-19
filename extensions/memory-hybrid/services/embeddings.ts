@@ -4,6 +4,7 @@
  */
 
 import OpenAI from "openai";
+import { createHash } from "node:crypto";
 
 /** Interface for embedding providers (enables swapping OpenAI for other backends). */
 export interface EmbeddingProvider {
@@ -12,6 +13,11 @@ export interface EmbeddingProvider {
 
 /** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
 const EMBEDDING_CACHE_MAX = 500;
+
+/** Hash text for cache key (prevents large text strings as Map keys). */
+function hashText(text: string): string {
+  return createHash("sha256").update(text, "utf-8").digest("hex");
+}
 
 /** OpenAI-based embedding provider. Optional in-memory cache to avoid redundant API calls. */
 export class Embeddings implements EmbeddingProvider {
@@ -26,10 +32,12 @@ export class Embeddings implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
-    const cached = this.cache.get(text);
+    const cacheKey = hashText(text);
+    const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
-      this.cache.delete(text);
-      this.cache.set(text, cached);
+      // LRU: move to end by deleting and re-inserting
+      this.cache.delete(cacheKey);
+      this.cache.set(cacheKey, cached);
       return cached;
     }
 
@@ -43,7 +51,7 @@ export class Embeddings implements EmbeddingProvider {
       const firstKey = this.cache.keys().next().value;
       if (firstKey !== undefined) this.cache.delete(firstKey);
     }
-    this.cache.set(text, vector);
+    this.cache.set(cacheKey, vector);
     return vector;
   }
 }

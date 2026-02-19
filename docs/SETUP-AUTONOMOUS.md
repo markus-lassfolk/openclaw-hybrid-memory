@@ -150,7 +150,7 @@ This runs automatically: once on startup (5-minute delay) and then every 24 hour
 
 - `model`: Use the cheapest chat model that gives acceptable results. `gpt-4o-mini` is a good default.
 - `batchSize`: Facts per LLM call (default 20). Higher = fewer API calls but longer prompts.
-- `categories`: Add custom category names (e.g. `["research", "health"]`) to extend the five defaults. Leave empty `[]` if you only need the defaults.
+- `categories`: Add custom category names (e.g. `["research", "health"]`) to extend the seven defaults (`preference`, `fact`, `decision`, `entity`, `pattern`, `rule`, `other`). Leave empty `[]` if you only need the defaults.
 
 **Verify:** Read back `~/.openclaw/openclaw.json` and confirm all seven blocks (4a-4g) are present and correct. *(ref: v3 §4, §4.8, §4.9)*
 

@@ -89,6 +89,8 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
     "summaryThreshold": 300,
     "summaryMaxChars": 80,
     "useSummaryInInjection": true,
+    "summarizeWhenOverBudget": false,
+    "summarizeModel": "gpt-4o-mini",
     "progressiveMaxCandidates": 15,
     "progressiveIndexMaxTokens": 300,
     "progressiveGroupByCategory": false,
@@ -110,6 +112,8 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `summaryThreshold` | `300` | Facts longer than this get a stored summary |
 | `summaryMaxChars` | `80` | Max chars for the summary |
 | `useSummaryInInjection` | `true` | Use summary in injection to save tokens |
+| `summarizeWhenOverBudget` | `false` | When token cap forces dropping memories, LLM-summarize all into 2-3 sentences |
+| `summarizeModel` | `gpt-4o-mini` | Model for summarize-when-over-budget |
 | `progressiveMaxCandidates` | `15` | (FR-009) Max memories in progressive index; used when `injectionFormat` is `progressive` or `progressive_hybrid` |
 | `progressiveIndexMaxTokens` | `300` when progressive | (FR-009) Token cap for the index block in progressive mode |
 | `progressiveGroupByCategory` | `false` | (FR-009) Group index lines by category for readability |
@@ -524,7 +528,7 @@ Optional config for the self-correction pipeline: semantic dedup before storing 
 }
 ```
 
-The five defaults (`preference`, `fact`, `decision`, `entity`, `other`) are always included. See [FEATURES.md](FEATURES.md) for details on categories and discovery.
+The seven defaults (`preference`, `fact`, `decision`, `entity`, `pattern`, `rule`, `other`) are always included. See [FEATURES.md](FEATURES.md) for details on categories and discovery.
 
 ---
 
