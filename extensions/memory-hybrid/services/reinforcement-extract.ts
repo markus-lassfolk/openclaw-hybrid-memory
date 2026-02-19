@@ -219,6 +219,10 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
       let recalledMemoryIds: string[] = [];
       let toolCallSequence: string[] = [];
       for (let j = i - 1; j >= 0 && j >= Math.max(0, i - 20); j--) {
+        if (messages[j].role === "user") {
+          // Stop at previous user message to avoid crossing conversation turn boundaries
+          break;
+        }
         if (messages[j].role === "assistant") {
           if (!precedingAssistant) {
             precedingAssistant = messages[j].text;
