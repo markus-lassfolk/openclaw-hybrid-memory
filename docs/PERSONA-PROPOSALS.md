@@ -129,14 +129,14 @@ See [CONFIGURATION.md](CONFIGURATION.md) for where to put these in `openclaw.jso
 - **Allowlist.** Only filenames in `allowedFiles` are accepted; path traversal in `targetFile` is rejected.
 - **Rate limit.** `persona_propose` fails when the 7-day proposal count would exceed `maxProposalsPerWeek`.
 - **Evidence and confidence.** Proposals below `minConfidence` or with fewer than `minSessionEvidence` references are rejected.
-- **Expiry.** Pending proposals older than `proposalTTLDays` are removed by a periodic prune (every 60 minutes when the gateway is running). They cannot be reviewed or applied after expiry.
+- **Expiry.** Pending proposals older than `proposalTTLDays` are removed by a daily prune (every 24 hours when the gateway is running). They cannot be reviewed or applied after expiry.
 - **Audit.** Each create/review/apply is logged to an audit file under the memory directory (e.g. `proposal-<id>.jsonl`) for traceability.
 
 ---
 
 ## Background job
 
-When persona proposals are enabled, a timer runs every **60 minutes** and deletes pending proposals whose `expires_at` is in the past. Log message: `memory-hybrid: pruned N expired proposal(s)`.
+When persona proposals are enabled, a timer runs **daily** (every 24 hours) and deletes pending proposals whose `expires_at` is in the past. Log message: `memory-hybrid: pruned N expired proposal(s)`.
 
 ---
 
