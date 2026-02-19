@@ -46,7 +46,7 @@ Your OpenClaw agent forgets everything between sessions. Preferences, decisions,
 - **Compaction flush** — saves to both `memory_store` and daily files before context is truncated
 
 ### Developer experience
-- **Full CLI** — 21 commands for stats, search, classify, consolidate, reflect, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
+- **Full CLI** — 34 commands for stats, search, classify, consolidate, reflect, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
 - **One-command setup** — `openclaw hybrid-mem install` applies all recommended config
 - **Verify & fix** — `openclaw hybrid-mem verify --fix` diagnoses issues and applies safe fixes
 - **Clean uninstall** — `openclaw hybrid-mem uninstall` reverts to default memory; data kept unless `--clean-all`
@@ -111,7 +111,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap files |
 | **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference |
 | **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates; index of [per-feature docs](docs/FEATURES.md#feature-documentation-by-topic) |
-| **[CLI-REFERENCE.md](docs/CLI-REFERENCE.md)** | All 21 `openclaw hybrid-mem` commands |
+| **[CLI-REFERENCE.md](docs/CLI-REFERENCE.md)** | All 34 `openclaw hybrid-mem` commands |
 | **[MEMORY-PROTOCOL.md](docs/MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md block |
 
 ### Operations
@@ -175,4 +175,4 @@ The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down 
 
 ### What this repo adds
 
-This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, full CLI (21 commands), verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.
+This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, full CLI (34 commands), verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.
