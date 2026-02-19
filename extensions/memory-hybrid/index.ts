@@ -2154,7 +2154,7 @@ const memoryHybridPlugin = {
             }
             if (factId) {
               const getByIdOpts = { asOf: asOfSec, scopeFilter };
-              const entry = factsDb.getById(factId, asOfSec != null || scopeFilter ? getByIdOpts : undefined);
+              const entry = factsDb.getById(factId, asOfSec != null || scopeFilter ? getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter } : undefined);
               if (entry) {
                 // FR-005: Access boost — update recall_count and last_accessed on fetch by id
                 factsDb.refreshAccessedFacts([entry.id]);
@@ -2291,7 +2291,7 @@ const memoryHybridPlugin = {
             const extraIds = connectedIds.filter((id) => !initialIds.has(id));
             const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
             for (const id of extraIds) {
-              const entry = factsDb.getById(id, getByIdOpts);
+              const entry = factsDb.getById(id, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
               if (entry) {
                 results.push({
                   entry,

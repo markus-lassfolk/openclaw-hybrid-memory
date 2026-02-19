@@ -171,7 +171,7 @@ function detectDirectiveCategories(text: string): { categories: DirectiveCategor
   if (categories.length >= 1) confidence = 0.7;
   if (categories.length >= 2) confidence = 0.8;
   if (categories.includes("emotional_emphasis")) confidence = Math.min(1.0, confidence + 0.1);
-  if (text.length < 40) confidence *= 0.8;
+  if (text.length < 25) confidence *= 0.8; // Reduced threshold from 40 to 25
 
   return { categories, confidence };
 }
