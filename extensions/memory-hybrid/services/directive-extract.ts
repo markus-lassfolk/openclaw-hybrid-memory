@@ -158,7 +158,10 @@ function extractRule(text: string): string {
   let colonMatch;
   while ((colonMatch = colonRegex.exec(trimmed)) !== null) {
     const wordBeforeColon = colonMatch[1].toLowerCase();
-    if (URI_SCHEMES.has(wordBeforeColon)) continue;
+    if (URI_SCHEMES.has(wordBeforeColon)) {
+      colonRegex.lastIndex = colonMatch.index + colonMatch[1].length + 1;
+      continue;
+    }
     const afterColon = colonMatch[2].trim();
     if (afterColon.length >= 10 && !afterColon.startsWith("//")) {
       return afterColon.slice(0, 200);
