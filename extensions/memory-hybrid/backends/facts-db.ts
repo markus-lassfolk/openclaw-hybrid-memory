@@ -1401,6 +1401,25 @@ export class FactsDB {
   }
 
   /**
+   * Helper: Parse existing reinforced_quotes JSON, append a new quote snippet, and cap at 10 entries.
+   * Returns the updated JSON string.
+   */
+  private appendReinforcementQuote(existingJson: string | null, newSnippet: string): string {
+    let quotes: string[] = [];
+    if (existingJson) {
+      try {
+        const parsed = JSON.parse(existingJson);
+        if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
+      } catch {
+        // Corrupted JSON — start fresh
+      }
+    }
+    quotes.push(newSnippet.slice(0, 200));
+    if (quotes.length > 10) quotes = quotes.slice(-10);
+    return JSON.stringify(quotes);
+  }
+
+  /**
    * Issue #40: Annotate a fact with reinforcement from user praise.
    * Increments reinforced_count, updates last_reinforced_at, appends quote (max 10 quotes kept).
    * Wraps read-modify-write in a transaction to prevent race conditions.
@@ -1415,19 +1434,7 @@ export class FactsDB {
         .get(id) as { reinforced_quotes: string | null } | undefined;
       if (!row) return false;
 
-      let quotes: string[] = [];
-      if (row.reinforced_quotes) {
-        try {
-          const parsed = JSON.parse(row.reinforced_quotes);
-          if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
-        } catch {
-          // Corrupted JSON — start fresh
-        }
-      }
-      // Append new quote (truncate to 200 chars) and keep last 10
-      quotes.push(quoteSnippet.slice(0, 200));
-      if (quotes.length > 10) quotes = quotes.slice(-10);
-      const quotesJson = JSON.stringify(quotes);
+      const quotesJson = this.appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
 
       this.liveDb
         .prepare(
@@ -1456,19 +1463,7 @@ export class FactsDB {
         .get(id) as { reinforced_quotes: string | null; reinforced_count: number; confidence: number } | undefined;
       if (!row) return false;
 
-      let quotes: string[] = [];
-      if (row.reinforced_quotes) {
-        try {
-          const parsed = JSON.parse(row.reinforced_quotes);
-          if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
-        } catch {
-          // Corrupted JSON — start fresh
-        }
-      }
-      // Append new quote (truncate to 200 chars) and keep last 10
-      quotes.push(quoteSnippet.slice(0, 200));
-      if (quotes.length > 10) quotes = quotes.slice(-10);
-      const quotesJson = JSON.stringify(quotes);
+      const quotesJson = this.appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
 
       const newReinforcedCount = (row.reinforced_count ?? 0) + 1;
 
