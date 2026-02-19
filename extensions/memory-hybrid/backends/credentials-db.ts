@@ -61,13 +61,12 @@ export class CredentialsDB {
   private salt: Buffer;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
-  // After migration completes, this field remains set but is no longer used (could be cleared in future optimization).
+  // After migration completes, this field is cleared to minimize exposure in memory.
   // Alternative approaches (e.g., prompting user for password again during migration) would break unattended operation.
-  private password: string;
+  private password: string | null;
 
   constructor(dbPath: string, encryptionKey: string) {
     this.dbPath = dbPath;
-    this.password = encryptionKey;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.applyPragmas();
@@ -114,12 +113,14 @@ export class CredentialsDB {
         this.kdfVersion = 1;
         this.salt = Buffer.alloc(0); // SHA-256 doesn't use salt
         this.key = deriveKey(encryptionKey, this.salt, 1);
+        this.password = encryptionKey;
         // Migration will happen on first successful get()
       } else {
         // New vault - use scrypt
         this.kdfVersion = CRED_KDF_VERSION;
         this.salt = randomBytes(32);
         this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
+        this.password = null;
         this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([this.kdfVersion]));
         this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
       }
@@ -128,6 +129,7 @@ export class CredentialsDB {
       this.kdfVersion = versionRow.value[0];
       this.salt = saltRow.value;
       this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
+      this.password = this.kdfVersion === 1 ? encryptionKey : null;
     }
   }
 
@@ -198,7 +200,11 @@ export class CredentialsDB {
     
     // Trigger migration if this is a legacy vault (successful decryption proves correct password)
     if (this.kdfVersion === 1) {
-      this.migrateLegacyVault();
+      try {
+        this.migrateLegacyVault();
+      } catch {
+        // Migration is best-effort; failure should not block credential retrieval
+      }
     }
     
     return {
@@ -215,6 +221,10 @@ export class CredentialsDB {
   
   /** Migrate legacy SHA-256 vault to scrypt. Called after first successful decryption. */
   private migrateLegacyVault(): void {
+    if (!this.password) {
+      throw new Error("Migration requires password");
+    }
+    
     // Fetch all credentials (will be decrypted with old key)
     const rows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
     
@@ -243,6 +253,7 @@ export class CredentialsDB {
     // Update instance state
     this.kdfVersion = CRED_KDF_VERSION;
     this.key = newKey;
+    this.password = null;
   }
 
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
