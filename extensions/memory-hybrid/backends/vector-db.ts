@@ -141,10 +141,13 @@ export class VectorDB {
   async delete(id: string): Promise<boolean> {
     try {
       await this.ensureInitialized();
+      // SECURITY: UUID validation is the security boundary for delete().
+      // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
+      // Regex tightened to enforce lowercase hex (case-insensitive in comparison, but normalized here).
       const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(id)) throw new Error(`Invalid ID: ${id}`);
-      await this.table!.delete(`id = '${id}'`);
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(id)) throw new Error(`Invalid UUID format: ${id}`);
+      await this.table!.delete(`id = '${id.toLowerCase()}'`);
       return true;
     } catch (err) {
       this.logWarn(`memory-hybrid: LanceDB delete failed: ${err}`);
