@@ -1832,9 +1832,10 @@ export class FactsDB {
         const confidence = (r.confidence as number) ?? 0.5;
         const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
         // Normalize FTS score to 0-1 range (inverted because bm25 returns negative scores)
-        const ftsScore = 1 - ((r.fts_score as number) - minFtsScore) / ftsRange;
-        // Composite: 60% FTS relevance, 30% confidence, 10% reinforcement
-        const boostedScore = ftsScore * 0.6 + confidence * 0.3 + reinforcement;
+        const rawFtsScore = 1 - ((r.fts_score as number) - minFtsScore) / ftsRange;
+        const ftsScore = Number.isNaN(rawFtsScore) ? 0.8 : rawFtsScore;
+        // Composite: 60% FTS relevance, 30% confidence, 10% reinforcement (capped at 1.0)
+        const boostedScore = Math.min(1.0, ftsScore * 0.6 + confidence * 0.3 + reinforcement);
         return { ...r, boostedScore };
       });
 
