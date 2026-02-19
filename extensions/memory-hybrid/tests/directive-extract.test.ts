@@ -72,7 +72,7 @@ describe("directive-extract", () => {
 
   it("should detect emotional emphasis", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
-    const sessionFile = join(tmpdir, "2026-02-19-test.jsonl");
+    const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"NEVER delete production data without backup!!!"}]}}
 {"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Understood."}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
