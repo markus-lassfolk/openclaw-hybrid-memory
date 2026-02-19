@@ -108,6 +108,13 @@ let reinforcementRegexCache: {
 } | null = null;
 
 /**
+ * Clear the reinforcement regex cache (e.g., after keyword rebuild).
+ */
+export function clearReinforcementRegexCache(): void {
+  reinforcementRegexCache = null;
+}
+
+/**
  * Calculate confidence for reinforcement detection.
  * High confidence: explicit praise words + substantial agent response
  * Low confidence: generic "thanks" or very short agent response

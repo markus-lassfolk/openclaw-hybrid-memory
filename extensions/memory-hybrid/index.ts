@@ -4580,7 +4580,13 @@ const memoryHybridPlugin = {
           if (!opts.dryRun) {
             for (const incident of result.incidents) {
               const category = incident.categories.includes("preference") ? "preference" : 
-                              incident.categories.includes("absolute_rule") ? "rule" : "other";
+                              incident.categories.includes("absolute_rule") ? "rule" :
+                              incident.categories.includes("conditional_rule") ? "rule" :
+                              incident.categories.includes("warning") ? "rule" :
+                              incident.categories.includes("future_behavior") ? "rule" :
+                              incident.categories.includes("procedural") ? "pattern" :
+                              incident.categories.includes("correction") ? "decision" :
+                              incident.categories.includes("implicit_correction") ? "decision" : "other";
               factsDb.store({
                 text: incident.extractedRule,
                 category: category as MemoryCategory,
@@ -4589,6 +4595,7 @@ const memoryHybridPlugin = {
                 key: null,
                 value: null,
                 source: `directive:${incident.sessionFile}`,
+                confidence: incident.confidence,
               });
             }
           }
