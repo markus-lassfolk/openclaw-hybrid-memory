@@ -24,13 +24,13 @@ import {
 describe("language-keywords", () => {
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "lang-kw-test-"));
-    clearKeywordCache();
+    await clearKeywordCache();
   });
 
-  afterEach(() => {
-    clearKeywordCache();
+  afterEach(async () => {
+    await clearKeywordCache();
     setKeywordsPath("");
     try {
       if (tmpDir) rmSync(tmpDir, { recursive: true });
@@ -72,7 +72,7 @@ describe("language-keywords", () => {
       expect(merged.triggers.length).toBe(ENGLISH_KEYWORDS.triggers.length);
     });
 
-    it("merges English and file translations when file exists", () => {
+    it("merges English and file translations when file exists", async () => {
       setKeywordsPath(tmpDir);
       const filePath = join(tmpDir, ".language-keywords.json");
       writeFileSync(
@@ -97,7 +97,7 @@ describe("language-keywords", () => {
         }),
         "utf8",
       );
-      clearKeywordCache();
+      await clearKeywordCache();
       const merged = loadMergedKeywords();
       expect(merged.triggers).toContain("remember");
       expect(merged.triggers).toContain("kom ihåg");
@@ -106,7 +106,7 @@ describe("language-keywords", () => {
       expect(merged.correctionSignals).toContain("du missförstod");
     });
 
-    it("uses cache when file path unchanged", () => {
+    it("uses cache when file path unchanged", async () => {
       setKeywordsPath(tmpDir);
       writeFileSync(
         join(tmpDir, ".language-keywords.json"),
@@ -118,14 +118,14 @@ describe("language-keywords", () => {
         }),
         "utf8",
       );
-      clearKeywordCache();
+      await clearKeywordCache();
       const first = loadMergedKeywords();
       const second = loadMergedKeywords();
       expect(second.triggers).toContain("cached");
       expect(first).toBe(second);
     });
 
-    it("clearKeywordCache forces reload on next loadMergedKeywords", () => {
+    it("clearKeywordCache forces reload on next loadMergedKeywords", async () => {
       setKeywordsPath(tmpDir);
       writeFileSync(
         join(tmpDir, ".language-keywords.json"),
@@ -137,7 +137,7 @@ describe("language-keywords", () => {
         }),
         "utf8",
       );
-      clearKeywordCache();
+      await clearKeywordCache();
       loadMergedKeywords();
       writeFileSync(
         join(tmpDir, ".language-keywords.json"),
@@ -151,7 +151,7 @@ describe("language-keywords", () => {
       );
       const before = loadMergedKeywords();
       expect(before.triggers).toContain("first");
-      clearKeywordCache();
+      await clearKeywordCache();
       const after = loadMergedKeywords();
       expect(after.triggers).toContain("second");
     });
@@ -181,7 +181,7 @@ describe("language-keywords", () => {
       expect(re.test("we decided to use typescript")).toBe(true);
     });
 
-    it("matches Swedish when in merged keywords", () => {
+    it("matches Swedish when in merged keywords", async () => {
       setKeywordsPath(tmpDir);
       writeFileSync(
         join(tmpDir, ".language-keywords.json"),
@@ -193,7 +193,7 @@ describe("language-keywords", () => {
         }),
         "utf8",
       );
-      clearKeywordCache();
+      await clearKeywordCache();
       const re = getCategoryDecisionRegex();
       expect(re.test("vi bestämde att använda det")).toBe(true);
     });

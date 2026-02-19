@@ -4586,7 +4586,8 @@ const memoryHybridPlugin = {
                               incident.categories.includes("future_behavior") ? "rule" :
                               incident.categories.includes("procedural") ? "pattern" :
                               incident.categories.includes("correction") ? "decision" :
-                              incident.categories.includes("implicit_correction") ? "decision" : "other";
+                              incident.categories.includes("implicit_correction") ? "decision" :
+                              incident.categories.includes("explicit_memory") ? "fact" : "other";
               factsDb.store({
                 text: incident.extractedRule,
                 category: category as MemoryCategory,

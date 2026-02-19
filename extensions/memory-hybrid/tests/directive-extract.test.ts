@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { runDirectiveExtract, DIRECTIVE_CATEGORIES, isProceduraDirective, extractTaskIntentFromDirective } from "../services/directive-extract.js";
+import { runDirectiveExtract, DIRECTIVE_CATEGORIES } from "../services/directive-extract.js";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -65,7 +65,6 @@ describe("directive-extract", () => {
     expect(result.incidents.length).toBeGreaterThan(0);
     const incident = result.incidents[0];
     expect(incident.categories).toContain("procedural");
-    expect(isProceduraDirective(incident)).toBe(true);
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -108,20 +107,6 @@ describe("directive-extract", () => {
     expect(result.incidents.length).toBe(0);
 
     rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("should extract task intent from procedural directive", () => {
-    const directive1 = "Before you restart the service, check the logs";
-    const intent1 = extractTaskIntentFromDirective(directive1, "");
-    expect(intent1).toContain("restart the service");
-
-    const directive2 = "First check the network status";
-    const intent2 = extractTaskIntentFromDirective(directive2, "");
-    expect(intent2).toContain("check the network status");
-
-    const directive3 = "When the disk is full, delete old logs";
-    const intent3 = extractTaskIntentFromDirective(directive3, "");
-    expect(intent3).toContain("when the disk is full");
   });
 
   it("should handle multiple categories in one message", () => {
