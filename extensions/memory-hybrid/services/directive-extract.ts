@@ -46,59 +46,6 @@ export type DirectiveExtractResult = {
   sessionsScanned: number;
 };
 
-/**
- * Phase 2: Check if an incident contains a procedural directive (category 7).
- * Returns true if procedure creation is recommended.
- */
-export function isProceduralDirective(incident: DirectiveIncident): boolean {
-  return incident.categories.includes("procedural");
-}
-
-/**
- * @deprecated Use isProceduralDirective instead (typo fix).
- */
-export function isProceduraDirective(incident: DirectiveIncident): boolean {
-  return isProceduralDirective(incident);
-}
-
-/**
- * Phase 2: Extract task intent from a procedural directive for procedure storage.
- * This is a heuristic — LLM-based extraction would be more accurate.
- */
-export function extractTaskIntentFromDirective(userMessage: string, context: string): string {
-  // Try to extract the task description from the directive
-  // Look for patterns like "before you do X", "first check Y", "when Z happens"
-  const lower = userMessage.toLowerCase();
-  
-  // Pattern 1: "before you do X" -> task = X
-  let match = lower.match(/before you (?:do|run|execute|start)\s+(.+?)(?:[,.]|$)/);
-  if (match) return match[1].trim().slice(0, 200);
-  
-  // Pattern 2: "first check X" -> task = "check X"
-  match = lower.match(/first (?:check|verify|ensure)\s+(.+?)(?:[,.]|$)/);
-  if (match) return `check ${match[1].trim()}`.slice(0, 200);
-  
-  // Pattern 3: "when X happens/occurs" -> task = "when X"
-  match = lower.match(/when (.+?)\s+(?:happens|occurs)(?:[,.]|$)/);
-  if (match) return `when ${match[1].trim()}`.slice(0, 200);
-  
-  // Pattern 3b: "when X, Y" (without happens/occurs) -> task = "when X"
-  match = lower.match(/when ([^,]+),/);
-  if (match) return `when ${match[1].trim()}`.slice(0, 200);
-  
-  // Pattern 4: Use first sentence with action verb
-  const sentences = userMessage.split(/[.!?]+/).map((s) => s.trim()).filter((s) => s.length > 10);
-  for (const s of sentences) {
-    if (/\b(check|verify|ensure|make sure|always|never|first|before)\b/i.test(s)) {
-      return s.toLowerCase().slice(0, 200);
-    }
-  }
-  
-  // Fallback: use the extracted rule or first sentence (ensure lowercase for consistency)
-  const fallback = context || sentences[0] || userMessage;
-  return fallback.toLowerCase().slice(0, 200);
-}
-
 const MAX_USER_MSG = 800;
 const MAX_ASSISTANT_MSG = 500;
 

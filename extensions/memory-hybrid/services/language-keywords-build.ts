@@ -375,7 +375,7 @@ export async function runBuildLanguageKeywords(
   try {
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
-    clearKeywordCache();
+    await clearKeywordCache();
   } catch (e) {
     return { ok: false, error: String(e) };
   }
