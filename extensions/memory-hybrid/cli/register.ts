@@ -175,6 +175,8 @@ export type HybridMemCliContext = {
     approve?: boolean;
     noApplyTools?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
+  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
 };
 
 /** Chainable command type (Commander-style). */
@@ -223,6 +225,8 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runSelfCorrectionRun,
     runCompaction,
     runBuildLanguageKeywords,
+    runExtractDirectives,
+    runExtractReinforcement,
   } = ctx;
 
   mem
@@ -683,9 +687,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--dry-run", "Show what would be extracted without storing")
     .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
       const days = parseInt(opts.days || "3", 10);
-      // TODO: Implement runExtractDirectives
-      console.log(`Extract-directives not fully implemented yet. Would scan last ${days} days.`);
-      console.log("Placeholder: extract directives, optionally store as facts with category 'rule' or 'preference'.");
+      const result = await runExtractDirectives({ days, verbose: opts.verbose, dryRun: opts.dryRun });
+      console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
+      if (opts.dryRun) {
+        console.log(`[dry-run] Would store ${result.incidents.length} directives as facts.`);
+      } else {
+        console.log(`Stored ${result.incidents.length} directives as facts.`);
+      }
     });
 
   mem
@@ -696,9 +704,14 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--dry-run", "Show what would be annotated without storing")
     .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
       const days = parseInt(opts.days || "3", 10);
-      // TODO: Implement runExtractReinforcement
-      console.log(`Extract-reinforcement not fully implemented yet. Would scan last ${days} days.`);
-      console.log("Placeholder: extract reinforcement, correlate with facts, call reinforceFact().");
+      const result = await runExtractReinforcement({ days, verbose: opts.verbose, dryRun: opts.dryRun });
+      console.log(`\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`);
+      if (opts.dryRun) {
+        console.log(`[dry-run] Would annotate facts/procedures with reinforcement data.`);
+      } else {
+        const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
+        console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
+      }
     });
 
   mem

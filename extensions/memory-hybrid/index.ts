@@ -98,6 +98,9 @@ import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionE
 import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./services/language-keywords-build.js";
+import { runDirectiveExtract, type DirectiveExtractResult, type DirectiveIncident } from "./services/directive-extract.js";
+import { runReinforcementExtract, type ReinforcementExtractResult, type ReinforcementIncident } from "./services/reinforcement-extract.js";
+import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
 
 // ============================================================================
 // Credentials Store (opt-in, encrypted)
@@ -4545,6 +4548,104 @@ const memoryHybridPlugin = {
           );
         }
 
+        async function runExtractDirectivesForCli(
+          opts: { days?: number; verbose?: boolean; dryRun?: boolean },
+        ): Promise<DirectiveExtractResult> {
+          const fs = await import("node:fs");
+          const pathMod = await import("node:path");
+          const sessionDir = cfg.procedures.sessionsDir;
+          
+          if (!fs.existsSync(sessionDir)) {
+            return { incidents: [], sessionsScanned: 0 };
+          }
+          
+          const days = opts.days ?? 3;
+          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+          const files = fs.readdirSync(sessionDir);
+          const filePaths = files
+            .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
+            .map((f) => pathMod.join(sessionDir, f))
+            .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+          
+          const directiveRegex = getDirectiveSignalRegex();
+          const result = runDirectiveExtract({ filePaths, directiveRegex });
+          
+          if (opts.verbose) {
+            for (const incident of result.incidents) {
+              console.log(`[${incident.sessionFile}] ${incident.categories.join(", ")}: ${incident.extractedRule}`);
+            }
+          }
+          
+          // Store directives as facts if not dry-run
+          if (!opts.dryRun) {
+            for (const incident of result.incidents) {
+              const category = incident.categories.includes("preference") ? "preference" : 
+                              incident.categories.includes("absolute_rule") ? "rule" : "other";
+              factsDb.store({
+                text: incident.extractedRule,
+                category: category as MemoryCategory,
+                importance: 0.8,
+                entity: null,
+                key: null,
+                value: null,
+                source: `directive:${incident.sessionFile}`,
+              });
+            }
+          }
+          
+          return result;
+        }
+
+        async function runExtractReinforcementForCli(
+          opts: { days?: number; verbose?: boolean; dryRun?: boolean },
+        ): Promise<ReinforcementExtractResult> {
+          const fs = await import("node:fs");
+          const pathMod = await import("node:path");
+          const sessionDir = cfg.procedures.sessionsDir;
+          
+          if (!fs.existsSync(sessionDir)) {
+            return { incidents: [], sessionsScanned: 0 };
+          }
+          
+          const days = opts.days ?? 3;
+          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+          const files = fs.readdirSync(sessionDir);
+          const filePaths = files
+            .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
+            .map((f) => pathMod.join(sessionDir, f))
+            .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+          
+          const reinforcementRegex = getReinforcementSignalRegex();
+          const result = runReinforcementExtract({ filePaths, reinforcementRegex });
+          
+          if (opts.verbose) {
+            for (const incident of result.incidents) {
+              console.log(`[${incident.sessionFile}] Confidence ${incident.confidence.toFixed(2)}: ${incident.userMessage.slice(0, 80)}`);
+            }
+          }
+          
+          // Annotate facts/procedures with reinforcement if not dry-run
+          if (!opts.dryRun) {
+            for (const incident of result.incidents) {
+              // Reinforce recalled memories
+              for (const memId of incident.recalledMemoryIds) {
+                factsDb.reinforceFact(memId, incident.userMessage);
+              }
+              
+              // Reinforce procedures based on tool call sequence
+              if (incident.toolCallSequence.length >= 2) {
+                const taskPattern = incident.toolCallSequence.join(" -> ");
+                const procedures = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost);
+                for (const proc of procedures) {
+                  factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold);
+                }
+              }
+            }
+          }
+          
+          return result;
+        }
+
         async function runExtractDailyForCli(
           opts: { days: number; dryRun: boolean },
           sink: ExtractDailySink,
@@ -5660,10 +5761,14 @@ const memoryHybridPlugin = {
             dryRun?: boolean;
             model?: string;
           }) => runSelfCorrectionRunForCli(opts),
+          runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) =>
+            runExtractDirectivesForCli(opts),
+          runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) =>
+            runExtractReinforcementForCli(opts),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem extract-directives", "hybrid-mem extract-reinforcement", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
