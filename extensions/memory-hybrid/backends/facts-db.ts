@@ -1817,7 +1817,7 @@ export class FactsDB {
     try {
       const rows = this.liveDb
         .prepare(
-          `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type DESC LIMIT ?`,
+          `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`,
         )
         .all(safeQuery, limit * 2) as Array<Record<string, unknown>>;
       

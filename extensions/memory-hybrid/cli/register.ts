@@ -114,6 +114,7 @@ export type HybridMemCliContext = {
   mergeResults: typeof mergeResults;
   parseSourceDate: (v: string | number | null | undefined) => number | null;
   getMemoryCategories: () => string[];
+  cfg: { distill?: { reinforcementBoost?: number; reinforcementProcedureBoost?: number; reinforcementPromotionThreshold?: number } };
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
   runVerify: (opts: { fix: boolean; logFile?: string }, sink: VerifyCliSink) => Promise<void>;
@@ -194,6 +195,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     mergeResults: merge,
     parseSourceDate: parseDate,
     getMemoryCategories,
+    cfg,
     runStore,
     runInstall,
     runVerify,
@@ -372,7 +374,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         opts.userId || opts.agentId || opts.sessionId
           ? { userId: opts.userId ?? null, agentId: opts.agentId ?? null, sessionId: opts.sessionId ?? null }
           : undefined;
-      const searchOpts = { tag, includeSuperseded: opts.includeSuperseded === true, scopeFilter, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+      const searchOpts = {
+        tag,
+        includeSuperseded: opts.includeSuperseded === true,
+        scopeFilter,
+        reinforcementBoost: cfg.distill?.reinforcementBoost,
+        ...(asOfSec != null ? { asOf: asOfSec } : {}),
+      };
       const sqlResults = factsDb.search(query, limit, searchOpts);
       let lanceResults: SearchResult[] = [];
       if (!tag) {
@@ -556,9 +564,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--verbose", "Log each fact as it is stored")
     .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
     .option("--max-session-tokens <n>", "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)", "0")
-    .option("--directives", "Also extract directives (issue #39)")
-    .option("--reinforcement", "Also extract reinforcement (issue #40)")
-    .action(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string; directives?: boolean; reinforcement?: boolean }) => {
+    .action(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string }) => {
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
       const maxSessionTokens = Math.max(0, parseInt(opts.maxSessionTokens || "0") || 0);
