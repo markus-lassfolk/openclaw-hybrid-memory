@@ -103,7 +103,7 @@ import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./s
 // Backend Imports (extracted from god file for maintainability)
 // ============================================================================
 
-import { CredentialsDB, type CredentialEntry } from "./backends/credentials-db.js";
+import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptValue } from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 
 // ============================================================================

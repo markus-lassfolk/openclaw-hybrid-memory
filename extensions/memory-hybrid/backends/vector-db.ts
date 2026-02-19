@@ -151,7 +151,7 @@ export class VectorDB {
       await this.ensureInitialized();
       // SECURITY: UUID validation is the security boundary for delete().
       // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
-      // Regex tightened to enforce lowercase hex (case-insensitive in comparison, but normalized here).
+      // Regex validates UUID v1-v5 format (case-insensitive), then we normalize to lowercase before interpolation.
       const uuidRegex =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       if (!uuidRegex.test(id)) throw new Error(`Invalid UUID format: ${id}`);

@@ -5,9 +5,10 @@
 
 import Database from "better-sqlite3";
 import { createHash, createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { mkdirSync, dirname } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../config.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 
 const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
@@ -58,7 +59,11 @@ export class CredentialsDB {
   private key: Buffer;
   private kdfVersion: number;
   private salt: Buffer;
-  private password: string; // Kept for migration only
+  // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
+  // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
+  // After migration completes, this field remains set but is no longer used (could be cleared in future optimization).
+  // Alternative approaches (e.g., prompting user for password again during migration) would break unattended operation.
+  private password: string;
 
   constructor(dbPath: string, encryptionKey: string) {
     this.dbPath = dbPath;
@@ -93,6 +98,10 @@ export class CredentialsDB {
     `);
     
     // Initialize or load KDF version and salt
+    // TEST COVERAGE NEEDED: This security-critical migration logic should be covered by tests:
+    // 1. New vault: verify vault_meta is written and credentials are decryptable across instances
+    // 2. Legacy vault (no vault_meta): verify migration to scrypt on first get() and subsequent decryptability
+    // 3. Crash resilience: verify transaction rollback prevents partial migration
     const versionRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as { value: Buffer } | undefined;
     const saltRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as { value: Buffer } | undefined;
     
@@ -259,3 +268,6 @@ export class CredentialsDB {
     try { this.db.close(); } catch { /* already closed */ }
   }
 }
+
+// Export encryption primitives for testing
+export { deriveKey, encryptValue, decryptValue };

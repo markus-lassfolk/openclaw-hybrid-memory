@@ -5,8 +5,9 @@
 
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, dirname } from "node:fs";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../config.js";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 
 export type ProposalEntry = {
   id: string;
