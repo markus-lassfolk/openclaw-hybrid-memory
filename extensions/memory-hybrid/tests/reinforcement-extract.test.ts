@@ -168,4 +168,30 @@ describe("reinforcement-extract", () => {
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it("should collect tool calls from multiple assistant messages in multi-turn conversations", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-multiturn.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Fix the config"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"tool_use","name":"memory_recall","id":"tool1"},{"type":"text","text":"Let me check the memory"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"tool_use","name":"read","id":"tool2"},{"type":"text","text":"Reading the config file"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"tool_use","name":"write","id":"tool3"},{"type":"text","text":"Updated the config file"}]}}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That workflow was exactly right"}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runReinforcementExtract({
+      filePaths: [sessionFile],
+      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+    });
+
+    expect(result.incidents.length).toBeGreaterThan(0);
+    const incident = result.incidents[0];
+    expect(incident.toolCallSequence.length).toBe(3);
+    expect(incident.toolCallSequence).toContain("memory_recall");
+    expect(incident.toolCallSequence).toContain("read");
+    expect(incident.toolCallSequence).toContain("write");
+    expect(incident.agentBehavior).toContain("Updated the config file");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
