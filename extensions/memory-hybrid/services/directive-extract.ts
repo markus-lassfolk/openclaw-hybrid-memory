@@ -134,12 +134,14 @@ function detectDirectiveCategories(text: string): { categories: DirectiveCategor
  * Extract a concise rule/instruction from the user message.
  * This is a simple heuristic; LLM-based extraction would be more accurate.
  * Improved: if colon exists ("Remember: ..."), take text after it.
+ * Skips colons that are part of URL schemes (http:, https:) to avoid corrupting rules.
  */
 function extractRule(text: string): string {
   const trimmed = text.trim().replace(/\s+/g, " ");
   
-  // Heuristic: If a colon exists, extract text after it (common pattern: "Remember: do X")
-  const colonMatch = trimmed.match(/:\s*(.+)/);
+  // Heuristic: If a colon exists, extract text after it (common pattern: "Remember: do X").
+  // Use lookbehind to skip URL scheme colons (https:, http:) so we don't extract "//host path".
+  const colonMatch = trimmed.match(/(?<!https)(?<!http):\s*(.+)/);
   if (colonMatch) {
     const afterColon = colonMatch[1].trim();
     if (afterColon.length >= 10) {

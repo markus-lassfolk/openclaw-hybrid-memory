@@ -132,4 +132,26 @@ describe("directive-extract", () => {
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it("extractRule should not use URL scheme colon (https:) as directive separator", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-url.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Use https://docs.example.com for API. Remember: always use the v2 endpoint for writes."}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Got it."}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.incidents.length).toBeGreaterThan(0);
+    const incident = result.incidents[0];
+    // Rule should be taken from "Remember: ...", not from "https:"
+    expect(incident.extractedRule).not.toMatch(/^\/\//);
+    expect(incident.extractedRule.toLowerCase()).toContain("v2");
+    expect(incident.extractedRule.toLowerCase()).toContain("endpoint");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });

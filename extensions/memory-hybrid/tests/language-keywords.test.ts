@@ -18,6 +18,8 @@ import {
   getDecaySessionRegex,
   getDecayActiveRegex,
   getCorrectionSignalRegex,
+  getDirectiveCategoryRegexes,
+  getReinforcementCategoryRegexes,
   type KeywordGroup,
 } from "../utils/language-keywords.js";
 
@@ -270,6 +272,59 @@ describe("language-keywords", () => {
         expect(ENGLISH_KEYWORDS[g]).toBeDefined();
         expect(Array.isArray(ENGLISH_KEYWORDS[g])).toBe(true);
       });
+    });
+  });
+
+  describe("directiveSignalsByCategory and reinforcementCategories", () => {
+    it("merges directiveSignalsByCategory from file into merged keywords", async () => {
+      setKeywordsPath(tmpDir);
+      writeFileSync(
+        join(tmpDir, ".language-keywords.json"),
+        JSON.stringify({
+          version: 2,
+          detectedAt: new Date().toISOString(),
+          topLanguages: ["en"],
+          translations: {},
+          directiveSignalsByCategory: {
+            explicit_memory: ["remember that", "muista että"],
+            future_behavior: ["from now on", "tästä lähtien"],
+          },
+        }),
+        "utf8",
+      );
+      await clearKeywordCache();
+      const merged = loadMergedKeywords();
+      expect(merged.directiveExplicitMemory).toContain("remember that");
+      expect(merged.directiveExplicitMemory).toContain("muista että");
+      expect(merged.directiveFutureBehavior).toContain("tästä lähtien");
+      const regexes = getDirectiveCategoryRegexes();
+      expect(regexes.explicit_memory.test("muista että käytä v2")).toBe(true);
+    });
+
+    it("merges reinforcementCategories from file and uses genericPoliteness", async () => {
+      setKeywordsPath(tmpDir);
+      writeFileSync(
+        join(tmpDir, ".language-keywords.json"),
+        JSON.stringify({
+          version: 2,
+          detectedAt: new Date().toISOString(),
+          topLanguages: ["en"],
+          translations: {},
+          reinforcementCategories: {
+            strongPraise: ["perfect", "täydellinen"],
+            genericPoliteness: ["thanks", "kiitos", "ok"],
+          },
+        }),
+        "utf8",
+      );
+      await clearKeywordCache();
+      const merged = loadMergedKeywords();
+      expect(merged.reinforcementStrongPraise).toContain("perfect");
+      expect(merged.reinforcementStrongPraise).toContain("täydellinen");
+      const regexes = getReinforcementCategoryRegexes();
+      expect(regexes.strongPraise.test("täydellinen!")).toBe(true);
+      expect(regexes.genericPoliteness.test("kiitos")).toBe(true);
+      expect(regexes.genericPoliteness.test("ok")).toBe(true);
     });
   });
 });

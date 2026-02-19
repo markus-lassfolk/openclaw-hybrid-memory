@@ -192,6 +192,28 @@ export const ENGLISH_KEYWORDS = {
 
 export type KeywordGroup = keyof typeof ENGLISH_KEYWORDS;
 
+/** Directive category key in file (snake_case) -> MergedKeywords key (camelCase). */
+const DIRECTIVE_CATEGORY_TO_MERGED: Record<string, KeywordGroup> = {
+  explicit_memory: "directiveExplicitMemory",
+  future_behavior: "directiveFutureBehavior",
+  absolute_rule: "directiveAbsoluteRule",
+  preference: "directivePreference",
+  warning: "directiveWarning",
+  procedural: "directiveProcedural",
+  implicit_correction: "directiveImplicitCorrection",
+  conditional_rule: "directiveConditionalRule",
+  correction: "correctionSignals",
+};
+
+/** Reinforcement category key in file -> MergedKeywords key. */
+const REINFORCEMENT_CATEGORY_TO_MERGED: Record<string, KeywordGroup> = {
+  strongPraise: "reinforcementStrongPraise",
+  methodConfirmation: "reinforcementMethodConfirmation",
+  relief: "reinforcementRelief",
+  comparativePraise: "reinforcementComparativePraise",
+  sharingSignals: "reinforcementSharingSignals",
+};
+
 export type LanguageKeywordsFile = {
   version: number;
   detectedAt: string;
@@ -201,6 +223,10 @@ export type LanguageKeywordsFile = {
   triggerStructures?: Record<string, string[]>;
   /** v2: per-language extraction building blocks; runtime builds safe regex from these. */
   extraction?: Record<string, LanguageExtractionTemplate>;
+  /** Optional: per-category directive signals (explicit_memory, future_behavior, ...). Merged into merged keywords for multilingual category detection. */
+  directiveSignalsByCategory?: Record<string, string[]>;
+  /** Optional: per-category reinforcement signals (strongPraise, methodConfirmation, ..., genericPoliteness). Merged into merged keywords; genericPoliteness used for confidence regex. */
+  reinforcementCategories?: Record<string, string[]>;
 };
 
 /** Building blocks for structured fact extraction in a given language (verbs, connectors, etc.). */
@@ -232,7 +258,14 @@ export function getLanguageKeywordsFilePath(): string | null {
   return join(keywordsPath, LANG_FILE_NAME);
 }
 
-let cache: { merged: MergedKeywords; path: string; triggerStructures: string[]; extraction: Record<string, LanguageExtractionTemplate> } | null = null;
+let cache: {
+  merged: MergedKeywords;
+  path: string;
+  triggerStructures: string[];
+  extraction: Record<string, LanguageExtractionTemplate>;
+  /** From file reinforcementCategories.genericPoliteness; used by getReinforcementCategoryRegexes. */
+  reinforcementGenericPoliteness?: string[];
+} | null = null;
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -251,6 +284,18 @@ function mergeGroup(
     }
   }
   return [...set];
+}
+
+/** Build merged keywords from English + translations (e.g. for build script to emit directiveSignalsByCategory). */
+export function buildMergedFromTranslations(
+  translations: Record<string, Record<KeywordGroup, string[]>>,
+): MergedKeywords {
+  const merged: MergedKeywords = {} as MergedKeywords;
+  for (const group of Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]) {
+    const english = ENGLISH_KEYWORDS[group];
+    merged[group] = mergeGroup(english, translations, group);
+  }
+  return merged;
 }
 
 /** Load merged keywords (English + file). Returns English-only if file missing. */
@@ -280,6 +325,27 @@ export function loadMergedKeywords(): MergedKeywords {
     const english = ENGLISH_KEYWORDS[group];
     merged[group] = mergeGroup(english, data?.translations ?? undefined, group);
   }
+  if (data?.directiveSignalsByCategory && typeof data.directiveSignalsByCategory === "object") {
+    for (const [fileKey, list] of Object.entries(data.directiveSignalsByCategory)) {
+      const mergedKey = DIRECTIVE_CATEGORY_TO_MERGED[fileKey];
+      if (mergedKey && Array.isArray(list)) {
+        const existing = new Set(merged[mergedKey] ?? []);
+        for (const s of list) if (typeof s === "string" && s.trim()) existing.add(s.trim());
+        merged[mergedKey] = [...existing];
+      }
+    }
+  }
+  if (data?.reinforcementCategories && typeof data.reinforcementCategories === "object") {
+    for (const [fileKey, list] of Object.entries(data.reinforcementCategories)) {
+      if (fileKey === "genericPoliteness") continue;
+      const mergedKey = REINFORCEMENT_CATEGORY_TO_MERGED[fileKey];
+      if (mergedKey && Array.isArray(list)) {
+        const existing = new Set(merged[mergedKey] ?? []);
+        for (const s of list) if (typeof s === "string" && s.trim()) existing.add(s.trim());
+        merged[mergedKey] = [...existing];
+      }
+    }
+  }
   const triggerStructures: string[] = [];
   if (data?.triggerStructures && typeof data.triggerStructures === "object") {
     for (const list of Object.values(data.triggerStructures)) {
@@ -288,7 +354,11 @@ export function loadMergedKeywords(): MergedKeywords {
   }
   const extraction: Record<string, LanguageExtractionTemplate> =
     data?.extraction && typeof data.extraction === "object" ? (data.extraction as Record<string, LanguageExtractionTemplate>) : {};
-  cache = { merged, path: filePath, triggerStructures, extraction };
+  const reinforcementGenericPoliteness =
+    data?.reinforcementCategories && Array.isArray(data.reinforcementCategories.genericPoliteness)
+      ? (data.reinforcementCategories.genericPoliteness as string[]).filter((s) => typeof s === "string" && s.trim())
+      : undefined;
+  cache = { merged, path: filePath, triggerStructures, extraction, reinforcementGenericPoliteness };
   return cache.merged;
 }
 
@@ -402,14 +472,23 @@ export function getDirectiveCategoryRegexes(): Record<string, RegExp> {
   };
 }
 
-/** Get reinforcement confidence regexes for multilingual detection. */
+/** Get reinforcement confidence regexes for multilingual detection. Uses reinforcementCategories from file when present. */
 export function getReinforcementCategoryRegexes(): Record<string, RegExp> {
   const merged = loadMergedKeywords();
+  const genericPolitenessPhrases =
+    cache?.reinforcementGenericPoliteness && cache.reinforcementGenericPoliteness.length > 0
+      ? cache.reinforcementGenericPoliteness
+      : ["thanks", "thank you", "ok", "okay", "got it"];
+  const genericPolitenessRegex = new RegExp(
+    `^(${genericPolitenessPhrases.map(escapeRegex).join("|")})\\.?$`,
+    "i",
+  );
   return {
     strongPraise: buildRegexFromKeywords(merged.reinforcementStrongPraise || []),
     methodConfirmation: buildRegexFromKeywords(merged.reinforcementMethodConfirmation || []),
     relief: buildRegexFromKeywords(merged.reinforcementRelief || []),
     comparativePraise: buildRegexFromKeywords(merged.reinforcementComparativePraise || []),
     sharingSignals: buildRegexFromKeywords(merged.reinforcementSharingSignals || []),
+    genericPoliteness: genericPolitenessRegex,
   };
 }

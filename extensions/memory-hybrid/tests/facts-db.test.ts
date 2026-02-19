@@ -1194,3 +1194,187 @@ describe("FactsDB FR-006 scoping", () => {
     expect(updated?.scopeTarget).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reinforcement (issue #40): reinforceFact, reinforceProcedure
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.reinforceFact", () => {
+  it("increments reinforced_count and appends quote", () => {
+    const entry = db.store({
+      text: "Use API key for auth",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    expect(entry.reinforcedCount).toBeFalsy();
+
+    const ok = db.reinforceFact(entry.id, "Perfect, that worked!");
+    expect(ok).toBe(true);
+
+    const updated = db.getById(entry.id);
+    expect(updated?.reinforcedCount).toBe(1);
+    expect(updated?.lastReinforcedAt).toBeGreaterThan(0);
+    expect(updated?.reinforcedQuotes).toEqual(["Perfect, that worked!"]);
+  });
+
+  it("keeps at most 10 quotes (FIFO)", () => {
+    const entry = db.store({
+      text: "Reinforced fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    for (let i = 0; i < 12; i++) {
+      db.reinforceFact(entry.id, `quote-${i}`);
+    }
+    const updated = db.getById(entry.id);
+    expect(updated?.reinforcedCount).toBe(12);
+    expect(updated?.reinforcedQuotes?.length).toBe(10);
+    expect(updated?.reinforcedQuotes?.[0]).toBe("quote-2");
+    expect(updated?.reinforcedQuotes?.[9]).toBe("quote-11");
+  });
+
+  it("returns false for unknown fact id", () => {
+    const ok = db.reinforceFact("nonexistent-id", "Great!");
+    expect(ok).toBe(false);
+  });
+});
+
+describe("FactsDB.reinforceProcedure", () => {
+  it("increments reinforced_count and appends quote", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Check health",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.6,
+    });
+    expect(proc.reinforcedCount).toBe(0);
+
+    const ok = db.reinforceProcedure(proc.id, "Nice, keep doing that!");
+    expect(ok).toBe(true);
+
+    const updated = db.getProcedureById(proc.id);
+    expect(updated?.reinforcedCount).toBe(1);
+    expect(updated?.lastReinforcedAt).toBeGreaterThan(0);
+    expect(updated?.reinforcedQuotes).toEqual(["Nice, keep doing that!"]);
+  });
+
+  it("auto-promotes confidence when reinforced_count >= threshold", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Deploy flow",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.5,
+    });
+    db.reinforceProcedure(proc.id, "Good!", 2);
+    db.reinforceProcedure(proc.id, "Perfect!", 2);
+
+    const updated = db.getProcedureById(proc.id);
+    expect(updated?.reinforcedCount).toBe(2);
+    expect(updated?.confidence).toBeGreaterThanOrEqual(0.8);
+    expect(updated?.promotedAt).toBeGreaterThan(0);
+  });
+
+  it("returns false for unknown procedure id", () => {
+    const ok = db.reinforceProcedure("nonexistent-proc-id", "Great!", 2);
+    expect(ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reinforcement ranking in search (issue #40): reinforced items rank higher
+// ---------------------------------------------------------------------------
+
+describe("FactsDB search reinforcement ranking", () => {
+  it("reinforced fact ranks before non-reinforced when reinforcementBoost > 0", () => {
+    const a = db.store({
+      text: "Use auth key for API requests",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const b = db.store({
+      text: "API auth token configuration and secrets",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.reinforceFact(a.id, "Perfect!");
+
+    const results = db.search("auth API", 10, { reinforcementBoost: 0.2 });
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    const ids = results.map((r) => r.entry.id);
+    expect(ids).toContain(a.id);
+    expect(ids).toContain(b.id);
+    expect(ids.indexOf(a.id)).toBeLessThan(ids.indexOf(b.id));
+    const scoreA = results.find((r) => r.entry.id === a.id)!.score;
+    const scoreB = results.find((r) => r.entry.id === b.id)!.score;
+    expect(scoreA).toBeGreaterThanOrEqual(scoreB);
+  });
+
+  it("with reinforcementBoost 0 reinforced fact does not get boost", () => {
+    const a = db.store({
+      text: "Auth key for API",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const b = db.store({
+      text: "API auth setup",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.reinforceFact(a.id, "Good");
+
+    const withBoost = db.search("auth API", 10, { reinforcementBoost: 0.2 });
+    const noBoost = db.search("auth API", 10, { reinforcementBoost: 0 });
+    const scoreAWith = withBoost.find((r) => r.entry.id === a.id)?.score ?? 0;
+    const scoreANo = noBoost.find((r) => r.entry.id === a.id)?.score ?? 0;
+    expect(scoreAWith).toBeGreaterThanOrEqual(scoreANo);
+  });
+});
+
+describe("FactsDB searchProcedures reinforcement ranking", () => {
+  it("reinforced procedure ranks before non-reinforced when reinforcementBoost > 0", () => {
+    const p1 = db.upsertProcedure({
+      taskPattern: "deploy auth service",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.5,
+    });
+    const p2 = db.upsertProcedure({
+      taskPattern: "deploy auth service",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.5,
+    });
+    db.reinforceProcedure(p1.id, "Perfect, keep doing that!");
+
+    const results = db.searchProcedures("deploy auth service", 5, 0.25);
+    expect(results.length).toBe(2);
+    expect(results[0].id).toBe(p1.id);
+    expect(results[1].id).toBe(p2.id);
+    expect(results[0].reinforcedCount).toBe(1);
+    expect(results[1].reinforcedCount).toBe(0);
+  });
+});
