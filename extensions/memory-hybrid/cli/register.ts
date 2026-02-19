@@ -383,7 +383,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         tag,
         includeSuperseded: opts.includeSuperseded === true,
         scopeFilter,
-        reinforcementBoost: cfg.distill?.reinforcementBoost,
+        reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
         ...(asOfSec != null ? { asOf: asOfSec } : {}),
       };
       const sqlResults = factsDb.search(query, limit, searchOpts);

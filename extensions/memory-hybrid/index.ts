@@ -2232,7 +2232,7 @@ const memoryHybridPlugin = {
 
           const ftsResults = factsDb.search(query, limit, {
             ...recallOpts,
-            reinforcementBoost: cfg.distill?.reinforcementBoost,
+            reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
           });
           sqliteResults = [...sqliteResults, ...ftsResults];
 
@@ -2378,7 +2378,7 @@ const memoryHybridPlugin = {
                 details: { count: 0 },
               };
             }
-            const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost);
+            const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
             const negatives = factsDb.getNegativeProceduresMatching(q, 3);
             const lines: string[] = [];
             const positiveList = procedures.filter((p) => p.procedureType === "positive");
@@ -4513,7 +4513,13 @@ const memoryHybridPlugin = {
           return files
             .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
             .map((f) => pathMod.join(sessionDir, f))
-            .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+            .filter((p) => {
+              try {
+                return fs.statSync(p).mtimeMs >= cutoff;
+              } catch {
+                return false;
+              }
+            });
         }
 
         async function runExtractProceduresForCli(
@@ -4622,7 +4628,7 @@ const memoryHybridPlugin = {
               // Reinforce procedures based on tool call sequence
               if (incident.toolCallSequence.length >= 2) {
                 const taskPattern = incident.toolCallSequence.join(" -> ");
-                const procedures = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost);
+                const procedures = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
                 for (const proc of procedures) {
                   factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold);
                 }
@@ -5771,7 +5777,7 @@ const memoryHybridPlugin = {
           // Procedural memory: inject relevant procedures and negative warnings (issue #23)
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
-            const procs = factsDb.searchProcedures(e.prompt, 3, cfg.distill?.reinforcementProcedureBoost);
+            const procs = factsDb.searchProcedures(e.prompt, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
             const negs = factsDb.getNegativeProceduresMatching(e.prompt, 2);
             const procLines: string[] = [];
             const positiveList = procs.filter((p) => p.procedureType === "positive");
@@ -5830,7 +5836,7 @@ const memoryHybridPlugin = {
           const ftsResults = factsDb.search(e.prompt, limit, {
             tierFilter,
             scopeFilter,
-            reinforcementBoost: cfg.distill?.reinforcementBoost,
+            reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
           });
           let lanceResults: SearchResult[] = [];
           try {
