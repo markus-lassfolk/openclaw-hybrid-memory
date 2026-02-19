@@ -56,6 +56,112 @@ export const ENGLISH_KEYWORDS = {
     "just use",
     "just do",
   ],
+  /** Issue #39: Directive extraction — phrases indicating user wants agent to remember/change behavior (10 categories merged). */
+  directiveSignals: [
+    // Explicit memory requests
+    "remember that",
+    "don't forget",
+    "keep in mind",
+    "store this",
+    "write this down",
+    "make a note",
+    "take note",
+    // Future behavior changes
+    "from now on",
+    "in the future",
+    "next time",
+    "going forward",
+    "moving forward",
+    "onwards",
+    // Absolute rules
+    "always",
+    "never",
+    "make sure to",
+    "under no circumstances",
+    "you must",
+    "you should always",
+    "you should never",
+    // Preferences
+    "i prefer",
+    "i'd rather",
+    "use X instead",
+    "default to",
+    "stick with",
+    // Warnings
+    "be careful with",
+    "watch out for",
+    "don't ever",
+    "avoid",
+    "stay away from",
+    // Procedural
+    "first check",
+    "before you do",
+    "the order should be",
+    "step 1 is always",
+    "make sure you",
+    // Implicit corrections (short redirects)
+    "no, use",
+    "the other one",
+    "that's the old way",
+    "not that",
+    // Emotional emphasis (ALL CAPS, multiple !!!, frustrated emoji captured by detection logic)
+    "NEVER",
+    "ALWAYS",
+    "IMPORTANT",
+    // Conditional rules
+    "when X happens",
+    "if you see",
+    "only when",
+    "whenever",
+  ],
+  /** Issue #40: Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
+  reinforcementSignals: [
+    // Explicit approval
+    "perfect",
+    "exactly",
+    "spot on",
+    "you nailed it",
+    "that's right",
+    "correct",
+    // Emotional praise
+    "love it",
+    "brilliant",
+    "amazing",
+    "excellent",
+    "fantastic",
+    "great job",
+    // Method confirmation
+    "yes, like that",
+    "keep this format",
+    "this is how it should be",
+    "that's the way",
+    "do it like this",
+    // Relief/finally
+    "finally!",
+    "now you get it",
+    "at last",
+    "there we go",
+    // Comparative praise
+    "much better",
+    "huge improvement",
+    "better than before",
+    "way better",
+    // Encouragement
+    "keep doing this",
+    "more of this",
+    "don't change",
+    "stick with this",
+    // Feature praise
+    "formatting is perfect",
+    "love the detail",
+    "great structure",
+    "perfect layout",
+    // Sharing signals
+    "going to show this",
+    "saving this",
+    "bookmarked",
+    "will share this",
+  ],
 } as const;
 
 export type KeywordGroup = keyof typeof ENGLISH_KEYWORDS;
@@ -233,4 +339,14 @@ export function getDecayActiveRegex(): RegExp {
 /** Regex to detect user messages that look like corrections/nudges (issue #34). Uses English + translated correctionSignals from .language-keywords.json after build-languages. */
 export function getCorrectionSignalRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().correctionSignals);
+}
+
+/** Issue #39: Regex to detect user messages that contain directive phrases (10 categories merged). */
+export function getDirectiveSignalRegex(): RegExp {
+  return buildRegexFromKeywords(loadMergedKeywords().directiveSignals);
+}
+
+/** Issue #40: Regex to detect user messages that contain reinforcement/praise phrases. */
+export function getReinforcementSignalRegex(): RegExp {
+  return buildRegexFromKeywords(loadMergedKeywords().reinforcementSignals);
 }

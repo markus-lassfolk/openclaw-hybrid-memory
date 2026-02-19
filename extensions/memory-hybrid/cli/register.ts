@@ -556,7 +556,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--verbose", "Log each fact as it is stored")
     .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
     .option("--max-session-tokens <n>", "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)", "0")
-    .action(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string }) => {
+    .option("--directives", "Also extract directives (issue #39)")
+    .option("--reinforcement", "Also extract reinforcement (issue #40)")
+    .action(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string; directives?: boolean; reinforcement?: boolean }) => {
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
       const maxSessionTokens = Math.max(0, parseInt(opts.maxSessionTokens || "0") || 0);
@@ -664,6 +666,32 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log(`\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`);
         for (const p of result.paths) console.log(`  ${p}`);
       }
+    });
+
+  mem
+    .command("extract-directives")
+    .description("Issue #39: Extract directive incidents from session JSONL (10 categories)")
+    .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
+    .option("--verbose", "Log each directive as it is detected")
+    .option("--dry-run", "Show what would be extracted without storing")
+    .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+      const days = parseInt(opts.days || "3", 10);
+      // TODO: Implement runExtractDirectives
+      console.log(`Extract-directives not fully implemented yet. Would scan last ${days} days.`);
+      console.log("Placeholder: extract directives, optionally store as facts with category 'rule' or 'preference'.");
+    });
+
+  mem
+    .command("extract-reinforcement")
+    .description("Issue #40: Extract reinforcement incidents from session JSONL and annotate facts/procedures")
+    .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
+    .option("--verbose", "Log each reinforcement as it is detected")
+    .option("--dry-run", "Show what would be annotated without storing")
+    .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+      const days = parseInt(opts.days || "3", 10);
+      // TODO: Implement runExtractReinforcement
+      console.log(`Extract-reinforcement not fully implemented yet. Would scan last ${days} days.`);
+      console.log("Placeholder: extract reinforcement, correlate with facts, call reinforceFact().");
     });
 
   mem
