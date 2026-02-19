@@ -131,6 +131,15 @@ function detectDirectiveCategories(text: string): { categories: DirectiveCategor
 }
 
 /**
+ * Common URL/URI scheme names (IANA and common usage). Colons after these words
+ * must not be treated as directive separators (e.g. "Remember: ...").
+ */
+const URI_SCHEMES = new Set([
+  "http", "https", "ftp", "file", "mailto", "tel", "ssh", "data", "ws", "wss",
+  "irc", "imap", "nntp", "ldap", "sftp", "git", "svn", "jdbc", "redis", "mongodb",
+]);
+
+/**
  * Extract a concise rule/instruction from the user message.
  * This is a simple heuristic; LLM-based extraction would be more accurate.
  * Improved: if colon exists ("Remember: ..."), take text after it.
@@ -141,19 +150,23 @@ function extractRule(text: string): string {
   
   // Heuristic: If a colon exists after a word boundary (directive pattern), extract text after it.
   // This regex matches colons that follow a word, but excludes:
-  // - URL schemes (http:, https:, ftp:, mailto:, etc.) - detected by checking if followed by //
-  // - Time formats (14:30) - detected by digit before colon
-  // - Numbered lists (Step 1:) - detected by digit before colon
-  // - Port numbers (localhost:8080, server.com:21) - detected by checking if followed by digits
-  const colonMatch = trimmed.match(/\b[a-zA-Z]+\s*:\s*(?!\/\/)(?!\d)(.+)/);
+  // - URL/URI schemes (http:, https:, ftp:, mailto:, file:, ssh:, data:, etc.) via URI_SCHEMES set
+  // - Time formats (14:30) - digit before colon (not matched by \b[a-zA-Z]+)
+  // - Numbered lists (Step 1:) - digit before colon
+  // - Port numbers - negative lookahead (?!\d) and (?!\/\/)
+  const colonMatch = trimmed.match(/\b([a-zA-Z]+)\s*:\s*(?!\/\/)(?!\d)(.+)/);
   if (colonMatch) {
-    const afterColon = colonMatch[1].trim();
-    // Also check that the match doesn't start with // (in case of URL scheme)
+    const wordBeforeColon = colonMatch[1].toLowerCase();
+    if (URI_SCHEMES.has(wordBeforeColon)) return fallbackExtract(trimmed);
+    const afterColon = colonMatch[2].trim();
     if (afterColon.length >= 10 && !afterColon.startsWith("//")) {
       return afterColon.slice(0, 200);
     }
   }
-  
+  return fallbackExtract(trimmed);
+}
+
+function fallbackExtract(trimmed: string): string {
   if (trimmed.length <= 200) return trimmed;
   
   // Try to find a sentence with directive keywords
