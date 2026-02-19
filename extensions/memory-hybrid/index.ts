@@ -1692,7 +1692,7 @@ const memoryHybridPlugin = {
             }),
           ),
           limit: Type.Optional(
-            Type.Number({ description: "Max results (default: 5)" }),
+            Type.Number({ description: "Max results (default: 10)" }),
           ),
           entity: Type.Optional(
             Type.String({
