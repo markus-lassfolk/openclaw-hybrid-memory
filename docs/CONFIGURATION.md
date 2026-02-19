@@ -524,7 +524,7 @@ Optional config for the self-correction pipeline: semantic dedup before storing 
 }
 ```
 
-The five defaults (`preference`, `fact`, `decision`, `entity`, `other`) are always included. See [FEATURES.md](FEATURES.md) for details on categories and discovery.
+The seven defaults (`preference`, `fact`, `decision`, `entity`, `pattern`, `rule`, `other`) are always included. See [FEATURES.md](FEATURES.md) for details on categories and discovery.
 
 ---
 

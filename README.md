@@ -32,7 +32,7 @@ Your OpenClaw agent forgets everything between sessions. Preferences, decisions,
 - **MEMORY.md index** — lightweight root index loaded every session; detail files loaded on demand
 
 ### Intelligence
-- **Auto-classify** — background LLM reclassifies facts into proper categories (5 built-in + custom)
+- **Auto-classify** — background LLM reclassifies facts into proper categories (7 built-in + custom)
 - **Category discovery** — LLM suggests new categories from your data patterns
 - **Reflection layer** — synthesizes behavioral patterns and rules from accumulated facts ([docs/REFLECTION.md](docs/REFLECTION.md))
 - **Graph memory** — typed relationships between facts enable zero-LLM recall via graph traversal ([docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md))
