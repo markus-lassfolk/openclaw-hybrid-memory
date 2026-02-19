@@ -96,6 +96,23 @@ credential_get(service="github", type="api_key")
 - Values are encrypted with AES-256-GCM
 - Only service, type, url, notes, and expiry metadata are stored in plaintext
 
+### Key Derivation (KDF)
+
+The encryption key is derived from your `encryptionKey` config using a **key derivation function**:
+
+- **v2 (current, scrypt):** New vaults use scrypt (N=16384, r=8, p=1) with a random 32-byte salt. The KDF version and salt are stored in the `vault_meta` table.
+- **v1 (legacy, SHA-256):** Earlier versions derived the key using a single SHA-256 hash (no salt). This is weaker and is automatically migrated.
+
+### Automatic KDF migration (v1 → v2)
+
+If you have an existing vault created before scrypt support was added, it will be **automatically migrated** to scrypt on the first successful `credential_get` call:
+
+1. The plugin detects the vault has no `vault_meta` entries (legacy vault).
+2. On the first successful decryption (proving the password is correct), all credentials are re-encrypted with a new scrypt-derived key and random salt.
+3. The new KDF version and salt are written to `vault_meta`.
+
+This migration is **transparent** — no action required. After migration, all subsequent operations use the stronger scrypt KDF.
+
 ## Redaction
 
 - **credential_get**: The credential value is returned only in `details.value` with `sensitiveFields: ["value"]`. The `content` text does not include the value, so it can be safely logged. Platforms should redact fields listed in `sensitiveFields` when persisting session transcripts or exporting.
