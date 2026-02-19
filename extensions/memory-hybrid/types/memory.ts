@@ -45,6 +45,12 @@ export type MemoryEntry = {
   successCount?: number;
   lastValidated?: number | null;
   sourceSessions?: string | null;
+  /** Issue #40: Reinforcement tracking — number of times this fact was reinforced by user praise. */
+  reinforcedCount?: number;
+  /** Issue #40: When this fact was last reinforced (epoch seconds). */
+  lastReinforcedAt?: number | null;
+  /** Issue #40: Array of user praise quotes that reinforced this fact. */
+  reinforcedQuotes?: string[] | null;
 };
 
 /** FR-006: Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */
@@ -82,6 +88,14 @@ export type ProcedureEntry = {
   createdAt: number;
   updatedAt: number;
   sourceSessions?: string;
+  /** Phase 2: Reinforcement tracking — number of times this procedure was reinforced by user praise. */
+  reinforcedCount?: number;
+  /** Phase 2: When this procedure was last reinforced (epoch seconds). */
+  lastReinforcedAt?: number | null;
+  /** Phase 2: Array of user praise quotes that reinforced this procedure. */
+  reinforcedQuotes?: string[] | null;
+  /** Phase 2: When this procedure was auto-promoted via reinforcement (epoch seconds). */
+  promotedAt?: number | null;
 };
 
 export type SearchResult = {
