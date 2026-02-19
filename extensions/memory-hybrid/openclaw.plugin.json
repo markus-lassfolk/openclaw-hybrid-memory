@@ -46,7 +46,7 @@
     },
     "autoRecall.limit": {
       "label": "Auto-Recall limit",
-      "help": "Max memories to consider for injection (default 5)"
+      "help": "Max memories to consider for injection (default 10)"
     },
     "autoRecall.minScore": {
       "label": "Auto-Recall min score",
