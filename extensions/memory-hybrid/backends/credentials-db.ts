@@ -213,18 +213,23 @@ export class CredentialsDB {
     this.salt = randomBytes(32);
     const newKey = deriveKey(this.password, this.salt, CRED_KDF_VERSION);
     
-    // Re-encrypt all credentials with new key
-    const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
-    for (const row of rows) {
-      const oldBuf = row.value as Buffer;
-      const plaintext = decryptValue(oldBuf, this.key); // Decrypt with old key
-      const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
-      updateStmt.run(newEncrypted, row.service, row.type);
-    }
+    // Wrap all mutations in a transaction to prevent partial migration
+    const migrate = this.liveDb.transaction(() => {
+      // Re-encrypt all credentials with new key
+      const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+      for (const row of rows) {
+        const oldBuf = row.value as Buffer;
+        const plaintext = decryptValue(oldBuf, this.key); // Decrypt with old key
+        const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
+        updateStmt.run(newEncrypted, row.service, row.type);
+      }
+      
+      // Update metadata
+      this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([CRED_KDF_VERSION]));
+      this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
+    });
     
-    // Update metadata
-    this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([CRED_KDF_VERSION]));
-    this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
+    migrate();
     
     // Update instance state
     this.kdfVersion = CRED_KDF_VERSION;
