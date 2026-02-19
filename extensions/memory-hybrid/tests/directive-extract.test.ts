@@ -155,6 +155,88 @@ describe("directive-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("extractRule should not use ftp: or other non-http URL schemes as directive separator", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-ftp.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Use ftp://server.com for files. Remember: always use SFTP"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Got it."}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.incidents.length).toBeGreaterThan(0);
+    const incident = result.incidents[0];
+    // Must extract "always use SFTP", not "//server.com for files..."
+    expect(incident.extractedRule).not.toMatch(/^\/\//);
+    expect(incident.extractedRule.toLowerCase()).toContain("sftp");
+    expect(incident.extractedRule.toLowerCase()).toContain("always");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("extractRule should not use mailto: scheme colon as directive separator", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-mailto.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Send to mailto:admin@example.com. Remember: always BCC support"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Ok."}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.incidents.length).toBe(1);
+    // mailto: -> rule from "Remember: ...", not "admin@example.com..."
+    expect(result.incidents[0].extractedRule.toLowerCase()).toContain("bcc");
+    expect(result.incidents[0].extractedRule).not.toMatch(/^admin@/);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("extractRule should not use ssh: scheme colon as directive separator", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-ssh.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Connect via ssh:host. Remember: always use key auth only"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Ok."}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.incidents.length).toBe(1);
+    // ssh: -> rule from "Remember: ...", not "host..."
+    expect(result.incidents[0].extractedRule.toLowerCase()).toContain("key");
+    expect(result.incidents[0].extractedRule).not.toMatch(/^host\./);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("extractRule should not use data: scheme colon as directive separator", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-data.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Data URI data:text/plain,hello. Remember: never trust unsanitized input"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Ok."}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.incidents.length).toBe(1);
+    // data: -> rule from "Remember: ...", not "text/plain..."
+    expect(result.incidents[0].extractedRule.toLowerCase()).toContain("never");
+    expect(result.incidents[0].extractedRule).not.toMatch(/^text\/plain/);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   it("extractRule should not use time formats or numbered lists as directive separator", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-edge.jsonl");
