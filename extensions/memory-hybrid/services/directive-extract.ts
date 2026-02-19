@@ -144,8 +144,8 @@ function extractRule(text: string): string {
   // - URL schemes (http:, https:, ftp:, mailto:, etc.) - detected by checking if followed by //
   // - Time formats (14:30) - detected by digit before colon
   // - Numbered lists (Step 1:) - detected by digit before colon
-  // - Port numbers (:8080) - detected by colon at start or digit after
-  const colonMatch = trimmed.match(/\b[a-zA-Z]+\s*:\s*(?!\/\/)(.+)/);
+  // - Port numbers (localhost:8080, server.com:21) - detected by checking if followed by digits
+  const colonMatch = trimmed.match(/\b[a-zA-Z]+\s*:\s*(?!\/\/)(?!\d)(.+)/);
   if (colonMatch) {
     const afterColon = colonMatch[1].trim();
     // Also check that the match doesn't start with // (in case of URL scheme)

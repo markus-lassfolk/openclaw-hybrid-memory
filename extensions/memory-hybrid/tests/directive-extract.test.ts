@@ -193,4 +193,35 @@ describe("directive-extract", () => {
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it("extractRule should not use port numbers as directive separator", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-port.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Connect to localhost:8080 for testing. Remember: always use staging first"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Got it."}]}}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Deploy to server.com:21 via FTP. Note: never deploy on Fridays"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Understood."}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens|note)\b/i,
+    });
+
+    expect(result.incidents.length).toBe(2);
+    
+    // First incident: localhost:8080 should not be used as separator
+    const incident1 = result.incidents[0];
+    expect(incident1.extractedRule).not.toMatch(/^8080/);
+    expect(incident1.extractedRule.toLowerCase()).toContain("always");
+    expect(incident1.extractedRule.toLowerCase()).toContain("staging");
+    
+    // Second incident: server.com:21 should not be used as separator
+    const incident2 = result.incidents[1];
+    expect(incident2.extractedRule).not.toMatch(/^21/);
+    expect(incident2.extractedRule.toLowerCase()).toContain("never");
+    expect(incident2.extractedRule.toLowerCase()).toContain("friday");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
