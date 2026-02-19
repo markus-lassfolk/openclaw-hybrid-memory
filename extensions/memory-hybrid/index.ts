@@ -2096,7 +2096,7 @@ const memoryHybridPlugin = {
           const {
             query: queryParam,
             id: idParam,
-            limit = 5,
+            limit = 10,
             entity,
             tag,
             includeSuperseded = false,

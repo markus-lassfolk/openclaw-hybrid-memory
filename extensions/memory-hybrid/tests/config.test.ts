@@ -253,6 +253,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.enabled).toBe(false);
     expect(result.autoRecall.maxTokens).toBe(800);
     expect(result.autoRecall.injectionFormat).toBe("full");
+    expect(result.autoRecall.limit).toBe(10);
   });
 
   it("defaults autoRecall.limit to 10 when not specified", () => {

@@ -77,7 +77,7 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
     "maxTokens": 800,
     "maxPerMemoryChars": 0,
     "injectionFormat": "full",
-    "limit": 5,
+    "limit": 10,
     "minScore": 0.3,
     "preferLongTerm": false,
     "useImportanceRecency": false,
@@ -102,7 +102,7 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `maxTokens` | `800` | Total tokens injected per turn |
 | `maxPerMemoryChars` | `0` | Truncate each memory to N chars (0 = no truncation) |
 | `injectionFormat` | `"full"` | `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only, `progressive` = memory index (agent fetches via `memory_recall`), `progressive_hybrid` = pinned in full + rest as index |
-| `limit` | `5` | Max memories considered for injection |
+| `limit` | `10` | Max memories considered for injection |
 | `minScore` | `0.3` | Minimum vector search score (0–1) |
 | `preferLongTerm` | `false` | Boost permanent (×1.2) and stable (×1.1) facts |
 | `useImportanceRecency` | `false` | Combine relevance with importance and recency |
