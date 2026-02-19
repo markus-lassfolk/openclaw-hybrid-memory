@@ -42,9 +42,9 @@ const SKIP_PATTERNS = [
 ];
 
 function shouldSkipUserMessage(text: string): boolean {
-  if (!text || text.length < 10) return true;
+  if (!text) return true;
   const t = text.trim();
-  if (t.length < 10) return true;
+  if (!t) return true;
   for (const re of SKIP_PATTERNS) {
     if (re.test(t)) return true;
   }
@@ -129,7 +129,7 @@ function calculateReinforcementConfidence(userText: string, agentText: string): 
       relief: regexes.relief,
       comparativePraise: regexes.comparativePraise,
       sharingSignals: regexes.sharingSignals,
-      genericPoliteness: /^(thanks?|thank you|ok|okay|got it)\.?$/i,
+      genericPoliteness: regexes.genericPoliteness,
     };
   }
 

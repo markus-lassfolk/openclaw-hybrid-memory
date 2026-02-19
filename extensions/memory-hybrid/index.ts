@@ -4503,23 +4503,26 @@ const memoryHybridPlugin = {
           return { path, timestamp: ts };
         }
 
+        /** Returns session .jsonl file paths modified within the last `days` days. Shared by procedure/directive/reinforcement extraction. */
+        async function getSessionFilePathsSince(sessionDir: string, days: number): Promise<string[]> {
+          const fs = await import("node:fs");
+          const pathMod = await import("node:path");
+          if (!fs.existsSync(sessionDir)) return [];
+          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+          const files = fs.readdirSync(sessionDir);
+          return files
+            .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
+            .map((f) => pathMod.join(sessionDir, f))
+            .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+        }
+
         async function runExtractProceduresForCli(
           opts: { sessionDir?: string; days?: number; dryRun: boolean },
         ): Promise<ExtractProceduresResult> {
           const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
           let filePaths: string[] | undefined;
           if (opts.days != null && opts.days > 0) {
-            const fs = await import("node:fs");
-            const pathMod = await import("node:path");
-            if (!fs.existsSync(sessionDir)) {
-              return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
-            }
-            const cutoff = Date.now() - opts.days * 24 * 60 * 60 * 1000;
-            const files = fs.readdirSync(sessionDir);
-            filePaths = files
-              .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
-              .map((f) => pathMod.join(sessionDir, f))
-              .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+            filePaths = await getSessionFilePathsSince(sessionDir, opts.days);
           }
           return extractProceduresFromSessions(
             factsDb,
@@ -4551,22 +4554,10 @@ const memoryHybridPlugin = {
         async function runExtractDirectivesForCli(
           opts: { days?: number; verbose?: boolean; dryRun?: boolean },
         ): Promise<DirectiveExtractResult> {
-          const fs = await import("node:fs");
-          const pathMod = await import("node:path");
           const sessionDir = cfg.procedures.sessionsDir;
-          
-          if (!fs.existsSync(sessionDir)) {
-            return { incidents: [], sessionsScanned: 0 };
-          }
-          
           const days = opts.days ?? 3;
-          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-          const files = fs.readdirSync(sessionDir);
-          const filePaths = files
-            .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
-            .map((f) => pathMod.join(sessionDir, f))
-            .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
-          
+          const filePaths = await getSessionFilePathsSince(sessionDir, days);
+
           const directiveRegex = getDirectiveSignalRegex();
           const result = runDirectiveExtract({ filePaths, directiveRegex });
           
@@ -4607,22 +4598,10 @@ const memoryHybridPlugin = {
         async function runExtractReinforcementForCli(
           opts: { days?: number; verbose?: boolean; dryRun?: boolean },
         ): Promise<ReinforcementExtractResult> {
-          const fs = await import("node:fs");
-          const pathMod = await import("node:path");
           const sessionDir = cfg.procedures.sessionsDir;
-          
-          if (!fs.existsSync(sessionDir)) {
-            return { incidents: [], sessionsScanned: 0 };
-          }
-          
           const days = opts.days ?? 3;
-          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-          const files = fs.readdirSync(sessionDir);
-          const filePaths = files
-            .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
-            .map((f) => pathMod.join(sessionDir, f))
-            .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
-          
+          const filePaths = await getSessionFilePathsSince(sessionDir, days);
+
           const reinforcementRegex = getReinforcementSignalRegex();
           const result = runReinforcementExtract({ filePaths, reinforcementRegex });
           
