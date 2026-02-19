@@ -71,7 +71,7 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 
 | Document | Description |
 |----------|-------------|
-| [CLI Reference](CLI-REFERENCE) | All 21 `openclaw hybrid-mem` commands |
+| [CLI Reference](CLI-REFERENCE) | All 34 `openclaw hybrid-mem` commands |
 | [Operations](OPERATIONS) | Day-to-day operational procedures |
 | [Uninstall](UNINSTALL) | Revert to default memory; optional data removal |
 | [Upgrade OpenClaw](UPGRADE-OPENCLAW) | What to do after every OpenClaw upgrade |

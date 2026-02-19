@@ -64,6 +64,14 @@ export class VectorDB {
     }
   }
 
+  /** Get initialized table or throw descriptive error. */
+  private getTable(): lancedb.Table {
+    if (!this.table) {
+      throw new Error("VectorDB not initialized. Call ensureInitialized() first or check if close() was called.");
+    }
+    return this.table;
+  }
+
   /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for FR-008 classification. */
   async store(entry: {
     text: string;
@@ -76,7 +84,7 @@ export class VectorDB {
     try {
       await this.ensureInitialized();
       const id = entry.id ?? randomUUID();
-      await this.table!.add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
+      await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
       return id;
     } catch (err) {
       this.logWarn(`memory-hybrid: LanceDB store failed: ${err}`);
@@ -91,7 +99,7 @@ export class VectorDB {
   ): Promise<SearchResult[]> {
     try {
       await this.ensureInitialized();
-      const results = await this.table!.vectorSearch(vector).limit(limit).toArray();
+      const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
       return results
         .map((row) => {
           const distance = row._distance ?? 0;
@@ -128,7 +136,7 @@ export class VectorDB {
   async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
     try {
       await this.ensureInitialized();
-      const results = await this.table!.vectorSearch(vector).limit(1).toArray();
+      const results = await this.getTable().vectorSearch(vector).limit(1).toArray();
       if (results.length === 0) return false;
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
@@ -141,10 +149,13 @@ export class VectorDB {
   async delete(id: string): Promise<boolean> {
     try {
       await this.ensureInitialized();
+      // SECURITY: UUID validation is the security boundary for delete().
+      // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
+      // Regex validates UUID v1-v5 format (case-insensitive), then we normalize to lowercase before interpolation.
       const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(id)) throw new Error(`Invalid ID: ${id}`);
-      await this.table!.delete(`id = '${id}'`);
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(id)) throw new Error(`Invalid UUID format: ${id}`);
+      await this.getTable().delete(`id = '${id.toLowerCase()}'`);
       return true;
     } catch (err) {
       this.logWarn(`memory-hybrid: LanceDB delete failed: ${err}`);
@@ -155,7 +166,7 @@ export class VectorDB {
   async count(): Promise<number> {
     try {
       await this.ensureInitialized();
-      return await this.table!.countRows();
+      return await this.getTable().countRows();
     } catch (err) {
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
       return 0;

@@ -36,7 +36,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 
 ### Default categories
 
-Five categories are built in and always available:
+Seven categories are built in and always available:
 
 | Category | Typical content | Examples |
 |----------|----------------|----------|
@@ -44,6 +44,8 @@ Five categories are built in and always available:
 | `fact` | Biographical or factual statements | "My birthday is Nov 13", "lives in Prague" |
 | `decision` | Architectural or process decisions with rationale | "Decided to use Postgres because ..." |
 | `entity` | Named things: people, projects, tools, identifiers | "John's email is john@example.com" |
+| `pattern` | Behavioral patterns synthesized by the reflection layer | "User consistently favors composition over inheritance" |
+| `rule` | Actionable one-line rules from reflection | "Always suggest composition over inheritance" |
 | `other` | Anything the heuristics can't classify | Catch-all; reclassified later by auto-classify |
 
 ### Custom categories
@@ -122,7 +124,7 @@ After category detection, `extractStructuredFields()` extracts **entity / key / 
 
 ### Adding heuristic patterns for custom categories
 
-The built-in `detectCategory()` only recognizes the five default categories. To add a heuristic for a custom category, edit `detectCategory()` in `index.ts`:
+The built-in `detectCategory()` only recognizes a subset of the default categories (not `pattern` or `rule`, which are assigned by the reflection layer). To add a heuristic for a custom category, edit `detectCategory()` in `index.ts`:
 
 ```typescript
 // Before the final return:

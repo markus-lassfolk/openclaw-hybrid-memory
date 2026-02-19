@@ -25,7 +25,6 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `backfill-decay` | Backfill decay classes for existing rows. |
 | `build-languages [--dry-run] [--model M]` | Detect top 3 languages from fact samples, generate multilingual trigger/category/decay keywords via LLM, write `.language-keywords.json`. See [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md). |
 | `classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. |
-| `build-languages [--dry-run] [--model M]` | Detect top languages from memory samples, generate multilingual keyword equivalents via LLM, write `.language-keywords.json`. Used automatically when `languageKeywords.autoBuild` is true; run manually to refresh now. See [LANGUAGE-KEYWORDS.md](LANGUAGE-KEYWORDS.md). |
 | `categories` | List all configured categories with per-category fact counts. |
 | `find-duplicates [--threshold 0.92] [--include-structured] [--limit 300]` | Report pairs of facts with embedding similarity ≥ threshold. Report-only; no merge. |
 | `consolidate [--threshold 0.92] [--include-structured] [--dry-run] [--limit 300] [--model M]` | Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster. |
