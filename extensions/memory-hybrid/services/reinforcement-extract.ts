@@ -147,8 +147,8 @@ function calculateReinforcementConfidence(userText: string, agentText: string): 
   // Reduce confidence for generic politeness
   if (regexes.genericPoliteness.test(userText.trim())) confidence *= 0.5;
 
-  // Reduce confidence if agent response is very short (< 50 chars) — might be a simple acknowledgment
-  if (agentText.length < 50) confidence *= 0.7;
+  // Reduce confidence if agent response is very short (< 25 chars) — might be a simple acknowledgment
+  if (agentText.length < 25) confidence *= 0.7;
 
   // Boost confidence if agent response is substantial (> 200 chars)
   if (agentText.length > 200) confidence = Math.min(1.0, confidence + 0.1);

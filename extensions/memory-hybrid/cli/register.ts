@@ -181,8 +181,9 @@ export type HybridMemCliContext = {
 type Chainable = {
   command(name: string): Chainable;
   description(desc: string): Chainable;
-  action(fn: (...args: unknown[]) => void | Promise<void>): Chainable;
+  action(fn: (...args: any[]) => void | Promise<void>): Chainable;
   option(flags: string, desc?: string, defaultValue?: string): Chainable;
+  requiredOption(flags: string, desc?: string, defaultValue?: string): Chainable;
   argument(name: string, desc?: string): Chainable;
 };
 
