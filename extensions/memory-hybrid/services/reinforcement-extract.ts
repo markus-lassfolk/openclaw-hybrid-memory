@@ -220,10 +220,12 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
       let toolCallSequence: string[] = [];
       for (let j = i - 1; j >= 0 && j >= Math.max(0, i - 20); j--) {
         if (messages[j].role === "assistant") {
-          precedingAssistant = messages[j].text;
-          recalledMemoryIds = extractRecalledMemoryIds(messages[j].content);
-          toolCallSequence = extractToolCallSequence(messages[j].content);
-          break;
+          if (!precedingAssistant) {
+            precedingAssistant = messages[j].text;
+            recalledMemoryIds = extractRecalledMemoryIds(messages[j].content);
+          }
+          const tools = extractToolCallSequence(messages[j].content);
+          toolCallSequence.push(...tools);
         }
       }
 
