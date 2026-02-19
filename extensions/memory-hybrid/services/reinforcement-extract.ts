@@ -225,7 +225,7 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
             recalledMemoryIds = extractRecalledMemoryIds(messages[j].content);
           }
           const tools = extractToolCallSequence(messages[j].content);
-          toolCallSequence.push(...tools);
+          toolCallSequence.unshift(...tools);
         }
       }
 

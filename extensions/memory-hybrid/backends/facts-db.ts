@@ -1831,8 +1831,8 @@ export class FactsDB {
         // Normalize FTS score to 0-1 range (inverted because bm25 returns negative scores)
         const rawFtsScore = 1 - ((r.fts_score as number) - minFtsScore) / ftsRange;
         const ftsScore = Number.isNaN(rawFtsScore) ? 0.8 : rawFtsScore;
-        // Composite: 60% FTS relevance, 30% confidence, 10% reinforcement (capped at 1.0)
-        const boostedScore = Math.min(1.0, ftsScore * 0.6 + confidence * 0.3 + reinforcement);
+        // Composite: 60% FTS relevance, 40% confidence, plus reinforcement boost (capped at 1.0)
+        const boostedScore = Math.min(1.0, ftsScore * 0.6 + confidence * 0.4 + reinforcement);
         return { ...r, boostedScore };
       });
 
