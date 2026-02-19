@@ -295,6 +295,15 @@ export function loadMergedKeywords(): MergedKeywords {
 /** Clear cached merged keywords (e.g. after writing new file or in tests). */
 export function clearKeywordCache(): void {
   cache = null;
+  // Also clear dependent regex caches in directive and reinforcement extraction
+  try {
+    const { clearDirectiveCategoryCache } = require("../services/directive-extract.js");
+    clearDirectiveCategoryCache();
+  } catch {}
+  try {
+    const { clearReinforcementRegexCache } = require("../services/reinforcement-extract.js");
+    clearReinforcementRegexCache();
+  } catch {}
 }
 
 function buildRegexFromKeywords(keywords: string[]): RegExp {

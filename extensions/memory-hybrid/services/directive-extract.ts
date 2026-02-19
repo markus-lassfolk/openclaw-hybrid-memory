@@ -125,6 +125,13 @@ function shouldSkipUserMessage(text: string): boolean {
 let categoryRegexCache: Map<DirectiveCategory, RegExp> | null = null;
 
 /**
+ * Clear the category regex cache (e.g., after keyword rebuild).
+ */
+export function clearDirectiveCategoryCache(): void {
+  categoryRegexCache = null;
+}
+
+/**
  * Detect directive categories in a user message.
  * Returns array of categories (can be empty if no clear directive).
  * Confidence is based on signal strength and context.
