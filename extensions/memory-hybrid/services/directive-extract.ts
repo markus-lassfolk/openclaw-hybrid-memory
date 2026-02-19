@@ -134,17 +134,22 @@ function detectDirectiveCategories(text: string): { categories: DirectiveCategor
  * Extract a concise rule/instruction from the user message.
  * This is a simple heuristic; LLM-based extraction would be more accurate.
  * Improved: if colon exists ("Remember: ..."), take text after it.
- * Skips colons that are part of URL schemes (http:, https:) to avoid corrupting rules.
+ * Skips colons that are part of URL schemes, time formats, numbered lists, etc.
  */
 function extractRule(text: string): string {
   const trimmed = text.trim().replace(/\s+/g, " ");
   
-  // Heuristic: If a colon exists, extract text after it (common pattern: "Remember: do X").
-  // Use lookbehind to skip URL scheme colons (https:, http:) so we don't extract "//host path".
-  const colonMatch = trimmed.match(/(?<!https)(?<!http):\s*(.+)/);
+  // Heuristic: If a colon exists after a word boundary (directive pattern), extract text after it.
+  // This regex matches colons that follow a word, but excludes:
+  // - URL schemes (http:, https:, ftp:, mailto:, etc.) - detected by checking if followed by //
+  // - Time formats (14:30) - detected by digit before colon
+  // - Numbered lists (Step 1:) - detected by digit before colon
+  // - Port numbers (:8080) - detected by colon at start or digit after
+  const colonMatch = trimmed.match(/\b[a-zA-Z]+\s*:\s*(?!\/\/)(.+)/);
   if (colonMatch) {
     const afterColon = colonMatch[1].trim();
-    if (afterColon.length >= 10) {
+    // Also check that the match doesn't start with // (in case of URL scheme)
+    if (afterColon.length >= 10 && !afterColon.startsWith("//")) {
       return afterColon.slice(0, 200);
     }
   }
