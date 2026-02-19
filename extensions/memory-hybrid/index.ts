@@ -2227,7 +2227,10 @@ const memoryHybridPlugin = {
             sqliteResults = factsDb.lookup(entity, undefined, tag, recallOpts);
           }
 
-          const ftsResults = factsDb.search(query, limit, recallOpts);
+          const ftsResults = factsDb.search(query, limit, {
+            ...recallOpts,
+            reinforcementBoost: cfg.distill?.reinforcementBoost,
+          });
           sqliteResults = [...sqliteResults, ...ftsResults];
 
           let lanceResults: SearchResult[] = [];
@@ -2372,7 +2375,7 @@ const memoryHybridPlugin = {
                 details: { count: 0 },
               };
             }
-            const procedures = factsDb.searchProcedures(q, limit);
+            const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost);
             const negatives = factsDb.getNegativeProceduresMatching(q, 3);
             const lines: string[] = [];
             const positiveList = procedures.filter((p) => p.procedureType === "positive");
@@ -5589,6 +5592,7 @@ const memoryHybridPlugin = {
           mergeResults,
           parseSourceDate,
           getMemoryCategories: () => [...getMemoryCategories()],
+          cfg,
           runStore: (opts) => runStoreForCli(opts, api.logger),
           runInstall: (opts) => Promise.resolve(runInstallForCli(opts)),
           runVerify: (opts, sink) => runVerifyForCli(opts, sink),
@@ -5675,7 +5679,7 @@ const memoryHybridPlugin = {
           // Procedural memory: inject relevant procedures and negative warnings (issue #23)
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
-            const procs = factsDb.searchProcedures(e.prompt, 3);
+            const procs = factsDb.searchProcedures(e.prompt, 3, cfg.distill?.reinforcementProcedureBoost);
             const negs = factsDb.getNegativeProceduresMatching(e.prompt, 2);
             const procLines: string[] = [];
             const positiveList = procs.filter((p) => p.procedureType === "positive");
@@ -5731,7 +5735,11 @@ const memoryHybridPlugin = {
             }
           }
 
-          const ftsResults = factsDb.search(e.prompt, limit, { tierFilter, scopeFilter });
+          const ftsResults = factsDb.search(e.prompt, limit, {
+            tierFilter,
+            scopeFilter,
+            reinforcementBoost: cfg.distill?.reinforcementBoost,
+          });
           let lanceResults: SearchResult[] = [];
           try {
             let textToEmbed = e.prompt;
