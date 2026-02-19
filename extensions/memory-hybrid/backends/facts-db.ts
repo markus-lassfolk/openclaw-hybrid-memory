@@ -1816,6 +1816,8 @@ export class FactsDB {
         )
         .all(safeQuery, limit * 2) as Array<Record<string, unknown>>;
       
+      if (rows.length === 0) return [];
+      
       // Phase 2: Compute composite score: FTS relevance + confidence + reinforcement
       const minFtsScore = Math.min(...rows.map((r) => r.fts_score as number));
       const maxFtsScore = Math.max(...rows.map((r) => r.fts_score as number));
