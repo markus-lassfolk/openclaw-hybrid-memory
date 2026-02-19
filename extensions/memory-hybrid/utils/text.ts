@@ -83,3 +83,37 @@ export function formatProgressiveIndexLine(
 ): string {
   return `  ${position}. [${category}] ${title} (${tokenCost} tok)`;
 }
+
+/**
+ * Extract text content from message content blocks (used by extraction services).
+ * Handles array of content blocks with type "text".
+ */
+export function extractMessageText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
+      const text = (block as { text?: string }).text;
+      if (typeof text === "string" && text.trim()) parts.push(text.trim());
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Simple truncate with ellipsis (used by extraction services).
+ * Different from truncateText which uses a configurable suffix.
+ */
+export function truncate(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max) + "...";
+}
+
+/**
+ * Extract timestamp from session filename if it looks like YYYY-MM-DD-*.jsonl.
+ */
+export function timestampFromFilename(name: string): string | undefined {
+  const match = name.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : undefined;
+}

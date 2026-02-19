@@ -8,7 +8,8 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { loadMergedKeywords } from "../utils/language-keywords.js";
+import { getDirectiveCategoryRegexes } from "../utils/language-keywords.js";
+import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
 
 /** 10 directive categories (can overlap — a message may have multiple types). */
 export const DIRECTIVE_CATEGORIES = [
@@ -77,20 +78,25 @@ export function extractTaskIntentFromDirective(userMessage: string, context: str
   match = lower.match(/first (?:check|verify|ensure)\s+(.+?)(?:[,.]|$)/);
   if (match) return `check ${match[1].trim()}`.slice(0, 200);
   
-  // Pattern 3: "when X happens" -> task = "when X"
+  // Pattern 3: "when X happens/occurs" -> task = "when X"
   match = lower.match(/when (.+?)\s+(?:happens|occurs)(?:[,.]|$)/);
+  if (match) return `when ${match[1].trim()}`.slice(0, 200);
+  
+  // Pattern 3b: "when X, Y" (without happens/occurs) -> task = "when X"
+  match = lower.match(/when ([^,]+),/);
   if (match) return `when ${match[1].trim()}`.slice(0, 200);
   
   // Pattern 4: Use first sentence with action verb
   const sentences = userMessage.split(/[.!?]+/).map((s) => s.trim()).filter((s) => s.length > 10);
   for (const s of sentences) {
     if (/\b(check|verify|ensure|make sure|always|never|first|before)\b/i.test(s)) {
-      return s.slice(0, 200);
+      return s.toLowerCase().slice(0, 200);
     }
   }
   
-  // Fallback: use the extracted rule or first sentence
-  return (context || sentences[0] || userMessage).slice(0, 200);
+  // Fallback: use the extracted rule or first sentence (ensure lowercase for consistency)
+  const fallback = context || sentences[0] || userMessage;
+  return fallback.toLowerCase().slice(0, 200);
 }
 
 const MAX_USER_MSG = 800;
@@ -116,93 +122,6 @@ function shouldSkipUserMessage(text: string): boolean {
   return false;
 }
 
-function extractMessageText(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
-      const text = (block as { text?: string }).text;
-      if (typeof text === "string" && text.trim()) parts.push(text.trim());
-    }
-  }
-  return parts.join("\n");
-}
-
-function truncate(s: string, max: number): string {
-  const t = s.trim();
-  if (t.length <= max) return t;
-  return t.slice(0, max) + "...";
-}
-
-/** Extract timestamp from session filename if it looks like YYYY-MM-DD-*.jsonl. */
-function timestampFromFilename(name: string): string | undefined {
-  const match = name.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match ? match[1] : undefined;
-}
-
-/**
- * Build category detection regexes from merged keywords (English + translations).
- * Returns a map of category -> regex for directive detection.
- */
-function buildCategoryRegexes(): Map<DirectiveCategory, RegExp> {
-  const merged = loadMergedKeywords();
-  const map = new Map<DirectiveCategory, RegExp>();
-
-  // Build regexes from directiveSignals (all categories merged in English keywords)
-  // We'll detect specific patterns from the full signal list
-  const signals = merged.directiveSignals;
-
-  // Extract category-specific keywords (manually grouped from ENGLISH_KEYWORDS)
-  const explicitMemory = signals.filter((s) =>
-    /remember|forget|keep in mind|store|write.*down|note/i.test(s)
-  );
-  const futureBehavior = signals.filter((s) =>
-    /from now|future|next time|going forward|moving forward|onwards/i.test(s)
-  );
-  const absoluteRule = signals.filter((s) =>
-    /always|never|make sure|circumstances|must|should always|should never/i.test(s)
-  );
-  const preference = signals.filter((s) =>
-    /prefer|rather|instead|default|stick with/i.test(s)
-  );
-  const warning = signals.filter((s) =>
-    /careful|watch out|don't ever|avoid|stay away/i.test(s)
-  );
-  const procedural = signals.filter((s) =>
-    /first check|before you|order should|step.*is|make sure you/i.test(s)
-  );
-  const implicitCorrection = signals.filter((s) =>
-    /no, use|other one|old way|not that/i.test(s)
-  );
-  const conditionalRule = signals.filter((s) =>
-    /when.*happens|if you see|only when|whenever/i.test(s)
-  );
-  const correction = merged.correctionSignals;
-
-  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-  if (explicitMemory.length > 0)
-    map.set("explicit_memory", new RegExp(`\\b(${explicitMemory.map(escapeRegex).join("|")})\\b`, "i"));
-  if (futureBehavior.length > 0)
-    map.set("future_behavior", new RegExp(`\\b(${futureBehavior.map(escapeRegex).join("|")})\\b`, "i"));
-  if (absoluteRule.length > 0)
-    map.set("absolute_rule", new RegExp(`\\b(${absoluteRule.map(escapeRegex).join("|")})\\b`, "i"));
-  if (preference.length > 0)
-    map.set("preference", new RegExp(`\\b(${preference.map(escapeRegex).join("|")})\\b`, "i"));
-  if (warning.length > 0)
-    map.set("warning", new RegExp(`\\b(${warning.map(escapeRegex).join("|")})\\b`, "i"));
-  if (procedural.length > 0)
-    map.set("procedural", new RegExp(`\\b(${procedural.map(escapeRegex).join("|")})\\b`, "i"));
-  if (implicitCorrection.length > 0)
-    map.set("implicit_correction", new RegExp(`\\b(${implicitCorrection.map(escapeRegex).join("|")})\\b`, "i"));
-  if (conditionalRule.length > 0)
-    map.set("conditional_rule", new RegExp(`\\b(${conditionalRule.map(escapeRegex).join("|")})\\b`, "i"));
-  if (correction.length > 0)
-    map.set("correction", new RegExp(`\\b(${correction.map(escapeRegex).join("|")})\\b`, "i"));
-
-  return map;
-}
-
 let categoryRegexCache: Map<DirectiveCategory, RegExp> | null = null;
 
 /**
@@ -213,7 +132,17 @@ let categoryRegexCache: Map<DirectiveCategory, RegExp> | null = null;
  */
 function detectDirectiveCategories(text: string): { categories: DirectiveCategory[]; confidence: number } {
   if (!categoryRegexCache) {
-    categoryRegexCache = buildCategoryRegexes();
+    const regexes = getDirectiveCategoryRegexes();
+    categoryRegexCache = new Map();
+    categoryRegexCache.set("explicit_memory", regexes.explicit_memory);
+    categoryRegexCache.set("future_behavior", regexes.future_behavior);
+    categoryRegexCache.set("absolute_rule", regexes.absolute_rule);
+    categoryRegexCache.set("preference", regexes.preference);
+    categoryRegexCache.set("warning", regexes.warning);
+    categoryRegexCache.set("procedural", regexes.procedural);
+    categoryRegexCache.set("implicit_correction", regexes.implicit_correction);
+    categoryRegexCache.set("conditional_rule", regexes.conditional_rule);
+    categoryRegexCache.set("correction", regexes.correction);
   }
 
   const categories: DirectiveCategory[] = [];

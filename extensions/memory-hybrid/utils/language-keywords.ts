@@ -114,6 +114,22 @@ export const ENGLISH_KEYWORDS = {
     "only when",
     "whenever",
   ],
+  /** Explicit memory request keywords (subset of directiveSignals for category detection). */
+  directiveExplicitMemory: ["remember that", "don't forget", "keep in mind", "store this", "write this down", "make a note", "take note"],
+  /** Future behavior keywords (subset of directiveSignals for category detection). */
+  directiveFutureBehavior: ["from now on", "in the future", "next time", "going forward", "moving forward", "onwards"],
+  /** Absolute rule keywords (subset of directiveSignals for category detection). */
+  directiveAbsoluteRule: ["always", "never", "make sure to", "under no circumstances", "you must", "you should always", "you should never"],
+  /** Preference keywords (subset of directiveSignals for category detection). */
+  directivePreference: ["i prefer", "i'd rather", "use X instead", "default to", "stick with"],
+  /** Warning keywords (subset of directiveSignals for category detection). */
+  directiveWarning: ["be careful with", "watch out for", "don't ever", "avoid", "stay away from"],
+  /** Procedural keywords (subset of directiveSignals for category detection). */
+  directiveProcedural: ["first check", "before you do", "the order should be", "step 1 is always", "make sure you"],
+  /** Implicit correction keywords (subset of directiveSignals for category detection). */
+  directiveImplicitCorrection: ["no, use", "the other one", "that's the old way", "not that"],
+  /** Conditional rule keywords (subset of directiveSignals for category detection). */
+  directiveConditionalRule: ["when X happens", "if you see", "only when", "whenever"],
   /** Issue #40: Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
   reinforcementSignals: [
     // Explicit approval
@@ -162,6 +178,16 @@ export const ENGLISH_KEYWORDS = {
     "bookmarked",
     "will share this",
   ],
+  /** Strong praise keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementStrongPraise: ["perfect", "brilliant", "amazing", "excellent", "you nailed it", "spot on", "love it"],
+  /** Method confirmation keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementMethodConfirmation: ["keep this format", "yes, like that", "this is how it should be", "do it like this"],
+  /** Relief keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementRelief: ["finally!", "now you get it", "at last", "there we go"],
+  /** Comparative praise keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementComparativePraise: ["much better", "huge improvement", "better than before", "way better"],
+  /** Sharing signal keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementSharingSignals: ["saving this", "bookmarked", "going to show this", "will share this"],
 } as const;
 
 export type KeywordGroup = keyof typeof ENGLISH_KEYWORDS;
@@ -349,4 +375,32 @@ export function getDirectiveSignalRegex(): RegExp {
 /** Issue #40: Regex to detect user messages that contain reinforcement/praise phrases. */
 export function getReinforcementSignalRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().reinforcementSignals);
+}
+
+/** Get category-specific directive regexes for multilingual detection. */
+export function getDirectiveCategoryRegexes(): Record<string, RegExp> {
+  const merged = loadMergedKeywords();
+  return {
+    explicit_memory: buildRegexFromKeywords(merged.directiveExplicitMemory || []),
+    future_behavior: buildRegexFromKeywords(merged.directiveFutureBehavior || []),
+    absolute_rule: buildRegexFromKeywords(merged.directiveAbsoluteRule || []),
+    preference: buildRegexFromKeywords(merged.directivePreference || []),
+    warning: buildRegexFromKeywords(merged.directiveWarning || []),
+    procedural: buildRegexFromKeywords(merged.directiveProcedural || []),
+    implicit_correction: buildRegexFromKeywords(merged.directiveImplicitCorrection || []),
+    conditional_rule: buildRegexFromKeywords(merged.directiveConditionalRule || []),
+    correction: buildRegexFromKeywords(merged.correctionSignals || []),
+  };
+}
+
+/** Get reinforcement confidence regexes for multilingual detection. */
+export function getReinforcementCategoryRegexes(): Record<string, RegExp> {
+  const merged = loadMergedKeywords();
+  return {
+    strongPraise: buildRegexFromKeywords(merged.reinforcementStrongPraise || []),
+    methodConfirmation: buildRegexFromKeywords(merged.reinforcementMethodConfirmation || []),
+    relief: buildRegexFromKeywords(merged.reinforcementRelief || []),
+    comparativePraise: buildRegexFromKeywords(merged.reinforcementComparativePraise || []),
+    sharingSignals: buildRegexFromKeywords(merged.reinforcementSharingSignals || []),
+  };
 }

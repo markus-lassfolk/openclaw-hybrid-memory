@@ -6,6 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
 
 export type CorrectionIncident = {
   userMessage: string;
@@ -41,30 +42,6 @@ function shouldSkipUserMessage(text: string): boolean {
     if (re.test(t)) return true;
   }
   return false;
-}
-
-function extractMessageText(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
-      const text = (block as { text?: string }).text;
-      if (typeof text === "string" && text.trim()) parts.push(text.trim());
-    }
-  }
-  return parts.join("\n");
-}
-
-function truncate(s: string, max: number): string {
-  const t = s.trim();
-  if (t.length <= max) return t;
-  return t.slice(0, max) + "...";
-}
-
-/** Extract timestamp from session filename if it looks like YYYY-MM-DD-*.jsonl. */
-function timestampFromFilename(name: string): string | undefined {
-  const match = name.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match ? match[1] : undefined;
 }
 
 export type RunSelfCorrectionExtractOpts = {

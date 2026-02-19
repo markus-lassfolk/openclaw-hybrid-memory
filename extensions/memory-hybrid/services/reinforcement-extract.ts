@@ -7,7 +7,8 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { loadMergedKeywords } from "../utils/language-keywords.js";
+import { getReinforcementCategoryRegexes } from "../utils/language-keywords.js";
+import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
 
 export type ReinforcementIncident = {
   userMessage: string;
@@ -48,18 +49,6 @@ function shouldSkipUserMessage(text: string): boolean {
     if (re.test(t)) return true;
   }
   return false;
-}
-
-function extractMessageText(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
-      const text = (block as { text?: string }).text;
-      if (typeof text === "string" && text.trim()) parts.push(text.trim());
-    }
-  }
-  return parts.join("\n");
 }
 
 /**
@@ -108,62 +97,15 @@ function extractToolCallSequence(content: unknown): string[] {
   return tools;
 }
 
-function truncate(s: string, max: number): string {
-  const t = s.trim();
-  if (t.length <= max) return t;
-  return t.slice(0, max) + "...";
-}
 
-/** Extract timestamp from session filename if it looks like YYYY-MM-DD-*.jsonl. */
-function timestampFromFilename(name: string): string | undefined {
-  const match = name.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match ? match[1] : undefined;
-}
-
-/**
- * Build reinforcement confidence regexes from merged keywords (English + translations).
- */
-function buildReinforcementRegexes(): {
+let reinforcementRegexCache: {
   strongPraise: RegExp;
   methodConfirmation: RegExp;
   relief: RegExp;
   comparativePraise: RegExp;
   sharingSignals: RegExp;
   genericPoliteness: RegExp;
-} {
-  const merged = loadMergedKeywords();
-  const signals = merged.reinforcementSignals;
-
-  // Group signals by type (heuristic extraction from English patterns)
-  const strongPraise = signals.filter((s) =>
-    /perfect|brilliant|amazing|excellent|nailed|spot on|love it/i.test(s)
-  );
-  const methodConfirmation = signals.filter((s) =>
-    /keep this|like that|this is how|do it like/i.test(s)
-  );
-  const relief = signals.filter((s) =>
-    /finally|now you get|at last|there we go/i.test(s)
-  );
-  const comparativePraise = signals.filter((s) =>
-    /much better|huge improvement|better than|way better/i.test(s)
-  );
-  const sharingSignals = signals.filter((s) =>
-    /saving this|bookmarked|going to show|will share/i.test(s)
-  );
-
-  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-  return {
-    strongPraise: new RegExp(`\\b(${strongPraise.map(escapeRegex).join("|")})\\b`, "i"),
-    methodConfirmation: new RegExp(`\\b(${methodConfirmation.map(escapeRegex).join("|")})\\b`, "i"),
-    relief: new RegExp(`\\b(${relief.map(escapeRegex).join("|")})\\b`, "i"),
-    comparativePraise: new RegExp(`\\b(${comparativePraise.map(escapeRegex).join("|")})\\b`, "i"),
-    sharingSignals: new RegExp(`\\b(${sharingSignals.map(escapeRegex).join("|")})\\b`, "i"),
-    genericPoliteness: /^(thanks?|thank you|ok|okay|got it)\.?$/i,
-  };
-}
-
-let reinforcementRegexCache: ReturnType<typeof buildReinforcementRegexes> | null = null;
+} | null = null;
 
 /**
  * Calculate confidence for reinforcement detection.
@@ -173,7 +115,15 @@ let reinforcementRegexCache: ReturnType<typeof buildReinforcementRegexes> | null
  */
 function calculateReinforcementConfidence(userText: string, agentText: string): number {
   if (!reinforcementRegexCache) {
-    reinforcementRegexCache = buildReinforcementRegexes();
+    const regexes = getReinforcementCategoryRegexes();
+    reinforcementRegexCache = {
+      strongPraise: regexes.strongPraise,
+      methodConfirmation: regexes.methodConfirmation,
+      relief: regexes.relief,
+      comparativePraise: regexes.comparativePraise,
+      sharingSignals: regexes.sharingSignals,
+      genericPoliteness: /^(thanks?|thank you|ok|okay|got it)\.?$/i,
+    };
   }
 
   const regexes = reinforcementRegexCache;
