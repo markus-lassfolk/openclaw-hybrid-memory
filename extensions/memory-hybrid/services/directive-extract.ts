@@ -154,10 +154,11 @@ function extractRule(text: string): string {
   // - Time formats (14:30) - digit before colon (not matched by \b[a-zA-Z]+)
   // - Numbered lists (Step 1:) - digit before colon
   // - Port numbers - negative lookahead (?!\d) and (?!\/\/)
-  const colonMatch = trimmed.match(/\b([a-zA-Z]+)\s*:\s*(?!\/\/)(?!\d)(.+)/);
-  if (colonMatch) {
+  const colonRegex = /\b([a-zA-Z]+)\s*:\s*(?!\/\/)(?!\d)(.+)/g;
+  let colonMatch;
+  while ((colonMatch = colonRegex.exec(trimmed)) !== null) {
     const wordBeforeColon = colonMatch[1].toLowerCase();
-    if (URI_SCHEMES.has(wordBeforeColon)) return fallbackExtract(trimmed);
+    if (URI_SCHEMES.has(wordBeforeColon)) continue;
     const afterColon = colonMatch[2].trim();
     if (afterColon.length >= 10 && !afterColon.startsWith("//")) {
       return afterColon.slice(0, 200);
