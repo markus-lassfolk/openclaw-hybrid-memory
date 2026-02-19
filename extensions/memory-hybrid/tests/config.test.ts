@@ -255,6 +255,21 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.injectionFormat).toBe("full");
   });
 
+  it("defaults autoRecall.limit to 10 when not specified", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+      },
+    });
+    expect(result.autoRecall.limit).toBe(10);
+  });
+
+  it("defaults autoRecall.limit to 10 when autoRecall is boolean", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.autoRecall.limit).toBe(10);
+  });
+
   it("defaults captureMaxChars to 5000", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.captureMaxChars).toBe(5000);

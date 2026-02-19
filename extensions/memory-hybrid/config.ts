@@ -365,7 +365,7 @@ export const hybridConfigSchema = {
       const format = typeof ar.injectionFormat === "string" && VALID_FORMATS.includes(ar.injectionFormat as typeof VALID_FORMATS[number])
         ? (ar.injectionFormat as AutoRecallInjectionFormat)
         : "full";
-      const limit = typeof ar.limit === "number" && ar.limit > 0 ? Math.floor(ar.limit) : 5;
+      const limit = typeof ar.limit === "number" && ar.limit > 0 ? Math.floor(ar.limit) : 10;
       const minScore = typeof ar.minScore === "number" && ar.minScore >= 0 && ar.minScore <= 1 ? ar.minScore : 0.3;
       const preferLongTerm = ar.preferLongTerm === true;
       const useImportanceRecency = ar.useImportanceRecency === true;
@@ -440,7 +440,7 @@ export const hybridConfigSchema = {
         maxTokens: 800,
         maxPerMemoryChars: 0,
         injectionFormat: "full",
-        limit: 5,
+        limit: 10,
         minScore: 0.3,
         preferLongTerm: false,
         useImportanceRecency: false,
