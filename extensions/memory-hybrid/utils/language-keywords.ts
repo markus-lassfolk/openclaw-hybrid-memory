@@ -84,7 +84,7 @@ export const ENGLISH_KEYWORDS = {
     // Preferences
     "i prefer",
     "i'd rather",
-    "use X instead",
+    "use this instead",
     "default to",
     "stick with",
     // Warnings
@@ -109,7 +109,7 @@ export const ENGLISH_KEYWORDS = {
     "ALWAYS",
     "IMPORTANT",
     // Conditional rules
-    "when X happens",
+    "when this happens",
     "if you see",
     "only when",
     "whenever",
@@ -121,7 +121,7 @@ export const ENGLISH_KEYWORDS = {
   /** Absolute rule keywords (subset of directiveSignals for category detection). */
   directiveAbsoluteRule: ["always", "never", "make sure to", "under no circumstances", "you must", "you should always", "you should never"],
   /** Preference keywords (subset of directiveSignals for category detection). */
-  directivePreference: ["i prefer", "i'd rather", "use X instead", "default to", "stick with"],
+  directivePreference: ["i prefer", "i'd rather", "use this instead", "default to", "stick with"],
   /** Warning keywords (subset of directiveSignals for category detection). */
   directiveWarning: ["be careful with", "watch out for", "don't ever", "avoid", "stay away from"],
   /** Procedural keywords (subset of directiveSignals for category detection). */
@@ -129,7 +129,7 @@ export const ENGLISH_KEYWORDS = {
   /** Implicit correction keywords (subset of directiveSignals for category detection). */
   directiveImplicitCorrection: ["no, use", "the other one", "that's the old way", "not that"],
   /** Conditional rule keywords (subset of directiveSignals for category detection). */
-  directiveConditionalRule: ["when X happens", "if you see", "only when", "whenever"],
+  directiveConditionalRule: ["when this happens", "if you see", "only when", "whenever"],
   /** Issue #40: Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
   reinforcementSignals: [
     // Explicit approval
