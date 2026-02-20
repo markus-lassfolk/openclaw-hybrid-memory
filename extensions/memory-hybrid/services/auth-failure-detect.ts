@@ -40,7 +40,7 @@ export type AuthFailureDetection = {
   type?: "ssh" | "http" | "api" | "generic";
   hint?: string;
   target?: string; // hostname, IP, URL domain, service name
-  originalText?: string;
+  // Note: originalText removed for security - could leak credential values from error messages
 };
 
 /**
@@ -80,7 +80,7 @@ export function extractTarget(text: string, type: "ssh" | "http" | "api" | "gene
   if (serviceMatch && serviceMatch[1]) {
     const serviceName = serviceMatch[1].toLowerCase();
     // Filter out common words that aren't service names
-    const commonWords = ["the", "this", "that", "with", "from", "failed", "authentication", "connection"];
+    const commonWords = ["the", "this", "that", "with", "your", "from", "failed", "authentication", "connection"];
     if (!commonWords.includes(serviceName)) {
       return serviceName;
     }
@@ -109,7 +109,7 @@ export function detectAuthFailure(
         type: pattern.type,
         hint: pattern.hint,
         target,
-        originalText: text.slice(0, 300), // Keep first 300 chars for context
+        // originalText removed for security (could leak credential values in error messages)
       };
     }
   }

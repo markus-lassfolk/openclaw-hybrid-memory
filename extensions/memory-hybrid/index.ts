@@ -6023,6 +6023,12 @@ const memoryHybridPlugin = {
     const authFailureRecallsThisSession = new Map<string, number>();
     
     if (cfg.autoRecall.enabled && cfg.autoRecall.authFailure.enabled) {
+      // Note: Multiple before_agent_start handlers exist in this plugin:
+      // 1. Main auto-recall (procedures + facts)
+      // 2. Auth failure recall (this one)
+      // 3. Credential auto-detect
+      // OpenClaw's event system merges returned { prependContext } by concatenation.
+      // Order: main auto-recall runs first, then this auth-failure handler, then credential auto-detect.
       api.on("before_agent_start", async (event: unknown) => {
         const e = event as { prompt?: string; messages?: unknown[] };
         if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
@@ -6090,8 +6096,29 @@ const memoryHybridPlugin = {
             { preferLongTerm: false, useImportanceRecency: false },
           );
           
+          // FR-006: Post-filter merged results by scope (LanceDB doesn't natively support scopeFilter)
+          // Validate that vector results match the same scope rules as SQLite results
+          const scopeValidatedMerged = merged.filter((r) => {
+            const fact = r.entry;
+            // Apply same scope filtering logic as factsDb.search
+            if (!scopeFilter) return true; // No filter = see all
+            
+            const factScope = fact.scope || "global";
+            const factTarget = fact.scopeTarget;
+            
+            // Global facts are visible to all
+            if (factScope === "global") return true;
+            
+            // Match scope-specific facts
+            if (factScope === "user" && scopeFilter.userId && factTarget === scopeFilter.userId) return true;
+            if (factScope === "agent" && scopeFilter.agentId && factTarget === scopeFilter.agentId) return true;
+            if (factScope === "session" && scopeFilter.sessionId && factTarget === scopeFilter.sessionId) return true;
+            
+            return false;
+          });
+          
           // Filter to technical/credential facts
-          const credentialFacts = merged
+          const credentialFacts = scopeValidatedMerged
             .filter((r) => {
               const fact = r.entry;
               if (fact.category === "technical") return true;
@@ -6126,6 +6153,14 @@ const memoryHybridPlugin = {
       });
     }
 
+    // FR-047: Clear auth failure dedup map on session end
+    if (cfg.autoRecall.enabled && cfg.autoRecall.authFailure.enabled) {
+      api.on("agent_end", async () => {
+        authFailureRecallsThisSession.clear();
+        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for new session");
+      });
+    }
+    
     // FR-004: Compaction on session end — migrate completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT
     if (cfg.memoryTiering.enabled && cfg.memoryTiering.compactionOnSessionEnd) {
       api.on("agent_end", async () => {
