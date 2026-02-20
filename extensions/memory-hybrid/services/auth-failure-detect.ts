@@ -51,17 +51,11 @@ export type AuthFailureDetection = {
  * - Service names mentioned in context
  */
 export function extractTarget(text: string, type: "ssh" | "http" | "api" | "generic"): string | undefined {
-  // Try SSH patterns: user@host, ssh host, IP addresses
-  if (type === "ssh") {
-    const sshMatch = text.match(/(?:ssh\s+)?(?:[\w.-]+@)?([\w.-]+)(?:\s|:|$)/i);
-    if (sshMatch && sshMatch[1]) return sshMatch[1];
-  }
-  
-  // Try IP address
+  // Try IP address first (highest priority) - this should match across all types
   const ipMatch = text.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
   if (ipMatch) return ipMatch[1];
   
-  // Try URL/domain patterns
+  // Try URL/domain patterns (for http/api types)
   if (type === "http" || type === "api") {
     const urlMatch = text.match(/https?:\/\/([\w.-]+)/i);
     if (urlMatch) return urlMatch[1];
@@ -71,13 +65,26 @@ export function extractTarget(text: string, type: "ssh" | "http" | "api" | "gene
     if (domainMatch) return domainMatch[1];
   }
   
+  // Try SSH patterns: user@host
+  if (type === "ssh") {
+    const sshUserHostMatch = text.match(/(?:ssh\s+)?[\w.-]+@([\w.-]+)/i);
+    if (sshUserHostMatch && sshUserHostMatch[1]) return sshUserHostMatch[1];
+  }
+  
   // Try to find hostname-like strings (at least 3 chars, contains dot or dash)
   const hostnameMatch = text.match(/\b([\w-]{3,}(?:\.[\w-]+)+)\b/);
   if (hostnameMatch) return hostnameMatch[1];
   
-  // Try to find service names mentioned in quotes or after "to/from/at"
-  const serviceMatch = text.match(/(?:to|from|at|for)\s+["']?([\w-]{3,})["']?/i);
-  if (serviceMatch && serviceMatch[1]) return serviceMatch[1].toLowerCase();
+  // Try to find service names mentioned after "to/from/at/for" (excluding common words)
+  const serviceMatch = text.match(/(?:to|from|at|for)\s+["']?([\w-]{4,})["']?/i);
+  if (serviceMatch && serviceMatch[1]) {
+    const serviceName = serviceMatch[1].toLowerCase();
+    // Filter out common words that aren't service names
+    const commonWords = ["the", "this", "that", "with", "from", "failed", "authentication", "connection"];
+    if (!commonWords.includes(serviceName)) {
+      return serviceName;
+    }
+  }
   
   return undefined;
 }
