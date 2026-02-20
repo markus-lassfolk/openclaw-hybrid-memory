@@ -4276,7 +4276,7 @@ const memoryHybridPlugin = {
                 const taskPattern = incident.toolCallSequence.join(" -> ");
                 const procedures = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
                 for (const proc of procedures) {
-                  factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold);
+                  factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold ?? 2);
                 }
               }
             }
