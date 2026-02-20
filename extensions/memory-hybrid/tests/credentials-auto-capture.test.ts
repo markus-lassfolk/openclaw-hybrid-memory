@@ -197,6 +197,19 @@ describe("extractCredentialsFromToolCalls", () => {
       // Should have at most 1 entry per service+type
       expect(apiKeyCreds.length).toBeLessThanOrEqual(1);
     });
+
+    it("captures multiple distinct credentials from the same input", () => {
+      // Two different SSH hosts in one tool call (e.g., a script with multiple sshpass commands)
+      const input = [
+        "sshpass -p password1234 ssh root@192.168.1.10",
+        "sshpass -p anotherPass ssh admin@192.168.1.20",
+      ].join("\n");
+      const results = extractCredentialsFromToolCalls(input);
+      const sshCreds = results.filter((r) => r.type === "password" && r.service.startsWith("ssh://"));
+      expect(sshCreds.length).toBe(2);
+      expect(sshCreds.map((c) => c.service)).toContain("ssh://root@192.168.1.10");
+      expect(sshCreds.map((c) => c.service)).toContain("ssh://admin@192.168.1.20");
+    });
   });
 
   describe("empty / non-matching input", () => {
