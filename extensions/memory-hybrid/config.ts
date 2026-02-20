@@ -1069,7 +1069,7 @@ export const hybridConfigSchema = {
       selfCorrection,
       multiAgent,
       errorReporting,
-      mode: appliedMode !== undefined && hasPresetOverrides ? "custom" : appliedMode,
+      mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
 };

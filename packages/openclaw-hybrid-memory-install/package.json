@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory-install",
-  "version": "2026.2.200",
+  "version": "2026.2.201",
   "description": "Standalone installer for openclaw-hybrid-memory. Use when OpenClaw config validation fails.",
   "bin": {
     "openclaw-hybrid-memory-install": "./install.js"
