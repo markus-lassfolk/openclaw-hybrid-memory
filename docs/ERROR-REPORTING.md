@@ -73,7 +73,7 @@ GlitchTip is an open-source, self-hosted Sentry alternative.
 
 Example DSN format:
 ```
-https://42da747e-e18f-4ac6-bede-eda1a8079476@villapolly.duckdns.org/1
+https://<key>@<your-glitchtip-host>/<project-id>
 ```
 
 ### Option 2: Sentry.io (Cloud)

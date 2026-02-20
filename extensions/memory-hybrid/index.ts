@@ -6319,7 +6319,7 @@ const memoryHybridPlugin = {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
-          `memory-hybrid: initialized v\${versionInfo.pluginVersion} (sqlite: \${sqlCount} facts, lance: \${resolvedLancePath}, model: \${cfg.embedding.model})`,
+          `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
         );
 
         // Initialize error reporter if configured
@@ -6342,7 +6342,7 @@ const memoryHybridPlugin = {
 
         if (expired > 0) {
           const pruned = factsDb.pruneExpired();
-          api.logger.info(`memory-hybrid: startup prune removed \${pruned} expired facts`);
+          api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
         }
 
                 // WAL Recovery: replay uncommitted operations from previous session
