@@ -6104,7 +6104,7 @@ const memoryHybridPlugin = {
           // FR-006: Apply scope filter (global + current agent)
           const detectedAgentId = currentAgentId || cfg.multiAgent.orchestratorId;
           const scopeFilter: ScopeFilter | undefined = detectedAgentId && detectedAgentId !== cfg.multiAgent.orchestratorId
-            ? { userId: null, agentId: detectedAgentId, sessionId: null }
+            ? { userId: cfg.autoRecall.scopeFilter?.userId ?? null, agentId: detectedAgentId, sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null }
             : undefined;
           
           // Search both SQLite and vector backends
