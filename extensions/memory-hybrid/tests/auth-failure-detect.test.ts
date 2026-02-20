@@ -1,5 +1,5 @@
 /**
- * Tests for auth failure detection service (FR-047)
+ * Tests for auth failure detection service
  */
 
 import { describe, it, expect } from "vitest";

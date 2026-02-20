@@ -26,9 +26,9 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Conflicting memories** | [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) | Classify-before-write (ADD/UPDATE/DELETE/NOOP), supersession, bi-temporal |
 | **Automatic categories** | [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md) | Category discovery from "other" facts (LLM labels, threshold, .discovered-categories.json) |
 | **Dynamic derived data** | [DYNAMIC-DERIVED-DATA.md](DYNAMIC-DERIVED-DATA.md) | Index: tags, categories, decay, entity/key/value, conflicting memories |
-| **Dynamic salience** | [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) | FR-005: Access-based importance — access boost, time decay, Hebbian co-recall links |
-| **Memory scoping** | [MEMORY-SCOPING.md](MEMORY-SCOPING.md) | FR-006: Global, user-private, agent-specific, session-scoped memories; privacy in multi-user environments |
-| **Memory tiering** | [MEMORY-TIERING.md](MEMORY-TIERING.md) | FR-004: Hot/warm/cold tiers, compaction (tasks→COLD, preferences→WARM, blockers→HOT), `hybrid-mem compact` |
+| **Dynamic salience** | [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) | Access-based importance — access boost, time decay, Hebbian co-recall links |
+| **Memory scoping** | [MEMORY-SCOPING.md](MEMORY-SCOPING.md) | Global, user-private, agent-specific, session-scoped memories; privacy in multi-user environments |
+| **Memory tiering** | [MEMORY-TIERING.md](MEMORY-TIERING.md) | Hot/warm/cold tiers, compaction (tasks→COLD, preferences→WARM, blockers→HOT), `hybrid-mem compact` |
 
 ---
 
@@ -176,7 +176,7 @@ Without this, custom categories are only assigned via explicit `memory_store` ca
 
 ---
 
-## Source Date (FR-003)
+## Source date
 
 Facts have an optional `source_date` (Unix seconds): when the fact *originated*, not when it was stored.
 
@@ -193,7 +193,7 @@ Facts have an optional `source_date` (Unix seconds): when the fact *originated*,
 
 ---
 
-## Auto-Tagging (FR-001)
+## Auto-tagging
 
 Facts can have optional **tags** for topic filtering. When `tags` are omitted, the plugin infers tags from fact text (and entity) via regex patterns. Tag-filtered search/lookup and `memory_recall(tag="…")` use only SQLite with a tag filter. Manual override: pass `tags` to `memory_store` or `hybrid-mem store --tags "a,b"`.
 
@@ -218,4 +218,4 @@ Facts can have optional **tags** for topic filtering. When `tags` are omitted, t
 - [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) — Conflicting/contradictory memories (classify-before-write, supersession)
 - [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md) — Automatic category discovery
 - [DYNAMIC-DERIVED-DATA.md](DYNAMIC-DERIVED-DATA.md) — Overview of tags, categories, decay, and other derived data
-- [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) — Access-based importance (FR-005)
+- [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) — Access-based importance

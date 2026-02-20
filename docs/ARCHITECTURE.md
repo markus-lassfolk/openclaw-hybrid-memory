@@ -153,5 +153,5 @@ Status emojis: 🟢 active, 🟡 paused, 🔵 completed. Keep the index under ~3
 - [MEMORY-PROTOCOL.md](MEMORY-PROTOCOL.md) — AGENTS.md paste-ready block
 - [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify
 - [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) — Write-ahead log design
-- [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph-based fact linking (FR-007)
-- [REFLECTION.md](REFLECTION.md) — Reflection layer (FR-011)
+- [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph-based fact linking
+- [REFLECTION.md](REFLECTION.md) — Reflection layer

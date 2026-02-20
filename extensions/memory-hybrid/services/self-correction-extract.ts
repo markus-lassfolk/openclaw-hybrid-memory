@@ -1,5 +1,5 @@
 /**
- * Self-correction extraction (issue #34): scan session JSONL for user messages
+ * Self-correction extraction: scan session JSONL for user messages
  * that look like corrections/nudges, using multi-language correction signals
  * from .language-keywords.json (after openclaw hybrid-mem build-languages).
  */

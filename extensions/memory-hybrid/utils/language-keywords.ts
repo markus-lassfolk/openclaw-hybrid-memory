@@ -28,7 +28,7 @@ export const ENGLISH_KEYWORDS = {
   decayPermanent: ["decided", "architecture", "always use", "never use"],
   decaySession: ["currently debugging", "right now", "this session"],
   decayActive: ["working on", "need to", "todo", "blocker", "sprint"],
-  /** Self-correction detection (issue #34). Phrases that suggest the user is correcting the agent. Translated via build-languages for multi-language support. */
+  /** Self-correction detection. Phrases that suggest the user is correcting the agent. Translated via build-languages for multi-language support. */
   correctionSignals: [
     "every time",
     "i already told",
@@ -56,7 +56,7 @@ export const ENGLISH_KEYWORDS = {
     "just use",
     "just do",
   ],
-  /** Issue #39: Directive extraction — phrases indicating user wants agent to remember/change behavior (10 categories merged). */
+  /** Directive extraction — phrases indicating user wants agent to remember/change behavior (10 categories merged). */
   directiveSignals: [
     // Explicit memory requests
     "remember that",
@@ -130,7 +130,7 @@ export const ENGLISH_KEYWORDS = {
   directiveImplicitCorrection: ["no, use", "the other one", "that's the old way", "not that"],
   /** Conditional rule keywords (subset of directiveSignals for category detection). */
   directiveConditionalRule: ["when this happens", "if you see", "only when", "whenever"],
-  /** Issue #40: Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
+  /** Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
   reinforcementSignals: [
     // Explicit approval
     "perfect",
@@ -441,17 +441,17 @@ export function getDecayActiveRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().decayActive);
 }
 
-/** Regex to detect user messages that look like corrections/nudges (issue #34). Uses English + translated correctionSignals from .language-keywords.json after build-languages. */
+/** Regex to detect user messages that look like corrections/nudges. Uses English + translated correctionSignals from .language-keywords.json after build-languages. */
 export function getCorrectionSignalRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().correctionSignals);
 }
 
-/** Issue #39: Regex to detect user messages that contain directive phrases (10 categories merged). */
+/** Regex to detect user messages that contain directive phrases (10 categories merged). */
 export function getDirectiveSignalRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().directiveSignals);
 }
 
-/** Issue #40: Regex to detect user messages that contain reinforcement/praise phrases. */
+/** Regex to detect user messages that contain reinforcement/praise phrases. */
 export function getReinforcementSignalRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().reinforcementSignals);
 }

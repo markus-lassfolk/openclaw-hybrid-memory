@@ -245,7 +245,7 @@ describe("estimateTokensForDisplay", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-009: Progressive index line format
+// Progressive index line format
 // ---------------------------------------------------------------------------
 
 describe("formatProgressiveIndexLine", () => {
@@ -259,7 +259,7 @@ describe("formatProgressiveIndexLine", () => {
     expect(line).toBe('  2. [technical] PostgreSQL connection config for prod (185 tok)');
   });
 
-  it("matches FR-009 index format [category] title/key (N tok)", () => {
+  it("matches index format [category] title/key (N tok)", () => {
     const line = formatProgressiveIndexLine("decision", "Chose React over Vue for frontend", 92, 3);
     expect(line).toMatch(/^\s+\d+\.\s\[decision\]\s.+\s\(\d+\stok\)$/);
   });

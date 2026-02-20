@@ -95,7 +95,7 @@ When you search for "database performance":
    - **BM25 rank** (60%) — text relevance from FTS5
    - **Freshness** (25%) — how far from expiry (1.0 = not expiring, 0.0 = expired)
    - **Confidence** (15%) — decays over time; refreshed on access
-   - **FR-005 Dynamic salience** — access boost (frequently recalled facts score higher) and time decay (older unused memories fade). See [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md).
+   - **Dynamic salience** — access boost (frequently recalled facts score higher) and time decay (older unused memories fade). See [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md).
 4. **Filtering** — excludes expired facts, superseded facts, and optionally filters by tag
 5. **Sorting** — by composite score, then by effective date (newer first) on ties
 6. **Access tracking** — bumps `recall_count` and `last_accessed` for returned facts; extends TTL for stable/active facts; drives salience scoring

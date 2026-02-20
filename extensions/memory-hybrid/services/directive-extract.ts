@@ -1,5 +1,5 @@
 /**
- * Directive extraction (issue #39): scan session JSONL for user messages
+ * Directive extraction: scan session JSONL for user messages
  * that contain directive phrases (10 categories: explicit memory requests,
  * future behavior changes, absolute rules, corrections, preferences, warnings,
  * procedural, implicit corrections, emotional emphasis, conditional rules).

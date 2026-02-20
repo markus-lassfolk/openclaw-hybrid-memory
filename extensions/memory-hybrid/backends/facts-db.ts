@@ -113,45 +113,45 @@ export class FactsDB {
     // ---- Normalized hash for fuzzy dedupe (2.3) ----
     this.migrateNormalizedHash();
 
-    // ---- Source date for provenance (FR-003) ----
+    // ---- Source date for provenance ----
     this.migrateSourceDateColumn();
 
-    // ---- Tags for topic filtering (FR-001) ----
+    // ---- Tags for topic filtering ----
     this.migrateTagsColumn();
 
-    // ---- Access tracking for dynamic salience (FR-005) ----
+    // ---- Access tracking for dynamic salience ----
     this.migrateAccessTracking();
 
-    // ---- Supersession columns for contradiction resolution (FR-008/010) ----
+    // ---- Supersession columns for contradiction resolution ----
     this.migrateSupersessionColumns();
 
-    // ---- FR-010: Bi-temporal valid_from / valid_until / supersedes_id ----
+    // ---- Bi-temporal valid_from / valid_until / supersedes_id ----
     this.migrateBiTemporalColumns();
 
-    // ---- FR-007: Graph-based spreading activation ----
+    // ---- Graph-based spreading activation ----
     this.migrateMemoryLinksTable();
 
-    // ---- FR-004: Dynamic memory tiering (hot/warm/cold) ----
+    // ---- Dynamic memory tiering (hot/warm/cold) ----
     this.migrateTierColumn();
 
-    // ---- FR-006: Memory scoping (global, user, agent, session) ----
+    // ---- Memory scoping (global, user, agent, session) ----
     this.migrateScopeColumns();
 
-    // ---- Procedural memory (issue #23): procedure columns on facts + procedures table ----
+    // ---- Procedural memory: procedure columns on facts + procedures table ----
     this.migrateProcedureColumns();
     this.migrateProceduresTable();
 
-    // ---- Issue #40: Reinforcement-as-Metadata ----
+    // ---- Reinforcement-as-Metadata ----
     this.migrateReinforcementColumns();
 
     // ---- Phase 2: Reinforcement for procedures ----
     this.migrateReinforcementColumnsProcedures();
 
-    // ---- FR-006 + multi-agent: Memory scoping for procedures ----
+    // ---- Memory scoping for procedures ----
     this.migrateProcedureScopeColumns();
   }
 
-  /** Issue #40: Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
+  /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
   private migrateReinforcementColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
@@ -166,7 +166,7 @@ export class FactsDB {
     );
   }
 
-  /** FR-004: Add tier column; default 'warm' for existing rows. */
+  /** Add tier column; default 'warm' for existing rows. */
   private migrateTierColumn(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
@@ -179,7 +179,7 @@ export class FactsDB {
     );
   }
 
-  /** FR-006: Add scope and scope_target columns for memory scoping. */
+  /** Add scope and scope_target columns for memory scoping. */
   private migrateScopeColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
@@ -280,13 +280,13 @@ export class FactsDB {
     );
   }
 
-  /** FR-006 + multi-agent: Add scope and scope_target columns to procedures table (same pattern as facts). */
+  /** Add scope and scope_target columns to procedures table (same pattern as facts). */
   private migrateProcedureScopeColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(procedures)`)
       .all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
-    // Issue #8: Check both columns independently, not just scope
+    // Check both columns independently, not just scope
     if (!colNames.has("scope")) {
       this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
     }
@@ -302,7 +302,7 @@ export class FactsDB {
   }
 
   /**
-   * FR-006: Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId.
+   * Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId.
    * ⚠️ SECURITY: Callers MUST derive scope filter values from trusted runtime identity (authenticated user/agent/session).
    * Do NOT pass arbitrary caller-controlled tool/CLI parameters here — that enables cross-tenant data leakage
    * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
@@ -332,7 +332,7 @@ export class FactsDB {
   }
 
   /**
-   * FR-006: Build SQL fragment for scope filtering with positional params (for lookup/getAll).
+   * Build SQL fragment for scope filtering with positional params (for lookup/getAll).
    * Same security constraints as scopeFilterClause — derive from trusted identity only.
    */
   private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: unknown[] } {
@@ -369,7 +369,7 @@ export class FactsDB {
     );
   }
 
-  /** FR-005: Add recall_count and last_accessed for dynamic salience scoring. */
+  /** Add recall_count and last_accessed for dynamic salience scoring. */
   private migrateAccessTracking(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
@@ -384,7 +384,7 @@ export class FactsDB {
     );
   }
 
-  /** FR-008/010: Add superseded_at and superseded_by for contradiction resolution. */
+  /** Add superseded_at and superseded_by for contradiction resolution. */
   private migrateSupersessionColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
@@ -398,7 +398,7 @@ export class FactsDB {
     );
   }
 
-  /** FR-010: Bi-temporal columns valid_from, valid_until, supersedes_id for point-in-time queries. */
+  /** Bi-temporal columns valid_from, valid_until, supersedes_id for point-in-time queries. */
   private migrateBiTemporalColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
@@ -416,7 +416,7 @@ export class FactsDB {
     );
   }
 
-  /** FR-007: Create memory_links table for graph-based spreading activation. */
+  /** Create memory_links table for graph-based spreading activation. */
   private migrateMemoryLinksTable(): void {
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS memory_links (
@@ -548,20 +548,20 @@ export class FactsDB {
       summary?: string | null;
       sourceDate?: number | null;
       tags?: string[] | null;
-      /** FR-010: When this fact became true (epoch sec). Defaults to sourceDate ?? now. */
+      /** When this fact became true (epoch sec). Defaults to sourceDate ?? now. */
       validFrom?: number | null;
-      /** FR-010: When this fact stopped being true (epoch sec). Usually null for new facts. */
+      /** When this fact stopped being true (epoch sec). Usually null for new facts. */
       validUntil?: number | null;
-      /** FR-010: Id of the fact this one supersedes. */
+      /** Id of the fact this one supersedes. */
       supersedesId?: string | null;
       /** Procedural memory: fact as procedure summary. */
       procedureType?: "positive" | "negative" | null;
       successCount?: number;
       lastValidated?: number | null;
       sourceSessions?: string | null;
-      /** FR-006: Memory scope — global, user, agent, or session. Default global. */
+      /** Memory scope — global, user, agent, or session. Default global. */
       scope?: "global" | "user" | "agent" | "session";
-      /** FR-006: Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
+      /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
       scopeTarget?: string | null;
     },
   ): MemoryEntry {
@@ -668,7 +668,7 @@ export class FactsDB {
     };
   }
 
-  /** FR-005: Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
+  /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
   refreshAccessedFacts(ids: string[]): void {
     if (ids.length === 0) return;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -697,7 +697,7 @@ export class FactsDB {
     tx();
   }
 
-  /** FR-004: Get HOT-tier facts for session context, capped by token budget. */
+  /** Get HOT-tier facts for session context, capped by token budget. */
   getHotFacts(maxTokens: number, scopeFilter?: ScopeFilter | null): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
@@ -726,7 +726,7 @@ export class FactsDB {
     return results;
   }
 
-  /** FR-004: Set a fact's tier. */
+  /** Set a fact's tier. */
   setTier(id: string, tier: MemoryTier): boolean {
     const result = this.liveDb
       .prepare(`UPDATE facts SET tier = ? WHERE id = ?`)
@@ -734,7 +734,7 @@ export class FactsDB {
     return result.changes > 0;
   }
 
-  /** FR-004: Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
+  /** Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
   runCompaction(opts: {
     inactivePreferenceDays: number;
     hotMaxTokens: number;
@@ -821,13 +821,13 @@ export class FactsDB {
       includeExpired?: boolean;
       tag?: string;
       includeSuperseded?: boolean;
-      /** FR-010: Point-in-time: only facts valid at this epoch second. */
+      /** Point-in-time: only facts valid at this epoch second. */
       asOf?: number;
-      /** FR-004: 'warm' = only warm tier (default), 'all' = warm + cold. */
+      /** 'warm' = only warm tier (default), 'all' = warm + cold. */
       tierFilter?: "warm" | "all";
-      /** FR-006: Scope filter — only return global + matching user/agent/session. */
+      /** Scope filter — only return global + matching user/agent/session. */
       scopeFilter?: ScopeFilter | null;
-      /** Issue #40: Reinforcement boost — added to score when reinforced_count > 0 (default: 0.1). */
+      /** Reinforcement boost — added to score when reinforced_count > 0 (default: 0.1). */
       reinforcementBoost?: number;
     } = {},
   ): SearchResult[] {
@@ -904,11 +904,11 @@ export class FactsDB {
       const freshness = (row.freshness as number) || 1.0;
       const confidence = (row.confidence as number) || 1.0;
       const reinforcedCount = (row.reinforced_count as number) || 0;
-      // Issue #40: Add reinforcement boost when fact has been praised
+      // Add reinforcement boost when fact has been praised
       const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
       const composite = Math.min(1.0, bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15 + reinforcement);
       const entry = this.rowToEntry(row);
-      // FR-005: Apply dynamic salience (access boost + time decay)
+      // Apply dynamic salience (access boost + time decay)
       const salienceScore = computeDynamicSalience(composite, entry);
 
       return {
@@ -979,7 +979,7 @@ export class FactsDB {
     const results = rows.map((row) => {
       const entry = this.rowToEntry(row);
       const baseScore = (row.confidence as number) || 1.0;
-      // FR-005: Apply dynamic salience (access boost + time decay)
+      // Apply dynamic salience (access boost + time decay)
       const salienceScore = computeDynamicSalience(baseScore, entry);
       return {
         entry,
@@ -1017,7 +1017,7 @@ export class FactsDB {
     return row?.id ?? null;
   }
 
-  /** FR-008/010: Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
+  /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
   supersede(oldId: string, newId: string | null): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
     const result = this.liveDb
@@ -1032,7 +1032,7 @@ export class FactsDB {
   }
 
 
-  /** FR-008: Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
+  /** Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
   findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const results: MemoryEntry[] = [];
@@ -1151,7 +1151,7 @@ export class FactsDB {
     };
   }
 
-  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded (FR-010). */
+  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded. */
   getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
     const nowSec = Math.floor(Date.now() / 1000);
     const rows = this.liveDb
@@ -1169,7 +1169,7 @@ export class FactsDB {
     }));
   }
 
-  /** Get one fact by id (for merge category). Returns null if not found. FR-010: when asOf is set, returns null if the fact was not valid at that time. FR-006: when scopeFilter is set, returns null if the fact is not in scope. */
+  /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
   getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
     const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
@@ -1194,7 +1194,7 @@ export class FactsDB {
     return entry;
   }
 
-  /** FR-007: Create a typed link between two facts. Returns link id. */
+  /** Create a typed link between two facts. Returns link id. */
   createLink(
     sourceFactId: string,
     targetFactId: string,
@@ -1211,7 +1211,7 @@ export class FactsDB {
     return id;
   }
 
-  /** FR-005 Hebbian: Create or strengthen RELATED_TO link between two facts recalled together. */
+  /** Hebbian: Create or strengthen RELATED_TO link between two facts recalled together. */
   createOrStrengthenRelatedLink(
     factIdA: string,
     factIdB: string,
@@ -1236,7 +1236,7 @@ export class FactsDB {
     }
   }
 
-  /** FR-007: Get links from a fact (outgoing). */
+  /** Get links from a fact (outgoing). */
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
     const rows = this.liveDb
       .prepare(
@@ -1251,7 +1251,7 @@ export class FactsDB {
     }));
   }
 
-  /** FR-007: Get links to a fact (incoming). */
+  /** Get links to a fact (incoming). */
   getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }> {
     const rows = this.liveDb
       .prepare(
@@ -1266,7 +1266,7 @@ export class FactsDB {
     }));
   }
 
-  /** FR-007: BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set). */
+  /** BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set). */
   getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
     if (factIds.length === 0 || maxDepth < 1) return [...factIds];
     const seen = new Set<string>(factIds);
@@ -1298,7 +1298,7 @@ export class FactsDB {
     return [...seen];
   }
 
-  /** FR-011: Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */
+  /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */
   getRecentFacts(days: number, options?: { excludeCategories?: string[] }): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const windowStartSec = nowSec - Math.max(1, Math.min(90, days)) * 86400;
@@ -1315,7 +1315,7 @@ export class FactsDB {
     return rows.map((row) => this.rowToEntry(row));
   }
 
-  /** Get all non-expired facts (for reflection). Optional FR-010 point-in-time / include superseded. FR-006: optional scope filter. */
+  /** Get all non-expired facts (for reflection). Optional point-in-time / include superseded. Optional scope filter. */
   getAll(options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
@@ -1370,7 +1370,7 @@ export class FactsDB {
     return result.changes;
   }
 
-  /** FR-006: Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
+  /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
   pruneSessionScope(sessionId: string): number {
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?`)
@@ -1378,7 +1378,7 @@ export class FactsDB {
     return result.changes;
   }
 
-  /** FR-006: Promote a fact's scope (e.g. session → global or agent). Returns true if updated. */
+  /** Promote a fact's scope (e.g. session → global or agent). Returns true if updated. */
   promoteScope(factId: string, newScope: "global" | "user" | "agent" | "session", newScopeTarget: string | null): boolean {
     const scopeTarget = newScope === "global" ? null : newScopeTarget;
     const result = this.liveDb
@@ -1444,7 +1444,7 @@ export class FactsDB {
   }
 
   /**
-   * Issue #40: Annotate a fact with reinforcement from user praise.
+   * Annotate a fact with reinforcement from user praise.
    * Increments reinforced_count, updates last_reinforced_at, appends quote (max 10 quotes kept).
    * Wraps read-modify-write in a transaction to prevent race conditions.
    * Returns true if fact was updated.
@@ -1581,7 +1581,7 @@ export class FactsDB {
     return stats;
   }
 
-  /** FR-004: Tier breakdown (hot/warm/cold) for non-superseded facts. */
+  /** Tier breakdown (hot/warm/cold) for non-superseded facts. */
   statsBreakdownByTier(): Record<string, number> {
     const rows = this.liveDb
       .prepare(
@@ -1694,7 +1694,7 @@ export class FactsDB {
     return this.db;
   }
 
-  // ---------- Procedural memory (issue #23): procedures table CRUD ----------
+  // ---------- Procedural memory: procedures table CRUD ----------
 
   private procedureRowToEntry(row: Record<string, unknown>): ProcedureEntry {
     return {
@@ -1744,9 +1744,9 @@ export class FactsDB {
     confidence?: number;
     ttlDays?: number;
     sourceSessionId?: string;
-    /** FR-006 + multi-agent: Memory scope — global, user, agent, or session. Default global. */
+    /** Memory scope — global, user, agent, or session. Default global. */
     scope?: "global" | "user" | "agent" | "session";
-    /** FR-006 + multi-agent: Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
+    /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
     scopeTarget?: string | null;
   }): ProcedureEntry {
     const id = proc.id ?? randomUUID();
@@ -1848,7 +1848,7 @@ export class FactsDB {
       .join(" OR ");
     if (!safeQuery) return [];
     try {
-      // FR-006 + multi-agent: Apply scope filter to procedures search
+      // Apply scope filter to procedures search
       const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
       const baseSql = `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`;
       const rows = this.liveDb
@@ -1920,7 +1920,7 @@ export class FactsDB {
     const RECENT_FAILURE_PENALTY = 0.5;
     
     try {
-      // FR-006 + multi-agent: Apply scope filter to procedures search
+      // Apply scope filter to procedures search
       const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
       const rows = this.liveDb
         .prepare(

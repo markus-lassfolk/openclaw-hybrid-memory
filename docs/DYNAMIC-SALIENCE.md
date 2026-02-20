@@ -1,10 +1,10 @@
 ---
 layout: default
-title: Dynamic Salience (FR-005)
+title: Dynamic Salience
 parent: Features
 nav_order: 15
 ---
-# Dynamic Salience Scoring (FR-005)
+# Dynamic Salience Scoring
 
 ## Overview
 
@@ -60,7 +60,7 @@ Default half-life is 30 days: after 30 days without access, salience halves. If 
 
 ### 3. Hebbian Reinforcement
 
-When two or more memories are recalled together in the same session, the system creates or strengthens `RELATED_TO` links between them. Co-recalled facts become associated in the graph, enabling graph traversal (FR-007) to surface related context.
+When two or more memories are recalled together in the same session, the system creates or strengthens `RELATED_TO` links between them. Co-recalled facts become associated in the graph, enabling graph traversal to surface related context.
 
 **When Hebbian linking runs:**
 
@@ -73,7 +73,7 @@ Requires `graph.enabled` (default true).
 
 ## Configuration
 
-No separate config is required. FR-005 uses:
+No separate config is required. Dynamic salience uses:
 
 - `graph.enabled` — must be true for Hebbian reinforcement (default true)
 
@@ -94,7 +94,7 @@ These columns are added by migration `migrateAccessTracking()` and seeded with `
 
 ## Related Docs
 
-- [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — `RELATED_TO` links and graph traversal (FR-007)
+- [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — `RELATED_TO` links and graph traversal
 - [DEEP-DIVE.md](DEEP-DIVE.md) — Search scoring and access tracking
 - [DYNAMIC-DERIVED-DATA.md](DYNAMIC-DERIVED-DATA.md) — Derived fields index
 - [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) — TTL and expiry

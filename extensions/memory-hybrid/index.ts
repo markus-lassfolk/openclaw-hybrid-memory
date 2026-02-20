@@ -13,7 +13,7 @@ import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,12 +36,13 @@ import {
   type CredentialType,
   PROPOSAL_STATUSES,
   type IdentityFileType,
+  type ConfigMode,
 } from "./config.js";
 import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
-import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type IngestFilesResult, type IngestFilesSink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
+import { registerHybridMemCli, type BackfillCliResult, type BackfillCliSink, type ConfigCliResult, type DistillCliResult, type DistillCliSink, type DistillWindowResult, type ExtractDailyResult, type ExtractDailySink, type ExtractProceduresResult, type GenerateAutoSkillsResult, type IngestFilesResult, type IngestFilesSink, type InstallCliResult, type MigrateToVaultResult, type RecordDistillResult, type StoreCliOpts, type StoreCliResult, type UninstallCliResult, type UpgradeCliResult, type VerifyCliSink } from "./cli/register.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
@@ -113,7 +114,7 @@ import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptVa
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 
 // ============================================================================
-// FR-008: Memory Operation Classification (ADD/UPDATE/DELETE/NOOP)
+// Memory Operation Classification (ADD/UPDATE/DELETE/NOOP)
 // ============================================================================
 
 type MemoryClassification = {
@@ -125,7 +126,7 @@ type MemoryClassification = {
 };
 
 /**
- * FR-008: Parse LLM classification response into MemoryClassification.
+ * Parse LLM classification response into MemoryClassification.
  * Format: "ACTION [id] | reason". Exported for tests.
  */
 function parseClassificationResponse(
@@ -155,7 +156,7 @@ function parseClassificationResponse(
 }
 
 /**
- * FR-008: Classify an incoming fact against existing similar facts.
+ * Classify an incoming fact against existing similar facts.
  * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
  * Falls back to ADD on error.
  */
@@ -203,7 +204,7 @@ async function classifyMemoryOperation(
   }
 }
 
-/** FR-008: Get top-N existing facts by embedding similarity. Resolves vector search ids via factsDb (filters superseded). Falls back to empty array on vector search failure. */
+/** Get top-N existing facts by embedding similarity. Resolves vector search ids via factsDb (filters superseded). Falls back to empty array on vector search failure. */
 async function findSimilarByEmbedding(
   vectorDb: VectorDB,
   factsDb: { getById(id: string): MemoryEntry | null },
@@ -771,10 +772,10 @@ async function runConsolidate(
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 // REFLECTION_PATTERN_MAX_CHARS, REFLECTION_DEDUPE_THRESHOLD imported from constants
-/** Rules: short one-liners (FR-011 optional Rules layer). */
+/** Rules: short one-liners (optional Rules layer). */
 const REFLECTION_RULE_MIN_CHARS = 10;
 const REFLECTION_RULE_MAX_CHARS = 120;
-/** Meta-patterns: 1-2 sentences (FR-011 optional Reflection on reflections). */
+/** Meta-patterns: 1-2 sentences (optional Reflection on reflections). */
 const REFLECTION_META_MIN_CHARS = 20;
 // REFLECTION_META_MAX_CHARS imported from constants
 const REFLECTION_MAX_PATTERNS_FOR_RULES = 50;
@@ -790,7 +791,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return a.reduce((s, x, i) => s + x * b[i], 0);
 }
 
-/** FR-011: Parse PATTERN: lines from reflection LLM response. Exported for tests. */
+/** Parse PATTERN: lines from reflection LLM response. Exported for tests. */
 function parsePatternsFromReflectionResponse(rawResponse: string): string[] {
   const patterns: string[] = [];
   for (const line of rawResponse.split(/\n/)) {
@@ -813,7 +814,7 @@ function parsePatternsFromReflectionResponse(rawResponse: string): string[] {
 }
 
 /**
- * FR-011: Run reflection — gather recent facts, call LLM to extract patterns, dedupe, store.
+ * Run reflection — gather recent facts, call LLM to extract patterns, dedupe, store.
  */
 async function runReflection(
   factsDb: FactsDB,
@@ -950,7 +951,7 @@ async function runReflection(
 }
 
 /**
- * FR-011 optional: Rules layer — synthesize patterns into actionable one-line rules (category "rule").
+ * Rules layer — synthesize patterns into actionable one-line rules (category "rule").
  */
 async function runReflectionRules(
   factsDb: FactsDB,
@@ -1059,7 +1060,7 @@ async function runReflectionRules(
 }
 
 /**
- * FR-011 optional: Reflection on reflections — synthesize patterns into 1-3 meta-patterns (stored as pattern + meta tag).
+ * Reflection on reflections — synthesize patterns into 1-3 meta-patterns (stored as pattern + meta tag).
  */
 async function runReflectionMeta(
   factsDb: FactsDB,
@@ -1501,11 +1502,11 @@ let languageKeywordsTimer: ReturnType<typeof setInterval> | null = null;
 let languageKeywordsStartupTimeout: ReturnType<typeof setTimeout> | null = null;
 let postUpgradeTimeout: ReturnType<typeof setTimeout> | null = null;
 
-/** FR-009: Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
+/** Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
 let lastProgressiveIndexIds: string[] = [];
 
-/** FR-006 + multi-agent: Runtime-detected agent identity. Used for dynamic scope filtering and default store scope. */
-// FR-006 + multi-agent: Runtime-detected agent identity
+/** Runtime-detected agent identity. Used for dynamic scope filtering and default store scope. */
+// Runtime-detected agent identity
 // 
 // ⚠️ MODULE-LEVEL STATE WARNING:
 // This is a singleton variable shared across all plugin invocations within the same OpenClaw process.
@@ -1565,6 +1566,12 @@ function walRemove(id: string, logger: { warn: (msg: string) => void }): void {
 
 const PLUGIN_ID = "openclaw-hybrid-memory";
 
+/** Path to marker file written by config-mode/config-set; cleared when gateway loads plugin. */
+function getRestartPendingPath(): string {
+  return join(homedir(), ".openclaw", ".restart-pending.openclaw-hybrid-memory");
+}
+let restartPendingCleared = false;
+
 const memoryHybridPlugin = {
   id: PLUGIN_ID,
   name: "Memory (Hybrid: SQLite + LanceDB)",
@@ -1620,10 +1627,13 @@ const memoryHybridPlugin = {
     embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
     openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
-    if (cfg.credentials.enabled) {
+    if (cfg.credentials.enabled && cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16) {
       const credPath = join(dirname(resolvedSqlitePath), "credentials.db");
       credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey);
-      api.logger.info(`memory-hybrid: credentials store enabled (${credPath})`);
+      api.logger.info(`memory-hybrid: credentials vault enabled (${credPath})`);
+    } else if (cfg.credentials.enabled) {
+      credentialsDb = null;
+      api.logger.info("memory-hybrid: credentials capture enabled (vault disabled — no encryption key); captured credentials stored in memory.");
     } else {
       credentialsDb = null;
     }
@@ -1750,32 +1760,32 @@ const memoryHybridPlugin = {
           ),
           includeSuperseded: Type.Optional(
             Type.Boolean({
-              description: "FR-010: Include superseded (historical) facts in results. Default: only current facts.",
+              description: "Include superseded (historical) facts in results. Default: only current facts.",
             }),
           ),
           asOf: Type.Optional(
             Type.String({
-              description: "FR-010: Point-in-time query: ISO date (YYYY-MM-DD) or epoch seconds. Return only facts valid at that time.",
+              description: "Point-in-time query: ISO date (YYYY-MM-DD) or epoch seconds. Return only facts valid at that time.",
             }),
           ),
           userId: Type.Optional(
             Type.String({
-              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include user-private memories for this user.",
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. Include user-private memories for this user.",
             }),
           ),
           agentId: Type.Optional(
             Type.String({
-              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include agent-specific memories for this agent.",
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. Include agent-specific memories for this agent.",
             }),
           ),
           sessionId: Type.Optional(
             Type.String({
-              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. FR-006: Include session-scoped memories for this session.",
+              description: "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. Include session-scoped memories for this session.",
             }),
           ),
           includeCold: Type.Optional(
             Type.Boolean({
-              description: "FR-004: Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
+              description: "Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
             }),
           ),
         }),
@@ -1807,7 +1817,7 @@ const memoryHybridPlugin = {
           };
           const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
           
-          // FR-006 + multi-agent: Scope filtering with auto-detection
+          // Scope filtering with auto-detection
           // ⚠️ SECURITY WARNING: userId/agentId/sessionId are caller-controlled parameters.
           // In multi-tenant production environments, these should be derived from authenticated
           // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
@@ -1829,7 +1839,7 @@ const memoryHybridPlugin = {
             scopeFilter = undefined;
           }
 
-          // FR-009: Fetch by id (fact id or 1-based index from last progressive index)
+          // Fetch by id (fact id or 1-based index from last progressive index)
           if (idParam !== undefined && idParam !== null && idParam !== "") {
             let factId: string | null = null;
             if (typeof idParam === "number") {
@@ -1854,7 +1864,7 @@ const memoryHybridPlugin = {
               const getByIdOpts = { asOf: asOfSec, scopeFilter };
               const entry = factsDb.getById(factId, asOfSec != null || scopeFilter ? getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter } : undefined);
               if (entry) {
-                // FR-005: Access boost — update recall_count and last_accessed on fetch by id
+                // Access boost — update recall_count and last_accessed on fetch by id
                 factsDb.refreshAccessedFacts([entry.id]);
                 const text = `[${entry.category}] ${entry.text}`;
                 return {
@@ -1962,7 +1972,7 @@ const memoryHybridPlugin = {
 
           let results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
 
-          // FR-004: Exclude COLD tier when includeCold is false (Lance results may include cold facts)
+          // Exclude COLD tier when includeCold is false (Lance results may include cold facts)
           if (!includeCold && results.length > 0) {
             const filtered: SearchResult[] = [];
             for (const r of results) {
@@ -1972,7 +1982,7 @@ const memoryHybridPlugin = {
             results = filtered.slice(0, limit);
           }
 
-          // FR-010: When asOf is set, filter so only facts valid at that time (Lance results lack temporal filter)
+          // When asOf is set, filter so only facts valid at that time (Lance results lack temporal filter)
           if (asOfSec != null && results.length > 0) {
             const filtered: SearchResult[] = [];
             for (const r of results) {
@@ -1982,7 +1992,7 @@ const memoryHybridPlugin = {
             results = filtered.slice(0, limit);
           }
 
-          // FR-007: Graph traversal — expand results with connected facts when enabled
+          // Graph traversal — expand results with connected facts when enabled
           if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
             const initialIds = new Set(results.map((r) => r.entry.id));
             const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
@@ -2060,17 +2070,17 @@ const memoryHybridPlugin = {
             ),
             agentId: Type.Optional(
               Type.String({
-                description: "⚠️ SECURITY: Caller-controlled parameter. FR-006 + multi-agent: Filter procedures for specific agent.",
+                description: "⚠️ SECURITY: Caller-controlled parameter. Filter procedures for specific agent.",
               }),
             ),
             userId: Type.Optional(
               Type.String({
-                description: "⚠️ SECURITY: Caller-controlled parameter. FR-006: Filter procedures for specific user.",
+                description: "⚠️ SECURITY: Caller-controlled parameter. Filter procedures for specific user.",
               }),
             ),
             sessionId: Type.Optional(
               Type.String({
-                description: "⚠️ SECURITY: Caller-controlled parameter. FR-006: Filter procedures for specific session.",
+                description: "⚠️ SECURITY: Caller-controlled parameter. Filter procedures for specific session.",
               }),
             ),
           }),
@@ -2092,7 +2102,7 @@ const memoryHybridPlugin = {
               };
             }
             
-            // FR-006 + multi-agent: Build scope filter (same logic as memory_recall)
+            // Build scope filter (same logic as memory_recall)
             let scopeFilter: ScopeFilter | undefined;
             if (userId || agentId || sessionId) {
               // Explicit scope parameters provided - use them
@@ -2201,7 +2211,7 @@ const memoryHybridPlugin = {
           ),
           supersedes: Type.Optional(
             Type.String({
-              description: "FR-010: Fact id this one supersedes (replaces). Marks the old fact as superseded and links the new one.",
+              description: "Fact id this one supersedes (replaces). Marks the old fact as superseded and links the new one.",
             }),
           ),
           scope: Type.Optional(
@@ -2210,7 +2220,7 @@ const memoryHybridPlugin = {
           scopeTarget: Type.Optional(
             Type.String({
               description:
-                "FR-006: Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
+                "Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
             }),
           ),
         }),
@@ -2332,7 +2342,7 @@ const memoryHybridPlugin = {
             api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
           }
 
-          // FR-008: Classify the operation before storing (use embedding similarity per issue #8)
+          // Classify the operation before storing (use embedding similarity)
           if (cfg.store.classifyBeforeWrite) {
             let similarFacts: MemoryEntry[] = [];
             if (vector) {
@@ -2421,8 +2431,8 @@ const memoryHybridPlugin = {
             source: "conversation", decayClass: paramDecayClass, summary, tags, vector,
           }, api.logger);
 
-          // Now commit to actual storage (FR-010: optional supersedes for manual supersession; FR-006: scope)
-          // FR-006 + multi-agent: Smart default scope based on agent identity and config
+          // Now commit to actual storage (optional supersedes for manual supersession; scope)
+          // Smart default scope based on agent identity and config
           let scope: "global" | "user" | "agent" | "session";
           let scopeTarget: string | null;
           
@@ -2514,7 +2524,7 @@ const memoryHybridPlugin = {
 
           walRemove(walEntryId, api.logger);
 
-          // FR-007: Auto-link to similar facts when enabled
+          // Auto-link to similar facts when enabled
           let autoLinked = 0;
           if (cfg.graph.enabled && cfg.graph.autoLink) {
             const similar = factsDb.findSimilarForClassification(
@@ -2561,7 +2571,7 @@ const memoryHybridPlugin = {
         name: "memory_promote",
         label: "Memory Promote",
         description:
-          "FR-006: Promote a session-scoped memory to global or agent scope (so it persists after session end).",
+          "Promote a session-scoped memory to global or agent scope (so it persists after session end).",
         parameters: Type.Object({
           memoryId: Type.String({ description: "Fact id to promote" }),
           scope: Type.Union([
@@ -2730,7 +2740,7 @@ const memoryHybridPlugin = {
       { name: "memory_forget" },
     );
 
-    // FR-007: Graph tools (when graph enabled)
+    // Graph tools (when graph enabled)
     if (cfg.graph.enabled) {
       api.registerTool(
         {
@@ -3106,7 +3116,7 @@ const memoryHybridPlugin = {
         name: "memory_reflect",
         label: "Memory Reflect",
         description:
-          "FR-011: Run reflection on recent facts to synthesize behavioral patterns. Analyzes facts from the last N days, sends to LLM to extract patterns, stores new patterns (permanent, high importance) for better agent alignment.",
+          "Run reflection on recent facts to synthesize behavioral patterns. Analyzes facts from the last N days, sends to LLM to extract patterns, stores new patterns (permanent, high importance) for better agent alignment.",
         parameters: Type.Object({
           window: Type.Optional(
             Type.Number({
@@ -3166,7 +3176,7 @@ const memoryHybridPlugin = {
         name: "memory_reflect_rules",
         label: "Memory Reflect Rules",
         description:
-          "FR-011 optional: Synthesize existing behavioral patterns into actionable one-line rules (category rule). Run after memory_reflect when you have enough patterns.",
+          "Synthesize existing behavioral patterns into actionable one-line rules (category rule). Run after memory_reflect when you have enough patterns.",
         parameters: Type.Object({}),
         async execute() {
           const reflectionCfg = cfg.reflection;
@@ -3203,7 +3213,7 @@ const memoryHybridPlugin = {
         name: "memory_reflect_meta",
         label: "Memory Reflect Meta",
         description:
-          "FR-011 optional: Synthesize existing patterns into 1-3 higher-level meta-patterns (working style, principles). Run after memory_reflect when you have enough patterns.",
+          "Synthesize existing patterns into 1-3 higher-level meta-patterns (working style, principles). Run after memory_reflect when you have enough patterns.",
         parameters: Type.Object({}),
         async execute() {
           const reflectionCfg = cfg.reflection;
@@ -3965,21 +3975,69 @@ const memoryHybridPlugin = {
             fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
             log(`Embedding API: FAIL — ${String(e)}`);
           }
-          log("\nFeatures:");
-          log(`  autoCapture: ${cfg.autoCapture}`);
-          log(`  autoRecall: ${cfg.autoRecall.enabled}`);
-          log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "off"}`);
-          log(`  credentials: ${cfg.credentials.enabled ? "enabled" : "disabled"}`);
-          log(`  store.fuzzyDedupe: ${cfg.store.fuzzyDedupe}`);
+          const bool = (b: boolean) => String(b);
+          const restartPending = existsSync(getRestartPendingPath());
+          const modeLabel = cfg.mode ? `Mode: ${cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)} (preset)` : "Mode: Custom (no preset or overrides)";
+          log(`\n${modeLabel}${restartPending ? " — restart pending" : ""}`);
+          log("\nFeatures (all on/off toggles, values match config true/false):");
+          log(`  autoCapture: ${bool(cfg.autoCapture)}`);
+          log(`  autoRecall: ${bool(cfg.autoRecall.enabled)}`);
+          log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "false"}`);
+          log(`  autoClassify.suggestCategories: ${bool(cfg.autoClassify.suggestCategories !== false)}`);
+          log(`  credentials: ${bool(cfg.credentials.enabled)}`);
+          if (cfg.credentials.enabled) {
+            log(`  credentials.autoDetect: ${bool(cfg.credentials.autoDetect === true)}`);
+            log(`  credentials.autoCapture.toolCalls (tool I/O): ${bool(cfg.credentials.autoCapture?.toolCalls === true)}`);
+            if (!cfg.credentials.encryptionKey || cfg.credentials.encryptionKey.length < 16) {
+              log(`  → Credentials: capture only (stored in memory); set credentials.encryptionKey for encrypted vault.`);
+            }
+          } else if (cfg.mode === "expert" || cfg.mode === "full") {
+            log(`  → Credentials (vault): off — set credentials.encryptionKey (or env:OPENCLAW_CRED_KEY) to enable vault and credential capture from tool I/O.`);
+          }
+          log(`  store.fuzzyDedupe: ${bool(cfg.store.fuzzyDedupe)}`);
+          log(`  store.classifyBeforeWrite: ${bool(cfg.store.classifyBeforeWrite === true)}`);
+          log(`  graph: ${bool(cfg.graph.enabled)}`);
+          if (cfg.graph.enabled) {
+            log(`  graph.autoLink: ${bool(cfg.graph.autoLink)}`);
+            log(`  graph.useInRecall: ${bool(cfg.graph.useInRecall)}`);
+          }
+          log(`  procedures: ${bool(cfg.procedures.enabled)}`);
+          log(`  procedures.requireApprovalForPromote: ${bool(cfg.procedures.requireApprovalForPromote)}`);
+          log(`  reflection: ${bool(cfg.reflection.enabled)}`);
+          log(`  wal: ${bool(cfg.wal.enabled)}`);
+          log(`  languageKeywords.autoBuild: ${bool(cfg.languageKeywords.autoBuild)}`);
+          log(`  personaProposals: ${bool(cfg.personaProposals.enabled)}`);
+          log(`  memoryTiering: ${bool(cfg.memoryTiering.enabled)}`);
+          log(`  memoryTiering.compactionOnSessionEnd: ${bool(cfg.memoryTiering.compactionOnSessionEnd)}`);
+          if (cfg.selfCorrection) {
+            log(`  selfCorrection: true`);
+            log(`  selfCorrection.semanticDedup: ${bool(cfg.selfCorrection.semanticDedup)}`);
+            log(`  selfCorrection.applyToolsByDefault: ${bool(cfg.selfCorrection.applyToolsByDefault)}`);
+            log(`  selfCorrection.autoRewriteTools: ${bool(cfg.selfCorrection.autoRewriteTools)}`);
+            log(`  selfCorrection.analyzeViaSpawn: ${bool(cfg.selfCorrection.analyzeViaSpawn)}`);
+          } else {
+            log(`  selfCorrection: false`);
+          }
+          log(`  autoRecall.entityLookup: ${bool(cfg.autoRecall.entityLookup.enabled)}`);
+          log(`  autoRecall.authFailure (reactive recall): ${bool(cfg.autoRecall.authFailure.enabled)}`);
+          if (cfg.search) {
+            log(`  search.hydeEnabled: ${bool(cfg.search.hydeEnabled)}`);
+          }
+          if (cfg.ingest) {
+            log(`  ingest (paths configured): true`);
+          }
+          if (cfg.distill) {
+            log(`  distill.extractDirectives: ${bool(cfg.distill.extractDirectives !== false)}`);
+            log(`  distill.extractReinforcement: ${bool(cfg.distill.extractReinforcement !== false)}`);
+          }
+          if (cfg.errorReporting) {
+            log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
+          }
           let credentialsOk = true;
           if (cfg.credentials.enabled) {
             const keyDefined = !!cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16;
             if (!keyDefined) {
-              issues.push("credentials.enabled but encryption key missing or too short (min 16 chars or env:VAR)");
-              loadBlocking.push("credentials enabled but encryption key missing or too short");
-              fixes.push("LOAD-BLOCKING: Set credentials.encryptionKey to env:OPENCLAW_CRED_KEY and export OPENCLAW_CRED_KEY (min 16 chars), or set a 16+ character secret in plugin config. See docs/CREDENTIALS.md.");
-              credentialsOk = false;
-              log("\nCredentials: enabled — key missing or too short (set OPENCLAW_CRED_KEY or credentials.encryptionKey)");
+              log("\nCredentials: capture enabled, vault disabled (no encryption key). Captured credentials stored in memory. Set credentials.encryptionKey for encrypted vault.");
             } else if (credentialsDb) {
               try {
                 const items = credentialsDb.list();
@@ -3987,18 +4045,16 @@ const memoryHybridPlugin = {
                   const first = items[0];
                   credentialsDb.get(first.service, first.type as CredentialType);
                 }
-                log(`\nCredentials: enabled — key set, vault OK (${items.length} stored)`);
+                log(`\nCredentials (vault): key set, OK (${items.length} stored)`);
               } catch (e) {
                 issues.push(`Credentials vault: ${String(e)} (wrong key or corrupted DB)`);
                 fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the same key used when credentials were stored, or disable credentials in config. See docs/CREDENTIALS.md.`);
                 credentialsOk = false;
-                log(`\nCredentials: enabled — vault FAIL — ${String(e)} (check OPENCLAW_CRED_KEY / encryptionKey)`);
+                log(`\nCredentials (vault): FAIL — ${String(e)} (check OPENCLAW_CRED_KEY / encryptionKey)`);
               }
             } else {
-              log("\nCredentials: enabled — key set (vault not opened in this process)");
+              log("\nCredentials (vault): key set (vault not opened in this process)");
             }
-          } else {
-            log("\nCredentials: disabled");
           }
           const memoryDir = dirname(resolvedSqlitePath);
           const distillLastRunPath = join(memoryDir, ".distill_last_run");
@@ -4087,15 +4143,15 @@ const memoryHybridPlugin = {
           }
           log("\nOptional / suggested jobs (cron store or openclaw.json):");
           if (nightlySweepDefined) {
-            log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "enabled" : "disabled"}`);
+            log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "true" : "false"}`);
           } else {
             log("  nightly-memory-sweep (session distillation): not defined");
             fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
           }
           if (weeklyReflectionDefined) {
-            log("  weekly-reflection (FR-011 pattern synthesis): defined");
+            log("  weekly-reflection (pattern synthesis): defined");
           } else {
-            log("  weekly-reflection (FR-011 pattern synthesis): not defined");
+            log("  weekly-reflection (pattern synthesis): not defined");
             fixes.push("Optional: Set up weekly reflection via jobs. See docs/REFLECTION.md § Scheduled Job. Run 'openclaw hybrid-mem verify --fix' to add.");
           }
           log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
@@ -4115,6 +4171,10 @@ const memoryHybridPlugin = {
           const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
           if (allOk) {
             log("\nAll checks passed.");
+            if (restartPending) {
+              process.exitCode = 2; // Scripting: 2 = restart pending (gateway restart recommended)
+            }
+            log("Note: If you see 'plugins.allow is empty' above, it is from OpenClaw. Optional: set plugins.allow to [\"openclaw-hybrid-memory\"] in openclaw.json for an explicit allow-list.");
             if (!nightlySweepDefined) {
               log("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.");
             }
@@ -4177,6 +4237,51 @@ const memoryHybridPlugin = {
                 if (!existsSync(memoryDirPath)) {
                   mkdirSync(memoryDirPath, { recursive: true });
                   applied.push("Created memory directory: " + memoryDirPath);
+                }
+                const cronDir = join(openclawDir, "cron");
+                const cronStorePath = join(cronDir, "jobs.json");
+                const nightlyJob = {
+                  name: "nightly-memory-sweep",
+                  schedule: "0 2 * * *",
+                  channel: "system",
+                  message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Then run openclaw hybrid-mem record-distill.",
+                  isolated: true,
+                  model: "gemini",
+                };
+                const weeklyJob = {
+                  name: "weekly-reflection",
+                  schedule: "0 3 * * 0",
+                  channel: "system",
+                  message: "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.",
+                  isolated: true,
+                  model: "gemini",
+                };
+                try {
+                  mkdirSync(cronDir, { recursive: true });
+                  let store: { jobs?: unknown[] } = {};
+                  if (existsSync(cronStorePath)) {
+                    store = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+                  }
+                  if (!Array.isArray(store.jobs)) store.jobs = [];
+                  const jobs = store.jobs as Array<Record<string, unknown>>;
+                  const hasNightly = jobs.some((j) => j && String(j.name).toLowerCase().includes("nightly-memory-sweep"));
+                  const hasWeekly = jobs.some((j) => j && /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")));
+                  let jobsChanged = false;
+                  if (!hasNightly) {
+                    jobs.push(nightlyJob as Record<string, unknown>);
+                    jobsChanged = true;
+                    applied.push("Added nightly-memory-sweep job to " + cronStorePath);
+                  }
+                  if (!hasWeekly) {
+                    jobs.push(weeklyJob as Record<string, unknown>);
+                    jobsChanged = true;
+                    applied.push("Added weekly-reflection job to " + cronStorePath);
+                  }
+                  if (jobsChanged) {
+                    writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
+                  }
+                } catch (e) {
+                  log("Could not add optional jobs to cron store: " + String(e));
                 }
                 if (changed) {
                   writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
@@ -5393,6 +5498,148 @@ const memoryHybridPlugin = {
           return { ok: true, version: installedVersion, pluginDir: extDir };
         }
 
+        function getPluginConfigFromFile(configPath: string): { config: Record<string, unknown>; root: Record<string, unknown> } | { error: string } {
+          if (!existsSync(configPath)) return { error: `Config not found: ${configPath}` };
+          let root: Record<string, unknown>;
+          try {
+            root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+          } catch (e) {
+            return { error: `Could not read config: ${e}` };
+          }
+          if (!root.plugins || typeof root.plugins !== "object") root.plugins = {};
+          const plugins = root.plugins as Record<string, unknown>;
+          if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
+          const entries = plugins.entries as Record<string, unknown>;
+          if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = { enabled: true, config: {} };
+          const entry = entries[PLUGIN_ID] as Record<string, unknown>;
+          if (!entry.config || typeof entry.config !== "object") entry.config = {};
+          const config = entry.config as Record<string, unknown>;
+          // Repair: credentials must be an object (schema). If written as boolean, normalize so next write is valid.
+          if (config.credentials === true || config.credentials === false) {
+            config.credentials = { enabled: config.credentials };
+          }
+          return { config, root };
+        }
+
+        function setNested(obj: Record<string, unknown>, path: string, value: unknown): void {
+          const parts = path.split(".");
+          let cur: Record<string, unknown> = obj;
+          for (let i = 0; i < parts.length - 1; i++) {
+            const p = parts[i];
+            if (!(p in cur) || typeof (cur as any)[p] !== "object" || (cur as any)[p] === null) (cur as any)[p] = {};
+            cur = (cur as any)[p] as Record<string, unknown>;
+          }
+          const last = parts[parts.length - 1];
+          const v =
+            value === "true" || value === "enabled"
+              ? true
+              : value === "false" || value === "disabled"
+                ? false
+                : value === "null"
+                  ? null
+                  : /^-?\d+$/.test(String(value))
+                    ? parseInt(String(value), 10)
+                    : /^-?\d*\.\d+$/.test(String(value))
+                      ? parseFloat(String(value))
+                      : value;
+          (cur as any)[last] = v;
+        }
+
+        function getNested(obj: Record<string, unknown>, path: string): unknown {
+          const parts = path.split(".");
+          let cur: unknown = obj;
+          for (const p of parts) cur = (cur as Record<string, unknown>)?.[p];
+          return cur;
+        }
+
+        const MAX_DESC_LEN = 280;
+
+        function runConfigSetHelpForCli(key: string): ConfigCliResult {
+          const k = key.trim();
+          if (!k) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled)" };
+          const openclawDir = join(homedir(), ".openclaw");
+          const configPath = join(openclawDir, "openclaw.json");
+          const out = getPluginConfigFromFile(configPath);
+          if ("error" in out) return { ok: false, error: out.error };
+          const current = getNested(out.config, k);
+          const currentStr = current === undefined ? "(not set)" : typeof current === "string" ? current : JSON.stringify(current);
+          let desc = "";
+          try {
+            const extDir = dirname(fileURLToPath(import.meta.url));
+            const pluginPath = join(extDir, "openclaw.plugin.json");
+            if (existsSync(pluginPath)) {
+              const plugin = JSON.parse(readFileSync(pluginPath, "utf-8")) as { uiHints?: Record<string, { help?: string; label?: string }> };
+              const hint = plugin.uiHints?.[k];
+              if (hint?.help) {
+                desc = hint.help.length > MAX_DESC_LEN ? hint.help.slice(0, MAX_DESC_LEN - 3) + "..." : hint.help;
+              } else if (hint?.label) {
+                desc = hint.label;
+              }
+            }
+          } catch {
+            // ignore
+          }
+          if (!desc) desc = "No description for this key.";
+          const lines = [`${k} = ${currentStr}`, "", desc];
+          return { ok: true, configPath, message: lines.join("\n") };
+        }
+
+        function runConfigModeForCli(mode: string): ConfigCliResult {
+          const valid: ConfigMode[] = ["essential", "normal", "expert", "full"];
+          if (!valid.includes(mode as ConfigMode)) {
+            return { ok: false, error: `Invalid mode: ${mode}. Use one of: ${valid.join(", ")}` };
+          }
+          const openclawDir = join(homedir(), ".openclaw");
+          const configPath = join(openclawDir, "openclaw.json");
+          const out = getPluginConfigFromFile(configPath);
+          if ("error" in out) return { ok: false, error: out.error };
+          out.config.mode = mode;
+          try {
+            writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+            writeFileSync(getRestartPendingPath(), "", "utf-8");
+          } catch (e) {
+            return { ok: false, error: `Could not write config: ${e}` };
+          }
+          return { ok: true, configPath, message: `Set mode to "${mode}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+        }
+
+        function runConfigSetForCli(key: string, value: string): ConfigCliResult {
+          if (!key.trim()) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled, store.fuzzyDedupe)" };
+          const k = key.trim();
+          const openclawDir = join(homedir(), ".openclaw");
+          const configPath = join(openclawDir, "openclaw.json");
+          const out = getPluginConfigFromFile(configPath);
+          if ("error" in out) return { ok: false, error: out.error };
+          // credentials must stay an object (schema); "config-set credentials true" → credentials.enabled = true
+          if (k === "credentials" && !k.includes(".")) {
+            const boolVal = value === "true" || value === "enabled";
+            const cred = out.config.credentials as Record<string, unknown> | undefined;
+            if (typeof cred !== "object" || cred === null) {
+              out.config.credentials = { enabled: boolVal };
+            } else {
+              (out.config.credentials as Record<string, unknown>).enabled = boolVal;
+            }
+            const written = (out.config.credentials as Record<string, unknown>).enabled;
+            try {
+              writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+              writeFileSync(getRestartPendingPath(), "", "utf-8");
+            } catch (e) {
+              return { ok: false, error: `Could not write config: ${e}` };
+            }
+            return { ok: true, configPath, message: `Set credentials.enabled = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+          }
+          setNested(out.config, k, value);
+          const written = getNested(out.config, k);
+          const writtenStr = typeof written === "string" ? written : JSON.stringify(written);
+          try {
+            writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+            writeFileSync(getRestartPendingPath(), "", "utf-8");
+          } catch (e) {
+            return { ok: false, error: `Could not write config: ${e}` };
+          }
+          return { ok: true, configPath, message: `Set ${key} = ${writtenStr}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+        }
+
         function runUninstallForCli(opts: { cleanAll: boolean; leaveConfig: boolean }): UninstallCliResult {
           const openclawDir = join(homedir(), ".openclaw");
           const configPath = join(openclawDir, "openclaw.json");
@@ -5471,6 +5718,9 @@ const memoryHybridPlugin = {
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
           runUpgrade: (v?: string) => runUpgradeForCli(v),
+          runConfigMode: (mode) => Promise.resolve(runConfigModeForCli(mode)),
+          runConfigSet: (key, value) => Promise.resolve(runConfigSetForCli(key, value)),
+          runConfigSetHelp: (key) => Promise.resolve(runConfigSetHelpForCli(key)),
           runFindDuplicates: (opts) =>
             runFindDuplicates(factsDb, embeddings, opts, api.logger),
           runConsolidate: (opts) =>
@@ -5538,9 +5788,17 @@ const memoryHybridPlugin = {
     // Lifecycle Hooks
     // ========================================================================
 
-    // FR-006 + multi-agent: Agent detection must run independently of autoRecall
+    // Agent detection must run independently of autoRecall
     // to support multi-agent scoping even when autoRecall is disabled
     api.on("before_agent_start", async (event: unknown) => {
+      if (!restartPendingCleared && existsSync(getRestartPendingPath())) {
+        try {
+          unlinkSync(getRestartPendingPath());
+        } catch {
+          // ignore
+        }
+        restartPendingCleared = true;
+      }
       const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
       
       // Detect current agent identity at runtime
@@ -5548,11 +5806,11 @@ const memoryHybridPlugin = {
       if (detectedAgentId) {
         currentAgentId = detectedAgentId;
       } else {
-        // Issue #9: Log when agent detection fails - fall back to orchestrator
+        // Log when agent detection fails - fall back to orchestrator
         api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
         currentAgentId = cfg.multiAgent.orchestratorId;
         
-        // Issue #9: Warn when we're in agent/auto mode but had to fall back
+        // Warn when we're in agent/auto mode but had to fall back
         if (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto") {
           api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
         }
@@ -5566,7 +5824,7 @@ const memoryHybridPlugin = {
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
-          // FR-009: Use configurable candidate pool for progressive disclosure
+          // Use configurable candidate pool for progressive disclosure
           const fmt = cfg.autoRecall.injectionFormat;
           const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
           const searchLimit = isProgressive
@@ -5576,7 +5834,7 @@ const memoryHybridPlugin = {
           const limit = searchLimit;
           const tierFilter = cfg.memoryTiering.enabled ? "warm" : "all";
           
-          // FR-006 + multi-agent: Build scope filter dynamically from detected agentId
+          // Build scope filter dynamically from detected agentId
           // Merge agent-detected scope with configured scopeFilter for multi-tenant support
           let scopeFilter: ScopeFilter | undefined;
           if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
@@ -5601,8 +5859,8 @@ const memoryHybridPlugin = {
             scopeFilter = undefined;
           }
 
-          // Procedural memory: inject relevant procedures and negative warnings (issue #23)
-          // FR-006 + multi-agent: Apply scope filter to procedure search
+          // Procedural memory: inject relevant procedures and negative warnings
+          // Apply scope filter to procedure search
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
             const rankedProcs = factsDb.searchProceduresRanked(e.prompt, 5, cfg.distill?.reinforcementProcedureBoost ?? 0.1, scopeFilter);
@@ -5658,7 +5916,7 @@ const memoryHybridPlugin = {
           }
           const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
 
-          // FR-004: HOT tier — always inject first (cap by hotMaxTokens)
+          // HOT tier — always inject first (cap by hotMaxTokens)
           let hotBlock = "";
           if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
             const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens, scopeFilter);
@@ -5696,7 +5954,7 @@ const memoryHybridPlugin = {
             const vector = await embeddings.embed(textToEmbed);
             lanceResults = await vectorDb.search(vector, limit * 2, minScore);
             lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
-            // FR-005: Enrich lance results with full entry and apply dynamic salience
+            // Enrich lance results with full entry and apply dynamic salience
             lanceResults = lanceResults.map((r) => {
               const fullEntry = factsDb.getById(r.entry.id);
               if (fullEntry) {
@@ -5716,7 +5974,7 @@ const memoryHybridPlugin = {
 
           let candidates = mergeResults(ftsResults, lanceResults, limit, factsDb);
 
-          // FR-004: Exclude COLD tier from auto-recall (only HOT + WARM)
+          // Exclude COLD tier from auto-recall (only HOT + WARM)
           if (cfg.memoryTiering.enabled && candidates.length > 0) {
             candidates = candidates.filter((r) => {
               const full = factsDb.getById(r.entry.id);
@@ -5776,7 +6034,7 @@ const memoryHybridPlugin = {
                         );
                 s *= importanceFactor * recencyFactor;
               }
-              // FR-005: Access-count salience boost — frequently recalled facts score higher
+              // Access-count salience boost — frequently recalled facts score higher
               const recallCount = r.entry.recallCount ?? 0;
               if (recallCount > 0) {
                 s *= 1 + 0.1 * Math.log(recallCount + 1);
@@ -5796,7 +6054,7 @@ const memoryHybridPlugin = {
             summarizeModel,
           } = cfg.autoRecall;
 
-          // FR-009: Progressive disclosure — inject a lightweight index, let the agent decide what to fetch
+          // Progressive disclosure — inject a lightweight index, let the agent decide what to fetch
           const indexCap = cfg.autoRecall.progressiveIndexMaxTokens ?? maxTokens;
           const groupByCategory = cfg.autoRecall.progressiveGroupByCategory === true;
 
@@ -5899,7 +6157,7 @@ const memoryHybridPlugin = {
             if (indexIds.length > 0) {
               factsDb.refreshAccessedFacts(indexIds);
             }
-            // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together
             const allIds = [...pinned.map((r) => r.entry.id), ...indexIds];
             if (cfg.graph.enabled && allIds.length >= 2) {
               for (let i = 0; i < allIds.length; i++) {
@@ -5936,7 +6194,7 @@ const memoryHybridPlugin = {
             lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
             factsDb.refreshAccessedFacts(includedIds);
-            // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together
             if (cfg.graph.enabled && includedIds.length >= 2) {
               for (let i = 0; i < includedIds.length; i++) {
                 for (let j = i + 1; j < includedIds.length; j++) {
@@ -5985,9 +6243,9 @@ const memoryHybridPlugin = {
             return hotBlock ? { prependContext: hotBlock } : undefined;
           }
 
-          // FR-005: Access tracking for injected memories
+          // Access tracking for injected memories
           factsDb.refreshAccessedFacts(injectedIds);
-          // FR-005 Hebbian: Strengthen RELATED_TO links between facts recalled together
+          // Hebbian: Strengthen RELATED_TO links between facts recalled together
           if (cfg.graph.enabled && injectedIds.length >= 2) {
             for (let i = 0; i < injectedIds.length; i++) {
               for (let j = i + 1; j < injectedIds.length; j++) {
@@ -6060,7 +6318,7 @@ const memoryHybridPlugin = {
       });
     }
 
-    // FR-047: Auto-recall on authentication failures (reactive memory trigger)
+    // Auto-recall on authentication failures (reactive memory trigger)
     // Track auth failures per target per session to avoid spam
     const authFailureRecallsThisSession = new Map<string, number>();
     
@@ -6130,7 +6388,7 @@ const memoryHybridPlugin = {
           api.logger.info?.(`memory-hybrid: auth failure detected for ${detection.target} (${detection.hint}), searching for credentials...`);
           
           // Search for credential facts
-          // FR-006: Apply scope filter (global + current agent)
+          // Apply scope filter (global + current agent)
           const detectedAgentId = currentAgentId || cfg.multiAgent.orchestratorId;
           const scopeFilter: ScopeFilter | undefined = detectedAgentId && detectedAgentId !== cfg.multiAgent.orchestratorId
             ? { userId: cfg.autoRecall.scopeFilter?.userId ?? null, agentId: detectedAgentId, sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null }
@@ -6141,7 +6399,7 @@ const memoryHybridPlugin = {
           const vector = await embeddings.embed(query);
           let lanceResults = await vectorDb.search(vector, 5, 0.3);
           
-          // FR-006: Filter LanceDB results by scope using filterByScope (LanceDB doesn't store scope metadata)
+          // Filter LanceDB results by scope using filterByScope (LanceDB doesn't store scope metadata)
           lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
           
           // Merge and filter for credential-related facts
@@ -6152,7 +6410,7 @@ const memoryHybridPlugin = {
             factsDb,
           );
           
-          // FR-006: Validate merged results against scope (merged results may not have scope metadata)
+          // Validate merged results against scope (merged results may not have scope metadata)
           const scopeValidatedMerged = scopeFilter
             ? merged.filter((r) => factsDb.getById(r.entry.id, { scopeFilter }) != null)
             : merged;
@@ -6207,7 +6465,7 @@ const memoryHybridPlugin = {
       });
     }
 
-    // FR-047: Clear auth failure dedup map on session end
+    // Clear auth failure dedup map on session end
     if (cfg.autoRecall.enabled && cfg.autoRecall.authFailure.enabled) {
       api.on("agent_end", async () => {
         authFailureRecallsThisSession.clear();
@@ -6215,7 +6473,7 @@ const memoryHybridPlugin = {
       });
     }
     
-    // FR-004: Compaction on session end — migrate completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT
+    // Compaction on session end — migrate completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT
     if (cfg.memoryTiering.enabled && cfg.memoryTiering.compactionOnSessionEnd) {
       api.on("agent_end", async () => {
         try {
@@ -6292,7 +6550,7 @@ const memoryHybridPlugin = {
                 ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
                 : undefined;
 
-            // Generate vector once (used for FR-008 classification by embedding similarity and for storage)
+            // Generate vector once (used for classification by embedding similarity and for storage)
             let vector: number[] | undefined;
             try {
               vector = await embeddings.embed(textToStore);
@@ -6300,7 +6558,7 @@ const memoryHybridPlugin = {
               api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
 
-            // FR-008: Classify before auto-capture using embedding similarity, fallback to entity/key (issue #8)
+            // Classify before auto-capture using embedding similarity, fallback to entity/key
             if (cfg.store.classifyBeforeWrite) {
               let similarFacts: MemoryEntry[] = vector
                 ? await findSimilarByEmbedding(vectorDb, factsDb, vector, 3)
@@ -6490,8 +6748,8 @@ const memoryHybridPlugin = {
       });
     }
 
-    // Tool-call credential auto-capture: scan tool call inputs for credential patterns and store in vault
-    if (cfg.credentials.enabled && credentialsDb && cfg.credentials.autoCapture?.toolCalls) {
+    // Tool-call credential auto-capture: scan tool call inputs for credential patterns; store in vault or in memory (no vault)
+    if (cfg.credentials.enabled && cfg.credentials.autoCapture?.toolCalls) {
       const logCaptures = cfg.credentials.autoCapture.logCaptures !== false;
 
       api.on("agent_end", async (event: unknown) => {
@@ -6529,14 +6787,43 @@ const memoryHybridPlugin = {
               
               const creds = extractCredentialsFromToolCalls(argsToScan || args);
               for (const cred of creds) {
-                if (!credentialsDb) continue;
-                credentialsDb.store({
-                  service: cred.service,
-                  type: cred.type,
-                  value: cred.value,
-                  url: cred.url,
-                  notes: cred.notes,
-                });
+                if (credentialsDb) {
+                  credentialsDb.store({
+                    service: cred.service,
+                    type: cred.type,
+                    value: cred.value,
+                    url: cred.url,
+                    notes: cred.notes,
+                  });
+                } else {
+                  // Memory-only: store as fact (no vault)
+                  const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}. Stored in memory.`;
+                  const entry = factsDb.store({
+                    text,
+                    category: "technical" as MemoryCategory,
+                    importance: 0.9,
+                    entity: "Credentials",
+                    key: cred.service,
+                    value: cred.value,
+                    source: "conversation",
+                    decayClass: "permanent",
+                    tags: ["auth", "credential"],
+                  });
+                  try {
+                    const vector = await embeddings.embed(text);
+                    if (!(await vectorDb.hasDuplicate(vector))) {
+                      await vectorDb.store({
+                        text,
+                        vector,
+                        importance: 0.9,
+                        category: "technical",
+                        id: entry.id,
+                      });
+                    }
+                  } catch (err) {
+                    api.logger.warn(`memory-hybrid: vector store for credential fact failed: ${err}`);
+                  }
+                }
                 if (logCaptures) {
                   api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
                 }
@@ -6616,7 +6903,7 @@ const memoryHybridPlugin = {
                       tags,
                     });
 
-                    // Store to LanceDB (async, best effort) with same fact id for FR-008
+                    // Store to LanceDB (async, best effort) with same fact id for classification
                     if (entry.data.vector) {
                       void vectorDb.store({
                         text,
@@ -6851,10 +7138,10 @@ export const _testing = {
   VectorDB,
   Embeddings,
   WriteAheadLog,
-  // FR-008 classification (for tests)
+  // Classification (for tests)
   parseClassificationResponse,
   findSimilarByEmbedding,
-  // FR-011 reflection parsing (for tests)
+  // Reflection parsing (for tests)
   parsePatternsFromReflectionResponse,
 };
 

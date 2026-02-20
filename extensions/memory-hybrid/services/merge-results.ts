@@ -1,6 +1,6 @@
 /**
  * Merge SQLite and LanceDB search results using Reciprocal Rank Fusion (RRF).
- * FR-006: LanceDB results should be pre-filtered by scope before merging (SQLite results are already filtered).
+ * LanceDB results should be pre-filtered by scope before merging (SQLite results are already filtered).
  *
  * RRF (Cormack et al., 2009): rank-based fusion so BM25 and cosine scores (incompatible scales)
  * are comparable. rrf_score = sum(1/(k + rank)) per result; items ranking well in BOTH lists
@@ -23,7 +23,7 @@ export interface MergeOptions {
   k?: number;
 }
 
-/** FR-006: Filter LanceDB results by scope. Uses getById(id, { scopeFilter }) — returns null when not in scope. */
+/** Filter LanceDB results by scope. Uses getById(id, { scopeFilter }) — returns null when not in scope. */
 export function filterByScope<T extends SearchResult>(
   results: T[],
   getById: (id: string, opts?: { scopeFilter?: ScopeFilter | null }) => unknown,

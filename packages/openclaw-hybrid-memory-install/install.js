@@ -3,12 +3,18 @@
  * Standalone installer for openclaw-hybrid-memory.
  * Use when OpenClaw config validation fails (e.g. "plugin not found").
  * Run: npx -y openclaw-hybrid-memory-install
+ * Fix broken credentials config (without loading plugin): npx -y openclaw-hybrid-memory-install fix-config
  */
 const { execSync } = require("child_process");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 
+if (process.argv[2] === "fix-config") {
+  require(path.join(__dirname, "fix-config.js"));
+  process.exit(0);
+}
+
+const os = require("os");
 const version = process.argv[2] || "latest";
 const extDir =
   process.env.OPENCLAW_EXTENSIONS_DIR ||
