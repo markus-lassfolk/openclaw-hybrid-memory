@@ -130,12 +130,12 @@ This adds:
 - Embedding API reachability
 - Credentials vault (if enabled)
 - Session distillation last run
-- Optional/suggested jobs (nightly-memory-sweep, weekly-reflection)
+- Optional/suggested jobs (nightly-memory-sweep, weekly-reflection, weekly-extract-procedures, self-correction-analysis)
 - Feature flags (autoCapture, autoRecall, autoClassify, credentials, fuzzyDedupe, classifyBeforeWrite)
 
 Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **other**, with **fixes for each**.
 
-`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs (adds `nightly-memory-sweep` and `weekly-reflection` to `~/.openclaw/cron/jobs.json` when missing).
+`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs (adds `nightly-memory-sweep`, `weekly-reflection`, `weekly-extract-procedures`, and `self-correction-analysis` to the cron store and to `openclaw.json` when it has a `jobs` array).
 `--log-file <path>` scans the file for memory-hybrid or cron errors.
 
 **Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect).
