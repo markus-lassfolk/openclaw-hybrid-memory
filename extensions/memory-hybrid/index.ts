@@ -514,7 +514,7 @@ const TOOL_CALL_CREDENTIAL_PATTERNS: Array<{
 }> = [
   // sshpass -p <password> ssh [options] <user>@<host>
   {
-    regex: /sshpass\s+-p\s+(\S+)\s+ssh(?:\s+\S+)*\s+([\w.-]+)@([\w.-]+)/i,
+    regex: /sshpass[ \t]+-p[ \t]+(\S+)[ \t]+ssh(?:[ \t]+\S+)*[ \t]+([\w.-]+)@([\w.-]+)/i,
     extract(m) {
       const [, pass, user, host] = m;
       if (!pass || pass.length < 4) return null;
@@ -592,14 +592,16 @@ function extractCredentialsFromToolCalls(text: string): ToolCallCredential[] {
   const results: ToolCallCredential[] = [];
   const seen = new Set<string>();
   for (const { regex, extract } of TOOL_CALL_CREDENTIAL_PATTERNS) {
-    const match = regex.exec(text);
-    if (!match) continue;
-    const cred = extract(match, text);
-    if (!cred || cred.value.length < 4) continue;
-    const key = `${cred.service}:${cred.type}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      results.push(cred);
+    // Use a global copy of the regex so we find all occurrences, not just the first.
+    const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : regex.flags + "g");
+    for (const match of text.matchAll(globalRegex)) {
+      const cred = extract(match, text);
+      if (!cred || cred.value.length < 4) continue;
+      const key = `${cred.service}:${cred.type}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push(cred);
+      }
     }
   }
   return results;
