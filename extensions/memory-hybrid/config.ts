@@ -723,6 +723,29 @@ export const hybridConfigSchema = {
       maxAge: typeof walRaw?.maxAge === "number" && walRaw.maxAge > 0 ? walRaw.maxAge : 5 * 60 * 1000,
     };
 
+    // Helper to parse credential autoCapture and expiryWarningDays (shared between vault and memory-only modes)
+    function parseCredentialOptions(credRaw: Record<string, unknown> | undefined): {
+      autoCapture: CredentialAutoCaptureConfig | undefined;
+      autoDetect: boolean;
+      expiryWarningDays: number;
+    } {
+      const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
+      const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
+        ? {
+            toolCalls: autoCaptureRaw.toolCalls === true,
+            patterns: "builtin",
+            logCaptures: autoCaptureRaw.logCaptures !== false,
+          }
+        : undefined;
+      return {
+        autoCapture,
+        autoDetect: credRaw?.autoDetect === true,
+        expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
+          ? Math.floor(credRaw.expiryWarningDays)
+          : 7,
+      };
+    }
+
     // Parse credentials config (opt-in). Enable automatically when a valid encryption key is set.
     const credRaw = cfg.credentials as Record<string, unknown> | undefined;
     const explicitlyDisabled = credRaw?.enabled === false;
@@ -734,7 +757,7 @@ export const hybridConfigSchema = {
       if (val) {
         encryptionKey = val;
       } else if (credRaw?.enabled === true) {
-        throw new Error(`credentials.enabled is true but environment variable ${envVar} is not set. Set the variable or use a direct key (not recommended for production).`);
+        throw new Error(`Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or use memory-only (omit credentials.encryptionKey). Run 'openclaw hybrid-mem verify --fix' for help.`);
       }
     } else if (encKeyRaw.length >= 16) {
       encryptionKey = encKeyRaw;
@@ -744,23 +767,12 @@ export const hybridConfigSchema = {
 
     let credentials: CredentialsConfig;
     if (shouldEnable && hasValidKey) {
-      const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
-      const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
-        ? {
-            toolCalls: autoCaptureRaw.toolCalls === true,
-            patterns: "builtin",
-            logCaptures: autoCaptureRaw.logCaptures !== false,
-          }
-        : undefined;
+      const opts = parseCredentialOptions(credRaw);
       credentials = {
         enabled: true,
         store: "sqlite",
         encryptionKey,
-        autoDetect: credRaw?.autoDetect === true,
-        autoCapture,
-        expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
-          ? Math.floor(credRaw.expiryWarningDays)
-          : 7,
+        ...opts,
       };
     } else if (shouldEnable && !hasValidKey) {
       // User explicitly set an encryption key but it's invalid or unresolved → fail fast (no silent fallback to unencrypted).
@@ -779,23 +791,12 @@ export const hybridConfigSchema = {
       if (credRaw?.enabled === true) {
         console.warn("⚠️  credentials.enabled but encryptionKey is missing or too short — running in capture-only mode (no persistent vault)");
       }
-      const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
-      const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
-        ? {
-            toolCalls: autoCaptureRaw.toolCalls === true,
-            patterns: "builtin",
-            logCaptures: autoCaptureRaw.logCaptures !== false,
-          }
-        : undefined;
+      const opts = parseCredentialOptions(credRaw);
       credentials = {
         enabled: true,
         store: "sqlite",
         encryptionKey: "",
-        autoDetect: credRaw?.autoDetect === true,
-        autoCapture,
-        expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
-          ? Math.floor(credRaw.expiryWarningDays)
-          : 7,
+        ...opts,
       };
     } else {
       credentials = {
@@ -1068,7 +1069,7 @@ export const hybridConfigSchema = {
       selfCorrection,
       multiAgent,
       errorReporting,
-      mode: appliedMode !== undefined && hasPresetOverrides ? undefined : appliedMode,
+      mode: appliedMode !== undefined && hasPresetOverrides ? "custom" : appliedMode,
     };
   },
 };

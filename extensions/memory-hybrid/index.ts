@@ -3977,7 +3977,11 @@ const memoryHybridPlugin = {
           }
           const bool = (b: boolean) => String(b);
           const restartPending = existsSync(getRestartPendingPath());
-          const modeLabel = cfg.mode ? `Mode: ${cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)} (preset)` : "Mode: Custom";
+          const modeLabel = cfg.mode 
+            ? cfg.mode === "custom" 
+              ? "Mode: Custom" 
+              : `Mode: ${cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)} (preset)` 
+            : "Mode: Custom";
           log(`\n${modeLabel}${restartPending ? " — restart pending" : ""}`);
           log("\nFeatures (all on/off toggles, values match config true/false):");
           log(`  autoCapture: ${bool(cfg.autoCapture)}`);
@@ -6808,7 +6812,7 @@ const memoryHybridPlugin = {
                   });
                 } else {
                   // Memory-only: store as fact (no vault)
-                  const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}. Stored in memory.`;
+                  const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}.`;
                   const entry = factsDb.store({
                     text,
                     category: "technical" as MemoryCategory,
