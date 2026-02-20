@@ -130,7 +130,7 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
 export function scrubString(input: string): string {
   return input
     // API keys (OpenAI, Anthropic, GitHub)
-    .replace(/sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g, '[REDACTED]')  // OpenAI (sk-, sk-proj-)
+    .replace(/sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})/g, '[REDACTED]')  // OpenAI (sk-, sk-proj-)
     .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, '[REDACTED]')       // Anthropic
     .replace(/ghp_[A-Za-z0-9]{36}/g, '[REDACTED]')             // GitHub
     .replace(/Bearer\s+[\w.-]+/gi, '[REDACTED]')
