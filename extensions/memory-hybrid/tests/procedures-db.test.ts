@@ -339,4 +339,182 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
       }
     }
   });
+
+  // ========================================================================
+  // FR-006 + multi-agent: Procedure Scoping Tests (Issue #3)
+  // ========================================================================
+
+  it("migrateProcedureScopeColumns adds scope and scope_target columns", () => {
+    // Create a procedure to verify columns exist
+    const proc = db.upsertProcedure({
+      taskPattern: "Test scoping",
+      recipeJson: "[]",
+      procedureType: "positive",
+    });
+    expect(proc.id).toBeDefined();
+    // If migration didn't run, upsertProcedure would fail on missing columns
+  });
+
+  it("upsertProcedure stores procedure with agent scope", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Forge-specific procedure",
+      recipeJson: JSON.stringify([{ tool: "exec", args: { command: "git commit" } }]),
+      procedureType: "positive",
+      scope: "agent",
+      scopeTarget: "forge",
+    });
+    expect(proc.scope).toBe("agent");
+    expect(proc.scopeTarget).toBe("forge");
+  });
+
+  it("upsertProcedure defaults to global scope when not specified", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Default scope procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+    });
+    expect(proc.scope).toBe("global");
+    expect(proc.scopeTarget).toBeNull();
+  });
+
+  it("searchProcedures with scopeFilter returns only matching scoped procedures", () => {
+    // Create procedures with different scopes
+    db.upsertProcedure({
+      taskPattern: "Global procedure for everyone",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "global",
+    });
+    db.upsertProcedure({
+      taskPattern: "Forge git commit procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "agent",
+      scopeTarget: "forge",
+    });
+    db.upsertProcedure({
+      taskPattern: "Hearth HA automation procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "agent",
+      scopeTarget: "hearth",
+    });
+
+    // Search with Forge scope filter
+    const forgeResults = db.searchProcedures("procedure", 10, 0.1, { 
+      userId: null, 
+      agentId: "forge", 
+      sessionId: null 
+    });
+    // Should see: global + forge-specific (NOT hearth)
+    expect(forgeResults.some((p) => p.taskPattern.includes("Global"))).toBe(true);
+    expect(forgeResults.some((p) => p.taskPattern.includes("Forge"))).toBe(true);
+    expect(forgeResults.some((p) => p.taskPattern.includes("Hearth"))).toBe(false);
+
+    // Search with Hearth scope filter
+    const hearthResults = db.searchProcedures("procedure", 10, 0.1, {
+      userId: null,
+      agentId: "hearth",
+      sessionId: null,
+    });
+    // Should see: global + hearth-specific (NOT forge)
+    expect(hearthResults.some((p) => p.taskPattern.includes("Global"))).toBe(true);
+    expect(hearthResults.some((p) => p.taskPattern.includes("Hearth"))).toBe(true);
+    expect(hearthResults.some((p) => p.taskPattern.includes("Forge"))).toBe(false);
+  });
+
+  it("searchProceduresRanked with scopeFilter returns only matching scoped procedures", () => {
+    // Create procedures with different scopes
+    db.upsertProcedure({
+      taskPattern: "Global ranked procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "global",
+      successCount: 5,
+    });
+    db.upsertProcedure({
+      taskPattern: "Forge ranked git procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "agent",
+      scopeTarget: "forge",
+      successCount: 5,
+    });
+    db.upsertProcedure({
+      taskPattern: "Hearth ranked HA procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "agent",
+      scopeTarget: "hearth",
+      successCount: 5,
+    });
+
+    // Search with Forge scope filter
+    const forgeResults = db.searchProceduresRanked("procedure", 10, 0.1, {
+      userId: null,
+      agentId: "forge",
+      sessionId: null,
+    });
+    // Should see: global + forge-specific (NOT hearth)
+    expect(forgeResults.some((p) => p.taskPattern.includes("Global"))).toBe(true);
+    expect(forgeResults.some((p) => p.taskPattern.includes("Forge"))).toBe(true);
+    expect(forgeResults.some((p) => p.taskPattern.includes("Hearth"))).toBe(false);
+  });
+
+  it("getNegativeProceduresMatching with scopeFilter respects scope boundaries", () => {
+    // Create negative procedures with different scopes
+    db.upsertProcedure({
+      taskPattern: "Global failure everyone knows",
+      recipeJson: "[]",
+      procedureType: "negative",
+      scope: "global",
+    });
+    db.upsertProcedure({
+      taskPattern: "Forge specific git failure",
+      recipeJson: "[]",
+      procedureType: "negative",
+      scope: "agent",
+      scopeTarget: "forge",
+    });
+
+    // Forge should see both global and forge-specific failures
+    const forgeNegs = db.getNegativeProceduresMatching("failure", 10, {
+      userId: null,
+      agentId: "forge",
+      sessionId: null,
+    });
+    expect(forgeNegs.some((p) => p.taskPattern.includes("Global"))).toBe(true);
+    expect(forgeNegs.some((p) => p.taskPattern.includes("Forge"))).toBe(true);
+
+    // Hearth should only see global failure (NOT forge-specific)
+    const hearthNegs = db.getNegativeProceduresMatching("failure", 10, {
+      userId: null,
+      agentId: "hearth",
+      sessionId: null,
+    });
+    expect(hearthNegs.some((p) => p.taskPattern.includes("Global"))).toBe(true);
+    expect(hearthNegs.some((p) => p.taskPattern.includes("Forge"))).toBe(false);
+  });
+
+  it("searchProcedures without scopeFilter returns all procedures (backward compatible)", () => {
+    db.upsertProcedure({
+      taskPattern: "Global procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "global",
+    });
+    db.upsertProcedure({
+      taskPattern: "Agent procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      scope: "agent",
+      scopeTarget: "forge",
+    });
+
+    // No scope filter = see all procedures (orchestrator view)
+    const allResults = db.searchProcedures("procedure", 10);
+    expect(allResults.length).toBeGreaterThanOrEqual(2);
+    expect(allResults.some((p) => p.scope === "global")).toBe(true);
+    expect(allResults.some((p) => p.scope === "agent")).toBe(true);
+  });
 });
