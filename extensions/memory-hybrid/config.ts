@@ -200,11 +200,6 @@ export type CredentialAutoCaptureConfig = {
   toolCalls: boolean;
   /** Pattern set to use: "builtin" uses the built-in regex set (default: "builtin") */
   patterns?: "builtin";
-  /**
-   * When true, write to pending file and prompt next turn instead of storing immediately.
-   * Default false for tool calls since the agent already used the credential openly.
-   */
-  confirmBeforeStore?: boolean;
   /** Emit info-level log on each capture (default: true) */
   logCaptures?: boolean;
 };
@@ -539,7 +534,6 @@ export const hybridConfigSchema = {
         ? {
             toolCalls: autoCaptureRaw.toolCalls === true,
             patterns: "builtin",
-            confirmBeforeStore: autoCaptureRaw.confirmBeforeStore === true,
             logCaptures: autoCaptureRaw.logCaptures !== false,
           }
         : undefined;
