@@ -369,7 +369,7 @@ const SENSITIVE_PATTERNS = [
   /credit.?card/i,
   /AKIA[0-9A-Z]{16}/, // AWS access keys
   /-----BEGIN .*PRIVATE KEY/, // Private key headers (RSA, EC, etc.)
-  /:\/\/[^\s:]+:[^\s@]+@/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host)
+  /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host) - Note: usernames with colons will fail
 ];
 
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
