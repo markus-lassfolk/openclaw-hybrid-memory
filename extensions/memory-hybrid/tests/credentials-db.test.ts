@@ -27,26 +27,30 @@ afterEach(() => {
 
 describe("deriveKey", () => {
   it("returns a 32-byte Buffer (SHA-256)", () => {
-    const key = deriveKey("password");
+    const salt = Buffer.alloc(32);
+    const key = deriveKey("password", salt);
     expect(Buffer.isBuffer(key)).toBe(true);
     expect(key.length).toBe(32);
   });
 
-  it("same password produces same key", () => {
-    const k1 = deriveKey("test123");
-    const k2 = deriveKey("test123");
+  it("same password and salt produces same key", () => {
+    const salt = Buffer.alloc(32);
+    const k1 = deriveKey("test123", salt);
+    const k2 = deriveKey("test123", salt);
     expect(k1.equals(k2)).toBe(true);
   });
 
   it("different passwords produce different keys", () => {
-    const k1 = deriveKey("alpha");
-    const k2 = deriveKey("beta");
+    const salt = Buffer.alloc(32);
+    const k1 = deriveKey("alpha", salt);
+    const k2 = deriveKey("beta", salt);
     expect(k1.equals(k2)).toBe(false);
   });
 });
 
 describe("encryptValue / decryptValue", () => {
-  const key = deriveKey("test-key");
+  const salt = Buffer.alloc(32);
+  const key = deriveKey("test-key", salt);
 
   it("round-trips plaintext through encrypt then decrypt", () => {
     const plaintext = "super-secret-api-key-12345";
@@ -70,7 +74,8 @@ describe("encryptValue / decryptValue", () => {
 
   it("fails to decrypt with wrong key", () => {
     const encrypted = encryptValue("secret", key);
-    const wrongKey = deriveKey("wrong-password");
+    const wrongSalt = Buffer.alloc(32, 1);
+    const wrongKey = deriveKey("wrong-password", wrongSalt);
     expect(() => decryptValue(encrypted, wrongKey)).toThrow();
   });
 

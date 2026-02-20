@@ -159,7 +159,16 @@ function extractRule(text: string): string {
   while ((colonMatch = colonRegex.exec(trimmed)) !== null) {
     const wordBeforeColon = colonMatch[1].toLowerCase();
     if (URI_SCHEMES.has(wordBeforeColon)) {
-      colonRegex.lastIndex = colonMatch.index + colonMatch[1].length + 1;
+      // Skip past the URI by finding the next whitespace after the colon
+      // This prevents the greedy .+ from consuming directive colons that come after URIs
+      const uriStart = colonMatch.index;
+      const afterScheme = trimmed.substring(uriStart + colonMatch[1].length + 1);
+      const nextSpace = afterScheme.search(/\s/);
+      if (nextSpace !== -1) {
+        colonRegex.lastIndex = uriStart + colonMatch[1].length + 1 + nextSpace + 1;
+      } else {
+        colonRegex.lastIndex = trimmed.length;
+      }
       continue;
     }
     const afterColon = colonMatch[2].trim();
