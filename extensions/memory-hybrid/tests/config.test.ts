@@ -692,7 +692,7 @@ describe("hybridConfigSchema.parse", () => {
         mode: "essential" as ConfigMode,
         graph: { enabled: true },
       });
-      expect(result.mode).toBeUndefined(); // overrides → show "Custom" in verify
+      expect(result.mode).toBe("custom"); // overrides → show "Custom" in verify
       expect(result.graph.enabled).toBe(true);
       expect(result.autoClassify.enabled).toBe(false);
     });
