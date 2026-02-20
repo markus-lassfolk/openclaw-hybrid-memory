@@ -194,6 +194,21 @@ export const CREDENTIAL_TYPES = [
 ] as const;
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
+/** Auto-capture configuration for credential scanning from tool call inputs */
+export type CredentialAutoCaptureConfig = {
+  /** Enable scanning of tool call inputs for credential patterns (default: false, opt-in) */
+  toolCalls: boolean;
+  /** Pattern set to use: "builtin" uses the built-in regex set (default: "builtin") */
+  patterns?: "builtin";
+  /**
+   * When true, write to pending file and prompt next turn instead of storing immediately.
+   * Default false for tool calls since the agent already used the credential openly.
+   */
+  confirmBeforeStore?: boolean;
+  /** Emit info-level log on each capture (default: true) */
+  logCaptures?: boolean;
+};
+
 /** Opt-in credentials: structured, encrypted storage for API keys, tokens, etc. */
 export type CredentialsConfig = {
   enabled: boolean;
@@ -202,6 +217,8 @@ export type CredentialsConfig = {
   encryptionKey: string;
   /** When enabled, detect credential patterns in conversation and prompt to store (default false) */
   autoDetect?: boolean;
+  /** Auto-capture credentials from tool call inputs (default: disabled) */
+  autoCapture?: CredentialAutoCaptureConfig;
   /** Days before expiry to warn (default 7) */
   expiryWarningDays?: number;
 };
@@ -517,11 +534,21 @@ export const hybridConfigSchema = {
 
     let credentials: CredentialsConfig;
     if (shouldEnable && hasValidKey) {
+      const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
+      const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
+        ? {
+            toolCalls: autoCaptureRaw.toolCalls === true,
+            patterns: "builtin",
+            confirmBeforeStore: autoCaptureRaw.confirmBeforeStore === true,
+            logCaptures: autoCaptureRaw.logCaptures !== false,
+          }
+        : undefined;
       credentials = {
         enabled: true,
         store: "sqlite",
         encryptionKey,
         autoDetect: credRaw?.autoDetect === true,
+        autoCapture,
         expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
           ? Math.floor(credRaw.expiryWarningDays)
           : 7,
