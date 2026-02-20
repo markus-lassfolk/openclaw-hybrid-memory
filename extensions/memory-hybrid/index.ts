@@ -5511,25 +5511,30 @@ const memoryHybridPlugin = {
     // Lifecycle Hooks
     // ========================================================================
 
+    // FR-006 + multi-agent: Agent detection must run independently of autoRecall
+    // to support multi-agent scoping even when autoRecall is disabled
+    api.on("before_agent_start", async (event: unknown) => {
+      const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
+      
+      // Detect current agent identity at runtime
+      const detectedAgentId = e.agentId || e.session?.agentId || currentAgentId;
+      if (detectedAgentId) {
+        currentAgentId = detectedAgentId;
+      } else {
+        // Issue #9: Log when agent detection fails - fall back to orchestrator
+        api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
+        currentAgentId = cfg.multiAgent.orchestratorId;
+        
+        // Issue #9: Warn when we're in agent/auto mode but had to fall back
+        if (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto") {
+          api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
+        }
+      }
+    });
+
     if (cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event: unknown) => {
         const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
-        
-        // FR-006 + multi-agent: Detect current agent identity at runtime
-        // Must run before early return to avoid stale agent state
-        const detectedAgentId = e.agentId || e.session?.agentId || currentAgentId;
-        if (detectedAgentId) {
-          currentAgentId = detectedAgentId;
-        } else {
-          // Issue #9: Log when agent detection fails - fall back to orchestrator
-          api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
-          currentAgentId = cfg.multiAgent.orchestratorId;
-          
-          // Issue #9: Warn when we're in agent/auto mode but had to fall back
-          if (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto") {
-            api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
-          }
-        }
         
         if (!e.prompt || e.prompt.length < 5) return;
 
