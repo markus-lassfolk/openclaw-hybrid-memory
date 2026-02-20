@@ -537,4 +537,66 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.search?.hydeEnabled).toBe(true);
     expect(result.search?.hydeModel).toBe("gpt-4o-mini");
   });
+
+  it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.multiAgent).toBeDefined();
+    expect(result.multiAgent.orchestratorId).toBe("main");
+    expect(result.multiAgent.defaultStoreScope).toBe("global");
+  });
+
+  it("parses multiAgent config with custom orchestratorId", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      multiAgent: {
+        orchestratorId: "maeve",
+        defaultStoreScope: "global",
+      },
+    });
+    expect(result.multiAgent.orchestratorId).toBe("maeve");
+    expect(result.multiAgent.defaultStoreScope).toBe("global");
+  });
+
+  it("parses multiAgent config with defaultStoreScope='agent'", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      multiAgent: {
+        orchestratorId: "main",
+        defaultStoreScope: "agent",
+      },
+    });
+    expect(result.multiAgent.defaultStoreScope).toBe("agent");
+  });
+
+  it("parses multiAgent config with defaultStoreScope='auto'", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      multiAgent: {
+        orchestratorId: "main",
+        defaultStoreScope: "auto",
+      },
+    });
+    expect(result.multiAgent.defaultStoreScope).toBe("auto");
+  });
+
+  it("multiAgent.orchestratorId trims whitespace", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      multiAgent: {
+        orchestratorId: "  maeve  ",
+      },
+    });
+    expect(result.multiAgent.orchestratorId).toBe("maeve");
+  });
+
+  it("multiAgent.defaultStoreScope defaults to 'global' for invalid values", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      multiAgent: {
+        orchestratorId: "main",
+        defaultStoreScope: "invalid" as any,
+      },
+    });
+    expect(result.multiAgent.defaultStoreScope).toBe("global");
+  });
 });
