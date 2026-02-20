@@ -69,7 +69,7 @@ export function initErrorReporter(config: ErrorReporterConfig, pluginVersion: st
 /**
  * Sanitize event using ALLOWLIST approach: rebuild event with only safe fields
  */
-function sanitizeEvent(event: SentryType.Event): SentryType.Event | null {
+export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null {
   if (!event) return null;
 
   const safe: SentryType.Event = {
@@ -101,7 +101,12 @@ function sanitizeEvent(event: SentryType.Event): SentryType.Event | null {
       operation: event.tags?.operation,
     },
     contexts: event.contexts?.config_shape ? {
-      config_shape: event.contexts.config_shape,
+      config_shape: Object.fromEntries(
+        Object.entries(event.contexts.config_shape).map(([k, v]) => [
+          k,
+          typeof v === 'string' ? scrubString(v) : v
+        ])
+      ),
     } : undefined,
     // NO: user, request, breadcrumbs, contexts.device, extra
   };
@@ -112,10 +117,10 @@ function sanitizeEvent(event: SentryType.Event): SentryType.Event | null {
 /**
  * Scrub sensitive data from strings
  */
-function scrubString(input: string): string {
+export function scrubString(input: string): string {
   return input
     // API keys
-    .replace(/sk-[A-Za-z0-9]{20,}/g, '[REDACTED]')
+    .replace(/sk-[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
     .replace(/ghp_[A-Za-z0-9]{36}/g, '[REDACTED]')
     .replace(/Bearer\s+[\w.-]+/gi, '[REDACTED]')
     // Paths
@@ -132,7 +137,7 @@ function scrubString(input: string): string {
 /**
  * Sanitize file paths: keep only relative plugin paths
  */
-function sanitizePath(path: string): string {
+export function sanitizePath(path: string): string {
   // Keep only relative plugin paths
   const idx = path.indexOf('extensions/memory-hybrid/');
   if (idx >= 0) {

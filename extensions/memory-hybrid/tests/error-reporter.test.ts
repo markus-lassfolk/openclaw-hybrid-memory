@@ -81,90 +81,106 @@ describe("Error Reporter", () => {
   });
 
   describe("Privacy Requirements (via internal functions)", () => {
-    // These tests verify the scrubString and sanitizePath functions
-    // We can't easily test them without exposing them, but we document the requirements:
-    
-    it("should document scrubString requirements", () => {
-      // scrubString must:
-      // 1. Replace API keys like sk-xxx with [REDACTED]
-      // 2. Replace GitHub tokens like ghp_xxx with [REDACTED]
-      // 3. Replace Bearer tokens with [REDACTED]
-      // 4. Replace /home/username paths with $HOME
-      // 5. Replace /Users/username paths with $HOME
-      // 6. Replace email addresses with [EMAIL]
-      // 7. Replace IP addresses with [IP]
-      // 8. Truncate to 500 chars
+    it("should scrub old and modern OpenAI API keys", async () => {
+      const { scrubString } = await import("../services/error-reporter.js");
       
-      expect(true).toBe(true); // Placeholder - actual tests would verify the functions
+      expect(scrubString("Error with key sk-1234567890abcdefghij")).toBe("Error with key [REDACTED]");
+      expect(scrubString("Error with key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890")).toBe("Error with key [REDACTED]");
+      expect(scrubString("Error with key sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz")).toBe("Error with key [REDACTED]");
     });
 
-    it("should document sanitizePath requirements", () => {
-      // sanitizePath must:
-      // 1. Keep only 'extensions/memory-hybrid/' relative paths
-      // 2. Replace /home/username with $HOME
-      // 3. Replace /Users/username with $HOME
-      // 4. Replace C:\Users\username with %USERPROFILE%
+    it("should scrub GitHub tokens and Bearer tokens", async () => {
+      const { scrubString } = await import("../services/error-reporter.js");
       
-      expect(true).toBe(true); // Placeholder
+      expect(scrubString("Token: ghp_" + "a".repeat(36))).toBe("Token: [REDACTED]");
+      expect(scrubString("Authorization: Bearer abc123.def456.ghi789")).toBe("Authorization: [REDACTED]");
     });
 
-    it("should document sanitizeEvent requirements", () => {
-      // sanitizeEvent must use ALLOWLIST approach:
-      // 1. Only include: event_id, timestamp, platform, level, release, environment
-      // 2. For exceptions: only type, scrubbed value, and minimal stacktrace
-      // 3. For stacktrace frames: only filename (sanitized), function, line/col, in_app
-      // 4. NO: abs_path, context_line, pre_context, post_context, vars
-      // 5. For tags: only subsystem, operation
-      // 6. NO: user, request, breadcrumbs, contexts.device, extra
+    it("should scrub home paths and PII", async () => {
+      const { scrubString } = await import("../services/error-reporter.js");
       
-      expect(true).toBe(true); // Placeholder
+      expect(scrubString("File at /home/alice/file.txt")).toBe("File at $HOME/file.txt");
+      expect(scrubString("File at /Users/bob/file.txt")).toBe("File at $HOME/file.txt");
+      expect(scrubString("Email: user@example.com")).toBe("Email: [EMAIL]");
+      expect(scrubString("IP: 192.168.1.1")).toBe("IP: [IP]");
+    });
+
+    it("should sanitize file paths", async () => {
+      const { sanitizePath } = await import("../services/error-reporter.js");
+      
+      expect(sanitizePath("/home/alice/project/extensions/memory-hybrid/index.ts")).toBe("extensions/memory-hybrid/index.ts");
+      expect(sanitizePath("/home/bob/other.ts")).toBe("$HOME/other.ts");
+      expect(sanitizePath("/Users/charlie/file.ts")).toBe("$HOME/file.ts");
+    });
+
+    it("should sanitize events using allowlist and scrub config_shape values", async () => {
+      const { sanitizeEvent } = await import("../services/error-reporter.js");
+      
+      const mockEvent: any = {
+        event_id: "123",
+        timestamp: 1234567890,
+        level: "error",
+        exception: {
+          values: [{
+            type: "Error",
+            value: "Failed with key sk-proj-abc123def456ghi789jkl012mno345pqr678",
+            stacktrace: {
+              frames: [{
+                filename: "/home/user/project/extensions/memory-hybrid/index.ts",
+                function: "test",
+                lineno: 10,
+              }]
+            }
+          }]
+        },
+        contexts: {
+          config_shape: {
+            provider: "openai",
+            apiKey: "sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz"
+          }
+        },
+        user: { id: "secret" },
+        request: { url: "http://example.com" },
+      };
+      
+      const sanitized = sanitizeEvent(mockEvent);
+      
+      expect(sanitized?.exception?.values?.[0]?.value).toBe("Failed with key [REDACTED]");
+      expect(sanitized?.exception?.values?.[0]?.stacktrace?.frames?.[0]?.filename).toBe("extensions/memory-hybrid/index.ts");
+      expect(sanitized?.contexts?.config_shape?.apiKey).toBe("[REDACTED]");
+      expect(sanitized?.user).toBeUndefined();
+      expect(sanitized?.request).toBeUndefined();
     });
   });
 
   describe("Security Boundaries", () => {
-    it("should enforce maxBreadcrumbs=0 (breadcrumbs can contain prompts)", () => {
-      // The config passed to Sentry.init MUST have maxBreadcrumbs: 0
-      expect(true).toBe(true); // Placeholder
-    });
-
-    it("should enforce sendDefaultPii=false (no PII)", () => {
-      // The config passed to Sentry.init MUST have sendDefaultPii: false
-      expect(true).toBe(true); // Placeholder
-    });
-
-    it("should enforce autoSessionTracking=false (no session tracking)", () => {
-      // The config passed to Sentry.init MUST have autoSessionTracking: false
-      expect(true).toBe(true); // Placeholder
-    });
-
-    it("should enforce integrations=[] (no default integrations)", () => {
-      // The config passed to Sentry.init MUST have integrations: []
-      // (default integrations capture HTTP requests, console output, etc.)
-      expect(true).toBe(true); // Placeholder
-    });
-
-    it("should enforce beforeBreadcrumb returns null (drop ALL breadcrumbs)", () => {
-      // The beforeBreadcrumb hook MUST return null to drop all breadcrumbs
-      expect(true).toBe(true); // Placeholder
+    it("should verify initErrorReporter enforces security config", async () => {
+      const serviceCode = await import("fs").then(fs => 
+        fs.promises.readFile(new URL("../services/error-reporter.ts", import.meta.url), "utf-8")
+      );
+      
+      expect(serviceCode).toContain("maxBreadcrumbs: 0");
+      expect(serviceCode).toContain("sendDefaultPii: false");
+      expect(serviceCode).toContain("autoSessionTracking: false");
+      expect(serviceCode).toContain("integrations: []");
+      expect(serviceCode).toContain("beforeBreadcrumb()");
+      expect(serviceCode).toContain("return null");
     });
   });
 
   describe("Integration Tests (if @sentry/node is installed)", () => {
-    it("should successfully capture an error with safe context", async () => {
-      // This test would verify that capturePluginError() works end-to-end
-      // But it requires @sentry/node to be installed, which is optional
-      const hasSentry = await checkSentryInstalled();
-      if (!hasSentry) {
-        console.log("⚠️  @sentry/node not installed - skipping integration test");
-        return;
-      }
+    it("should verify capturePluginError accepts safe context", async () => {
+      const { capturePluginError, isErrorReporterActive } = await import("../services/error-reporter.js");
       
-      // If Sentry is available, we could test:
-      // 1. Initialize with valid config
-      // 2. Call capturePluginError with a fake error
-      // 3. Verify the error was sanitized (would need to mock Sentry.captureException)
+      const testError = new Error("Test error with sk-proj-sensitive123456789012345678901234567890");
       
-      expect(true).toBe(true); // Placeholder
+      capturePluginError(testError, {
+        operation: "test",
+        subsystem: "test",
+        configShape: { key: "sk-ant-api03-secret123456789012345678901234567890" }
+      });
+      
+      expect(isErrorReporterActive()).toBe(false);
     });
   });
 });
