@@ -16,20 +16,29 @@ export interface ErrorReporterConfig {
   enabled: boolean;
   dsn: string;        // Sentry/GlitchTip DSN
   environment?: string; // "production" | "development"
-  maxBreadcrumbs: number; // default 0 (no breadcrumbs — privacy)
+  maxBreadcrumbs: number; // PRIVACY: Always passed as 0 (breadcrumbs can contain user prompts). Not user-configurable.
   sampleRate: number;  // 0.0-1.0, default 1.0
   consent: boolean;    // explicit opt-in required
 }
 
 let Sentry: typeof SentryType | null = null;
 let initialized = false;
+let logger: any = console; // Default fallback to console
 
 /**
  * Initialize error reporter with STRICT privacy settings
  */
-export async function initErrorReporter(config: ErrorReporterConfig, pluginVersion: string): Promise<void> {
+export async function initErrorReporter(
+  config: ErrorReporterConfig, 
+  pluginVersion: string,
+  loggerInstance?: any
+): Promise<void> {
+  if (loggerInstance) {
+    logger = loggerInstance;
+  }
+  
   if (!config.enabled || !config.consent || !config.dsn) {
-    console.log('[ErrorReporter] Disabled: enabled=%s, consent=%s, dsn=%s',
+    logger.info?.('[ErrorReporter] Disabled: enabled=%s, consent=%s, dsn=%s',
       config.enabled, config.consent, !!config.dsn);
     return;
   }
@@ -38,8 +47,8 @@ export async function initErrorReporter(config: ErrorReporterConfig, pluginVersi
   try {
     Sentry = await import("@sentry/node");
   } catch (err) {
-    console.warn('[ErrorReporter] @sentry/node not installed. Error reporting disabled.');
-    console.warn('[ErrorReporter] Install with: npm install @sentry/node --save-optional');
+    logger.warn?.('[ErrorReporter] @sentry/node not installed. Error reporting disabled.');
+    logger.warn?.('[ErrorReporter] Install with: npm install @sentry/node --save-optional');
     return;
   }
 
@@ -64,7 +73,7 @@ export async function initErrorReporter(config: ErrorReporterConfig, pluginVersi
 
   initialized = true;
   const dsnHost = config.dsn.split('@')[1] || '***';
-  console.log('[ErrorReporter] Initialized with DSN host:', dsnHost);
+  logger.info?.('[ErrorReporter] Initialized with DSN host:', dsnHost);
 }
 
 /**
@@ -98,8 +107,8 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
       }))
     } : undefined,
     tags: {
-      subsystem: event.tags?.subsystem,
-      operation: event.tags?.operation,
+      subsystem: event.tags?.subsystem ? scrubString(String(event.tags.subsystem)) : undefined,
+      operation: event.tags?.operation ? scrubString(String(event.tags.operation)) : undefined,
     },
     contexts: event.contexts?.config_shape ? {
       config_shape: Object.fromEntries(
@@ -120,9 +129,10 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
  */
 export function scrubString(input: string): string {
   return input
-    // API keys
-    .replace(/sk-[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
-    .replace(/ghp_[A-Za-z0-9]{36}/g, '[REDACTED]')
+    // API keys (OpenAI, Anthropic, GitHub)
+    .replace(/sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g, '[REDACTED]')  // OpenAI (sk-, sk-proj-)
+    .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, '[REDACTED]')       // Anthropic
+    .replace(/ghp_[A-Za-z0-9]{36}/g, '[REDACTED]')             // GitHub
     .replace(/Bearer\s+[\w.-]+/gi, '[REDACTED]')
     // Paths
     .replace(/\/home\/[^/\s]+/g, '$HOME')

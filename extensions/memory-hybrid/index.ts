@@ -6334,6 +6334,7 @@ const memoryHybridPlugin = {
               maxBreadcrumbs: 0,
             },
             versionInfo.pluginVersion,
+            api.logger,
           );
           if (isErrorReporterActive()) {
             api.logger.info("memory-hybrid: error reporting enabled");
