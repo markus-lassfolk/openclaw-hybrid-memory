@@ -6315,7 +6315,7 @@ const memoryHybridPlugin = {
 
     api.registerService({
       id: PLUGIN_ID,
-      start: () => {
+      start: async () => {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
@@ -6324,7 +6324,7 @@ const memoryHybridPlugin = {
 
         // Initialize error reporter if configured
         if (cfg.errorReporting) {
-          initErrorReporter(
+          await initErrorReporter(
             {
               enabled: cfg.errorReporting.enabled,
               dsn: cfg.errorReporting.dsn,
