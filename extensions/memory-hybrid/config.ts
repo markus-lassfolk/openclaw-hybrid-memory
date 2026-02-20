@@ -738,15 +738,36 @@ export const hybridConfigSchema = {
     const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
     const errorReporting: ErrorReportingConfig | undefined =
       errorReportingRaw && typeof errorReportingRaw === "object"
-        ? {
-            enabled: errorReportingRaw.enabled === true,
-            dsn: typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn : "",
-            consent: errorReportingRaw.consent === true,
-            environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
-            sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
-              ? errorReportingRaw.sampleRate
-              : 1.0,
-          }
+        ? (() => {
+            const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn : "";
+            const enabled = errorReportingRaw.enabled === true;
+            
+            // Validate DSN when enabled: reject placeholders
+            if (enabled && dsnRaw) {
+              const placeholderPatterns = /<key>|<host>|<project-id>|YOUR_DSN|PLACEHOLDER/i;
+              if (placeholderPatterns.test(dsnRaw)) {
+                throw new Error(
+                  'errorReporting.dsn contains placeholder values. ' +
+                  'Replace <key>, <host>, <project-id> with actual values, or set enabled: false.'
+                );
+              }
+            }
+            
+            // If enabled=true but DSN is empty, throw error
+            if (enabled && !dsnRaw) {
+              throw new Error('errorReporting.enabled is true but dsn is empty or missing.');
+            }
+            
+            return {
+              enabled,
+              dsn: dsnRaw,
+              consent: errorReportingRaw.consent === true,
+              environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
+              sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
+                ? errorReportingRaw.sampleRate
+                : 1.0,
+            };
+          })()
         : undefined;
 
     const multiAgent: MultiAgentConfig = {

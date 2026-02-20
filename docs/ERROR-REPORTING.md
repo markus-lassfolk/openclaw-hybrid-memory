@@ -27,7 +27,7 @@ Add the following to your `openclaw.json` (gateway config) or plugin config:
       "errorReporting": {
         "enabled": true,
         "consent": true,
-        "dsn": "https://<key>@<host>/<project-id>",
+        "dsn": "https://7d641cabffdb4557a7bd2f02c338dc80@villapolly.duckdns.org/1",
         "environment": "production",
         "sampleRate": 1.0
       }
