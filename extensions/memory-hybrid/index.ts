@@ -98,6 +98,9 @@ import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionE
 import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./services/language-keywords-build.js";
+import { runDirectiveExtract, type DirectiveExtractResult, type DirectiveIncident } from "./services/directive-extract.js";
+import { runReinforcementExtract, type ReinforcementExtractResult, type ReinforcementIncident } from "./services/reinforcement-extract.js";
+import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
 
 // ============================================================================
 // Backend Imports (extracted from god file for maintainability)
@@ -1800,7 +1803,7 @@ const memoryHybridPlugin = {
             }
             if (factId) {
               const getByIdOpts = { asOf: asOfSec, scopeFilter };
-              const entry = factsDb.getById(factId, asOfSec != null || scopeFilter ? getByIdOpts : undefined);
+              const entry = factsDb.getById(factId, asOfSec != null || scopeFilter ? getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter } : undefined);
               if (entry) {
                 // FR-005: Access boost — update recall_count and last_accessed on fetch by id
                 factsDb.refreshAccessedFacts([entry.id]);
@@ -1873,7 +1876,10 @@ const memoryHybridPlugin = {
             sqliteResults = factsDb.lookup(entity, undefined, tag, recallOpts);
           }
 
-          const ftsResults = factsDb.search(query, limit, recallOpts);
+          const ftsResults = factsDb.search(query, limit, {
+            ...recallOpts,
+            reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+          });
           sqliteResults = [...sqliteResults, ...ftsResults];
 
           let lanceResults: SearchResult[] = [];
@@ -1934,7 +1940,7 @@ const memoryHybridPlugin = {
             const extraIds = connectedIds.filter((id) => !initialIds.has(id));
             const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
             for (const id of extraIds) {
-              const entry = factsDb.getById(id, getByIdOpts);
+              const entry = factsDb.getById(id, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
               if (entry) {
                 results.push({
                   entry,
@@ -2018,7 +2024,7 @@ const memoryHybridPlugin = {
                 details: { count: 0 },
               };
             }
-            const procedures = factsDb.searchProcedures(q, limit);
+            const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
             const negatives = factsDb.getNegativeProceduresMatching(q, 3);
             const lines: string[] = [];
             const positiveList = procedures.filter((p) => p.procedureType === "positive");
@@ -4143,23 +4149,32 @@ const memoryHybridPlugin = {
           return { path, timestamp: ts };
         }
 
+        /** Returns session .jsonl file paths modified within the last `days` days. Shared by procedure/directive/reinforcement extraction. */
+        async function getSessionFilePathsSince(sessionDir: string, days: number): Promise<string[]> {
+          const fs = await import("node:fs");
+          const pathMod = await import("node:path");
+          if (!fs.existsSync(sessionDir)) return [];
+          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+          const files = fs.readdirSync(sessionDir);
+          return files
+            .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
+            .map((f) => pathMod.join(sessionDir, f))
+            .filter((p) => {
+              try {
+                return fs.statSync(p).mtimeMs >= cutoff;
+              } catch {
+                return false;
+              }
+            });
+        }
+
         async function runExtractProceduresForCli(
           opts: { sessionDir?: string; days?: number; dryRun: boolean },
         ): Promise<ExtractProceduresResult> {
           const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
           let filePaths: string[] | undefined;
           if (opts.days != null && opts.days > 0) {
-            const fs = await import("node:fs");
-            const pathMod = await import("node:path");
-            if (!fs.existsSync(sessionDir)) {
-              return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
-            }
-            const cutoff = Date.now() - opts.days * 24 * 60 * 60 * 1000;
-            const files = fs.readdirSync(sessionDir);
-            filePaths = files
-              .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
-              .map((f) => pathMod.join(sessionDir, f))
-              .filter((p) => fs.statSync(p).mtimeMs >= cutoff);
+            filePaths = await getSessionFilePathsSince(sessionDir, opts.days);
           }
           return extractProceduresFromSessions(
             factsDb,
@@ -4186,6 +4201,88 @@ const memoryHybridPlugin = {
             },
             { info: (s) => api.logger.info?.(s) ?? console.log(s), warn: (s) => api.logger.warn?.(s) ?? console.warn(s) },
           );
+        }
+
+        async function runExtractDirectivesForCli(
+          opts: { days?: number; verbose?: boolean; dryRun?: boolean },
+        ): Promise<DirectiveExtractResult> {
+          const sessionDir = cfg.procedures.sessionsDir;
+          const days = opts.days ?? 3;
+          const filePaths = await getSessionFilePathsSince(sessionDir, days);
+
+          const directiveRegex = getDirectiveSignalRegex();
+          const result = runDirectiveExtract({ filePaths, directiveRegex });
+          
+          if (opts.verbose) {
+            for (const incident of result.incidents) {
+              console.log(`[${incident.sessionFile}] ${incident.categories.join(", ")}: ${incident.extractedRule}`);
+            }
+          }
+          
+          // Store directives as facts if not dry-run
+          if (!opts.dryRun) {
+            for (const incident of result.incidents) {
+              const category = incident.categories.includes("preference") ? "preference" : 
+                              incident.categories.includes("absolute_rule") ? "rule" :
+                              incident.categories.includes("conditional_rule") ? "rule" :
+                              incident.categories.includes("warning") ? "rule" :
+                              incident.categories.includes("future_behavior") ? "rule" :
+                              incident.categories.includes("procedural") ? "pattern" :
+                              incident.categories.includes("correction") ? "decision" :
+                              incident.categories.includes("implicit_correction") ? "decision" :
+                              incident.categories.includes("explicit_memory") ? "fact" : "other";
+              factsDb.store({
+                text: incident.extractedRule,
+                category: category as MemoryCategory,
+                importance: 0.8,
+                entity: null,
+                key: null,
+                value: null,
+                source: `directive:${incident.sessionFile}`,
+                confidence: incident.confidence,
+              });
+            }
+          }
+          
+          return result;
+        }
+
+        async function runExtractReinforcementForCli(
+          opts: { days?: number; verbose?: boolean; dryRun?: boolean },
+        ): Promise<ReinforcementExtractResult> {
+          const sessionDir = cfg.procedures.sessionsDir;
+          const days = opts.days ?? 3;
+          const filePaths = await getSessionFilePathsSince(sessionDir, days);
+
+          const reinforcementRegex = getReinforcementSignalRegex();
+          const result = runReinforcementExtract({ filePaths, reinforcementRegex });
+          
+          if (opts.verbose) {
+            for (const incident of result.incidents) {
+              console.log(`[${incident.sessionFile}] Confidence ${incident.confidence.toFixed(2)}: ${incident.userMessage.slice(0, 80)}`);
+            }
+          }
+          
+          // Annotate facts/procedures with reinforcement if not dry-run
+          if (!opts.dryRun) {
+            for (const incident of result.incidents) {
+              // Reinforce recalled memories
+              for (const memId of incident.recalledMemoryIds) {
+                factsDb.reinforceFact(memId, incident.userMessage);
+              }
+              
+              // Reinforce procedures based on tool call sequence
+              if (incident.toolCallSequence.length >= 2) {
+                const taskPattern = incident.toolCallSequence.join(" -> ");
+                const procedures = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
+                for (const proc of procedures) {
+                  factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold);
+                }
+              }
+            }
+          }
+          
+          return result;
         }
 
         async function runExtractDailyForCli(
@@ -5235,6 +5332,7 @@ const memoryHybridPlugin = {
           mergeResults,
           parseSourceDate,
           getMemoryCategories: () => [...getMemoryCategories()],
+          cfg,
           runStore: (opts) => runStoreForCli(opts, api.logger),
           runInstall: (opts) => Promise.resolve(runInstallForCli(opts)),
           runVerify: (opts, sink) => runVerifyForCli(opts, sink),
@@ -5302,10 +5400,14 @@ const memoryHybridPlugin = {
             dryRun?: boolean;
             model?: string;
           }) => runSelfCorrectionRunForCli(opts),
+          runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) =>
+            runExtractDirectivesForCli(opts),
+          runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) =>
+            runExtractReinforcementForCli(opts),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem extract-directives", "hybrid-mem extract-reinforcement", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
@@ -5321,7 +5423,7 @@ const memoryHybridPlugin = {
           // Procedural memory: inject relevant procedures and negative warnings (issue #23)
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
-            const procs = factsDb.searchProcedures(e.prompt, 3);
+            const procs = factsDb.searchProcedures(e.prompt, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
             const negs = factsDb.getNegativeProceduresMatching(e.prompt, 2);
             const procLines: string[] = [];
             const positiveList = procs.filter((p) => p.procedureType === "positive");
@@ -5377,7 +5479,11 @@ const memoryHybridPlugin = {
             }
           }
 
-          const ftsResults = factsDb.search(e.prompt, limit, { tierFilter, scopeFilter });
+          const ftsResults = factsDb.search(e.prompt, limit, {
+            tierFilter,
+            scopeFilter,
+            reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+          });
           let lanceResults: SearchResult[] = [];
           try {
             let textToEmbed = e.prompt;

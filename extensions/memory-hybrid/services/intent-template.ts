@@ -24,6 +24,42 @@ export const KEYWORD_GROUP_INTENTS: Record<KeywordGroup, string> = {
     "Phrases that indicate temporary, session-scoped state: 'right now', 'this session', 'currently debugging'.",
   decayActive:
     "Phrases that indicate current work or short-term focus: 'working on', 'need to', 'todo', 'blocker', 'sprint'.",
+  /** Issue #39: Directive extraction — phrases where user instructs agent to remember or change behavior. */
+  /** Issue #34: Self-correction detection — phrases indicating the user is correcting the agent. */
+  correctionSignals:
+    "Phrases indicating the user is correcting the agent or nudging it to fix a mistake. Include: 'every time', 'i already told you', 'why didn't you', 'try again', 'you misunderstood', 'that was wrong', 'let's revert', 'just do X'. These are not new instructions but corrections of previous ones.",
+  /** Issue #39: Directive extraction — phrases where user instructs agent to remember or change behavior (10 categories merged). */
+  directiveSignals:
+    "Phrases indicating the user wants the agent to remember something or change future behavior. Include: explicit memory requests ('remember that', 'don't forget', 'keep in mind'), future behavior changes ('from now on', 'next time', 'going forward'), absolute rules ('always', 'never', 'you must'), preferences ('I prefer', 'I'd rather', 'default to'), warnings ('be careful with', 'watch out for', 'avoid'), procedural instructions ('first check', 'before you do', 'step 1 is always'), implicit corrections ('no, use', 'the other one', 'that's the old way'), emotional emphasis (ALL CAPS, multiple exclamation marks), and conditional rules ('when X happens', 'if you see', 'only when'). These are not questions but directives — the user is telling the agent how to behave.",
+  directiveExplicitMemory:
+    "Explicit memory requests: 'remember that', 'don't forget', 'keep in mind', 'store this', 'write this down'. User explicitly asks for memory.",
+  directiveFutureBehavior:
+    "Future behavior phrases: 'from now on', 'next time', 'going forward', 'in the future'. Changes how agent should act later.",
+  directiveAbsoluteRule:
+    "Absolute rule phrases: 'always', 'never', 'you must', 'under no circumstances'. Strict constraints on behavior.",
+  directivePreference:
+    "Preference phrases (directive): 'I prefer', 'use this instead', 'default to', 'I'd rather'. User stating a choice.",
+  directiveWarning:
+    "Warning phrases: 'be careful with', 'watch out for', 'avoid', 'don't ever'. Safety instructions.",
+  directiveProcedural:
+    "Procedural instruction phrases: 'first check', 'before you do', 'step 1 is', 'the order should be'. Defining a process.",
+  directiveImplicitCorrection:
+    "Implicit correction phrases: 'no, use', 'not that', 'the other one', 'that's the old way'. Short redirects.",
+  directiveConditionalRule:
+    "Conditional rule phrases: 'when this happens', 'if you see', 'only when', 'whenever'. Rules with triggers.",
+  /** Issue #40: Reinforcement extraction — phrases where user praises or approves of agent behavior. */
+  reinforcementSignals:
+    "Phrases indicating the user is praising or approving of the agent's behavior, output, or method. Include: explicit approval ('perfect', 'exactly', 'spot on', 'you nailed it', 'correct'), emotional praise ('love it', 'brilliant', 'amazing', 'excellent'), method confirmation ('yes, like that', 'keep this format', 'this is how it should be'), relief/finally ('finally!', 'now you get it', 'at last'), comparative praise ('much better', 'huge improvement', 'better than before'), encouragement ('keep doing this', 'more of this', 'don't change'), feature praise ('formatting is perfect', 'love the detail', 'great structure'), and sharing signals ('going to show this', 'saving this', 'bookmarked'). These are not corrections but positive reinforcement — the user is saying 'yes, do more of this'.",
+  reinforcementStrongPraise:
+    "Strong praise phrases: 'perfect', 'brilliant', 'amazing', 'excellent', 'you nailed it', 'spot on'. High enthusiasm.",
+  reinforcementMethodConfirmation:
+    "Method confirmation phrases: 'yes, like that', 'keep this format', 'this is how it should be', 'do it like this'. Approving the specific way a task was done.",
+  reinforcementRelief:
+    "Relief/finally phrases: 'finally!', 'now you get it', 'at last', 'there we go'. Success after struggle.",
+  reinforcementComparativePraise:
+    "Comparative praise phrases: 'much better', 'huge improvement', 'better than before', 'way better'. Improvement over past attempts.",
+  reinforcementSharingSignals:
+    "Sharing/saving signals: 'saving this', 'bookmarked', 'going to show this', 'will share this'. Content valuable enough to keep.",
 };
 
 /** Structural patterns we need for trigger detection (sentence-level). */

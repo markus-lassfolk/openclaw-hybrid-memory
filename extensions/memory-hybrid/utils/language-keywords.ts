@@ -56,9 +56,163 @@ export const ENGLISH_KEYWORDS = {
     "just use",
     "just do",
   ],
+  /** Issue #39: Directive extraction — phrases indicating user wants agent to remember/change behavior (10 categories merged). */
+  directiveSignals: [
+    // Explicit memory requests
+    "remember that",
+    "don't forget",
+    "keep in mind",
+    "store this",
+    "write this down",
+    "make a note",
+    "take note",
+    // Future behavior changes
+    "from now on",
+    "in the future",
+    "next time",
+    "going forward",
+    "moving forward",
+    "onwards",
+    // Absolute rules
+    "always",
+    "never",
+    "make sure to",
+    "under no circumstances",
+    "you must",
+    "you should always",
+    "you should never",
+    // Preferences
+    "i prefer",
+    "i'd rather",
+    "use this instead",
+    "default to",
+    "stick with",
+    // Warnings
+    "be careful with",
+    "watch out for",
+    "don't ever",
+    "avoid",
+    "stay away from",
+    // Procedural
+    "first check",
+    "before you do",
+    "the order should be",
+    "step 1 is always",
+    "make sure you",
+    // Implicit corrections (short redirects)
+    "no, use",
+    "the other one",
+    "that's the old way",
+    "not that",
+    // Emotional emphasis (ALL CAPS, multiple !!!, frustrated emoji captured by detection logic)
+    "NEVER",
+    "ALWAYS",
+    "IMPORTANT",
+    // Conditional rules
+    "when this happens",
+    "if you see",
+    "only when",
+    "whenever",
+  ],
+  /** Explicit memory request keywords (subset of directiveSignals for category detection). */
+  directiveExplicitMemory: ["remember that", "don't forget", "keep in mind", "store this", "write this down", "make a note", "take note"],
+  /** Future behavior keywords (subset of directiveSignals for category detection). */
+  directiveFutureBehavior: ["from now on", "in the future", "next time", "going forward", "moving forward", "onwards"],
+  /** Absolute rule keywords (subset of directiveSignals for category detection). */
+  directiveAbsoluteRule: ["always", "never", "make sure to", "under no circumstances", "you must", "you should always", "you should never"],
+  /** Preference keywords (subset of directiveSignals for category detection). */
+  directivePreference: ["i prefer", "i'd rather", "use this instead", "default to", "stick with"],
+  /** Warning keywords (subset of directiveSignals for category detection). */
+  directiveWarning: ["be careful with", "watch out for", "don't ever", "avoid", "stay away from"],
+  /** Procedural keywords (subset of directiveSignals for category detection). */
+  directiveProcedural: ["first check", "before you do", "the order should be", "step 1 is always", "make sure you"],
+  /** Implicit correction keywords (subset of directiveSignals for category detection). */
+  directiveImplicitCorrection: ["no, use", "the other one", "that's the old way", "not that"],
+  /** Conditional rule keywords (subset of directiveSignals for category detection). */
+  directiveConditionalRule: ["when this happens", "if you see", "only when", "whenever"],
+  /** Issue #40: Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
+  reinforcementSignals: [
+    // Explicit approval
+    "perfect",
+    "exactly",
+    "spot on",
+    "you nailed it",
+    "that's right",
+    "correct",
+    // Emotional praise
+    "love it",
+    "brilliant",
+    "amazing",
+    "excellent",
+    "fantastic",
+    "great job",
+    // Method confirmation
+    "yes, like that",
+    "keep this format",
+    "this is how it should be",
+    "that's the way",
+    "do it like this",
+    // Relief/finally
+    "finally!",
+    "now you get it",
+    "at last",
+    "there we go",
+    // Comparative praise
+    "much better",
+    "huge improvement",
+    "better than before",
+    "way better",
+    // Encouragement
+    "keep doing this",
+    "more of this",
+    "don't change",
+    "stick with this",
+    // Feature praise
+    "formatting is perfect",
+    "love the detail",
+    "great structure",
+    "perfect layout",
+    // Sharing signals
+    "going to show this",
+    "saving this",
+    "bookmarked",
+    "will share this",
+  ],
+  /** Strong praise keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementStrongPraise: ["perfect", "brilliant", "amazing", "excellent", "you nailed it", "spot on", "love it"],
+  /** Method confirmation keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementMethodConfirmation: ["keep this format", "yes, like that", "this is how it should be", "do it like this"],
+  /** Relief keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementRelief: ["finally!", "now you get it", "at last", "there we go"],
+  /** Comparative praise keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementComparativePraise: ["much better", "huge improvement", "better than before", "way better"],
+  /** Sharing signal keywords (subset of reinforcementSignals for confidence scoring). */
+  reinforcementSharingSignals: ["saving this", "bookmarked", "going to show this", "will share this"],
 } as const;
 
 export type KeywordGroup = keyof typeof ENGLISH_KEYWORDS;
+
+/** Directive category key in file (snake_case) -> MergedKeywords key (camelCase). */
+const DIRECTIVE_CATEGORY_TO_MERGED: Record<string, KeywordGroup> = {
+  explicit_memory: "directiveExplicitMemory",
+  future_behavior: "directiveFutureBehavior",
+  absolute_rule: "directiveAbsoluteRule",
+  preference: "directivePreference",
+  warning: "directiveWarning",
+  procedural: "directiveProcedural",
+  implicit_correction: "directiveImplicitCorrection",
+  conditional_rule: "directiveConditionalRule",
+  correction: "correctionSignals",
+};
+
+/** Reinforcement category key in file -> MergedKeywords key. */
+const REINFORCEMENT_CATEGORY_TO_MERGED: Record<string, KeywordGroup> = {
+  strongPraise: "reinforcementStrongPraise",
+  methodConfirmation: "reinforcementMethodConfirmation",
+  relief: "reinforcementRelief",
+  comparativePraise: "reinforcementComparativePraise",
+  sharingSignals: "reinforcementSharingSignals",
+};
 
 export type LanguageKeywordsFile = {
   version: number;
@@ -69,6 +223,10 @@ export type LanguageKeywordsFile = {
   triggerStructures?: Record<string, string[]>;
   /** v2: per-language extraction building blocks; runtime builds safe regex from these. */
   extraction?: Record<string, LanguageExtractionTemplate>;
+  /** Optional: per-category directive signals (explicit_memory, future_behavior, ...). Merged into merged keywords for multilingual category detection. */
+  directiveSignalsByCategory?: Record<string, string[]>;
+  /** Optional: per-category reinforcement signals (strongPraise, methodConfirmation, ..., genericPoliteness). Merged into merged keywords; genericPoliteness used for confidence regex. */
+  reinforcementCategories?: Record<string, string[]>;
 };
 
 /** Building blocks for structured fact extraction in a given language (verbs, connectors, etc.). */
@@ -100,7 +258,14 @@ export function getLanguageKeywordsFilePath(): string | null {
   return join(keywordsPath, LANG_FILE_NAME);
 }
 
-let cache: { merged: MergedKeywords; path: string; triggerStructures: string[]; extraction: Record<string, LanguageExtractionTemplate> } | null = null;
+let cache: {
+  merged: MergedKeywords;
+  path: string;
+  triggerStructures: string[];
+  extraction: Record<string, LanguageExtractionTemplate>;
+  /** From file reinforcementCategories.genericPoliteness; used by getReinforcementCategoryRegexes. */
+  reinforcementGenericPoliteness?: string[];
+} | null = null;
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -119,6 +284,18 @@ function mergeGroup(
     }
   }
   return [...set];
+}
+
+/** Build merged keywords from English + translations (e.g. for build script to emit directiveSignalsByCategory). */
+export function buildMergedFromTranslations(
+  translations: Record<string, Record<KeywordGroup, string[]>>,
+): MergedKeywords {
+  const merged: MergedKeywords = {} as MergedKeywords;
+  for (const group of Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]) {
+    const english = ENGLISH_KEYWORDS[group];
+    merged[group] = mergeGroup(english, translations, group);
+  }
+  return merged;
 }
 
 /** Load merged keywords (English + file). Returns English-only if file missing. */
@@ -148,6 +325,27 @@ export function loadMergedKeywords(): MergedKeywords {
     const english = ENGLISH_KEYWORDS[group];
     merged[group] = mergeGroup(english, data?.translations ?? undefined, group);
   }
+  if (data?.directiveSignalsByCategory && typeof data.directiveSignalsByCategory === "object") {
+    for (const [fileKey, list] of Object.entries(data.directiveSignalsByCategory)) {
+      const mergedKey = DIRECTIVE_CATEGORY_TO_MERGED[fileKey];
+      if (mergedKey && Array.isArray(list)) {
+        const existing = new Set(merged[mergedKey] ?? []);
+        for (const s of list) if (typeof s === "string" && s.trim()) existing.add(s.trim());
+        merged[mergedKey] = [...existing];
+      }
+    }
+  }
+  if (data?.reinforcementCategories && typeof data.reinforcementCategories === "object") {
+    for (const [fileKey, list] of Object.entries(data.reinforcementCategories)) {
+      if (fileKey === "genericPoliteness") continue;
+      const mergedKey = REINFORCEMENT_CATEGORY_TO_MERGED[fileKey];
+      if (mergedKey && Array.isArray(list)) {
+        const existing = new Set(merged[mergedKey] ?? []);
+        for (const s of list) if (typeof s === "string" && s.trim()) existing.add(s.trim());
+        merged[mergedKey] = [...existing];
+      }
+    }
+  }
   const triggerStructures: string[] = [];
   if (data?.triggerStructures && typeof data.triggerStructures === "object") {
     for (const list of Object.values(data.triggerStructures)) {
@@ -156,13 +354,26 @@ export function loadMergedKeywords(): MergedKeywords {
   }
   const extraction: Record<string, LanguageExtractionTemplate> =
     data?.extraction && typeof data.extraction === "object" ? (data.extraction as Record<string, LanguageExtractionTemplate>) : {};
-  cache = { merged, path: filePath, triggerStructures, extraction };
+  const reinforcementGenericPoliteness =
+    data?.reinforcementCategories && Array.isArray(data.reinforcementCategories.genericPoliteness)
+      ? (data.reinforcementCategories.genericPoliteness as string[]).filter((s) => typeof s === "string" && s.trim())
+      : undefined;
+  cache = { merged, path: filePath, triggerStructures, extraction, reinforcementGenericPoliteness };
   return cache.merged;
 }
 
 /** Clear cached merged keywords (e.g. after writing new file or in tests). */
-export function clearKeywordCache(): void {
+export async function clearKeywordCache(): Promise<void> {
   cache = null;
+  // Also clear dependent regex caches in directive and reinforcement extraction
+  try {
+    const { clearDirectiveCategoryCache } = await import("../services/directive-extract.js");
+    clearDirectiveCategoryCache();
+  } catch {}
+  try {
+    const { clearReinforcementRegexCache } = await import("../services/reinforcement-extract.js");
+    clearReinforcementRegexCache();
+  } catch {}
 }
 
 function buildRegexFromKeywords(keywords: string[]): RegExp {
@@ -233,4 +444,51 @@ export function getDecayActiveRegex(): RegExp {
 /** Regex to detect user messages that look like corrections/nudges (issue #34). Uses English + translated correctionSignals from .language-keywords.json after build-languages. */
 export function getCorrectionSignalRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().correctionSignals);
+}
+
+/** Issue #39: Regex to detect user messages that contain directive phrases (10 categories merged). */
+export function getDirectiveSignalRegex(): RegExp {
+  return buildRegexFromKeywords(loadMergedKeywords().directiveSignals);
+}
+
+/** Issue #40: Regex to detect user messages that contain reinforcement/praise phrases. */
+export function getReinforcementSignalRegex(): RegExp {
+  return buildRegexFromKeywords(loadMergedKeywords().reinforcementSignals);
+}
+
+/** Get category-specific directive regexes for multilingual detection. */
+export function getDirectiveCategoryRegexes(): Record<string, RegExp> {
+  const merged = loadMergedKeywords();
+  return {
+    explicit_memory: buildRegexFromKeywords(merged.directiveExplicitMemory || []),
+    future_behavior: buildRegexFromKeywords(merged.directiveFutureBehavior || []),
+    absolute_rule: buildRegexFromKeywords(merged.directiveAbsoluteRule || []),
+    preference: buildRegexFromKeywords(merged.directivePreference || []),
+    warning: buildRegexFromKeywords(merged.directiveWarning || []),
+    procedural: buildRegexFromKeywords(merged.directiveProcedural || []),
+    implicit_correction: buildRegexFromKeywords(merged.directiveImplicitCorrection || []),
+    conditional_rule: buildRegexFromKeywords(merged.directiveConditionalRule || []),
+    correction: buildRegexFromKeywords(merged.correctionSignals || []),
+  };
+}
+
+/** Get reinforcement confidence regexes for multilingual detection. Uses reinforcementCategories from file when present. */
+export function getReinforcementCategoryRegexes(): Record<string, RegExp> {
+  const merged = loadMergedKeywords();
+  const genericPolitenessPhrases =
+    cache?.reinforcementGenericPoliteness && cache.reinforcementGenericPoliteness.length > 0
+      ? cache.reinforcementGenericPoliteness
+      : ["thanks", "thank you", "ok", "okay", "got it"];
+  const genericPolitenessRegex = new RegExp(
+    `^(${genericPolitenessPhrases.map(escapeRegex).join("|")})\\.?$`,
+    "i",
+  );
+  return {
+    strongPraise: buildRegexFromKeywords(merged.reinforcementStrongPraise || []),
+    methodConfirmation: buildRegexFromKeywords(merged.reinforcementMethodConfirmation || []),
+    relief: buildRegexFromKeywords(merged.reinforcementRelief || []),
+    comparativePraise: buildRegexFromKeywords(merged.reinforcementComparativePraise || []),
+    sharingSignals: buildRegexFromKeywords(merged.reinforcementSharingSignals || []),
+    genericPoliteness: genericPolitenessRegex,
+  };
 }
