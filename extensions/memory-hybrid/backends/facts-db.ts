@@ -1751,13 +1751,13 @@ export class FactsDB {
   }): ProcedureEntry {
     const id = proc.id ?? randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    const scope = proc.scope ?? "global";
-    const scopeTarget = proc.scopeTarget ?? null;
     const existing = this.getProcedureById(id);
     if (existing) {
       const successCount = (proc.successCount ?? existing.successCount);
       const failureCount = (proc.failureCount ?? existing.failureCount);
       const confidence = proc.confidence ?? Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount)));
+      const scope = proc.scope ?? existing.scope;
+      const scopeTarget = proc.scopeTarget ?? existing.scopeTarget;
       this.liveDb
         .prepare(
           `UPDATE procedures SET task_pattern = ?, recipe_json = ?, procedure_type = ?, success_count = ?, failure_count = ?, last_validated = ?, last_failed = ?, confidence = ?, ttl_days = ?, scope = ?, scope_target = ?, updated_at = ? WHERE id = ?`,
@@ -1779,6 +1779,8 @@ export class FactsDB {
         );
       return this.getProcedureById(id)!;
     }
+    const scope = proc.scope ?? "global";
+    const scopeTarget = proc.scopeTarget ?? null;
     this.liveDb
       .prepare(
         `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, last_validated, last_failed, confidence, ttl_days, promoted_to_skill, skill_path, source_sessions, scope, scope_target, created_at, updated_at)

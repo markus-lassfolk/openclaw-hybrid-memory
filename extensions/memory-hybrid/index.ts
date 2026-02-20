@@ -1800,9 +1800,12 @@ const memoryHybridPlugin = {
             // Explicit scope parameters provided - use them
             scopeFilter = { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
           } else if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
-            // No explicit params - default to current agent scope for specialists
-            // (orchestrator sees all by default)
-            scopeFilter = { userId: null, agentId: currentAgentId, sessionId: null };
+            // No explicit params - merge agent scope with configured scopeFilter
+            scopeFilter = { 
+              userId: cfg.autoRecall.scopeFilter?.userId ?? null, 
+              agentId: currentAgentId, 
+              sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null 
+            };
           } else {
             // Orchestrator or no agent detected - see all memories
             scopeFilter = undefined;
@@ -2077,8 +2080,12 @@ const memoryHybridPlugin = {
               // Explicit scope parameters provided - use them
               scopeFilter = { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
             } else if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
-              // No explicit params - default to current agent scope for specialists
-              scopeFilter = { userId: null, agentId: currentAgentId, sessionId: null };
+              // No explicit params - merge agent scope with configured scopeFilter
+              scopeFilter = { 
+                userId: cfg.autoRecall.scopeFilter?.userId ?? null, 
+                agentId: currentAgentId, 
+                sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null 
+              };
             } else {
               // Orchestrator or no agent detected - see all procedures
               scopeFilter = undefined;
@@ -5506,22 +5513,26 @@ const memoryHybridPlugin = {
     if (cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event: unknown) => {
         const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
+        
+        // FR-006 + multi-agent: Detect current agent identity at runtime
+        // Must run before early return to avoid stale agent state
+        const detectedAgentId = e.agentId || e.session?.agentId || currentAgentId;
+        if (detectedAgentId) {
+          currentAgentId = detectedAgentId;
+        } else {
+          // Issue #9: Log when agent detection fails - fall back to orchestrator
+          api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
+          currentAgentId = cfg.multiAgent.orchestratorId;
+          
+          // Issue #9: Warn when we're in agent/auto mode but had to fall back
+          if (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto") {
+            api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
+          }
+        }
+        
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
-          // FR-006 + multi-agent: Detect current agent identity at runtime
-          const detectedAgentId = e.agentId || e.session?.agentId || currentAgentId || cfg.multiAgent.orchestratorId;
-          if (detectedAgentId) {
-            currentAgentId = detectedAgentId;
-          } else {
-            // Issue #9: Log when agent detection fails
-            api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
-          }
-          
-          // Issue #9: Warn when currentAgentId is null but we're in agent/auto mode
-          if (!currentAgentId && (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")) {
-            api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
-          }
 
           // FR-009: Use configurable candidate pool for progressive disclosure
           const fmt = cfg.autoRecall.injectionFormat;
@@ -5534,14 +5545,14 @@ const memoryHybridPlugin = {
           const tierFilter = cfg.memoryTiering.enabled ? "warm" : "all";
           
           // FR-006 + multi-agent: Build scope filter dynamically from detected agentId
-          // If agent is NOT the orchestrator, filter to global + agent-specific memories
+          // Merge agent-detected scope with configured scopeFilter for multi-tenant support
           let scopeFilter: ScopeFilter | undefined;
           if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
-            // Specialist agent — filter to global + agent-specific
+            // Specialist agent — merge with configured scopeFilter to preserve userId
             scopeFilter = {
-              userId: null,
+              userId: cfg.autoRecall.scopeFilter?.userId ?? null,
               agentId: currentAgentId,
-              sessionId: null,
+              sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null,
             };
           } else if (
             cfg.autoRecall.scopeFilter &&
