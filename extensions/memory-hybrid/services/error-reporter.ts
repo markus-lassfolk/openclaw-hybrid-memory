@@ -27,7 +27,7 @@ let initialized = false;
 /**
  * Initialize error reporter with STRICT privacy settings
  */
-export function initErrorReporter(config: ErrorReporterConfig, pluginVersion: string): void {
+export async function initErrorReporter(config: ErrorReporterConfig, pluginVersion: string): Promise<void> {
   if (!config.enabled || !config.consent || !config.dsn) {
     console.log('[ErrorReporter] Disabled: enabled=%s, consent=%s, dsn=%s',
       config.enabled, config.consent, !!config.dsn);
@@ -36,7 +36,7 @@ export function initErrorReporter(config: ErrorReporterConfig, pluginVersion: st
 
   // Lazy-load @sentry/node (optional peer dependency)
   try {
-    Sentry = require("@sentry/node");
+    Sentry = await import("@sentry/node");
   } catch (err) {
     console.warn('[ErrorReporter] @sentry/node not installed. Error reporting disabled.');
     console.warn('[ErrorReporter] Install with: npm install @sentry/node --save-optional');
@@ -63,7 +63,8 @@ export function initErrorReporter(config: ErrorReporterConfig, pluginVersion: st
   });
 
   initialized = true;
-  console.log('[ErrorReporter] Initialized with DSN:', config.dsn.split('@')[0] + '@***');
+  const dsnHost = config.dsn.split('@')[1] || '***';
+  console.log('[ErrorReporter] Initialized with DSN host:', dsnHost);
 }
 
 /**

@@ -28,7 +28,7 @@ describe("Error Reporter", () => {
       const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
       
       // Try to init without consent
-      initErrorReporter(
+      await initErrorReporter(
         {
           enabled: true,
           dsn: "https://fake@example.com/1",
@@ -46,7 +46,7 @@ describe("Error Reporter", () => {
     it("should not initialize when disabled", async () => {
       const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
       
-      initErrorReporter(
+      await initErrorReporter(
         {
           enabled: false, // DISABLED
           dsn: "https://fake@example.com/1",
@@ -64,7 +64,7 @@ describe("Error Reporter", () => {
     it("should not initialize without DSN", async () => {
       const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
       
-      initErrorReporter(
+      await initErrorReporter(
         {
           enabled: true,
           dsn: "", // NO DSN
