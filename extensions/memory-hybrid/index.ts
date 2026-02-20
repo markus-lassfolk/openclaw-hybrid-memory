@@ -6514,7 +6514,20 @@ const memoryHybridPlugin = {
               const args = fn.arguments;
               if (typeof args !== "string" || args.length === 0) continue;
 
-              const creds = extractCredentialsFromToolCalls(args);
+              // Parse JSON args to unescape quotes/spaces for reliable pattern matching
+              let parsedArgs: Record<string, unknown> = {};
+              try {
+                parsedArgs = JSON.parse(args);
+              } catch {
+                // If args aren't valid JSON, scan the raw string as fallback
+              }
+              
+              // Extract string fields from parsed args and scan them
+              const argsToScan = Object.values(parsedArgs)
+                .filter((v): v is string => typeof v === "string")
+                .join(" ");
+              
+              const creds = extractCredentialsFromToolCalls(argsToScan || args);
               for (const cred of creds) {
                 if (!credentialsDb) continue;
                 credentialsDb.store({
@@ -6531,7 +6544,8 @@ const memoryHybridPlugin = {
             }
           }
         } catch (err) {
-          api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${err}`);
+          const errMsg = err instanceof Error ? err.stack || err.message : String(err);
+          api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${errMsg}`);
         }
       });
     }

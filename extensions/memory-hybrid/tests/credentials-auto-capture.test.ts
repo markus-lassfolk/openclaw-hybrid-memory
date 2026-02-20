@@ -7,7 +7,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
 import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 
@@ -50,11 +49,11 @@ describe("extractCredentialsFromToolCalls", () => {
 
   describe("curl Authorization Bearer pattern", () => {
     it("extracts bearer token from curl -H Authorization Bearer", () => {
-      const input = `curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.abc123" https://api.example.com/data`;
+      const input = `curl -H "Authorization: Bearer TEST_JWT_HEADER.TEST_JWT_PAYLOAD.TEST_JWT_SIGNATURE_123456789" https://api.example.com/data`;
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "bearer");
       expect(cred).toBeDefined();
-      expect(cred!.value).toContain("eyJhbGciOiJIUzI1NiJ9");
+      expect(cred!.value).toContain("TEST_JWT_HEADER");
       expect(cred!.service).toBe("api.example.com");
       expect(cred!.url).toBe("https://api.example.com/data");
     });
@@ -139,16 +138,16 @@ describe("extractCredentialsFromToolCalls", () => {
 
   describe("export VAR=value pattern", () => {
     it("extracts API key from export *_KEY=value", () => {
-      const input = `export OPENAI_API_KEY=sk-projXYZ1234567890abcdef`;
+      const input = `export OPENAI_API_KEY=test_key_abcdefghijklmnopqrst123456`;
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "openai-api");
       expect(cred).toBeDefined();
       expect(cred!.type).toBe("api_key");
-      expect(cred!.value).toBe("sk-projXYZ1234567890abcdef");
+      expect(cred!.value).toBe("test_key_abcdefghijklmnopqrst123456");
     });
 
     it("extracts token from export *_TOKEN=value", () => {
-      const input = `export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456`;
+      const input = `export GITHUB_TOKEN=test_token_abcdefghijklmnopqrstuvwxyz123456`;
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "github");
       expect(cred).toBeDefined();
@@ -275,7 +274,7 @@ describe("tool call credential auto-capture integration", () => {
   });
 
   it("stores bearer token from curl tool call into vault", () => {
-    const args = `curl -H "Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.payload.signature" https://api.example.com/resource`;
+    const args = `curl -H "Authorization: Bearer TEST_JWT_ALGO.TEST_PAYLOAD.TEST_SIGNATURE_12345" https://api.example.com/resource`;
     const creds = extractCredentialsFromToolCalls(args);
     expect(creds.length).toBeGreaterThanOrEqual(1);
 

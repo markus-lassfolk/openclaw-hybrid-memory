@@ -156,7 +156,7 @@ export const TOOL_CALL_CREDENTIAL_PATTERNS: Array<{
     regex: /(?:^|\n)\s*([A-Z][A-Z0-9_]*_(?:KEY|TOKEN|PASSWORD|SECRET))\s*=\s*(?:"([^"]{8,})"|'([^']{8,})'|([^\s"';\n]{8,}))/i,
     extract(m, fullText) {
       // Check if this match is preceded by 'export' on the same line
-      const matchIndex = fullText.indexOf(m[0]);
+      const matchIndex = m.index ?? fullText.indexOf(m[0]);
       if (matchIndex > 0) {
         const lineStart = fullText.lastIndexOf('\n', matchIndex) + 1;
         const linePrefix = fullText.slice(lineStart, matchIndex).trim().toLowerCase();

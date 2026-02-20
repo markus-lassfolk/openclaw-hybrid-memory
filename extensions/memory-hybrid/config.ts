@@ -213,7 +213,10 @@ export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 export type CredentialAutoCaptureConfig = {
   /** Enable scanning of tool call inputs for credential patterns (default: false, opt-in) */
   toolCalls: boolean;
-  /** Pattern set to use: "builtin" uses the built-in regex set (default: "builtin") */
+  /**
+   * Pattern set to use: "builtin" uses the built-in regex set (default: "builtin").
+   * Custom patterns are not currently supported but reserved for future extension.
+   */
   patterns?: "builtin";
   /** Emit info-level log on each capture (default: true) */
   logCaptures?: boolean;
