@@ -1860,9 +1860,10 @@ export class FactsDB {
    * - Success rate boost (50-100% weight based on successCount/failureCount)
    * - Penalty for procedures that failed in last 7 days (0.5 multiplier)
    * - Never-validated procedures get 30% penalty
+   * - Reinforcement boost for user-praised procedures (configurable)
    * Returns procedures with relevanceScore, sorted by composite score.
    */
-  searchProceduresRanked(taskDescription: string, limit = 10): Array<ProcedureEntry & { relevanceScore: number }> {
+  searchProceduresRanked(taskDescription: string, limit = 10, reinforcementBoost = 0.1): Array<ProcedureEntry & { relevanceScore: number }> {
     const sanitized = this.sanitizeFTS5Query(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
@@ -1931,8 +1932,12 @@ export class FactsDB {
           validationPenalty = NEVER_VALIDATED_PENALTY;
         }
         
-        // Composite score: FTS relevance + confidence, weighted by recency, success_rate, and penalties
-        const baseScore = ftsScore * 0.6 + confidence * 0.4;
+        // Reinforcement boost for user-praised procedures
+        const reinforcedCount = (r.reinforced_count as number) ?? 0;
+        const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
+        
+        // Composite score: FTS relevance + confidence + reinforcement, weighted by recency, success_rate, and penalties
+        const baseScore = ftsScore * 0.6 + confidence * 0.4 + reinforcement;
         const relevanceScore = Math.min(1.0, 
           baseScore * recencyFactor * successRateWeight * recentFailurePenalty * validationPenalty
         );
