@@ -455,8 +455,8 @@ export const hybridConfigSchema = {
         enabled: authFailureRaw?.enabled !== false, // enabled by default
         patterns: Array.isArray(authFailureRaw?.patterns)
           ? (authFailureRaw.patterns as string[]).filter((p) => typeof p === "string" && p.length > 0)
-          : ["Permission denied", "Authentication failed", "publickey,password", "401", "403", "Unauthorized", "Forbidden", "Invalid API key", "token expired", "invalid_auth"],
-        maxRecallsPerTarget: typeof authFailureRaw?.maxRecallsPerTarget === "number" && authFailureRaw.maxRecallsPerTarget > 0
+          : [],
+        maxRecallsPerTarget: typeof authFailureRaw?.maxRecallsPerTarget === "number" && authFailureRaw.maxRecallsPerTarget >= 0
           ? Math.floor(authFailureRaw.maxRecallsPerTarget)
           : 1,
         includeVaultHints: authFailureRaw?.includeVaultHints !== false,

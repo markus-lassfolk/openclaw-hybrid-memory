@@ -6066,7 +6066,8 @@ const memoryHybridPlugin = {
           
           // Check if we've already recalled for this target in this session
           const recallCount = authFailureRecallsThisSession.get(detection.target) || 0;
-          if (recallCount >= cfg.autoRecall.authFailure.maxRecallsPerTarget) {
+          const maxRecalls = cfg.autoRecall.authFailure.maxRecallsPerTarget;
+          if (maxRecalls > 0 && recallCount >= maxRecalls) {
             api.logger.info?.(`memory-hybrid: auth failure for ${detection.target} already recalled ${recallCount} times this session, skipping`);
             return;
           }
@@ -6085,37 +6086,22 @@ const memoryHybridPlugin = {
             : undefined;
           
           // Search both SQLite and vector backends
-          const ftsResults = factsDb.search(query, 5, 0.3, scopeFilter);
+          const ftsResults = factsDb.search(query, 5, { scopeFilter });
           const vector = await embeddings.embed(query);
-          const lanceResults = await vectorDb.search(vector, 5, 0.3);
+          let lanceResults = await vectorDb.search(vector, 5, 0.3);
+          
+          // FR-006: Filter LanceDB results by scope using filterByScope (LanceDB doesn't store scope metadata)
+          lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
           
           // Merge and filter for credential-related facts
           const merged = mergeResults(
             ftsResults.map((r) => ({ ...r, backend: "sqlite" as const })),
-            lanceResults.map((r) => ({ ...r, backend: "lance" as const })),
-            { preferLongTerm: false, useImportanceRecency: false },
+            lanceResults.map((r) => ({ ...r, backend: "lancedb" as const })),
+            5,
+            factsDb,
           );
           
-          // FR-006: Post-filter merged results by scope (LanceDB doesn't natively support scopeFilter)
-          // Validate that vector results match the same scope rules as SQLite results
-          const scopeValidatedMerged = merged.filter((r) => {
-            const fact = r.entry;
-            // Apply same scope filtering logic as factsDb.search
-            if (!scopeFilter) return true; // No filter = see all
-            
-            const factScope = fact.scope || "global";
-            const factTarget = fact.scopeTarget;
-            
-            // Global facts are visible to all
-            if (factScope === "global") return true;
-            
-            // Match scope-specific facts
-            if (factScope === "user" && scopeFilter.userId && factTarget === scopeFilter.userId) return true;
-            if (factScope === "agent" && scopeFilter.agentId && factTarget === scopeFilter.agentId) return true;
-            if (factScope === "session" && scopeFilter.sessionId && factTarget === scopeFilter.sessionId) return true;
-            
-            return false;
-          });
+          const scopeValidatedMerged = merged;
           
           // Filter to technical/credential facts
           const credentialFacts = scopeValidatedMerged

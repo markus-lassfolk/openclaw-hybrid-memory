@@ -1751,9 +1751,9 @@ export class FactsDB {
   }): ProcedureEntry {
     const id = proc.id ?? randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    const scope = proc.scope ?? "global";
-    const scopeTarget = proc.scopeTarget ?? null;
     const existing = this.getProcedureById(id);
+    const scope = proc.scope ?? existing?.scope ?? "global";
+    const scopeTarget = proc.scopeTarget ?? existing?.scopeTarget ?? null;
     if (existing) {
       const successCount = (proc.successCount ?? existing.successCount);
       const failureCount = (proc.failureCount ?? existing.failureCount);
