@@ -61,6 +61,16 @@ export class ProposalsDB {
       CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at);
       CREATE INDEX IF NOT EXISTS idx_proposals_expires ON proposals(expires_at);
     `);
+
+    this.migrateRejectionReasonColumn();
+  }
+
+  private migrateRejectionReasonColumn(): void {
+    const cols = this.db
+      .prepare(`PRAGMA table_info(proposals)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "rejection_reason")) return;
+    this.db.exec(`ALTER TABLE proposals ADD COLUMN rejection_reason TEXT`);
   }
 
   create(entry: {
