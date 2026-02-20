@@ -115,7 +115,7 @@ export const ENGLISH_KEYWORDS = {
     "whenever",
   ],
   /** Explicit memory request keywords (subset of directiveSignals for category detection). */
-  directiveExplicitMemory: ["remember", "remember that", "don't forget", "keep in mind", "store this", "write this down", "make a note", "take note"],
+  directiveExplicitMemory: ["remember that", "don't forget", "keep in mind", "store this", "write this down", "make a note", "take note"],
   /** Future behavior keywords (subset of directiveSignals for category detection). */
   directiveFutureBehavior: ["from now on", "in the future", "next time", "going forward", "moving forward", "onwards"],
   /** Absolute rule keywords (subset of directiveSignals for category detection). */
