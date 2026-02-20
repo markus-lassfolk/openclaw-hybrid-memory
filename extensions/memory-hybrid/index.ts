@@ -5424,11 +5424,12 @@ const memoryHybridPlugin = {
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
             const rankedProcs = factsDb.searchProceduresRanked(e.prompt, 5, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
-            const filtered = rankedProcs.filter((p) => p.relevanceScore > 0.4);
+            const positiveFiltered = rankedProcs.filter((p) => p.procedureType === "positive" && p.relevanceScore > 0.4);
+            const negativeUnfiltered = rankedProcs.filter((p) => p.procedureType === "negative");
             const procLines: string[] = [];
             
             // Positive procedures with relevance score
-            const positiveList = filtered.filter((p) => p.procedureType === "positive");
+            const positiveList = positiveFiltered;
             if (positiveList.length > 0) {
               procLines.push("Last time this worked:");
               for (const p of positiveList.slice(0, 3)) {
@@ -5449,7 +5450,7 @@ const memoryHybridPlugin = {
             }
             
             // Negative procedures (known failures)
-            const negs = filtered.filter((p) => p.procedureType === "negative");
+            const negs = negativeUnfiltered;
             if (negs.length > 0) {
               procLines.push("⚠️ Known issue (avoid):");
               for (const n of negs.slice(0, 2)) {
