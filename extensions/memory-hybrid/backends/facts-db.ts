@@ -1931,22 +1931,23 @@ export class FactsDB {
           validationPenalty = NEVER_VALIDATED_PENALTY;
         }
         
-        // Composite score: confidence × recency × success_rate × penalties
+        // Composite score: FTS relevance + confidence, weighted by recency, success_rate, and penalties
+        const baseScore = ftsScore * 0.6 + confidence * 0.4;
         const relevanceScore = Math.min(1.0, 
-          confidence * recencyFactor * successRateWeight * recentFailurePenalty * validationPenalty
+          baseScore * recencyFactor * successRateWeight * recentFailurePenalty * validationPenalty
         );
         
         return { ...proc, relevanceScore };
       });
 
-      // Sort by procedure_type (positive first), then relevanceScore, then last validated
+      // Sort by relevanceScore, then procedure_type (positive first as tiebreaker), then last validated
       scored.sort((a, b) => {
-        const typeA = a.procedureType === "positive" ? 1 : 0;
-        const typeB = b.procedureType === "positive" ? 1 : 0;
-        if (typeB !== typeA) return typeB - typeA;
         if (Math.abs(b.relevanceScore - a.relevanceScore) > 0.001) {
           return b.relevanceScore - a.relevanceScore;
         }
+        const typeA = a.procedureType === "positive" ? 1 : 0;
+        const typeB = b.procedureType === "positive" ? 1 : 0;
+        if (typeB !== typeA) return typeB - typeA;
         const lastValA = a.lastValidated ?? 0;
         const lastValB = b.lastValidated ?? 0;
         return lastValB - lastValA;
