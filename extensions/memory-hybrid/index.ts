@@ -6161,7 +6161,7 @@ const memoryHybridPlugin = {
               correctionsApproveAll: async (opts: { workspace?: string }) => {
                 const report = getLatestCorrectionReport(opts.workspace);
                 if (!report) return { applied: 0, error: "No self-correction report found" };
-                const items = parseReportProposedSections(report.content);
+                const items = parseReportSuggestedTools(report.content);
                 if (items.length === 0) return { applied: 0, error: "No suggested TOOLS rules in report (run self-correction-run first)" };
                 const toolsPath = join(opts.workspace ?? workspaceRoot(), "TOOLS.md");
                 if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
