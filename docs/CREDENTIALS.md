@@ -45,6 +45,10 @@ Set a valid **encryptionKey** in your memory-hybrid config; the credential store
     "store": "sqlite",
     "encryptionKey": "env:OPENCLAW_CRED_KEY",
     "autoDetect": true,
+    "autoCapture": {
+      "toolCalls": true,
+      "logCaptures": true
+    },
     "expiryWarningDays": 7
   }
 }
@@ -53,6 +57,7 @@ Set a valid **encryptionKey** in your memory-hybrid config; the credential store
 - **encryptionKey**: `env:VAR_NAME` (e.g. `env:OPENCLAW_CRED_KEY`) or a 16+ character secret. When set and valid, the credential store is enabled automatically.
 - **enabled** (optional): Set to `false` to disable even if encryptionKey is present.
 - **autoDetect** (optional): When true, detects credential patterns (Bearer tokens, API keys, SSH) in conversation and prompts the agent to offer storing them
+- **autoCapture** (optional): Auto-capture credentials directly from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below)
 - **expiryWarningDays** (optional): Days before expiry to warn (default: 7)
 
 **Required:** Set the `OPENCLAW_CRED_KEY` environment variable to a secret of at least 16 characters. This key is used to encrypt credentials at rest.
@@ -116,6 +121,60 @@ This migration is **transparent** — no action required. After migration, all s
 ## Redaction
 
 - **credential_get**: The credential value is returned only in `details.value` with `sensitiveFields: ["value"]`. The `content` text does not include the value, so it can be safely logged. Platforms should redact fields listed in `sensitiveFields` when persisting session transcripts or exporting.
+
+## Auto-Capture from Tool Calls
+
+When `autoCapture.toolCalls` is enabled, the plugin scans **tool call inputs** (what the agent sends to tools) for credential patterns and stores them in the vault immediately — no prompting required, since the agent already used the credential openly.
+
+This solves the problem of credentials getting lost between sessions: the agent uses them in tool calls (exec commands, API calls, etc.) but never explicitly mentions them in conversation text.
+
+### Enable
+
+```json
+{
+  "credentials": {
+    "encryptionKey": "env:OPENCLAW_CRED_KEY",
+    "autoCapture": {
+      "toolCalls": true,
+      "logCaptures": true
+    }
+  }
+}
+```
+
+**Config options:**
+- `toolCalls`: Enable scanning of tool call inputs (default: `false`, opt-in)
+- `logCaptures`: Emit an info-level log on each capture (default: `true`)
+
+Pattern matching currently uses a built-in pattern set and is not configurable via `credentials.autoCapture`.
+
+### Detection Patterns
+
+The following tool input patterns are detected and stored automatically:
+
+| Pattern | Type | Service |
+|---------|------|---------|
+| `sshpass -p <pass> ssh user@host` | `password` | `ssh://user@host` |
+| `curl -H "Authorization: Bearer <token>" <url>` | `bearer` | hostname from URL |
+| `curl -u user:pass <url>` | `password` | hostname from URL |
+| `-H "X-API-Key: <key>"` | `api_key` | hostname from URL |
+| `postgres://user:pass@host/db` (also mysql, mongodb, redis, mssql) | `password` | `proto://host/db` |
+| `export VAR_KEY=value`, `export VAR_TOKEN=value`, `export VAR_PASSWORD=value`, `export VAR_SECRET=value` | `api_key` / `token` / `password` / `other` | derived from var name |
+| `.env`-style `VAR_KEY=value` assignments | `api_key` / `token` / `password` / `other` | derived from var name |
+
+### Behavior
+
+1. The plugin registers an `agent_end` hook that scans all `tool_calls[*].function.arguments` in assistant messages.
+2. When a credential pattern is found, the value is extracted along with service name (hostname, connection string, or variable-derived slug) and type.
+3. The credential is stored in the vault via `credentialsDb.store()` — an **upsert** on `(service, type)`, so repeated captures update the value without creating duplicates.
+4. A confirmation log is emitted: `memory-hybrid: auto-captured credential for ssh://root@192.168.1.19 (password)`.
+5. Credential values are **never** written to the facts DB or vector DB — vault only.
+
+### Security Notes
+
+- Only **tool inputs** are scanned — never tool outputs (which may contain unrelated secrets in command logs, etc.).
+- Respects the `credentials.enabled` gate — if vault is disabled, no capture occurs.
+- Credential values are encrypted with AES-256-GCM in the vault.
 
 ## Auto-Detection
 
