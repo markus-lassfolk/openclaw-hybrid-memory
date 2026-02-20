@@ -144,9 +144,9 @@ This solves the problem of credentials getting lost between sessions: the agent 
 
 **Config options:**
 - `toolCalls`: Enable scanning of tool call inputs (default: `false`, opt-in)
-- `patterns`: Pattern set to use — `"builtin"` only for now (default: `"builtin"`)
-- `confirmBeforeStore`: If `true`, write to pending file and prompt next turn instead of storing immediately (default: `false`)
 - `logCaptures`: Emit an info-level log on each capture (default: `true`)
+
+Pattern matching currently uses a built-in pattern set and is not configurable via `credentials.autoCapture`.
 
 ### Detection Patterns
 
