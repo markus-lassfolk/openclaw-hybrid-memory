@@ -1910,7 +1910,9 @@ export class FactsDB {
         // Recency factor (decay over 30 days, min 0.3)
         const lastActive = proc.lastValidated ?? proc.createdAt;
         const ageSeconds = nowSec - lastActive;
-        const recencyFactor = Math.max(MIN_RECENCY_FACTOR, 1 - (ageSeconds / RECENCY_WINDOW));
+        const recencyFactor = ageSeconds > RECENCY_WINDOW
+          ? MIN_RECENCY_FACTOR
+          : Math.max(MIN_RECENCY_FACTOR, 1 - (ageSeconds / RECENCY_WINDOW));
         
         // Success rate (50-100% weight based on successCount/failureCount)
         const totalTrials = proc.successCount + proc.failureCount;
