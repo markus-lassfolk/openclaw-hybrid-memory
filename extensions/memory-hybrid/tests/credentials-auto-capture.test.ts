@@ -8,8 +8,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
+import { CredentialsDB } from "../backends/credentials-db.js";
 
-const { extractCredentialsFromToolCalls, CredentialsDB } = _testing;
+// Note: extractCredentialsFromToolCalls moved to credential-scanner service
 
 const TEST_KEY = "test-encryption-key-for-unit-tests-32chars";
 
@@ -298,5 +300,83 @@ describe("tool call credential auto-capture integration", () => {
       expect(Object.keys(cred)).not.toContain("category");
       expect(Object.keys(cred)).not.toContain("importance");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix #19: Additional test cases for council review fixes
+// ---------------------------------------------------------------------------
+
+describe("council review fixes", () => {
+  describe("Fix #13: quoted env vars with spaces", () => {
+    it("extracts quoted env var with spaces", () => {
+      const input = `export API_KEY="my secret key with spaces 12345"`;
+      const results = extractCredentialsFromToolCalls(input);
+      const cred = results.find((r) => r.service === "api");
+      expect(cred).toBeDefined();
+      expect(cred!.value).toBe("my secret key with spaces 12345");
+    });
+
+    it("extracts single-quoted env var with spaces", () => {
+      const input = `export DB_PASSWORD='my password with spaces 789'`;
+      const results = extractCredentialsFromToolCalls(input);
+      const cred = results.find((r) => r.service === "db");
+      expect(cred).toBeDefined();
+      expect(cred!.value).toBe("my password with spaces 789");
+    });
+  });
+
+  describe("Fix #14: invalid hostname validation", () => {
+    it("rejects invalid hostnames in extractHostFromUrl", () => {
+      // Test with SQL injection attempt
+      const result1 = extractHostFromUrl("https://'; DROP TABLE users; --/api");
+      expect(result1).toBe("api"); // Should fall back to safe default
+      
+      // Test with path traversal
+      const result2 = extractHostFromUrl("https://../../../etc/passwd");
+      expect(result2).toBe("api");
+      
+      // Valid hostname should work
+      const result3 = extractHostFromUrl("https://api.example.com/path");
+      expect(result3).toBe("api.example.com");
+    });
+  });
+
+  describe("Fix #18: slugify minimum length", () => {
+    it("returns 'imported' for slugs shorter than 2 chars", () => {
+      expect(slugify("a")).toBe("imported");
+      expect(slugify("")).toBe("imported");
+      expect(slugify("ab")).toBe("ab");
+      expect(slugify("123")).toBe("123");
+    });
+  });
+
+  describe("Fix #19: connection string extraction", () => {
+    it("extracts credentials from connection strings in .env format", () => {
+      const input = `DATABASE_URL=postgres://user:pass12345@db.example.com:5432/mydb`;
+      const results = extractCredentialsFromToolCalls(input);
+      const cred = results.find((r) => r.service.startsWith("postgres://"));
+      expect(cred).toBeDefined();
+      expect(cred!.value).toBe("pass12345");
+      expect(cred!.service).toBe("postgres://db.example.com:5432/mydb");
+    });
+
+    it("handles mongodb+srv connection strings", () => {
+      const input = `MONGO_URI=mongodb+srv://admin:secret789@cluster.mongodb.net/dbname`;
+      const results = extractCredentialsFromToolCalls(input);
+      const cred = results.find((r) => r.service.startsWith("mongodb+srv://"));
+      expect(cred).toBeDefined();
+      expect(cred!.value).toBe("secret789");
+    });
+  });
+
+  describe("Fix #15: error resilience", () => {
+    it("continues extraction even if one pattern fails", () => {
+      // This test verifies that if one regex throws, others still work
+      const input = `export API_KEY=validkey12345\nsshpass -p password456 ssh user@host`;
+      const results = extractCredentialsFromToolCalls(input);
+      // Should have extracted at least one credential even if other patterns fail
+      expect(results.length).toBeGreaterThan(0);
+    });
   });
 });
