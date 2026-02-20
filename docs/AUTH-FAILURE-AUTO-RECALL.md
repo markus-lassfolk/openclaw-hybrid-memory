@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Feature Status:** ✅ Implemented (v2026.2.181+)
+**Feature Status:** ✅ Implemented (v2026.2.176+)
 
 The **Authentication Failure Auto-Recall** feature is a reactive memory trigger that automatically injects relevant credentials from memory when the agent encounters authentication failures in tool results.
 

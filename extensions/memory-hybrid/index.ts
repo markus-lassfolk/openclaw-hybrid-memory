@@ -5515,8 +5515,9 @@ const memoryHybridPlugin = {
           if (detectedAgentId) {
             currentAgentId = detectedAgentId;
           } else {
-            // Issue #9: Log when agent detection fails
+            // Issue #9: Log when agent detection fails and set fallback
             api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
+            currentAgentId = cfg.multiAgent.orchestratorId;
           }
           
           // Issue #9: Warn when currentAgentId is null but we're in agent/auto mode
@@ -6034,14 +6035,21 @@ const memoryHybridPlugin = {
         if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
         
         try {
-          // Build auth failure patterns from config
-          const patterns: AuthFailurePattern[] = cfg.autoRecall.authFailure.patterns.map((p) => ({
-            regex: new RegExp(p, "i"),
-            type: "generic" as const,
-            hint: p,
-          }));
+          // Build auth failure patterns from config (with ReDoS protection)
+          const patterns: AuthFailurePattern[] = [];
+          for (const p of cfg.autoRecall.authFailure.patterns) {
+            try {
+              patterns.push({
+                regex: new RegExp(p, "i"),
+                type: "generic" as const,
+                hint: p,
+              });
+            } catch (err) {
+              api.logger.warn?.(`memory-hybrid: invalid regex pattern "${p}": ${err}`);
+            }
+          }
           
-          // Merge with default patterns
+          // Merge with default patterns (config patterns should not include defaults to avoid duplication)
           const allPatterns = [...DEFAULT_AUTH_FAILURE_PATTERNS, ...patterns];
           
           // Scan prompt for auth failures
@@ -6101,7 +6109,10 @@ const memoryHybridPlugin = {
             factsDb,
           );
           
-          const scopeValidatedMerged = merged;
+          // FR-006: Validate merged results against scope (merged results may not have scope metadata)
+          const scopeValidatedMerged = scopeFilter
+            ? merged.filter((r) => factsDb.getById(r.entry.id, { scopeFilter }) != null)
+            : merged;
           
           // Filter to technical/credential facts
           const credentialFacts = scopeValidatedMerged

@@ -52,6 +52,8 @@ export type AuthFailureDetection = {
  */
 export function extractTarget(text: string, type: "ssh" | "http" | "api" | "generic"): string | undefined {
   // Try IP address first (highest priority) - this should match across all types
+  // Note: Regex is intentionally loose (matches 999.999.999.999) for simplicity; 
+  // invalid IPs will fail at connection time, not here
   const ipMatch = text.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
   if (ipMatch) return ipMatch[1];
   
