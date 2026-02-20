@@ -1,5 +1,5 @@
 /**
- * FR-011: Reflection layer — parsePatternsFromReflectionResponse and prompt loading.
+ * Reflection layer — parsePatternsFromReflectionResponse and prompt loading.
  */
 
 import { describe, it, expect } from "vitest";

@@ -34,10 +34,10 @@ The full documentation is split into focused guides for easy navigation:
 |----------|---------------|
 | [CREDENTIALS.md](../CREDENTIALS.md) | Credentials vault (opt-in encrypted credential store) |
 | [SESSION-DISTILLATION.md](../SESSION-DISTILLATION.md) | Extracting facts from session logs |
-| [GRAPH-MEMORY.md](../GRAPH-MEMORY.md) | Graph memory / fact linking (FR-007) |
+| [GRAPH-MEMORY.md](../GRAPH-MEMORY.md) | Graph memory / fact linking |
 | [WAL-CRASH-RESILIENCE.md](../WAL-CRASH-RESILIENCE.md) | Write-ahead log design |
 | [SETUP-AUTONOMOUS.md](../SETUP-AUTONOMOUS.md) | AI-friendly setup (imperative phase-by-phase for agents) |
-| [REFLECTION.md](../REFLECTION.md) | Reflection system (FR-011) |
+| [REFLECTION.md](../REFLECTION.md) | Reflection system |
 | [MODEL-AGNOSTIC-ANALYSIS.md](../MODEL-AGNOSTIC-ANALYSIS.md) | Analysis of multi-provider support options |
 | [FEEDBACK-ROADMAP.md](../FEEDBACK-ROADMAP.md) | Post-PR #15 feedback roadmap (completed) |
 

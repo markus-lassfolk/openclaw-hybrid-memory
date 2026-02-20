@@ -1,5 +1,5 @@
 /**
- * Procedural memory (issue #23): generate SKILL.md + recipe.json from validated procedures.
+ * Procedural memory: generate SKILL.md + recipe.json from validated procedures.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
