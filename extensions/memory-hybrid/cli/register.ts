@@ -591,13 +591,23 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         items.forEach((e, i) => console.log(`  ${i + 1}. [${e.id}] ${e.procedureType} — ${(e.taskPattern || "").slice(0, 60)}${(e.taskPattern?.length ?? 0) > 60 ? "..." : ""}`));
         return;
       }
-      if (t === "proposals" && listCommands) {
+      if (t === "proposals") {
+        if (!listCommands) {
+          console.error("Proposals feature is not enabled. Enable persona proposals or self-correction to use this command.");
+          process.exitCode = 1;
+          return;
+        }
         const items = await listCommands.listProposals({ status: opts?.status });
         console.log(`Proposals (${items.length}):`);
         items.forEach((p) => console.log(`  ${p.id}  ${p.status}  ${p.title}  → ${p.targetFile} (conf: ${p.confidence})`));
         return;
       }
-      if (t === "corrections" && listCommands) {
+      if (t === "corrections") {
+        if (!listCommands) {
+          console.error("Corrections feature is not enabled. Enable self-correction to use this command.");
+          process.exitCode = 1;
+          return;
+        }
         const { reportPath, items } = await listCommands.listCorrections({});
         if (!reportPath) {
           console.log("No self-correction report found. Run: openclaw hybrid-mem self-correction-run");

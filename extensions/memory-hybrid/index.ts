@@ -1412,6 +1412,10 @@ async function runClassifyForCli(
   }
 
   const numBatches = Math.ceil(others.length / config.batchSize);
+  if (!progressReporter && numBatches > 0) {
+    const sink = { log: (m: string) => logger.info(m) };
+    progressReporter = createProgressReporter(sink, numBatches, "Classifying");
+  }
   let totalReclassified = 0;
   let batchIndex = 0;
   for (let i = 0; i < others.length; i += config.batchSize) {
@@ -4424,14 +4428,26 @@ const memoryHybridPlugin = {
                   if (!Array.isArray(rootJobs)) rootJobs = [];
                   fixConfig.jobs = rootJobs;
                   const arr = rootJobs as Array<Record<string, unknown>>;
+                  const legacyNameMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
+                    [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name).toLowerCase().includes("nightly-memory-sweep"),
+                    [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+                  };
                   for (const def of definedJobs) {
                     const id = def.pluginJobId as string;
-                    const hasByPluginId = arr.some((j) => j && (j as Record<string, unknown>).pluginJobId === id);
-                    const hasLegacy = id === PLUGIN_JOB_ID_PREFIX + "nightly-distill" && arr.some((j) => j && String(j.name).toLowerCase().includes("nightly-memory-sweep"))
-                      || id === PLUGIN_JOB_ID_PREFIX + "weekly-reflection" && arr.some((j) => j && /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")))
-                      || id === PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures" && arr.some((j) => j && /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")))
-                      || id === PLUGIN_JOB_ID_PREFIX + "self-correction-analysis" && arr.some((j) => j && /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")));
-                    if (!hasByPluginId && !hasLegacy) {
+                    const existing = arr.find((j) => j && (j.pluginJobId === id || legacyNameMatch[id]?.(j)));
+                    if (existing) {
+                      if (opts.fix && existing.enabled === false) {
+                        existing.enabled = true;
+                        changed = true;
+                        applied.push(`Re-enabled job ${def.name} (${id}) in ${defaultConfigPath}`);
+                      }
+                      if (!existing.pluginJobId) {
+                        existing.pluginJobId = id;
+                        changed = true;
+                      }
+                    } else {
                       arr.push({ ...def });
                       changed = true;
                       applied.push("Added " + (def.name as string) + " job to " + defaultConfigPath);
@@ -5222,7 +5238,7 @@ const memoryHybridPlugin = {
                 return;
               }
               const pct = Math.min(100, Math.floor((current / total) * 100));
-              const filled = Math.round((current / total) * width);
+              const filled = Math.min(width, Math.round((current / total) * width));
               const bar = "=".repeat(filled) + ">".repeat(filled < width ? 1 : 0) + ".".repeat(Math.max(0, width - filled - 1));
               const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
               process.stdout.write("\r" + line + " ".repeat(Math.max(0, lastLen - line.length)));
@@ -5954,10 +5970,6 @@ const memoryHybridPlugin = {
             runReflectionMeta(factsDb, vectorDb, embeddings, openai, opts, api.logger),
           reflectionConfig: cfg.reflection,
           runClassify: (opts) => {
-            const others = factsDb.getByCategory("other").slice(0, opts.limit);
-            const numBatches = others.length === 0 ? 0 : Math.ceil(others.length / cfg.autoClassify.batchSize);
-            const sink = { log: (m: string) => console.log(m) };
-            const progress = numBatches > 0 ? createProgressReporter(sink, numBatches, "Classifying") : null;
             return runClassifyForCli(
               factsDb,
               openai,
@@ -5965,7 +5977,7 @@ const memoryHybridPlugin = {
               opts,
               join(dirname(resolvedSqlitePath), ".discovered-categories.json"),
               { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) },
-              progress ?? undefined,
+              undefined,
             );
           },
           autoClassifyConfig: cfg.autoClassify,
