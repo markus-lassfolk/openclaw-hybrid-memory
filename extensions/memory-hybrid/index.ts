@@ -2412,7 +2412,7 @@ const memoryHybridPlugin = {
 
           // Now commit to actual storage (FR-010: optional supersedes for manual supersession; FR-006: scope)
           // FR-006 + multi-agent: Smart default scope based on agent identity and config
-          let scope: string;
+          let scope: "global" | "user" | "agent" | "session";
           let scopeTarget: string | null;
           
           if (paramScope) {
