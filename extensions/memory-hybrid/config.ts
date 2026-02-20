@@ -222,6 +222,15 @@ export type CredentialsConfig = {
 };
 
 
+/** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
+export type ErrorReportingConfig = {
+  enabled: boolean;
+  dsn: string;
+  consent: boolean;
+  environment?: string;
+  sampleRate?: number;
+};
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -277,6 +286,8 @@ export type HybridMemoryConfig = {
   selfCorrection?: SelfCorrectionConfig;
   /** Multi-agent memory scoping — dynamic agent detection and scope defaults (default: orchestratorId="main", defaultStoreScope="global") */
   multiAgent: MultiAgentConfig;
+  /** Optional: error reporting to GlitchTip/Sentry (opt-in, default: disabled) */
+  errorReporting?: ErrorReportingConfig;
 };
 
 /** Self-correction pipeline (issue #34): semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
@@ -757,6 +768,42 @@ export const hybridConfigSchema = {
 
     // Parse multi-agent config (FR-006 + dynamic agent detection)
     const multiAgentRaw = cfg.multiAgent as Record<string, unknown> | undefined;
+    // Parse optional error reporting config
+    const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
+    const errorReporting: ErrorReportingConfig | undefined =
+      errorReportingRaw && typeof errorReportingRaw === "object"
+        ? (() => {
+            const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn : "";
+            const enabled = errorReportingRaw.enabled === true;
+            
+            // Validate DSN when enabled: reject placeholders
+            if (enabled && dsnRaw) {
+              const placeholderPatterns = /<key>|<host>|<project-id>|YOUR_DSN|PLACEHOLDER/i;
+              if (placeholderPatterns.test(dsnRaw)) {
+                throw new Error(
+                  'errorReporting.dsn contains placeholder values. ' +
+                  'Replace <key>, <host>, <project-id> with actual values, or set enabled: false.'
+                );
+              }
+            }
+            
+            // If enabled=true but DSN is empty, throw error
+            if (enabled && !dsnRaw) {
+              throw new Error('errorReporting.enabled is true but dsn is empty or missing.');
+            }
+            
+            return {
+              enabled,
+              dsn: dsnRaw,
+              consent: errorReportingRaw.consent === true,
+              environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
+              sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
+                ? errorReportingRaw.sampleRate
+                : 1.0,
+            };
+          })()
+        : undefined;
+
     const multiAgent: MultiAgentConfig = {
       orchestratorId: 
         typeof multiAgentRaw?.orchestratorId === "string" && multiAgentRaw.orchestratorId.trim().length > 0
@@ -799,6 +846,7 @@ export const hybridConfigSchema = {
       search,
       selfCorrection,
       multiAgent,
+      errorReporting,
     };
   },
 };
