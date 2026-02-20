@@ -505,7 +505,7 @@ export const hybridConfigSchema = {
         progressivePinnedRecallCount: 3,
         authFailure: {
           enabled: true,
-          patterns: ["Permission denied", "Authentication failed", "publickey,password", "401", "403", "Unauthorized", "Forbidden", "Invalid API key", "token expired", "invalid_auth"],
+          patterns: [],
           maxRecallsPerTarget: 1,
           includeVaultHints: true,
         },
