@@ -5454,13 +5454,17 @@ const memoryHybridPlugin = {
               procLines.push("⚠️ Known issue (avoid):");
               for (const n of negs.slice(0, 2)) {
                 try {
+                  const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
+                  const confidence = Math.round(n.relevanceScore * 100);
                   const steps = (JSON.parse(n.recipeJson) as Array<{ tool?: string }>)
                     .map((s) => s.tool)
                     .filter(Boolean)
                     .join(" → ");
-                  procLines.push(`- ${n.taskPattern.slice(0, 50)}… (${steps})`);
+                  procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`);
                 } catch {
-                  procLines.push(`- ${n.taskPattern.slice(0, 70)}…`);
+                  const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
+                  const confidence = Math.round(n.relevanceScore * 100);
+                  procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 70)}…`);
                 }
               }
             }
