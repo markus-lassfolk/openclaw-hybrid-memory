@@ -14,6 +14,11 @@
       "placeholder": "text-embedding-3-small",
       "help": "OpenAI embedding model to use"
     },
+    "mode": {
+      "label": "Configuration preset",
+      "placeholder": "normal",
+      "help": "essential | normal | expert | full. See CONFIGURATION-MODES.md."
+    },
     "lanceDbPath": {
       "label": "LanceDB Path",
       "placeholder": "~/.openclaw/memory/lancedb",
@@ -147,7 +152,7 @@
       "help": "Skip storing when normalized text (trim, collapse whitespace, lowercase) matches an existing fact (2.3)"
     },
     "store.classifyBeforeWrite": {
-      "label": "Classify before write (FR-008)",
+      "label": "Classify before write",
       "help": "Classify each new fact as ADD/UPDATE/DELETE/NOOP against similar facts before storing; reduces duplicates and contradictions"
     },
     "store.classifyModel": {
@@ -213,7 +218,7 @@
     },
     "graph.enabled": {
       "label": "Graph memory",
-      "help": "Enable graph-based spreading activation for zero-LLM recall (FR-007)"
+      "help": "Enable graph-based spreading activation for zero-LLM recall"
     },
     "graph.autoLink": {
       "label": "Auto-link",
@@ -237,7 +242,7 @@
     },
     "procedures.enabled": {
       "label": "Procedural memory",
-      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills (issue #23)"
+      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills"
     },
     "procedures.sessionsDir": {
       "label": "Session directory",
@@ -278,7 +283,7 @@
       "help": "Days between auto-builds (1–30, default 7)"
     },
     "reflection.enabled": {
-      "label": "Reflection layer (FR-011)",
+      "label": "Reflection layer",
       "help": "Synthesize behavioral patterns from facts; memory_reflect, reflect-rules"
     },
     "reflection.model": {
@@ -296,7 +301,7 @@
     },
     "procedures.enabled": {
       "label": "Procedural memory",
-      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills (issue #23)"
+      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills"
     },
     "procedures.sessionsDir": {
       "label": "Session directory",
@@ -333,6 +338,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["essential", "normal", "expert", "full"],
+        "description": "Configuration preset. See docs/CONFIGURATION-MODES.md."
+      },
       "embedding": {
         "type": "object",
         "additionalProperties": false,
@@ -401,7 +411,7 @@
                   },
                   "includeVaultHints": { "type": "boolean", "description": "Inject hints even when credentials are in vault (default: true)" }
                 },
-                "description": "Auto-recall credentials on authentication failures (issue #47)"
+                "description": "Auto-recall credentials on authentication failures"
               }
             }
           }
@@ -429,7 +439,7 @@
         "additionalProperties": false,
         "properties": {
           "fuzzyDedupe": { "type": "boolean" },
-          "classifyBeforeWrite": { "type": "boolean", "description": "FR-008: Classify incoming fact against similar facts (ADD/UPDATE/DELETE/NOOP) before storing" },
+          "classifyBeforeWrite": { "type": "boolean", "description": "Classify incoming fact against similar facts (ADD/UPDATE/DELETE/NOOP) before storing" },
           "classifyModel": { "type": "string", "description": "Model for classification (default: gpt-4o-mini)" }
         }
       },
@@ -466,7 +476,7 @@
       "reflection": {
         "type": "object",
         "additionalProperties": false,
-        "description": "FR-011: Synthesize behavioral patterns from facts (memory_reflect, reflect-rules).",
+        "description": "Synthesize behavioral patterns from facts (memory_reflect, reflect-rules).",
         "properties": {
           "enabled": { "type": "boolean", "description": "Enable reflection layer (default: false)" },
           "model": { "type": "string", "description": "LLM for reflection (default: gpt-4o-mini)" },
@@ -505,7 +515,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "description": "Enable graph-based spreading activation for zero-LLM recall (FR-007)" },
+          "enabled": { "type": "boolean", "description": "Enable graph-based spreading activation for zero-LLM recall" },
           "autoLink": { "type": "boolean", "description": "Auto-create RELATED_TO links to similar facts when storing (default: false)" },
           "autoLinkMinScore": { "type": "number", "minimum": 0, "maximum": 1, "description": "Min similarity score for auto-linking (default: 0.7)" },
           "autoLinkLimit": { "type": "number", "description": "Max similar facts to link per storage (default: 3)" },
@@ -526,7 +536,7 @@
           "skillsAutoPath": { "type": "string", "description": "Path for auto-generated skills (default: skills/auto)" },
           "requireApprovalForPromote": { "type": "boolean", "description": "Require human move to promote auto-skill (default: true)" }
         },
-        "description": "Procedural memory: auto-generated skills from learned patterns (issue #23)"
+        "description": "Procedural memory: auto-generated skills from learned patterns"
       },
       "selfCorrection": {
         "type": "object",
@@ -541,7 +551,7 @@
           "spawnThreshold": { "type": "number", "description": "Use spawn for Phase 2 when incident count exceeds this (default: 15)" },
           "spawnModel": { "type": "string", "description": "Model for spawn when analyzeViaSpawn is true (default: gemini)" }
         },
-        "description": "Self-correction analysis (issue #34): semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
+        "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
       },
       "multiAgent": {
         "type": "object",
@@ -554,7 +564,7 @@
             "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
           }
         },
-        "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults (FR-006 + multi-agent)"
+        "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults"
       }
     },
     "required": ["embedding"]

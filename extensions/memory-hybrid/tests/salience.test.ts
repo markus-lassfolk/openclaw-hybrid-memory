@@ -1,5 +1,5 @@
 /**
- * FR-005: Dynamic Salience Scoring tests
+ * Dynamic Salience Scoring tests
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";

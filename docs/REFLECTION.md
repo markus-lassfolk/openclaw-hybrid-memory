@@ -1,10 +1,10 @@
 ---
 layout: default
-title: Reflection Layer (FR-011)
+title: Reflection Layer
 parent: Features
 nav_order: 6
 ---
-# Reflection Layer (FR-011): Pattern Synthesis from Session History
+# Reflection Layer: Pattern Synthesis from Session History
 
 ## Overview
 

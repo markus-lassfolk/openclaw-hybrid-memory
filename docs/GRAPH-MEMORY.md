@@ -1,10 +1,10 @@
 ---
 layout: default
-title: Graph-Based Spreading Activation (FR-007)
+title: Graph-Based Spreading Activation
 parent: Features
 nav_order: 4
 ---
-# Graph-Based Spreading Activation (FR-007)
+# Graph-Based Spreading Activation
 
 ## Overview
 
@@ -431,7 +431,7 @@ Add `valid_at` / `invalid_at` columns to support superseded links without deleti
 
 ## References
 
-- **FR-007 Issue**: Graph-Based Spreading Activation (Zero-LLM Recall)
+- **Graph memory**: Graph-Based Spreading Activation (Zero-LLM Recall)
 - **Zep Graphiti**: https://github.com/getzep/graphiti, arXiv:2501.13956
 - **Mem0**: https://docs.mem0.ai/features/graph-memory
 - **MAGMA**: Multi-Graph Architecture, arXiv:2601.03236

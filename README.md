@@ -145,9 +145,9 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 | [CREDENTIALS.md](docs/CREDENTIALS.md) | Credential vault (opt-in encrypted store) |
 | [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md) | Extracting facts from session logs |
 | [PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md) | Auto-generated skills from learned tool-call patterns (issue #23) |
-| [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md) | Graph-based fact linking (FR-007) |
+| [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md) | Graph-based fact linking |
 | [WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md) | Write-ahead log design |
-| [REFLECTION.md](docs/REFLECTION.md) | Reflection layer (FR-011) |
+| [REFLECTION.md](docs/REFLECTION.md) | Reflection layer (pattern synthesis) |
 | [SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md) | AI-friendly autonomous setup |
 
 ---

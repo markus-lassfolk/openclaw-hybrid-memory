@@ -1,5 +1,5 @@
 /**
- * Reinforcement extraction (issue #40): scan session JSONL for user messages
+ * Reinforcement extraction: scan session JSONL for user messages
  * that contain positive reinforcement/praise, correlate with agent's preceding response,
  * and identify which memories or actions were being praised.
  * Uses multi-language reinforcement signals from .language-keywords.json.

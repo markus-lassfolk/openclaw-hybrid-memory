@@ -30,6 +30,14 @@ These run inside the gateway process. No cron, no external scheduler.
 
 These are **not** required for core functionality but enhance the system for long-running setups.
 
+**How to enable when "not defined":**
+
+1. **Recommended:** Run **`openclaw hybrid-mem verify --fix`**. This adds both `nightly-memory-sweep` and `weekly-reflection` to `~/.openclaw/cron/jobs.json` when they are missing (without overwriting existing jobs).
+2. **Or** add the job definitions manually to `~/.openclaw/openclaw.json` (under a top-level `jobs` array if your OpenClaw version uses it) or to `~/.openclaw/cron/jobs.json` (see snippets below).
+3. **Or** run the standalone install script from the repo: `node scripts/install-hybrid-config.mjs` (merges full defaults including jobs into openclaw.json).
+
+After adding jobs, the gateway will pick them up on next start (or according to your host’s job reload behavior). No plugin restart needed for cron store changes in many setups.
+
 ### Nightly session distillation
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.
@@ -81,7 +89,7 @@ openclaw hybrid-mem distill-window --json
 
 See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for the full pipeline details.
 
-### Weekly reflection (FR-011)
+### Weekly reflection
 
 Synthesizes behavioral patterns from recent facts. The `openclaw hybrid-mem install` command adds a weekly job; `verify --fix` adds it when missing.
 
@@ -97,6 +105,20 @@ Synthesizes behavioral patterns from recent facts. The `openclaw hybrid-mem inst
 ```
 
 Runs at 3 AM Sundays. Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
+
+### What the two jobs cover (and what they don’t)
+
+| What | Covered by | Notes |
+|------|------------|--------|
+| **Session distillation** (facts from old conversation logs) | **nightly-memory-sweep** | Run `openclaw hybrid-mem record-distill` after each run (or have the job message ask the agent to do it). With `distill.extractDirectives` / `distill.extractReinforcement` the same run can extract directives and reinforcement. |
+| **Reflection** (pattern synthesis from facts) | **weekly-reflection** | Uses `memory_reflect`; requires `reflection.enabled: true`. |
+| **Prune expired facts** | Gateway (every 60 min) | No cron job needed. |
+| **Auto-classify** ("other" → categories) | Gateway (every 24 h if enabled) | No cron job needed. |
+| **Compaction** (tier migration hot/warm/cold) | Gateway (on session end if `memoryTiering.compactionOnSessionEnd`) | No cron job needed. |
+| **Procedural memory** (extract procedures from sessions) | Not in the two jobs | Run **`openclaw hybrid-mem extract-procedures`** on a schedule (e.g. weekly after distill) if you want procedures updated from session logs. |
+| **Self-correction analysis** | Optional third job | The repo’s `scripts/install-hybrid-config.mjs` adds a `self-correction-analysis` job; you can add it manually or run `openclaw hybrid-mem self-correction-run` on a schedule. |
+
+So the two suggested jobs (nightly sweep + weekly reflection) cover **distillation** and **reflection**. Everything else that must run regularly (prune, auto-classify, compaction) runs inside the gateway. Only **extract-procedures** and **self-correction** are additional optional schedules if you want them.
 
 ---
 

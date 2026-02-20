@@ -1,5 +1,5 @@
 /**
- * Tests for directive extraction (issue #39).
+ * Tests for directive extraction.
  */
 
 import { describe, it, expect } from "vitest";

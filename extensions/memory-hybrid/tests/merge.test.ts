@@ -107,7 +107,7 @@ describe("mergeResults", () => {
     expect(mergeResults([], single, 10).length).toBe(1);
   });
 
-  it("FR-010: excludes Lance results whose text is superseded", () => {
+  it("excludes Lance results whose text is superseded", () => {
     const supersededProvider = {
       getSupersededTexts: () => new Set(["old superseded fact"]),
     };
@@ -162,7 +162,7 @@ describe("mergeResults", () => {
 });
 
 // ---------------------------------------------------------------------------
-// filterByScope (FR-006)
+// filterByScope
 // ---------------------------------------------------------------------------
 
 describe("filterByScope", () => {

@@ -33,7 +33,7 @@ Categories can also be **discovered** over time from "other" facts (new category
 | **Decay class** | Heuristic (classifyDecay) from entity/key/text: permanent, stable, active, session, checkpoint. Determines TTL and refresh-on-access. | [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) |
 | **Entity / key / value** | Structured extraction (extractStructuredFields) from text: e.g. "X's Y is Z", "decided X because Y", email/phone. | [FEATURES.md](FEATURES.md#structured-field-extraction) |
 | **Conflicting memories** | Classify-before-write (ADD/UPDATE/DELETE/NOOP); supersession (supersedes_id, valid_from, valid_until). | [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) |
-| **Dynamic salience (FR-005)** | Access boost (recall_count), time decay (last_accessed), Hebbian RELATED_TO links on co-recall. | [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) |
+| **Dynamic salience** | Access boost (recall_count), time decay (last_accessed), Hebbian RELATED_TO links on co-recall. | [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) |
 
 ---
 
@@ -56,4 +56,4 @@ Categories can also be **discovered** over time from "other" facts (new category
 - [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) — Decay class and TTL
 - [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) — Contradiction handling and supersession
 - [DEEP-DIVE.md](DEEP-DIVE.md) — Storage and search internals
-- [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) — Access-based importance (FR-005)
+- [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) — Access-based importance

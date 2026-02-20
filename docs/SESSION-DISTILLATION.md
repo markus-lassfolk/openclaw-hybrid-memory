@@ -334,7 +334,7 @@ Sessions are sorted by date (oldest first) before batching. This ensures:
 
 ## Source Date Preservation
 
-**Preferred:** Use the `source_date` field. The facts table has a `source_date` column (FR-003). **When parsing old memories, always include source_date if it is available** (from session filenames, `[YYYY-MM-DD]` prefixes, or conversation context). Pass it via:
+**Preferred:** Use the `source_date` field. The facts table has a `source_date` column. **When parsing old memories, always include source_date if it is available** (from session filenames, `[YYYY-MM-DD]` prefixes, or conversation context). Pass it via:
 
 - **JSONL:** Add optional `source_date` (YYYY-MM-DD) per fact; `store-facts.sh` forwards it to `openclaw hybrid-mem store --source-date`
 - **Gemini prompt:** Extracts `source_date` from SESSION markers when the filename contains a date (e.g. `2026-01-15-session.jsonl` → `"2026-01-15"`)

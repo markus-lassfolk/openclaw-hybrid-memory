@@ -166,7 +166,7 @@ Boost long-lived facts:
 }
 ```
 
-### Progressive disclosure (FR-009): agent-driven memory retrieval
+### Progressive disclosure: agent-driven memory retrieval
 
 Inject a lightweight memory index instead of full texts; the agent uses `memory_recall` to fetch only what it needs. Saves tokens and scales to large memory stores:
 

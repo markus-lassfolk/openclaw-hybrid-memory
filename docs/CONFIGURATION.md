@@ -10,6 +10,8 @@ All settings live in `~/.openclaw/openclaw.json`. Merge these into your existing
 
 **Quick setup:** Run `openclaw hybrid-mem install` to apply all recommended defaults at once. Then customise as needed below.
 
+**Configuration modes:** You can set `"mode": "essential" | "normal" | "expert" | "full"` to apply a preset of feature toggles (e.g. **Essential** for Raspberry Pi, **Normal** for most users, **Expert**/**Full** for power users). See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) for the matrix and where credentials vault and credential capture from tool I/O fit in.
+
 ---
 
 ## Memory slot and memory-hybrid plugin
@@ -57,7 +59,7 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 
 `store.fuzzyDedupe` (default `false`): enables fuzzy deduplication — before storing, normalizes text, hashes it, skips if an existing fact has the same hash.
 
-**FR-008 — Memory operation classification (Mem0-style):**
+**Memory operation classification (Mem0-style):**
 
 | Key | Default | Description |
 |-----|--------|-------------|
@@ -114,15 +116,15 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `useSummaryInInjection` | `true` | Use summary in injection to save tokens |
 | `summarizeWhenOverBudget` | `false` | When token cap forces dropping memories, LLM-summarize all into 2-3 sentences |
 | `summarizeModel` | `gpt-4o-mini` | Model for summarize-when-over-budget |
-| `progressiveMaxCandidates` | `15` | (FR-009) Max memories in progressive index; used when `injectionFormat` is `progressive` or `progressive_hybrid` |
-| `progressiveIndexMaxTokens` | `300` when progressive | (FR-009) Token cap for the index block in progressive mode |
-| `progressiveGroupByCategory` | `false` | (FR-009) Group index lines by category for readability |
-| `progressivePinnedRecallCount` | `3` | (FR-009) In `progressive_hybrid`: facts with recallCount ≥ this or permanent decay are injected in full |
-| `scopeFilter` | (none) | (FR-006) Multi-user: restrict auto-recall to global + matching scopes. `{ "userId": "alice", "agentId": "support-bot", "sessionId": "sess-xyz" }` — omit any to not filter by that dimension. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
+| `progressiveMaxCandidates` | `15` | Max memories in progressive index; used when `injectionFormat` is `progressive` or `progressive_hybrid` |
+| `progressiveIndexMaxTokens` | `300` when progressive | Token cap for the index block in progressive mode |
+| `progressiveGroupByCategory` | `false` | Group index lines by category for readability |
+| `progressivePinnedRecallCount` | `3` | In `progressive_hybrid`: facts with recallCount ≥ this or permanent decay are injected in full |
+| `scopeFilter` | (none) | Multi-user: restrict auto-recall to global + matching scopes. `{ "userId": "alice", "agentId": "support-bot", "sessionId": "sess-xyz" }` — omit any to not filter by that dimension. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
 
 ---
 
-## FR-004: Memory tiering (hot/warm/cold)
+## Memory tiering (hot/warm/cold)
 
 Dynamic tiering keeps a small **HOT** set always loaded, uses **WARM** for semantic search, and archives **COLD** for manual or deep retrieval only. Compaction runs on session end (or via `hybrid-mem compact`).
 
@@ -318,7 +320,7 @@ See [FEATURES.md](FEATURES.md) for how auto-classify works. Configuration:
 
 ---
 
-## Reflection (FR-011)
+## Reflection (pattern synthesis)
 
 Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for full documentation.
 

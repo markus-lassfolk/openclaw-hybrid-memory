@@ -1,4 +1,4 @@
-# FR-047: Auto-Recall on Authentication Failures
+# Auto-Recall on Authentication Failures
 
 ## Overview
 
@@ -164,7 +164,7 @@ When the credential vault is enabled, the system can still inject hints about va
 Even if the credential value is encrypted in the vault, the hint will tell the agent:
 > "Credential for example.com (ssh) — stored in secure vault. Use credential_get(service="example.com") to retrieve."
 
-## Scope Awareness (FR-006)
+## Scope awareness
 
 The feature respects memory scoping:
 - **Orchestrator agents**: See all credentials (global scope)
@@ -241,7 +241,7 @@ The auth failure recall system follows these security rules:
    - Never logs secrets, tokens, passwords
 
 2. **Scoped access**
-   - Respects FR-006 memory scoping
+   - Respects memory scoping (global + agent-specific)
    - Agents only see credentials in their scope
 
 3. **Vault respect**
@@ -326,7 +326,7 @@ The feature is **fully backward compatible**:
 
 ## Future Enhancements
 
-Potential improvements (not in scope for FR-047):
+Potential improvements (out of scope for this feature):
 
 1. **Multi-step auth flows**: Track auth context across multiple turns
 2. **Credential validation**: Detect when recalled credentials also fail
@@ -335,7 +335,7 @@ Potential improvements (not in scope for FR-047):
 
 ## Related Features
 
-- **FR-006**: Memory scoping (used for credential access control)
+- **Memory scoping**: Used for credential access control (global + agent-specific)
 - **Credential vault**: Encrypted credential storage (optional integration)
 - **Auto-recall**: Base memory injection system
 - **FTS5 + LanceDB**: Dual backend for fast + semantic search

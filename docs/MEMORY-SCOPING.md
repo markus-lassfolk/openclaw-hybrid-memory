@@ -1,10 +1,10 @@
 ---
 layout: default
-title: Memory Scoping (FR-006)
+title: Memory Scoping
 parent: Features
 nav_order: 13
 ---
-# Memory Scoping (FR-006)
+# Memory Scoping
 
 **Explicit Memory Scoping** lets you control which memories are visible to whom in multi-agent or shared environments (e.g. Discord, Slack). Personal facts like "My dog's name is Rex" can stay private to a user; company policies can be global.
 

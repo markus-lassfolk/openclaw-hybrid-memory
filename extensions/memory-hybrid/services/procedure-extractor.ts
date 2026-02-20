@@ -1,5 +1,5 @@
 /**
- * Procedural memory (issue #23): extract tool-call sequences from session JSONL
+ * Procedural memory: extract tool-call sequences from session JSONL
  * and store as positive/negative procedures.
  */
 

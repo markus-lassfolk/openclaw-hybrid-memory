@@ -341,7 +341,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
   });
 
   // ========================================================================
-  // FR-006 + multi-agent: Procedure Scoping Tests (Issue #3)
+  // Procedure Scoping Tests
   // ========================================================================
 
   it("migrateProcedureScopeColumns adds scope and scope_target columns", () => {

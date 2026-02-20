@@ -1,6 +1,6 @@
 /**
  * Authentication Failure Detection Service
- * FR-047: Auto-Recall on Authentication Failures
+ * Auto-Recall on Authentication Failures
  * 
  * Detects authentication failures in tool results and extracts target identifiers
  * (hostname, IP, URL domain, service name) for memory recall.

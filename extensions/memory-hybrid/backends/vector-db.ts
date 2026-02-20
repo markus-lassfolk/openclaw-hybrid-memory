@@ -72,7 +72,7 @@ export class VectorDB {
     return this.table;
   }
 
-  /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for FR-008 classification. */
+  /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for classification. */
   async store(entry: {
     text: string;
     vector: number[];
