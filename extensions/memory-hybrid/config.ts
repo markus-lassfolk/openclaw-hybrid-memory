@@ -47,6 +47,17 @@ export type EntityLookupConfig = {
   maxFactsPerEntity: number;    // max facts to merge per matched entity (default 2)
 };
 
+/** FR-047: Auto-recall on authentication failures (reactive memory trigger) */
+export type AuthFailureRecallConfig = {
+  enabled: boolean;
+  /** Auth failure patterns to detect (regex strings). Default includes SSH, HTTP 401/403, API key errors. */
+  patterns: string[];
+  /** Max recalls per target per session (dedup to avoid spam). Default: 1. */
+  maxRecallsPerTarget: number;
+  /** Inject credentials as system hint even if they were stored in the vault. Default: true. */
+  includeVaultHints: boolean;
+};
+
 /** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary, progressive options */
 export type AutoRecallConfig = {
   enabled: boolean;
@@ -73,6 +84,8 @@ export type AutoRecallConfig = {
   progressivePinnedRecallCount?: number;
   /** FR-006: Scope filter for auto-recall (userId, agentId, sessionId). When set, only global + matching scopes are injected. */
   scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+  /** FR-047: Auto-recall on authentication failures (reactive trigger after tool results) */
+  authFailure: AuthFailureRecallConfig;
 };
 
 /** Store options: fuzzy dedupe (2.3) and optional FR-008 classify-before-write. */
@@ -436,6 +449,18 @@ export const hybridConfigSchema = {
               sessionId: typeof scopeFilterRaw.sessionId === "string" && scopeFilterRaw.sessionId.trim().length > 0 ? scopeFilterRaw.sessionId.trim() : undefined,
             }
           : undefined;
+      // FR-047: Auth failure recall config
+      const authFailureRaw = ar.authFailure as Record<string, unknown> | undefined;
+      const authFailure: AuthFailureRecallConfig = {
+        enabled: authFailureRaw?.enabled !== false, // enabled by default
+        patterns: Array.isArray(authFailureRaw?.patterns)
+          ? (authFailureRaw.patterns as string[]).filter((p) => typeof p === "string" && p.length > 0)
+          : ["Permission denied", "Authentication failed", "publickey,password", "401", "403", "Unauthorized", "Forbidden", "Invalid API key", "token expired", "invalid_auth"],
+        maxRecallsPerTarget: typeof authFailureRaw?.maxRecallsPerTarget === "number" && authFailureRaw.maxRecallsPerTarget > 0
+          ? Math.floor(authFailureRaw.maxRecallsPerTarget)
+          : 1,
+        includeVaultHints: authFailureRaw?.includeVaultHints !== false,
+      };
       autoRecall = {
         enabled: ar.enabled !== false,
         maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
@@ -456,6 +481,7 @@ export const hybridConfigSchema = {
         progressiveGroupByCategory,
         progressivePinnedRecallCount,
         scopeFilter,
+        authFailure,
       };
     } else {
       autoRecall = {
@@ -477,6 +503,12 @@ export const hybridConfigSchema = {
         progressiveIndexMaxTokens: undefined,
         progressiveGroupByCategory: false,
         progressivePinnedRecallCount: 3,
+        authFailure: {
+          enabled: true,
+          patterns: ["Permission denied", "Authentication failed", "publickey,password", "401", "403", "Unauthorized", "Forbidden", "Invalid API key", "token expired", "invalid_auth"],
+          maxRecallsPerTarget: 1,
+          includeVaultHints: true,
+        },
       };
     }
 
