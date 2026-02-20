@@ -32,7 +32,7 @@ These are **not** required for core functionality but enhance the system for lon
 
 **How to enable when "not defined":**
 
-1. **Recommended:** Run **`openclaw hybrid-mem verify --fix`**. This adds both `nightly-memory-sweep` and `weekly-reflection` to `~/.openclaw/cron/jobs.json` when they are missing (without overwriting existing jobs).
+1. **Recommended:** Run **`openclaw hybrid-mem verify --fix`**. This adds the four optional jobs when they are missing (without overwriting existing jobs) to both `~/.openclaw/cron/jobs.json` and, if present, the `jobs` array in `~/.openclaw/openclaw.json`: `nightly-memory-sweep`, `weekly-reflection`, `weekly-extract-procedures`, and `self-correction-analysis`.
 2. **Or** add the job definitions manually to `~/.openclaw/openclaw.json` (under a top-level `jobs` array if your OpenClaw version uses it) or to `~/.openclaw/cron/jobs.json` (see snippets below).
 3. **Or** run the standalone install script from the repo: `node scripts/install-hybrid-config.mjs` (merges full defaults including jobs into openclaw.json).
 

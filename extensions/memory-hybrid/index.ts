@@ -4145,6 +4145,36 @@ const memoryHybridPlugin = {
               }
             } catch { /* ignore */ }
           }
+          let extractProceduresDefined = false;
+          let selfCorrectionDefined = false;
+          const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
+          const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
+          if (existsSync(cronStorePath)) {
+            try {
+              const raw = readFileSync(cronStorePath, "utf-8");
+              const store = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = store.jobs;
+              if (Array.isArray(jobs)) {
+                if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
+                if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
+              }
+            } catch { /* ignore */ }
+          }
+          if ((!extractProceduresDefined || !selfCorrectionDefined) && existsSync(defaultConfigPath)) {
+            try {
+              const raw = readFileSync(defaultConfigPath, "utf-8");
+              const root = JSON.parse(raw) as Record<string, unknown>;
+              const jobs = root.jobs;
+              if (Array.isArray(jobs)) {
+                if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
+                if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
+              } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+                const keyed = jobs as Record<string, unknown>;
+                if (Object.keys(keyed).some((k) => extractProceduresRe.test(k))) extractProceduresDefined = true;
+                if (Object.keys(keyed).some((k) => selfCorrectionRe.test(k))) selfCorrectionDefined = true;
+              }
+            } catch { /* ignore */ }
+          }
           log("\nOptional / suggested jobs (cron store or openclaw.json):");
           if (nightlySweepDefined) {
             log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "true" : "false"}`);
@@ -4157,6 +4187,18 @@ const memoryHybridPlugin = {
           } else {
             log("  weekly-reflection (pattern synthesis): not defined");
             fixes.push("Optional: Set up weekly reflection via jobs. See docs/REFLECTION.md § Scheduled Job. Run 'openclaw hybrid-mem verify --fix' to add.");
+          }
+          if (extractProceduresDefined) {
+            log("  weekly-extract-procedures (procedural memory): defined");
+          } else {
+            log("  weekly-extract-procedures (procedural memory): not defined");
+            fixes.push("Optional: Set up procedural memory extraction via jobs. See docs/PROCEDURAL-MEMORY.md. Run 'openclaw hybrid-mem verify --fix' to add.");
+          }
+          if (selfCorrectionDefined) {
+            log("  self-correction-analysis: defined");
+          } else {
+            log("  self-correction-analysis: not defined");
+            fixes.push("Optional: Set up self-correction analysis via jobs. See docs/SELF-CORRECTION-PIPELINE.md. Run 'openclaw hybrid-mem verify --fix' to add.");
           }
           log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
           if (opts.logFile && existsSync(opts.logFile)) {
@@ -4260,6 +4302,22 @@ const memoryHybridPlugin = {
                   isolated: true,
                   model: "gemini",
                 };
+                const weeklyExtractProceduresJob = {
+                  name: "weekly-extract-procedures",
+                  schedule: "0 4 * * 0",
+                  channel: "system",
+                  message: "Run procedural memory extraction: openclaw hybrid-mem extract-procedures --days 7. Extracts tool-call procedures from session logs; run generate-auto-skills when needed.",
+                  isolated: true,
+                  model: "gemini",
+                };
+                const selfCorrectionJob = {
+                  name: "self-correction-analysis",
+                  schedule: "30 2 * * *",
+                  channel: "system",
+                  message: "Run nightly self-correction analysis: openclaw hybrid-mem self-correction-run. Uses last 3 days of sessions; multi-language correction detection from .language-keywords.json (run build-languages first for non-English). Report: workspace memory/reports/self-correction-YYYY-MM-DD.md.",
+                  isolated: true,
+                  model: "sonnet",
+                };
                 try {
                   mkdirSync(cronDir, { recursive: true });
                   let store: { jobs?: unknown[] } = {};
@@ -4270,6 +4328,8 @@ const memoryHybridPlugin = {
                   const jobs = store.jobs as Array<Record<string, unknown>>;
                   const hasNightly = jobs.some((j) => j && String(j.name).toLowerCase().includes("nightly-memory-sweep"));
                   const hasWeekly = jobs.some((j) => j && /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")));
+                  const hasExtractProcedures = jobs.some((j) => j && /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")));
+                  const hasSelfCorrection = jobs.some((j) => j && /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")));
                   let jobsChanged = false;
                   if (!hasNightly) {
                     jobs.push(nightlyJob as Record<string, unknown>);
@@ -4281,11 +4341,54 @@ const memoryHybridPlugin = {
                     jobsChanged = true;
                     applied.push("Added weekly-reflection job to " + cronStorePath);
                   }
+                  if (!hasExtractProcedures) {
+                    jobs.push(weeklyExtractProceduresJob as Record<string, unknown>);
+                    jobsChanged = true;
+                    applied.push("Added weekly-extract-procedures job to " + cronStorePath);
+                  }
+                  if (!hasSelfCorrection) {
+                    jobs.push(selfCorrectionJob as Record<string, unknown>);
+                    jobsChanged = true;
+                    applied.push("Added self-correction-analysis job to " + cronStorePath);
+                  }
                   if (jobsChanged) {
                     writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
                   }
                 } catch (e) {
                   log("Could not add optional jobs to cron store: " + String(e));
+                }
+                // Also add missing jobs to openclaw.json so schedulers that read from there see them
+                try {
+                  const rootJobs = fixConfig.jobs;
+                  if (Array.isArray(rootJobs)) {
+                    const arr = rootJobs as Array<Record<string, unknown>>;
+                    const hasNightlyInConfig = arr.some((j) => j && String(j.name).toLowerCase().includes("nightly-memory-sweep"));
+                    const hasWeeklyInConfig = arr.some((j) => j && /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")));
+                    const hasExtractProceduresInConfig = arr.some((j) => j && /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")));
+                    const hasSelfCorrectionInConfig = arr.some((j) => j && /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")));
+                    if (!hasNightlyInConfig) {
+                      arr.push(nightlyJob as Record<string, unknown>);
+                      changed = true;
+                      applied.push("Added nightly-memory-sweep job to " + defaultConfigPath);
+                    }
+                    if (!hasWeeklyInConfig) {
+                      arr.push(weeklyJob as Record<string, unknown>);
+                      changed = true;
+                      applied.push("Added weekly-reflection job to " + defaultConfigPath);
+                    }
+                    if (!hasExtractProceduresInConfig) {
+                      arr.push(weeklyExtractProceduresJob as Record<string, unknown>);
+                      changed = true;
+                      applied.push("Added weekly-extract-procedures job to " + defaultConfigPath);
+                    }
+                    if (!hasSelfCorrectionInConfig) {
+                      arr.push(selfCorrectionJob as Record<string, unknown>);
+                      changed = true;
+                      applied.push("Added self-correction-analysis job to " + defaultConfigPath);
+                    }
+                  }
+                } catch (e) {
+                  log("Could not add optional jobs to openclaw.json: " + String(e));
                 }
                 if (changed) {
                   writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
