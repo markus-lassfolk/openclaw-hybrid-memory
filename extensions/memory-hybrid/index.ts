@@ -5631,6 +5631,14 @@ const memoryHybridPlugin = {
           setNested(out.config, k, value);
           const written = getNested(out.config, k);
           const writtenStr = typeof written === "string" ? written : JSON.stringify(written);
+          
+          // Validate config against schema before writing
+          try {
+            hybridConfigSchema.parse(out.config);
+          } catch (schemaErr: unknown) {
+            return { ok: false, error: `Invalid config value: ${schemaErr}` };
+          }
+          
           try {
             writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
             writeFileSync(getRestartPendingPath(), "", "utf-8");
@@ -5792,12 +5800,15 @@ const memoryHybridPlugin = {
     // to support multi-agent scoping even when autoRecall is disabled
     api.on("before_agent_start", async (event: unknown) => {
       if (!restartPendingCleared && existsSync(getRestartPendingPath())) {
+        restartPendingCleared = true; // Set flag before unlink to prevent race
         try {
           unlinkSync(getRestartPendingPath());
-        } catch {
-          // ignore
+        } catch (err: unknown) {
+          // Ignore ENOENT (already deleted by another agent), propagate other errors
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            console.warn("Failed to delete restart marker:", err);
+          }
         }
-        restartPendingCleared = true;
       }
       const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
       
