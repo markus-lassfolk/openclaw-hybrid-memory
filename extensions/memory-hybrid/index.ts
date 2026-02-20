@@ -5615,8 +5615,6 @@ const memoryHybridPlugin = {
           }
           const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
 
-                   const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
-
           // FR-004: HOT tier — always inject first (cap by hotMaxTokens)
           let hotBlock = "";
           if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
