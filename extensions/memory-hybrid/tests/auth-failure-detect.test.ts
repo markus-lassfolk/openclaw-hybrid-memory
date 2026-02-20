@@ -191,8 +191,9 @@ describe("auth-failure-detect", () => {
       expect(hint).toContain("💡 Memory has credentials for example.com:");
       expect(hint).toContain("1.");
       expect(hint).toContain("2.");
-      expect(hint).toContain("SSH credentials");
-      expect(hint).toContain("API token");
+      // Security fix: Now shows only metadata, not full text
+      expect(hint).toContain("entity: Credentials");
+      expect(hint).toContain("key: example.com");
     });
 
     it("limits to 3 facts", () => {
@@ -210,19 +211,22 @@ describe("auth-failure-detect", () => {
       expect(lines.length).toBe(4);
     });
 
-    it("truncates long fact text", () => {
+    it("shows metadata instead of text for security", () => {
       const longText = "x".repeat(200);
       const facts = [
         {
           text: longText,
           category: "technical",
-          entity: null,
-          key: null,
+          entity: "TestEntity",
+          key: "testkey",
         },
       ];
       const hint = formatCredentialHint(detection, facts);
-      expect(hint).toContain("…");
-      expect(hint.length).toBeLessThan(longText.length + 100);
+      // Security: should NOT contain the actual text
+      expect(hint).not.toContain("xxx");
+      // Should contain metadata
+      expect(hint).toContain("entity: TestEntity");
+      expect(hint).toContain("key: testkey");
     });
 
     it("returns empty string when no facts", () => {
@@ -288,7 +292,9 @@ Permission denied (publickey,password).
       const hint = formatCredentialHint(detection, facts);
       expect(hint).toContain("💡");
       expect(hint).toContain("production-server.example.com");
-      expect(hint).toContain("SSH credentials");
+      // Security fix: shows metadata instead of text
+      expect(hint).toContain("entity: Credentials");
+      expect(hint).toContain("key: production-server.example.com");
     });
 
     it("full flow: API failure -> extract domain -> format hint", () => {
@@ -316,7 +322,9 @@ Response: 401 Unauthorized
 
       const hint = formatCredentialHint(detection, facts);
       expect(hint).toContain("api.openai.com");
-      expect(hint).toContain("OpenAI API key");
+      // Security fix: shows metadata instead of text
+      expect(hint).toContain("entity: Credentials");
+      expect(hint).toContain("key: openai");
     });
 
     it("handles case where target extraction fails", () => {

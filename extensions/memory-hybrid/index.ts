@@ -1514,6 +1514,15 @@ let lastProgressiveIndexIds: string[] = [];
 // - Updated on each before_agent_start event
 // - Used by memory_store to auto-scope facts to the current agent
 // - Falls back to cfg.multiAgent.orchestratorId if detection fails
+// 
+// ⚠️ THREADING WARNING: This is a module-level singleton. If OpenClaw's plugin
+// host ever switches to concurrent request handling, this variable could race
+// between agent sessions. Current implementation assumes serial execution per
+// plugin instance.
+//
+// Config option `multiAgent.strictAgentScoping` can be enabled to throw an error
+// if agent detection fails in "agent" or "auto" scope modes, rather than silently
+// falling back to orchestrator.
 let currentAgentId: string | null = null;
 
 /**
@@ -2417,6 +2426,16 @@ const memoryHybridPlugin = {
             // Auto-determine scope based on multiAgent config
             const agentId = currentAgentId || cfg.multiAgent.orchestratorId;
             const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
+            
+            // Strict agent scoping: throw if agent detection failed in agent/auto mode
+            if (cfg.multiAgent.strictAgentScoping && !currentAgentId && 
+                (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")) {
+              throw new Error(
+                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. ` +
+                `Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". ` +
+                `Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`
+              );
+            }
             
             if (cfg.multiAgent.defaultStoreScope === "global") {
               // Backward compatible: always global
@@ -6091,7 +6110,8 @@ const memoryHybridPlugin = {
           const recallCount = authFailureRecallsThisSession.get(detection.target) || 0;
           const maxRecalls = cfg.autoRecall.authFailure.maxRecallsPerTarget;
           if (maxRecalls > 0 && recallCount >= maxRecalls) {
-            api.logger.info?.(`memory-hybrid: auth failure for ${detection.target} already recalled ${recallCount} times this session, skipping`);
+            // Use debug level to avoid log spam for repeated failures
+            api.logger.debug?.(`memory-hybrid: auth failure for ${detection.target} already recalled ${recallCount} times this session, skipping`);
             return;
           }
           
@@ -6165,8 +6185,12 @@ const memoryHybridPlugin = {
             authFailureRecallsThisSession.set(detection.target, recallCount + 1);
             
             // Return the hint to be injected
-            // Note: This assumes the hook supports returning { prependContext }
-            // If not, we may need to use a different injection mechanism
+            // Hook contract validation: OpenClaw's before_agent_start hook must support
+            // returning { prependContext: string } which is automatically prepended to the
+            // agent's prompt. This is documented in OpenClaw's plugin API.
+            // If this contract changes or is not supported in your OpenClaw version,
+            // this will fail silently (hint won't be injected). Alternative injection
+            // mechanisms would be: tool response text, or system message via API.
             return { prependContext: hint + "\n\n" };
           }
         } catch (err) {
