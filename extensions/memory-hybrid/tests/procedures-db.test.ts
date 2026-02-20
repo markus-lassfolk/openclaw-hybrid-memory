@@ -170,3 +170,173 @@ describe("FactsDB procedure columns on facts", () => {
     expect(retrieved!.successCount).toBe(3);
   });
 });
+
+describe("searchProceduresRanked (confidence-weighted ranking)", () => {
+  it("returns procedures with relevanceScore", () => {
+    db.upsertProcedure({
+      taskPattern: "Check Home Assistant health",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      lastValidated: Math.floor(Date.now() / 1000),
+    });
+    const results = db.searchProceduresRanked("Home Assistant health", 5);
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0]).toHaveProperty("relevanceScore");
+    expect(results[0].relevanceScore).toBeGreaterThan(0);
+    expect(results[0].relevanceScore).toBeLessThanOrEqual(1);
+  });
+
+  it("applies recency decay (30-day window, min 0.3)", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const recentProc = db.upsertProcedure({
+      taskPattern: "Recent check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      lastValidated: nowSec - 1 * 24 * 3600, // 1 day ago
+    });
+    const oldProc = db.upsertProcedure({
+      taskPattern: "Old check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      lastValidated: nowSec - 40 * 24 * 3600, // 40 days ago (beyond window)
+    });
+    const results = db.searchProceduresRanked("check API", 10);
+    const recent = results.find((r) => r.id === recentProc.id);
+    const old = results.find((r) => r.id === oldProc.id);
+    expect(recent).toBeDefined();
+    expect(old).toBeDefined();
+    // Recent should have higher score due to recency
+    expect(recent!.relevanceScore).toBeGreaterThan(old!.relevanceScore);
+    // Old procedure should have at least 0.3 recency factor
+    expect(old!.relevanceScore).toBeGreaterThan(0);
+  });
+
+  it("applies success rate boost (50-100% weight)", () => {
+    const highSuccess = db.upsertProcedure({
+      taskPattern: "High success check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      successCount: 10,
+      failureCount: 0,
+      lastValidated: Math.floor(Date.now() / 1000),
+    });
+    const lowSuccess = db.upsertProcedure({
+      taskPattern: "Low success check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      successCount: 1,
+      failureCount: 9,
+      lastValidated: Math.floor(Date.now() / 1000),
+    });
+    const results = db.searchProceduresRanked("check API", 10);
+    const high = results.find((r) => r.id === highSuccess.id);
+    const low = results.find((r) => r.id === lowSuccess.id);
+    expect(high).toBeDefined();
+    expect(low).toBeDefined();
+    // High success rate should have higher score
+    expect(high!.relevanceScore).toBeGreaterThan(low!.relevanceScore);
+  });
+
+  it("penalizes procedures that failed in last 7 days (0.5 multiplier)", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const recentFail = db.upsertProcedure({
+      taskPattern: "Recent fail check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      successCount: 5,
+      failureCount: 1,
+      lastValidated: nowSec - 1 * 24 * 3600,
+      lastFailed: nowSec - 2 * 24 * 3600, // failed 2 days ago
+    });
+    const oldFail = db.upsertProcedure({
+      taskPattern: "Old fail check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      successCount: 5,
+      failureCount: 1,
+      lastValidated: nowSec - 1 * 24 * 3600,
+      lastFailed: nowSec - 10 * 24 * 3600, // failed 10 days ago
+    });
+    const results = db.searchProceduresRanked("check API", 10);
+    const recent = results.find((r) => r.id === recentFail.id);
+    const old = results.find((r) => r.id === oldFail.id);
+    expect(recent).toBeDefined();
+    expect(old).toBeDefined();
+    // Recent failure should have lower score (penalty applied)
+    expect(recent!.relevanceScore).toBeLessThan(old!.relevanceScore);
+  });
+
+  it("penalizes never-validated procedures (30% penalty)", () => {
+    const validated = db.upsertProcedure({
+      taskPattern: "Validated check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      lastValidated: Math.floor(Date.now() / 1000),
+    });
+    const neverValidated = db.upsertProcedure({
+      taskPattern: "Never validated check API",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      lastValidated: null,
+    });
+    const results = db.searchProceduresRanked("check API", 10);
+    const val = results.find((r) => r.id === validated.id);
+    const never = results.find((r) => r.id === neverValidated.id);
+    expect(val).toBeDefined();
+    expect(never).toBeDefined();
+    // Validated should have higher score
+    expect(val!.relevanceScore).toBeGreaterThan(never!.relevanceScore);
+    // Never-validated should have ~70% of validated score (30% penalty)
+    expect(never!.relevanceScore).toBeLessThan(val!.relevanceScore * 0.75);
+  });
+
+  it("returns procedures matching FTS query", () => {
+    // Create a procedure that won't match the FTS query
+    db.upsertProcedure({
+      taskPattern: "Completely unrelated task about cooking pasta",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.3,
+      successCount: 0,
+      failureCount: 10,
+      lastValidated: null,
+    });
+    const results = db.searchProceduresRanked("check API", 10);
+    // FTS query won't match unrelated procedures
+    expect(results.every((r) => r.taskPattern.toLowerCase().includes("api") || r.taskPattern.toLowerCase().includes("check"))).toBe(true);
+  });
+
+  it("returns positive procedures before negative", () => {
+    db.upsertProcedure({
+      taskPattern: "Positive API check",
+      recipeJson: "[]",
+      procedureType: "positive",
+      confidence: 0.8,
+      lastValidated: Math.floor(Date.now() / 1000),
+    });
+    db.upsertProcedure({
+      taskPattern: "Negative API check",
+      recipeJson: "[]",
+      procedureType: "negative",
+      confidence: 0.8,
+      lastValidated: Math.floor(Date.now() / 1000),
+    });
+    const results = db.searchProceduresRanked("API check", 10);
+    if (results.length >= 2) {
+      const positiveIdx = results.findIndex((r) => r.procedureType === "positive");
+      const negativeIdx = results.findIndex((r) => r.procedureType === "negative");
+      if (positiveIdx !== -1 && negativeIdx !== -1) {
+        expect(positiveIdx).toBeLessThan(negativeIdx);
+      }
+    }
+  });
+});

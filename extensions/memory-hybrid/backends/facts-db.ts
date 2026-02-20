@@ -1853,6 +1853,119 @@ export class FactsDB {
     }
   }
 
+  /**
+   * Confidence-weighted procedural ranking (enhancement):
+   * - Combines FTS relevance with confidence, recency, success rate, and recent failures
+   * - Recency decay over 30-day window (min 0.3 factor)
+   * - Success rate boost (50-100% weight based on successCount/failureCount)
+   * - Penalty for procedures that failed in last 7 days (0.5 multiplier)
+   * - Never-validated procedures get 30% penalty
+   * - Reinforcement boost for user-praised procedures (configurable)
+   * Returns procedures with relevanceScore, sorted by composite score.
+   */
+  searchProceduresRanked(taskDescription: string, limit = 10, reinforcementBoost = 0.1): Array<ProcedureEntry & { relevanceScore: number }> {
+    const sanitized = this.sanitizeFTS5Query(taskDescription);
+    const safeQuery = sanitized
+      .split(/\s+/)
+      .filter((w) => w.length > 1)
+      .slice(0, 8)
+      .map((w) => `"${w}"`)
+      .join(" OR ");
+    if (!safeQuery) return [];
+    
+    const nowSec = Math.floor(Date.now() / 1000);
+    const RECENCY_WINDOW = 30 * 24 * 3600; // 30 days
+    const RECENT_FAILURE_WINDOW = 7 * 24 * 3600; // 7 days
+    const MIN_RECENCY_FACTOR = 0.3;
+    const NEVER_VALIDATED_PENALTY = 0.7; // 30% penalty
+    const RECENT_FAILURE_PENALTY = 0.5;
+    
+    try {
+      const rows = this.liveDb
+        .prepare(
+          `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p 
+           JOIN procedures_fts fts ON p.rowid = fts.rowid 
+           WHERE procedures_fts MATCH ? 
+           ORDER BY bm25(procedures_fts) 
+           LIMIT ?`,
+        )
+        .all(safeQuery, limit * 3) as Array<Record<string, unknown>>;
+      
+      if (rows.length === 0) return [];
+      
+      // Normalize FTS scores to 0-1 range
+      const minFtsScore = Math.min(...rows.map((r) => r.fts_score as number));
+      const maxFtsScore = Math.max(...rows.map((r) => r.fts_score as number));
+      const ftsRange = maxFtsScore - minFtsScore || 1;
+      
+      type ScoredRow = ProcedureEntry & { relevanceScore: number };
+      const scored: ScoredRow[] = rows.map((r) => {
+        const proc = this.procedureRowToEntry(r);
+        const confidence = proc.confidence;
+        
+        // FTS relevance (inverted because bm25 returns negative scores)
+        const rawFtsScore = 1 - ((r.fts_score as number) - minFtsScore) / ftsRange;
+        const ftsScore = Number.isNaN(rawFtsScore) ? 0.8 : rawFtsScore;
+        
+        // Recency factor (decay over 30 days, min 0.3)
+        const lastActive = proc.lastValidated ?? proc.createdAt;
+        const ageSeconds = nowSec - lastActive;
+        const recencyFactor = ageSeconds > RECENCY_WINDOW
+          ? MIN_RECENCY_FACTOR
+          : Math.max(MIN_RECENCY_FACTOR, 1 - (ageSeconds / RECENCY_WINDOW));
+        
+        // Success rate (50-100% weight based on successCount/failureCount)
+        const totalTrials = proc.successCount + proc.failureCount;
+        let successRateWeight = 0.75; // default for never-validated
+        if (totalTrials > 0) {
+          const successRate = proc.successCount / totalTrials;
+          successRateWeight = 0.5 + (successRate * 0.5); // 50% base + up to 50% from success rate
+        }
+        
+        // Penalty for recent failures (last 7 days)
+        let recentFailurePenalty = 1.0;
+        if (proc.lastFailed && (nowSec - proc.lastFailed) < RECENT_FAILURE_WINDOW) {
+          recentFailurePenalty = RECENT_FAILURE_PENALTY;
+        }
+        
+        // Penalty for never-validated procedures
+        let validationPenalty = 1.0;
+        if (!proc.lastValidated) {
+          validationPenalty = NEVER_VALIDATED_PENALTY;
+        }
+        
+        // Reinforcement boost for user-praised procedures
+        const reinforcedCount = (r.reinforced_count as number) ?? 0;
+        const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
+        
+        // Composite score: FTS relevance + confidence + reinforcement, weighted by recency, success_rate, and penalties
+        const baseScore = ftsScore * 0.6 + confidence * 0.4 + reinforcement;
+        const relevanceScore = Math.min(1.0, 
+          baseScore * recencyFactor * successRateWeight * recentFailurePenalty * validationPenalty
+        );
+        
+        return { ...proc, relevanceScore };
+      });
+
+      // Sort by relevanceScore, then procedure_type (positive first as tiebreaker), then last validated
+      scored.sort((a, b) => {
+        if (Math.abs(b.relevanceScore - a.relevanceScore) > 0.001) {
+          return b.relevanceScore - a.relevanceScore;
+        }
+        const typeA = a.procedureType === "positive" ? 1 : 0;
+        const typeB = b.procedureType === "positive" ? 1 : 0;
+        if (typeB !== typeA) return typeB - typeA;
+        const lastValA = a.lastValidated ?? 0;
+        const lastValB = b.lastValidated ?? 0;
+        return lastValB - lastValA;
+      });
+
+      return scored.slice(0, limit);
+    } catch {
+      return [];
+    }
+  }
+
   /** Get negative procedures whose task_pattern might match the given description (for warnings). */
   getNegativeProceduresMatching(taskDescription: string, limit = 5): ProcedureEntry[] {
     const all = this.searchProcedures(taskDescription, limit * 2);
