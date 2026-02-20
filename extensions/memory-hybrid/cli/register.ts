@@ -602,8 +602,11 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       console.log(result.message);
     }));
 
-  mem
-    .command("help config-set <key>")
+  const helpCmd = mem
+    .command("help")
+    .description("Help commands for config keys");
+  helpCmd
+    .command("config-set <key>")
     .description("Show current value and a short description for a config key (e.g. autoCapture, credentials.enabled).")
     .action(withExit(async (key: string) => {
       const result = await runConfigSetHelp(key);

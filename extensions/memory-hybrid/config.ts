@@ -517,6 +517,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       analyzeViaSpawn: false,
     },
     search: { hydeEnabled: true },
+    ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true },
   },
 };
