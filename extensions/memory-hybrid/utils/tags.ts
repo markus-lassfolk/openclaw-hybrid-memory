@@ -1,5 +1,5 @@
 /**
- * Tag extraction (FR-001) and fuzzy dedupe helpers for facts.
+ * Tag extraction and fuzzy dedupe helpers for facts.
  */
 
 import { createHash } from "node:crypto";
@@ -30,7 +30,7 @@ export const TAG_PATTERNS: Array<[string, RegExp]> = [
   ["ha", /\bha\b/i],
 ];
 
-/** Extract topic tags from text (FR-001). Returns lowercase, deduplicated tags. */
+/** Extract topic tags from text. Returns lowercase, deduplicated tags. */
 export function extractTags(text: string, entity?: string | null): string[] {
   const combined = [text, entity].filter(Boolean).join(" ").toLowerCase();
   const seen = new Set<string>();

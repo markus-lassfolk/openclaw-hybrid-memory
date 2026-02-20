@@ -22,7 +22,7 @@ No automatic merging of text: UPDATE creates a **new** fact row that supersedes 
 
 ---
 
-## Classify-before-write (FR-008)
+## Classify-before-write
 
 When **`store.classifyBeforeWrite`** is `true`, every store (from `memory_store`, auto-capture, or batch) runs a **classification step** before writing:
 
@@ -52,7 +52,7 @@ Classification uses a dedicated prompt (e.g. `memory-classify`) and a configurab
 
 ---
 
-## Supersession (FR-010)
+## Supersession
 
 **Supersession** is how we record “this fact replaces that one” without deleting history.
 

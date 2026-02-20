@@ -6,7 +6,7 @@ nav_order: 14
 ---
 # Search Improvements — RRF, ingest-files, HyDE
 
-[Issue #33](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/33) adds three improvements to hybrid memory search:
+[GitHub issue #33](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/33) adds three improvements to hybrid memory search:
 
 1. **Reciprocal Rank Fusion (RRF)** — Better merging of SQLite FTS5 and LanceDB vector results
 2. **`ingest-files`** — Index workspace markdown (skills, TOOLS.md, etc.) as searchable facts

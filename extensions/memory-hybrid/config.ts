@@ -32,7 +32,7 @@ export type AutoClassifyConfig = {
 /** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index (agent fetches on demand), progressive_hybrid = pinned in full + rest as index */
 export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive" | "progressive_hybrid";
 
-/** Multi-agent memory scoping configuration (FR-006 + dynamic agent detection) */
+/** Multi-agent memory scoping configuration (dynamic agent detection) */
 export type MultiAgentConfig = {
   /** Agent ID of the orchestrator (main agent). Default: "main". This agent sees all scopes. */
   orchestratorId: string;
@@ -49,7 +49,7 @@ export type EntityLookupConfig = {
   maxFactsPerEntity: number;    // max facts to merge per matched entity (default 2)
 };
 
-/** FR-047: Auto-recall on authentication failures (reactive memory trigger) */
+/** Auto-recall on authentication failures (reactive memory trigger) */
 export type AuthFailureRecallConfig = {
   enabled: boolean;
   /** Auth failure patterns to detect (regex strings). Default includes SSH, HTTP 401/403, API key errors. */
@@ -76,24 +76,24 @@ export type AutoRecallConfig = {
   useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
   summarizeWhenOverBudget: boolean;  // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
   summarizeModel: string;        // model for summarize-when-over-budget (default gpt-4o-mini)
-  /** FR-009: Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
+  /** Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
   progressiveMaxCandidates?: number;
-  /** FR-009: Max tokens for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid). */
+  /** Max tokens for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid). */
   progressiveIndexMaxTokens?: number;
-  /** FR-009: Group index lines by category (e.g. "Preferences (3):") for readability (default false). */
+  /** Group index lines by category (e.g. "Preferences (3):") for readability (default false). */
   progressiveGroupByCategory?: boolean;
-  /** FR-009: Min recall count or permanent decay to treat as "pinned" in progressive_hybrid (default 3). */
+  /** Min recall count or permanent decay to treat as "pinned" in progressive_hybrid (default 3). */
   progressivePinnedRecallCount?: number;
-  /** FR-006: Scope filter for auto-recall (userId, agentId, sessionId). When set, only global + matching scopes are injected. */
+  /** Scope filter for auto-recall (userId, agentId, sessionId). When set, only global + matching scopes are injected. */
   scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
-  /** FR-047: Auto-recall on authentication failures (reactive trigger after tool results) */
+  /** Auto-recall on authentication failures (reactive trigger after tool results) */
   authFailure: AuthFailureRecallConfig;
 };
 
-/** Store options: fuzzy dedupe (2.3) and optional FR-008 classify-before-write. */
+/** Store options: fuzzy dedupe and optional classify-before-write. */
 export type StoreConfig = {
   fuzzyDedupe: boolean;
-  /** FR-008: Classify incoming fact against existing similar facts (ADD/UPDATE/DELETE/NOOP) before storing (default: false) */
+  /** Classify incoming fact against existing similar facts (ADD/UPDATE/DELETE/NOOP) before storing (default: false) */
   classifyBeforeWrite?: boolean;
   /** Model for classification (default: gpt-4o-mini) */
   classifyModel?: string;
@@ -132,7 +132,7 @@ export type PersonaProposalsConfig = {
   minSessionEvidence: number;
 };
 
-/** Graph-based spreading activation (FR-007): auto-linking and traversal settings */
+/** Graph-based spreading activation: auto-linking and traversal settings */
 export type GraphConfig = {
   enabled: boolean;
   autoLink: boolean;            // Auto-create RELATED_TO links during storage
@@ -142,7 +142,7 @@ export type GraphConfig = {
   useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
 };
 
-/** FR-011: Reflection / pattern synthesis from session history */
+/** Reflection / pattern synthesis from session history */
 export type ReflectionConfig = {
   enabled: boolean;
   model: string;             // LLM for reflection (default: gpt-4o-mini)
@@ -150,7 +150,7 @@ export type ReflectionConfig = {
   minObservations: number;   // Min observations to support a pattern (default: 2)
 };
 
-/** Procedural memory (issue #23): auto-generated skills from learned patterns */
+/** Procedural memory: auto-generated skills from learned patterns */
 export type ProceduresConfig = {
   enabled: boolean;
   /** Session JSONL directory (default: ~/.openclaw/agents/main/sessions) */
@@ -167,7 +167,7 @@ export type ProceduresConfig = {
   requireApprovalForPromote: boolean;
 };
 
-/** FR-004: Dynamic memory tiering (hot/warm/cold). */
+/** Dynamic memory tiering (hot/warm/cold). */
 export type MemoryTieringConfig = {
   enabled: boolean;
   /** Max tokens for HOT tier always loaded at session start (default: 2000). */
@@ -180,7 +180,7 @@ export type MemoryTieringConfig = {
   hotMaxFacts: number;
 };
 
-/** Search options (issue #33): HyDE query expansion */
+/** Search options: HyDE query expansion */
 export type SearchConfig = {
   /** Generate hypothetical answer before embedding for vector search (default false) */
   hydeEnabled: boolean;
@@ -188,7 +188,7 @@ export type SearchConfig = {
   hydeModel: string;
 };
 
-/** Ingest workspace files (issue #33): index markdown files as facts for search */
+/** Ingest workspace files: index markdown files as facts for search */
 export type IngestConfig = {
   /** Glob patterns relative to workspace (e.g. ["skills/**\/*.md", "TOOLS.md"]) */
   paths: string[];
@@ -264,27 +264,27 @@ export type HybridMemoryConfig = {
   store: StoreConfig;
   /** Opt-in credential management: structured, encrypted storage (default: disabled) */
   credentials: CredentialsConfig;
-  /** Graph-based spreading activation (FR-007): auto-linking and graph traversal */
+  /** Graph-based spreading activation: auto-linking and graph traversal */
   graph: GraphConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
-  /** FR-011: Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
+  /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
   reflection: ReflectionConfig;
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
   procedures: ProceduresConfig;
-  /** FR-004: Dynamic memory tiering — hot/warm/cold (default: enabled) */
+  /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
   /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
   distill?: {
     apiKey?: string;
     defaultModel?: string;
-    /** Issue #39: Enable directive extraction from sessions (default: true). */
+    /** Enable directive extraction from sessions (default: true). */
     extractDirectives?: boolean;
-    /** Issue #40: Enable reinforcement extraction from sessions (default: true). */
+    /** Enable reinforcement extraction from sessions (default: true). */
     extractReinforcement?: boolean;
-    /** Issue #40: Reinforcement boost added to facts search score (default: 0.1). */
+    /** Reinforcement boost added to facts search score (default: 0.1). */
     reinforcementBoost?: number;
     /** Phase 2: Reinforcement boost added to procedures search score (default: 0.1). */
     reinforcementProcedureBoost?: number;
@@ -297,15 +297,17 @@ export type HybridMemoryConfig = {
   ingest?: IngestConfig;
   /** Optional: search tweaks (HyDE query expansion) */
   search?: SearchConfig;
-  /** Optional: self-correction analysis (issue #34) — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
+  /** Optional: self-correction analysis — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
   selfCorrection?: SelfCorrectionConfig;
   /** Multi-agent memory scoping — dynamic agent detection and scope defaults (default: orchestratorId="main", defaultStoreScope="global") */
   multiAgent: MultiAgentConfig;
   /** Optional: error reporting to GlitchTip/Sentry (opt-in, default: disabled) */
   errorReporting?: ErrorReportingConfig;
+  /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
+  mode?: ConfigMode | "custom";
 };
 
-/** Self-correction pipeline (issue #34): semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
+/** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
 export type SelfCorrectionConfig = {
   /** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
   semanticDedup: boolean;
@@ -378,12 +380,141 @@ function resolveEnvVars(value: string): string {
   });
 }
 
+/** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
+export type ConfigMode = "essential" | "normal" | "expert" | "full";
+
+/** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
+function deepMergePreset(base: Record<string, unknown>, overrides: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const key of Object.keys(overrides)) {
+    const b = out[key];
+    const o = overrides[key];
+    if (o !== undefined && o !== null && typeof o === "object" && !Array.isArray(o) && typeof b === "object" && b !== null && !Array.isArray(b)) {
+      out[key] = deepMergePreset(b as Record<string, unknown>, o as Record<string, unknown>);
+    } else if (o !== undefined) {
+      out[key] = o;
+    }
+  }
+  return out;
+}
+
+/** True if user value explicitly overrides a preset key (same key, different value). Extra keys in user (e.g. encryptionKey) do not count. */
+function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean {
+  if (presetVal !== undefined && presetVal !== null && typeof presetVal === "object" && !Array.isArray(presetVal)) {
+    if (userVal === undefined || userVal === null || typeof userVal !== "object" || Array.isArray(userVal)) return false;
+    const u = userVal as Record<string, unknown>;
+    const p = presetVal as Record<string, unknown>;
+    for (const key of Object.keys(p)) {
+      if (key in u && userOverridesPresetValue(u[key], p[key])) return true;
+    }
+    return false;
+  }
+  return JSON.stringify(userVal) !== JSON.stringify(presetVal);
+}
+
+/** Preset overrides per mode. Merged under user config so user keys win. See CONFIGURATION-MODES.md. */
+export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
+  essential: {
+    autoCapture: true,
+    autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: false } },
+    autoClassify: { enabled: false, suggestCategories: false },
+    credentials: { enabled: false },
+    store: { fuzzyDedupe: true, classifyBeforeWrite: false },
+    graph: { enabled: false },
+    procedures: { enabled: false },
+    reflection: { enabled: false },
+    wal: { enabled: true },
+    languageKeywords: { autoBuild: false },
+    personaProposals: { enabled: false },
+    memoryTiering: { enabled: false },
+    distill: { extractDirectives: true, extractReinforcement: false },
+  },
+  normal: {
+    autoCapture: true,
+    autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: true } },
+    autoClassify: { enabled: true, suggestCategories: true },
+    credentials: { enabled: false },
+    store: { fuzzyDedupe: false, classifyBeforeWrite: false },
+    graph: { enabled: true, autoLink: false, useInRecall: true },
+    procedures: { enabled: true, requireApprovalForPromote: true },
+    reflection: { enabled: false },
+    wal: { enabled: true },
+    languageKeywords: { autoBuild: true },
+    personaProposals: { enabled: false },
+    memoryTiering: { enabled: true, compactionOnSessionEnd: true },
+    distill: { extractDirectives: true, extractReinforcement: true },
+  },
+  expert: {
+    autoCapture: true,
+    autoRecall: { enabled: true, entityLookup: { enabled: true }, authFailure: { enabled: true } },
+    autoClassify: { enabled: true, suggestCategories: true },
+    credentials: { autoDetect: true, autoCapture: { toolCalls: true } },
+    store: { fuzzyDedupe: true, classifyBeforeWrite: true },
+    graph: { enabled: true, autoLink: true, useInRecall: true },
+    procedures: { enabled: true, requireApprovalForPromote: true },
+    reflection: { enabled: true },
+    wal: { enabled: true },
+    languageKeywords: { autoBuild: true },
+    personaProposals: { enabled: true },
+    memoryTiering: { enabled: true, compactionOnSessionEnd: true },
+    selfCorrection: {
+      semanticDedup: true,
+      applyToolsByDefault: true,
+      autoRewriteTools: false,
+      analyzeViaSpawn: false,
+    },
+    distill: { extractDirectives: true, extractReinforcement: true },
+  },
+  full: {
+    autoCapture: true,
+    autoRecall: { enabled: true, entityLookup: { enabled: true }, authFailure: { enabled: true } },
+    autoClassify: { enabled: true, suggestCategories: true },
+    credentials: { autoDetect: true, autoCapture: { toolCalls: true } },
+    store: { fuzzyDedupe: true, classifyBeforeWrite: true },
+    graph: { enabled: true, autoLink: true, useInRecall: true },
+    procedures: { enabled: true, requireApprovalForPromote: true },
+    reflection: { enabled: true },
+    wal: { enabled: true },
+    languageKeywords: { autoBuild: true },
+    personaProposals: { enabled: true },
+    memoryTiering: { enabled: true, compactionOnSessionEnd: true },
+    selfCorrection: {
+      semanticDedup: true,
+      applyToolsByDefault: true,
+      autoRewriteTools: false,
+      analyzeViaSpawn: false,
+    },
+    search: { hydeEnabled: true },
+    distill: { extractDirectives: true, extractReinforcement: true },
+  },
+};
+
 export const hybridConfigSchema = {
   parse(value: unknown): HybridMemoryConfig {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new Error("memory-hybrid config required");
     }
-    const cfg = value as Record<string, unknown>;
+    let cfg = value as Record<string, unknown>;
+    const modeRaw = cfg.mode;
+    const validModes: ConfigMode[] = ["essential", "normal", "expert", "full"];
+    let appliedMode: ConfigMode | undefined;
+    let hasPresetOverrides = false; // true when user explicitly overrode a preset value (show "Custom" in verify)
+    if (typeof modeRaw === "string" && validModes.includes(modeRaw as ConfigMode)) {
+      appliedMode = modeRaw as ConfigMode;
+      const preset = PRESET_OVERRIDES[appliedMode];
+      const userRaw = { ...cfg } as Record<string, unknown>;
+      delete userRaw.mode;
+      cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
+      delete cfg.mode;
+      // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
+      for (const key of Object.keys(preset)) {
+        if (!(key in userRaw)) continue;
+        if (userOverridesPresetValue(userRaw[key], preset[key])) {
+          hasPresetOverrides = true;
+          break;
+        }
+      }
+    }
 
     const embedding = cfg.embedding as Record<string, unknown> | undefined;
     if (!embedding || typeof embedding.apiKey !== "string") {
@@ -459,7 +590,7 @@ export const hybridConfigSchema = {
         typeof ar.progressiveIndexMaxTokens === "number" && ar.progressiveIndexMaxTokens > 0
           ? Math.floor(ar.progressiveIndexMaxTokens)
           : undefined;
-      // FR-009: default index cap to 300 when using progressive disclosure (keeps index ~150–300 tokens)
+      // Default index cap to 300 when using progressive disclosure (keeps index ~150–300 tokens)
       if ((format === "progressive" || format === "progressive_hybrid") && progressiveIndexMaxTokens === undefined) {
         progressiveIndexMaxTokens = 300;
       }
@@ -477,7 +608,7 @@ export const hybridConfigSchema = {
               sessionId: typeof scopeFilterRaw.sessionId === "string" && scopeFilterRaw.sessionId.trim().length > 0 ? scopeFilterRaw.sessionId.trim() : undefined,
             }
           : undefined;
-      // FR-047: Auth failure recall config
+      // Auth failure recall config
       const authFailureRaw = ar.authFailure as Record<string, unknown> | undefined;
       const authFailure: AuthFailureRecallConfig = {
         enabled: authFailureRaw?.enabled !== false, // enabled by default
@@ -596,10 +727,25 @@ export const hybridConfigSchema = {
           : 7,
       };
     } else if (shouldEnable && !hasValidKey) {
-      if (encKeyRaw.startsWith("env:")) {
-        throw new Error(`Credentials encryption key env var ${encKeyRaw.slice(4).trim()} is not set. Run 'openclaw hybrid-mem verify --fix' for help.`);
-      }
-      throw new Error("credentials.encryptionKey must be at least 16 characters (or use env:VAR). Run 'openclaw hybrid-mem verify --fix' for help.");
+      // Memory-only mode: capture (autoDetect, autoCapture) enabled, vault disabled (no encryption key).
+      const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
+      const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
+        ? {
+            toolCalls: autoCaptureRaw.toolCalls === true,
+            patterns: "builtin",
+            logCaptures: autoCaptureRaw.logCaptures !== false,
+          }
+        : undefined;
+      credentials = {
+        enabled: true,
+        store: "sqlite",
+        encryptionKey: "",
+        autoDetect: credRaw?.autoDetect === true,
+        autoCapture,
+        expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
+          ? Math.floor(credRaw.expiryWarningDays)
+          : 7,
+      };
     } else {
       credentials = {
         enabled: false,
@@ -610,7 +756,7 @@ export const hybridConfigSchema = {
       };
     }
 
-    // Parse graph config (FR-007)
+    // Parse graph config
     const graphRaw = cfg.graph as Record<string, unknown> | undefined;
     const graph: GraphConfig = {
       enabled: graphRaw?.enabled !== false,
@@ -655,7 +801,7 @@ export const hybridConfigSchema = {
         : 10,
     };
 
-    // Parse reflection config (FR-011)
+    // Parse reflection config
     const reflectionRaw = cfg.reflection as Record<string, unknown> | undefined;
     const reflection: ReflectionConfig = {
       enabled: reflectionRaw?.enabled === true,
@@ -668,7 +814,7 @@ export const hybridConfigSchema = {
         : 2,
     };
 
-    // Parse procedures config (issue #23)
+    // Parse procedures config
     const defaultSessionsDir = join(homedir(), ".openclaw", "agents", "main", "sessions");
     const proceduresRaw = cfg.procedures as Record<string, unknown> | undefined;
     const procedures: ProceduresConfig = {
@@ -724,7 +870,7 @@ export const hybridConfigSchema = {
           }
         : { autoBuild: true, weeklyIntervalDays: 7 };
 
-    // Parse FR-004 memory tiering config
+    // Parse memory tiering config
     const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
     const memoryTiering: MemoryTieringConfig = {
       enabled: tierRaw?.enabled !== false,
@@ -740,7 +886,7 @@ export const hybridConfigSchema = {
         : 50,
     };
 
-    // Parse optional ingest config (issue #33)
+    // Parse optional ingest config
     const ingestRaw = cfg.ingest as Record<string, unknown> | undefined;
     const ingest: IngestConfig | undefined =
       ingestRaw && Array.isArray(ingestRaw.paths) && ingestRaw.paths.length > 0
@@ -755,7 +901,7 @@ export const hybridConfigSchema = {
           }
           : undefined;
 
-    // Parse optional search config (issue #33 - HyDE)
+    // Parse optional search config (HyDE)
     const searchRaw = cfg.search as Record<string, unknown> | undefined;
     const search: SearchConfig | undefined =
       searchRaw && typeof searchRaw === "object"
@@ -765,7 +911,7 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
-    // Parse optional self-correction config (issue #34)
+    // Parse optional self-correction config
     const scRaw = cfg.selfCorrection as Record<string, unknown> | undefined;
     const selfCorrection: SelfCorrectionConfig | undefined =
       scRaw && typeof scRaw === "object"
@@ -790,7 +936,7 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
-    // Parse multi-agent config (FR-006 + dynamic agent detection)
+    // Parse multi-agent config (dynamic agent detection)
     const multiAgentRaw = cfg.multiAgent as Record<string, unknown> | undefined;
     // Parse optional error reporting config
     const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
@@ -871,6 +1017,7 @@ export const hybridConfigSchema = {
       selfCorrection,
       multiAgent,
       errorReporting,
+      mode: appliedMode !== undefined && hasPresetOverrides ? undefined : appliedMode,
     };
   },
 };

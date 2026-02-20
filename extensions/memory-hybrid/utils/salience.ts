@@ -1,5 +1,5 @@
 /**
- * FR-005: Dynamic Salience Scoring (Access-Based Importance)
+ * Dynamic Salience Scoring (Access-Based Importance)
  *
  * Combines:
  * 1. Access Boost — frequently recalled facts score higher

@@ -1,5 +1,5 @@
 /**
- * Utilities for ingest-files CLI (issue #33).
+ * Utilities for ingest-files CLI.
  * Exported for unit testing.
  */
 

@@ -26,11 +26,11 @@ export type StoreCliOpts = {
   value?: string;
   sourceDate?: string;
   tags?: string;
-  /** FR-010: Fact id this store supersedes (replaces). */
+  /** Fact id this store supersedes (replaces). */
   supersedes?: string;
-  /** FR-006: Memory scope (global, user, agent, session). Default global. */
+  /** Memory scope (global, user, agent, session). Default global. */
   scope?: "global" | "user" | "agent" | "session";
-  /** FR-006: Scope target (userId, agentId, sessionId). Required when scope is user/agent/session. */
+  /** Scope target (userId, agentId, sessionId). Required when scope is user/agent/session. */
   scopeTarget?: string;
 };
 
@@ -106,6 +106,10 @@ export type UninstallCliResult =
   | { outcome: "config_error"; error: string; pluginId: string; cleaned: string[] }
   | { outcome: "leave_config"; pluginId: string; cleaned: string[] };
 
+export type ConfigCliResult =
+  | { ok: true; configPath: string; message: string }
+  | { ok: false; error: string };
+
 export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
@@ -129,6 +133,9 @@ export type HybridMemCliContext = {
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
+  runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
+  runConfigSet: (key: string, value: string) => ConfigCliResult | Promise<ConfigCliResult>;
+  runConfigSetHelp: (key: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runFindDuplicates: (opts: {
     threshold: number;
     includeStructured: boolean;
@@ -156,14 +163,14 @@ export type HybridMemCliContext = {
     breakdown?: Record<string, number>;
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
-  /** FR-004: Run memory tier compaction (completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT). */
+  /** Run memory tier compaction (completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT). */
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
   /** Detect top 3 languages from memory text; LLM produces intent-based natural equivalents (triggers, extraction patterns) and writes .language-keywords.json. */
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
     | { ok: true; path: string; topLanguages: string[]; languagesAdded: number }
     | { ok: false; error: string }
   >;
-  /** Self-correction (issue #34): extract incidents from session JSONL using multi-language correction signals from .language-keywords.json. */
+  /** Self-correction: extract incidents from session JSONL using multi-language correction signals from .language-keywords.json. */
   runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
   /** Self-correction: analyze extracted incidents and auto-remediate (memory store, TOOLS.md); report to memory/reports. */
   runSelfCorrectionRun: (opts: {
@@ -187,6 +194,7 @@ type Chainable = {
   option(flags: string, desc?: string, defaultValue?: string): Chainable;
   requiredOption(flags: string, desc?: string, defaultValue?: string): Chainable;
   argument(name: string, desc?: string): Chainable;
+  alias?(name: string): Chainable;
 };
 
 export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): void {
@@ -213,6 +221,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runMigrateToVault,
     runUninstall,
     runUpgrade,
+    runConfigMode,
+    runConfigSet,
+    runConfigSetHelp,
     runFindDuplicates,
     runConsolidate,
     runReflection,
@@ -229,19 +240,31 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractReinforcement,
   } = ctx;
 
+  /** Run an async action and exit when done (avoids hang from open DB/handles when run as standalone CLI). */
+  const withExit = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+    (...args: A) => {
+      Promise.resolve(fn(...args)).then(
+        () => process.exit(process.exitCode ?? 0),
+        (err: unknown) => {
+          console.error(err);
+          process.exit(1);
+        },
+      );
+    };
+
   mem
     .command("compact")
-    .description("FR-004: Run tier compaction — completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT")
-    .action(async () => {
+    .description("Run tier compaction: completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT")
+    .action(withExit(async () => {
       const counts = await runCompaction();
       console.log(`Tier compaction: hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
-    });
+    }));
 
   mem
     .command("stats")
     .description("Show memory statistics with decay breakdown. Use --efficiency for tiers, sources, and token estimates.")
     .option("--efficiency", "Show tier/source breakdown, estimated tokens, and token-savings note")
-    .action(async (opts?: { efficiency?: boolean }) => {
+    .action(withExit(async (opts?: { efficiency?: boolean }) => {
       const efficiency = opts?.efficiency ?? false;
       const sqlCount = factsDb.count();
       let lanceCount = 0;
@@ -272,7 +295,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         const tokensByTier = factsDb.estimateStoredTokensByTier();
 
         console.log(`\n--- Efficiency ---`);
-        console.log(`\nBy tier (FR-004 hot/warm/cold):`);
+        console.log(`\nBy tier (hot/warm/cold):`);
         for (const t of ["hot", "warm", "cold"]) {
           const cnt = tierBreakdown[t] ?? 0;
           const tok = tokensByTier[t as keyof typeof tokensByTier] ?? 0;
@@ -288,7 +311,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log(`Cache Read is typically 90%+ cheaper than Input. Compare your provider dashboard`);
         console.log(`(Input vs Cache Read) to see actual savings — many users see 90-97% reduction.`);
       }
-    });
+    }));
 
   mem
     .command("prune")
@@ -296,7 +319,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--hard", "Only hard-delete expired facts")
     .option("--soft", "Only soft-decay confidence")
     .option("--dry-run", "Show what would be pruned without deleting")
-    .action(async (opts: { dryRun?: boolean; hard?: boolean; soft?: boolean }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; hard?: boolean; soft?: boolean }) => {
       if (opts.dryRun) {
         const expired = factsDb.countExpired();
         console.log(`Would prune: ${expired} expired facts`);
@@ -314,7 +337,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       }
       console.log(`Hard-pruned: ${hardPruned} expired`);
       console.log(`Soft-pruned: ${softPruned} low-confidence`);
-    });
+    }));
 
   mem
     .command("checkpoint")
@@ -322,7 +345,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .argument("<action>", "save or restore")
     .option("--intent <text>", "Intent for save")
     .option("--state <text>", "State for save")
-    .action(async (action: string, opts: { intent?: string; state?: string }) => {
+    .action(withExit(async (action: string, opts: { intent?: string; state?: string }) => {
       if (action === "save") {
         if (!opts.intent || !opts.state) {
           console.error("--intent and --state required for save");
@@ -343,12 +366,12 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       } else {
         console.error("Usage: checkpoint <save|restore>");
       }
-    });
+    }));
 
   mem
     .command("backfill-decay")
     .description("Re-classify existing facts with auto-detected decay classes")
-    .action(async () => {
+    .action(withExit(async () => {
       const counts = factsDb.backfillDecayClasses();
       if (Object.keys(counts).length === 0) {
         console.log("All facts already properly classified.");
@@ -358,7 +381,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           console.log(`  ${cls}: ${cnt}`);
         }
       }
-    });
+    }));
 
   mem
     .command("search")
@@ -366,12 +389,12 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .argument("<query>", "Search query")
     .option("--limit <n>", "Max results", "5")
     .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-    .option("--as-of <date>", "FR-010: Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
-    .option("--include-superseded", "FR-010: Include superseded (historical) facts")
-    .option("--user-id <id>", "FR-006: Include user-private memories for this user")
-    .option("--agent-id <id>", "FR-006: Include agent-specific memories for this agent")
-    .option("--session-id <id>", "FR-006: Include session-scoped memories for this session")
-    .action(async (query: string, opts: { limit?: string; tag?: string; asOf?: string; includeSuperseded?: boolean; userId?: string; agentId?: string; sessionId?: string }) => {
+    .option("--as-of <date>", "Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
+    .option("--include-superseded", "Include superseded (historical) facts")
+    .option("--user-id <id>", "Include user-private memories for this user")
+    .option("--agent-id <id>", "Include agent-specific memories for this agent")
+    .option("--session-id <id>", "Include session-scoped memories for this session")
+    .action(withExit(async (query: string, opts: { limit?: string; tag?: string; asOf?: string; includeSuperseded?: boolean; userId?: string; agentId?: string; sessionId?: string }) => {
       const limit = parseInt(opts.limit || "5");
       const tag = opts.tag?.trim();
       const asOfSec = opts.asOf != null && opts.asOf !== "" ? parseDate(opts.asOf) : undefined;
@@ -412,7 +435,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           : undefined,
       }));
       console.log(JSON.stringify(output, null, 2));
-    });
+    }));
 
   mem
     .command("lookup")
@@ -420,9 +443,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .argument("<entity>", "Entity name")
     .option("--key <key>", "Optional key filter")
     .option("--tag <tag>", "Filter by topic tag (e.g. nibe, zigbee)")
-    .option("--as-of <date>", "FR-010: Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
-    .option("--include-superseded", "FR-010: Include superseded (historical) facts")
-    .action(async (entity: string, opts: { key?: string; tag?: string; asOf?: string; includeSuperseded?: boolean }) => {
+    .option("--as-of <date>", "Point-in-time: ISO date (YYYY-MM-DD) or epoch seconds")
+    .option("--include-superseded", "Include superseded (historical) facts")
+    .action(withExit(async (entity: string, opts: { key?: string; tag?: string; asOf?: string; includeSuperseded?: boolean }) => {
       const asOfSec = opts.asOf != null && opts.asOf !== "" ? parseDate(opts.asOf) : undefined;
       const lookupOpts = { includeSuperseded: opts.includeSuperseded === true, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
       const results = factsDb.lookup(entity, opts.key, opts.tag?.trim(), lookupOpts);
@@ -438,19 +461,19 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           : undefined,
       }));
       console.log(JSON.stringify(output, null, 2));
-    });
+    }));
 
   mem
     .command("categories")
     .description("List all configured memory categories")
-    .action(() => {
+    .action(withExit(async () => {
       const cats = getMemoryCategories();
       console.log(`Memory categories (${cats.length}):`);
       for (const cat of cats) {
         const count = factsDb.getByCategory(cat).length;
         console.log(`  ${cat}: ${count} facts`);
       }
-    });
+    }));
 
   mem
     .command("store")
@@ -462,10 +485,10 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--value <value>", "Structured value")
     .option("--source-date <date>", "When fact originated (ISO-8601, e.g. 2026-01-15)")
     .option("--tags <tags>", "Comma-separated topic tags (e.g. nibe,zigbee); auto-inferred if omitted")
-    .option("--supersedes <id>", "FR-010: Fact id this one supersedes (replaces)")
-    .option("--scope <scope>", "FR-006: Memory scope (global, user, agent, session). Default global.")
-    .option("--scope-target <target>", "FR-006: Scope target (userId, agentId, sessionId). Required when scope is user/agent/session.")
-    .action(async (opts: { text: string; category?: string; entity?: string; key?: string; value?: string; sourceDate?: string; tags?: string; supersedes?: string; scope?: string; scopeTarget?: string }) => {
+    .option("--supersedes <id>", "Fact id this store supersedes (replaces)")
+    .option("--scope <scope>", "Memory scope (global, user, agent, session). Default global.")
+    .option("--scope-target <target>", "Scope target (userId, agentId, sessionId). Required when scope is user/agent/session.")
+    .action(withExit(async (opts: { text: string; category?: string; entity?: string; key?: string; value?: string; sourceDate?: string; tags?: string; supersedes?: string; scope?: string; scopeTarget?: string }) => {
       const text = opts.text;
       if (!text || text.length < 2) {
         console.error("--text is required and must be at least 2 characters");
@@ -520,13 +543,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           );
           break;
       }
-    });
+    }));
 
   mem
     .command("install")
     .description("Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.")
     .option("--dry-run", "Print what would be merged without writing")
-    .action(async (opts: { dryRun?: boolean }) => {
+    .action(withExit(async (opts: { dryRun?: boolean }) => {
       const result = await runInstall({ dryRun: !!opts.dryRun });
       if (!result.ok) {
         console.error(result.error);
@@ -544,19 +567,71 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       console.log(`  1. Set embedding.apiKey in plugins.entries["${result.pluginId}"].config (or use env:OPENAI_API_KEY in config).`);
       console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
       console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
-    });
+    }));
 
   mem
     .command("verify")
     .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
-    .action(async (opts: { fix?: boolean; logFile?: string }) => {
+    .action(withExit(async (opts: { fix?: boolean; logFile?: string }) => {
       await runVerify(
         { fix: !!opts.fix, logFile: opts.logFile },
         { log: (s) => console.log(s), error: (s) => console.error(s) },
       );
-    });
+    }));
+
+  (() => {
+    const cmd = mem.command("config-mode <preset>");
+    if (cmd.alias) cmd.alias("set-mode");
+    return cmd;
+  })()
+    .description("Set configuration preset (essential | normal | expert | full). Writes to openclaw.json. Restart gateway after.")
+    .action(withExit(async (preset: string) => {
+      const result = await runConfigMode(preset);
+      if (!result.ok) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(result.message);
+    }));
+
+  mem
+    .command("help config-set <key>")
+    .description("Show current value and a short description for a config key (e.g. autoCapture, credentials.enabled).")
+    .action(withExit(async (key: string) => {
+      const result = await runConfigSetHelp(key);
+      if (!result.ok) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(result.message);
+    }));
+
+  mem
+    .command("config-set <key> [value]")
+    .description("Set a plugin config key (use true/false for booleans). Omit value to show current value and description. Writes to openclaw.json. Restart gateway after.")
+    .action(withExit(async (key: string, value?: string) => {
+      if (value === undefined || value === "") {
+        const result = await runConfigSetHelp(key);
+        if (!result.ok) {
+          console.error(result.error);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(result.message);
+        return;
+      }
+      const result = await runConfigSet(key, value);
+      if (!result.ok) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(result.message);
+    }));
 
   mem
     .command("distill")
@@ -569,7 +644,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--verbose", "Log each fact as it is stored")
     .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
     .option("--max-session-tokens <n>", "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)", "0")
-    .action(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string }) => {
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
       const maxSessionTokens = Math.max(0, parseInt(opts.maxSessionTokens || "0") || 0);
@@ -593,13 +668,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           `\nDistill done: ${result.stored} stored, ${result.skipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
         );
       }
-    });
+    }));
 
   mem
     .command("distill-window")
     .description("Print the session distillation window (full or incremental). Use at start of a distillation job to decide what to process; end the job with record-distill.")
     .option("--json", "Output machine-readable JSON only (mode, startDate, endDate, mtimeDays)")
-    .action(async (opts: { json?: boolean }) => {
+    .action(withExit(async (opts: { json?: boolean }) => {
       const result = await runDistillWindow({ json: !!opts.json });
       if (opts.json) {
         console.log(JSON.stringify(result));
@@ -610,23 +685,23 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       console.log(`  endDate: ${result.endDate}`);
       console.log(`  mtimeDays: ${result.mtimeDays} (use find ... -mtime -${result.mtimeDays} for session files)`);
       console.log("Process sessions from that window; then run: openclaw hybrid-mem record-distill");
-    });
+    }));
 
   mem
     .command("record-distill")
     .description("Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)")
-    .action(async () => {
+    .action(withExit(async () => {
       const result = await runRecordDistill();
       console.log(`Recorded distillation run: ${result.timestamp}`);
       console.log(`Written to ${result.path}. Run 'openclaw hybrid-mem verify' to see it.`);
-    });
+    }));
 
   mem
     .command("extract-daily")
     .description("Extract structured facts from daily memory files")
     .option("--days <n>", "How many days back to scan", "7")
     .option("--dry-run", "Show extractions without storing")
-    .action(async (opts: { days: string; dryRun?: boolean }) => {
+    .action(withExit(async (opts: { days: string; dryRun?: boolean }) => {
       const daysBack = parseInt(opts.days);
       const result = await runExtractDaily(
         { days: daysBack, dryRun: !!opts.dryRun },
@@ -641,7 +716,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           } duplicates skipped)`,
         );
       }
-    });
+    }));
 
   mem
     .command("extract-procedures")
@@ -649,7 +724,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
     .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
     .option("--dry-run", "Show what would be stored without writing")
-    .action(async (opts: { dir?: string; days?: string; dryRun?: boolean }) => {
+    .action(withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean }) => {
       const days = opts.days ? parseInt(opts.days, 10) : undefined;
       const result = await runExtractProcedures({
         sessionDir: opts.dir,
@@ -663,13 +738,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
         );
       }
-    });
+    }));
 
   mem
     .command("generate-auto-skills")
     .description("Generate SKILL.md + recipe.json in skills/auto/ for procedures validated enough times")
     .option("--dry-run", "Show what would be generated without writing")
-    .action(async (opts: { dryRun?: boolean }) => {
+    .action(withExit(async (opts: { dryRun?: boolean }) => {
       const result = await runGenerateAutoSkills({ dryRun: !!opts.dryRun });
       if (result.dryRun) {
         console.log(`\n[dry-run] Would generate ${result.generated} auto-skills`);
@@ -677,15 +752,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log(`\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`);
         for (const p of result.paths) console.log(`  ${p}`);
       }
-    });
+    }));
 
   mem
     .command("extract-directives")
-    .description("Issue #39: Extract directive incidents from session JSONL (10 categories)")
+    .description("Extract directive incidents from session JSONL (10 categories)")
     .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
     .option("--verbose", "Log each directive as it is detected")
     .option("--dry-run", "Show what would be extracted without storing")
-    .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+    .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
       const days = parseInt(opts.days || "3", 10);
       const result = await runExtractDirectives({ days, verbose: opts.verbose, dryRun: opts.dryRun });
       console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
@@ -694,15 +769,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       } else {
         console.log(`Stored ${result.incidents.length} directives as facts.`);
       }
-    });
+    }));
 
   mem
     .command("extract-reinforcement")
-    .description("Issue #40: Extract reinforcement incidents from session JSONL and annotate facts/procedures")
+    .description("Extract reinforcement incidents from session JSONL and annotate facts/procedures")
     .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
     .option("--verbose", "Log each reinforcement as it is detected")
     .option("--dry-run", "Show what would be annotated without storing")
-    .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+    .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
       const days = parseInt(opts.days || "3", 10);
       const result = await runExtractReinforcement({ days, verbose: opts.verbose, dryRun: opts.dryRun });
       console.log(`\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`);
@@ -712,7 +787,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
         console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
       }
-    });
+    }));
 
   mem
     .command("backfill")
@@ -720,7 +795,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--dry-run", "Show what would be indexed without storing")
     .option("--workspace <path>", "Workspace root (default: OPENCLAW_WORKSPACE or ~/.openclaw/workspace)")
     .option("--limit <n>", "Max facts to store (0 = no limit)", "0")
-    .action(async (opts: { dryRun?: boolean; workspace?: string; limit?: string }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; workspace?: string; limit?: string }) => {
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const limit = Math.max(0, parseInt(opts.limit || "0") || 0);
       const result = await runBackfill(
@@ -734,15 +809,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           `\nBackfill done: ${result.stored} new facts stored, ${result.skipped} duplicates skipped (${result.candidates} candidates from ${result.files} files)`,
         );
       }
-    });
+    }));
 
   mem
     .command("ingest-files")
-    .description("Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction (issue #33)")
+    .description("Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction")
     .option("--dry-run", "Show what would be processed without storing")
     .option("--workspace <path>", "Workspace root (default: OPENCLAW_WORKSPACE or cwd)")
     .option("--paths <globs>", "Comma-separated globs (default: config ingest.paths or skills/**/*.md,TOOLS.md,AGENTS.md)")
-    .action(async (opts: { dryRun?: boolean; workspace?: string; paths?: string }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; workspace?: string; paths?: string }) => {
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const paths = opts.paths?.split(",").map((p) => p.trim()).filter(Boolean);
       const result = await runIngestFiles(
@@ -756,7 +831,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           `\nIngest done: ${result.stored} stored, ${result.skipped} skipped (${result.extracted} extracted from ${result.files} files)`,
         );
       }
-    });
+    }));
 
   mem
     .command("find-duplicates")
@@ -764,7 +839,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--threshold <n>", "Similarity threshold 0–1 (default 0.92)", "0.92")
     .option("--include-structured", "Include identifier-like facts (IP, email, etc.); default is to skip")
     .option("--limit <n>", "Max facts to consider (default 300)", "300")
-    .action(async (opts: { threshold?: string; includeStructured?: boolean; limit?: string }) => {
+    .action(withExit(async (opts: { threshold?: string; includeStructured?: boolean; limit?: string }) => {
       const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.92")));
       const limit = Math.min(500, Math.max(10, parseInt(opts.limit || "300")));
       const result = await runFindDuplicates({
@@ -780,7 +855,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log(`    A: ${trim(p.textA, 80)}`);
         console.log(`    B: ${trim(p.textB, 80)}`);
       }
-    });
+    }));
 
   mem
     .command("consolidate")
@@ -790,7 +865,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--dry-run", "Report clusters and would-merge only; do not store or delete")
     .option("--limit <n>", "Max facts to consider (default 300)", "300")
     .option("--model <model>", "LLM for merge (default gpt-4o-mini)", "gpt-4o-mini")
-    .action(async (opts: { threshold?: string; includeStructured?: boolean; dryRun?: boolean; limit?: string; model?: string }) => {
+    .action(withExit(async (opts: { threshold?: string; includeStructured?: boolean; dryRun?: boolean; limit?: string; model?: string }) => {
       const threshold = Math.min(1, Math.max(0, parseFloat(opts.threshold || "0.96")));
       const limit = Math.min(500, Math.max(10, parseInt(opts.limit || "300")));
       const result = await runConsolidate({
@@ -803,16 +878,16 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       console.log(`Clusters found: ${result.clustersFound}`);
       console.log(`Merged: ${result.merged}`);
       console.log(`Deleted: ${result.deleted}${opts.dryRun ? " (dry run)" : ""}`);
-    });
+    }));
 
   mem
     .command("reflect")
-    .description("FR-011: Analyze recent facts, extract behavioral patterns, store as pattern-category facts")
+    .description("Analyze recent facts, extract behavioral patterns, store as pattern-category facts")
     .option("--window <days>", "Time window in days (default: config or 14)")
     .option("--dry-run", "Show extracted patterns without storing")
     .option("--model <model>", "LLM for reflection (default: config or gpt-4o-mini)")
     .option("--force", "Run even if reflection is disabled in config")
-    .action(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
+    .action(withExit(async (opts: { window?: string; dryRun?: boolean; model?: string; force?: boolean }) => {
       if (!opts.force && !reflectionConfig.enabled) {
         console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
         return;
@@ -827,15 +902,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       console.log(`Patterns extracted: ${result.patternsExtracted}`);
       console.log(`Patterns stored: ${result.patternsStored}${opts.dryRun ? " (dry run)" : ""}`);
       console.log(`Window: ${result.window} days`);
-    });
+    }));
 
   mem
     .command("reflect-rules")
-    .description("FR-011 optional: Synthesize patterns into actionable one-line rules (category rule)")
+    .description("Synthesize patterns into actionable one-line rules (category rule)")
     .option("--dry-run", "Show extracted rules without storing")
     .option("--model <model>", "LLM (default: config or gpt-4o-mini)")
     .option("--force", "Run even if reflection is disabled in config")
-    .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
       if (!opts.force && !reflectionConfig.enabled) {
         console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
         return;
@@ -846,15 +921,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       });
       console.log(`Rules extracted: ${result.rulesExtracted}`);
       console.log(`Rules stored: ${result.rulesStored}${opts.dryRun ? " (dry run)" : ""}`);
-    });
+    }));
 
   mem
     .command("reflect-meta")
-    .description("FR-011 optional: Synthesize patterns into 1-3 higher-level meta-patterns")
+    .description("Synthesize patterns into 1-3 higher-level meta-patterns")
     .option("--dry-run", "Show extracted meta-patterns without storing")
     .option("--model <model>", "LLM (default: config or gpt-4o-mini)")
     .option("--force", "Run even if reflection is disabled in config")
-    .action(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; model?: string; force?: boolean }) => {
       if (!opts.force && !reflectionConfig.enabled) {
         console.log("Reflection is disabled in config. Set reflection.enabled to true, or use --force.");
         return;
@@ -865,7 +940,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       });
       console.log(`Meta-patterns extracted: ${result.metaExtracted}`);
       console.log(`Meta-patterns stored: ${result.metaStored}${opts.dryRun ? " (dry run)" : ""}`);
-    });
+    }));
 
   mem
     .command("classify")
@@ -873,7 +948,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--dry-run", "Show classifications without applying")
     .option("--limit <n>", "Max facts to classify", "500")
     .option("--model <model>", "Override LLM model")
-    .action(async (opts: { dryRun?: boolean; limit?: string; model?: string }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; limit?: string; model?: string }) => {
       const limit = Math.min(2000, Math.max(1, parseInt(opts.limit || "500")));
       const logger = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
       console.log(`Auto-classify config:`);
@@ -902,14 +977,14 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           console.log(`  ${cat}: ${count}`);
         }
       }
-    });
+    }));
 
   mem
     .command("build-languages")
     .description("Detect top 3 languages from memory text; use English as intent template and generate natural triggers, structural phrases, and extraction patterns per language (not literal translation). Writes .language-keywords.json (v2). Run once or when you add new languages.")
     .option("--dry-run", "Detect and translate but do not write file")
     .option("--model <model>", "LLM model for detection and translation", "gpt-4o-mini")
-    .action(async (opts: { dryRun?: boolean; model?: string }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; model?: string }) => {
       const result = await runBuildLanguageKeywords({
         model: opts.model || autoClassifyConfig.model,
         dryRun: !!opts.dryRun,
@@ -922,14 +997,14 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       console.log(`Detected languages: ${result.topLanguages.join(", ")}`);
       console.log(`Languages added (translations): ${result.languagesAdded}`);
       console.log(`Path: ${result.path}${opts.dryRun ? " (dry run, not written)" : ""}`);
-    });
+    }));
 
   mem
     .command("self-correction-extract")
-    .description("Issue #34: Extract user correction incidents from session JSONL (last N days). Uses multi-language correction signals from .language-keywords.json — run build-languages first for non-English. Output JSON to file or stdout.")
+    .description("Extract user correction incidents from session JSONL (last N days). Uses .language-keywords.json — run build-languages first for non-English. Output JSON to file or stdout.")
     .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
     .option("--output <path>", "Write incidents JSON to file (optional)")
-    .action(async (opts: { days?: string; output?: string }) => {
+    .action(withExit(async (opts: { days?: string; output?: string }) => {
       const days = opts.days ? parseInt(opts.days, 10) : 3;
       const result = await runSelfCorrectionExtract({
         days: Number.isFinite(days) ? days : 3,
@@ -939,18 +1014,18 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       if (result.incidents.length > 0 && !opts.output) {
         console.log(JSON.stringify(result.incidents, null, 2));
       }
-    });
+    }));
 
   mem
     .command("self-correction-run")
-    .description("Issue #34: Analyze incidents, auto-remediate (memory + TOOLS section or rewrite). TOOLS rules are applied by default; use --no-apply-tools to only suggest.")
+    .description("Analyze incidents, auto-remediate (memory + TOOLS section or rewrite). TOOLS rules applied by default; use --no-apply-tools to only suggest.")
     .option("--extract <path>", "Path to incidents JSON from self-correction-extract --output (else runs extract in memory)")
     .option("--workspace <path>", "Workspace root for TOOLS.md and memory/reports (default: OPENCLAW_WORKSPACE or ~/.openclaw/workspace)")
     .option("--dry-run", "Analyze and report only; do not store or append")
     .option("--approve", "Force apply suggested TOOLS rules (when config applyToolsByDefault is false)")
     .option("--no-apply-tools", "Do not apply TOOLS rules this run (only suggest in report). Opt-out from default apply.")
     .option("--model <model>", "LLM for analysis (default: config.distill.defaultModel or gemini-3-pro-preview)", "gemini-3-pro-preview")
-    .action(async (opts: { extract?: string; workspace?: string; dryRun?: boolean; approve?: boolean; applyTools?: boolean; model?: string }) => {
+    .action(withExit(async (opts: { extract?: string; workspace?: string; dryRun?: boolean; approve?: boolean; applyTools?: boolean; model?: string }) => {
       const result = await runSelfCorrectionRun({
         extractPath: opts.extract?.trim(),
         workspace: opts.workspace?.trim(),
@@ -974,7 +1049,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log("Proposed (review before applying):");
         result.proposals.forEach((p) => console.log(`  - ${p}`));
       }
-    });
+    }));
 
   const cred = mem
     .command("credentials")
@@ -982,7 +1057,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
   cred
     .command("migrate-to-vault")
     .description("Move credential facts from memory into vault and redact originals (idempotent)")
-    .action(async () => {
+    .action(withExit(async () => {
       const result = await runMigrateToVault();
       if (result === null) {
         console.error("Credentials vault is disabled. Enable it in plugin config (credentials.encryptionKey) and restart.");
@@ -993,26 +1068,26 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.error("Errors:");
         result.errors.forEach((e) => console.error(`  - ${e}`));
       }
-    });
+    }));
 
   const scopeCmd = mem
     .command("scope")
-    .description("FR-006: Memory scoping — prune session memories, promote to durable");
+    .description("Memory scoping: prune session memories, promote to durable");
   scopeCmd
     .command("prune-session")
     .description("Delete session-scoped memories for a given session (cleared on session end)")
     .argument("<session-id>", "Session identifier to prune")
-    .action(async (sessionId: string) => {
+    .action(withExit(async (sessionId: string) => {
       const count = factsDb.pruneSessionScope(sessionId);
       console.log(`Pruned ${count} session-scoped memories for session "${sessionId}".`);
-    });
+    }));
   scopeCmd
     .command("promote")
     .description("Promote a session-scoped memory to global or agent scope (persists after session end)")
     .requiredOption("--id <fact-id>", "Fact id to promote")
     .requiredOption("--scope <global|agent>", "New scope: global or agent")
     .option("--scope-target <target>", "Required when scope is agent: agent identifier")
-    .action(async (opts: { id: string; scope: string; scopeTarget?: string }) => {
+    .action(withExit(async (opts: { id: string; scope: string; scopeTarget?: string }) => {
       const scope = opts.scope as "global" | "agent";
       if (scope !== "global" && scope !== "agent") {
         console.error("Scope must be 'global' or 'agent'.");
@@ -1031,13 +1106,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         return;
       }
       console.log(`Promoted memory ${opts.id} to scope "${scope}"${scope === "agent" ? ` (agent: ${opts.scopeTarget})` : ""}.`);
-    });
+    }));
 
   mem
     .command("upgrade")
     .argument("[version]", "Optional version to install (e.g. 2026.2.181); default: latest")
     .description("Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart the gateway afterward.")
-    .action(async (versionArg: string | undefined) => {
+    .action(withExit(async (versionArg: string | undefined) => {
       const result = await runUpgrade(versionArg);
       if (!result.ok) {
         console.error(result.error);
@@ -1046,7 +1121,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       }
       console.log(`Upgraded to openclaw-hybrid-memory@${result.version}`);
       console.log("Restart the gateway to load the new version: openclaw gateway stop && openclaw gateway start");
-    });
+    }));
 
   mem
     .command("uninstall")
@@ -1054,7 +1129,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--clean-all", "Remove SQLite and LanceDB data (irreversible)")
     .option("--force-cleanup", "Same as --clean-all")
     .option("--leave-config", "Do not modify openclaw.json; only print instructions")
-    .action(async (opts: { cleanAll?: boolean; forceCleanup?: boolean; leaveConfig?: boolean }) => {
+    .action(withExit(async (opts: { cleanAll?: boolean; forceCleanup?: boolean; leaveConfig?: boolean }) => {
       const cleanAll = !!opts.cleanAll || !!opts.forceCleanup;
       const result = await runUninstall({ cleanAll, leaveConfig: !!opts.leaveConfig });
       const pluginId = result.pluginId;
@@ -1093,5 +1168,5 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       } else {
         console.log("\nNo hybrid data files found at configured paths.");
       }
-    });
+    }));
 }

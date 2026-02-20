@@ -34,7 +34,7 @@ export function estimateTokensForDisplay(text: string): number {
 
 /**
  * Chunk session text into overlapping windows. No content is dropped.
- * Used by distill CLI for oversized sessions (issue #32).
+ * Used by distill CLI for oversized sessions.
  *
  * @param text - Full session text
  * @param maxTokens - Max tokens per chunk (~4 chars per token)
@@ -72,7 +72,7 @@ export function chunkTextByChars(text: string, chunkSize: number, overlap: numbe
 }
 
 /**
- * FR-009: Format a single progressive index line as "[category] title (N tok)".
+ * Format a single progressive index line as "[category] title (N tok)".
  * Used by auto-recall when injectionFormat is progressive or progressive_hybrid.
  */
 export function formatProgressiveIndexLine(

@@ -281,7 +281,7 @@ describe("FactsDB.lookup", () => {
     expect(results[0].entry.id).toBe(newer.id);
   });
 
-  it("FR-005: frequently recalled fact scores higher (dynamic salience)", () => {
+  it("frequently recalled fact scores higher (dynamic salience)", () => {
     const a = db.store({ text: "User prefers dark mode", category: "preference", importance: 0.7, entity: "user", key: "theme", value: "dark", source: "test", confidence: 0.8 });
     const b = db.store({ text: "User prefers TypeScript", category: "preference", importance: 0.7, entity: "user", key: "language", value: "TypeScript", source: "test", confidence: 0.8 });
 
@@ -298,10 +298,10 @@ describe("FactsDB.lookup", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-004: Dynamic memory tiering (hot/warm/cold)
+// Dynamic memory tiering (hot/warm/cold)
 // ---------------------------------------------------------------------------
 
-describe("FactsDB FR-004 tiering", () => {
+describe("FactsDB tiering", () => {
   it("stores with default tier warm and getHotFacts returns only hot", () => {
     const a = db.store({ text: "Hot blocker", category: "fact", importance: 0.9, entity: null, key: null, value: null, source: "test", tags: ["blocker"] });
     const b = db.store({ text: "Warm fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
@@ -399,7 +399,7 @@ describe("FactsDB fuzzy deduplication", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Supersession (FR-008/010)
+// Supersession
 // ---------------------------------------------------------------------------
 
 describe("FactsDB.supersede", () => {
@@ -424,10 +424,10 @@ describe("FactsDB.supersede", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-010: Bi-temporal and point-in-time
+// Bi-temporal and point-in-time
 // ---------------------------------------------------------------------------
 
-describe("FactsDB FR-010 bi-temporal", () => {
+describe("FactsDB bi-temporal", () => {
   it("getById with asOf returns null when fact not yet valid", () => {
     const entry = db.store({
       text: "Future fact",
@@ -669,7 +669,7 @@ describe("FactsDB FR-010 bi-temporal", () => {
 });
 
 // ---------------------------------------------------------------------------
-// updateFact (FR-008)
+// updateFact
 // ---------------------------------------------------------------------------
 
 describe.skip("FactsDB.updateFact", () => {
@@ -960,7 +960,7 @@ describe("FactsDB.backfillDecayClasses", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-005: Hebbian createOrStrengthenRelatedLink
+// Hebbian createOrStrengthenRelatedLink
 // ---------------------------------------------------------------------------
 
 describe("FactsDB.createOrStrengthenRelatedLink", () => {
@@ -1004,10 +1004,10 @@ describe("FactsDB.createOrStrengthenRelatedLink", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-006: Memory Scoping
+// Memory Scoping
 // ---------------------------------------------------------------------------
 
-describe("FactsDB FR-006 scoping", () => {
+describe("FactsDB scoping", () => {
   it("stores with default global scope", () => {
     const entry = db.store({
       text: "Company policy",
@@ -1196,7 +1196,7 @@ describe("FactsDB FR-006 scoping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reinforcement (issue #40): reinforceFact, reinforceProcedure
+// Reinforcement: reinforceFact, reinforceProcedure
 // ---------------------------------------------------------------------------
 
 describe("FactsDB.reinforceFact", () => {
@@ -1289,7 +1289,7 @@ describe("FactsDB.reinforceProcedure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reinforcement ranking in search (issue #40): reinforced items rank higher
+// Reinforcement ranking in search: reinforced items rank higher
 // ---------------------------------------------------------------------------
 
 describe("FactsDB search reinforcement ranking", () => {

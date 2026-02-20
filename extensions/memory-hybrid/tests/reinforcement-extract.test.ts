@@ -1,5 +1,5 @@
 /**
- * Tests for reinforcement extraction (issue #40).
+ * Tests for reinforcement extraction.
  */
 
 import { describe, it, expect } from "vitest";

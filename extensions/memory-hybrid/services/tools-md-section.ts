@@ -1,5 +1,5 @@
 /**
- * TOOLS.md section handling (issue #34): insert self-correction rules under a
+ * TOOLS.md section handling: insert self-correction rules under a
  * named section instead of appending at end. Dedup by normalized line.
  */
 

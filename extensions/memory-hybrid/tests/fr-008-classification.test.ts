@@ -1,5 +1,5 @@
 /**
- * FR-008: ADD/UPDATE/DELETE/NOOP classification.
+ * ADD/UPDATE/DELETE/NOOP classification.
  * Tests parseClassificationResponse (LLM response parser) and findSimilarByEmbedding (embedding-based similar-fact retrieval).
  */
 
@@ -33,7 +33,7 @@ function mockFact(id: string, text: string): MemoryEntry {
 
 const VECTOR_DIM = vectorDimsForModel("text-embedding-3-small");
 
-describe("FR-008 parseClassificationResponse", () => {
+describe("parseClassificationResponse", () => {
   const existingFacts: MemoryEntry[] = [
     mockFact("550e8400-e29b-41d4-a716-446655440000", "User prefers VS Code with dark mode"),
     mockFact("6ba7b810-9dad-11d1-80b4-00c04fd430c8", "User uses Linux"),
@@ -99,7 +99,7 @@ describe("FR-008 parseClassificationResponse", () => {
   });
 });
 
-describe("FR-008 findSimilarByEmbedding", () => {
+describe("findSimilarByEmbedding", () => {
   let tmpDir: string;
   let factsDb: InstanceType<typeof FactsDB>;
   let vectorDb: InstanceType<typeof VectorDB>;

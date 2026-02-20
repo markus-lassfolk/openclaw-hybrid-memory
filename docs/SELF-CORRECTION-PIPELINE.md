@@ -1,4 +1,4 @@
-# Self-Correction Analysis Pipeline (Issue #34)
+# Self-Correction Analysis Pipeline
 
 Automated detection of user corrections/nudges in session logs and remediation (memory store, TOOLS.md rules, and proposed AGENTS/skill changes).
 
@@ -169,6 +169,6 @@ Adjust `--days` and paths as needed. The report is still written to `memory/repo
 
 ## Related
 
-- **Issue #34**: [Feature: Nightly Self-Correction Analysis](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/34)
+- [GitHub issue #34: Nightly Self-Correction Analysis](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/34)
 - **build-languages**: [CLI reference](CLI-REFERENCE.md) — run first for non-English correction detection.
 - **Session distillation**: [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — separate pipeline (fact extraction from sessions).

@@ -12,6 +12,7 @@ import {
   type DecayClass,
   type HybridMemoryConfig,
 } from "../config.js";
+import type { ConfigMode } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Decay classes & TTL defaults
@@ -161,7 +162,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.enabled).toBe(true);
   });
 
-  it("FR-004: memoryTiering defaults when omitted", () => {
+  it("memoryTiering defaults when omitted", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.memoryTiering.enabled).toBe(true);
     expect(result.memoryTiering.hotMaxTokens).toBe(2000);
@@ -228,7 +229,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.minScore).toBe(0.5);
   });
 
-  it("parses autoRecall.scopeFilter (FR-006)", () => {
+  it("parses autoRecall.scopeFilter", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       autoRecall: {
@@ -289,17 +290,17 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.store.fuzzyDedupe).toBe(false);
   });
 
-  it("defaults store.classifyBeforeWrite to false (FR-008)", () => {
+  it("defaults store.classifyBeforeWrite to false", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.classifyBeforeWrite).toBe(false);
   });
 
-  it("defaults store.classifyModel to gpt-4o-mini (FR-008)", () => {
+  it("defaults store.classifyModel to gpt-4o-mini", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.classifyModel).toBe("gpt-4o-mini");
   });
 
-  it("respects store.classifyBeforeWrite and store.classifyModel when set (FR-008)", () => {
+  it("respects store.classifyBeforeWrite and store.classifyModel when set", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       store: { fuzzyDedupe: false, classifyBeforeWrite: true, classifyModel: "gpt-4.1-nano" },
@@ -330,16 +331,16 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.credentials.encryptionKey).toBe("abcdefghij1234567890");
   });
 
-  it("throws when credentials enabled but key too short", () => {
-    expect(() =>
-      hybridConfigSchema.parse({
-        ...validBase,
-        credentials: {
-          enabled: true,
-          encryptionKey: "short",
-        },
-      }),
-    ).toThrow(/encryptionKey must be at least 16 characters/);
+  it("allows credentials enabled without key (memory-only mode)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      credentials: {
+        enabled: true,
+        encryptionKey: "short",
+      },
+    });
+    expect(result.credentials.enabled).toBe(true);
+    expect(result.credentials.encryptionKey).toBe("");
   });
 
   it("parses custom categories", () => {
@@ -375,7 +376,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.entityLookup.maxFactsPerEntity).toBe(3);
   });
 
-  it("parses progressive disclosure config (FR-009)", () => {
+  it("parses progressive disclosure config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       autoRecall: {
@@ -442,7 +443,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill).toBeUndefined();
   });
 
-  it("parses optional selfCorrection config (issue #34)", () => {
+  it("parses optional selfCorrection config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       selfCorrection: {
@@ -501,7 +502,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.languageKeywords.weeklyIntervalDays).toBe(14);
   });
 
-  it("parses optional ingest config (issue #33)", () => {
+  it("parses optional ingest config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       ingest: {
@@ -598,5 +599,92 @@ describe("hybridConfigSchema.parse", () => {
       },
     });
     expect(result.multiAgent.defaultStoreScope).toBe("global");
+  });
+
+  describe("config mode presets", () => {
+    it("mode essential: disables autoClassify, graph, procedures, reflection, credentials", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        mode: "essential" as ConfigMode,
+      });
+      expect(result.mode).toBe("essential");
+      expect(result.autoClassify.enabled).toBe(false);
+      expect(result.graph.enabled).toBe(false);
+      expect(result.procedures.enabled).toBe(false);
+      expect(result.reflection.enabled).toBe(false);
+      expect(result.credentials.enabled).toBe(false);
+      expect(result.autoCapture).toBe(true);
+      expect(result.autoRecall.enabled).toBe(true);
+      expect(result.wal.enabled).toBe(true);
+      expect(result.languageKeywords.autoBuild).toBe(false);
+      expect(result.personaProposals.enabled).toBe(false);
+      expect(result.memoryTiering.enabled).toBe(false);
+      expect(result.autoRecall.entityLookup.enabled).toBe(false);
+      expect(result.autoRecall.authFailure.enabled).toBe(false);
+    });
+
+    it("mode normal: enables autoClassify, graph, procedures; disables reflection", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        mode: "normal" as ConfigMode,
+      });
+      expect(result.mode).toBe("normal");
+      expect(result.autoClassify.enabled).toBe(true);
+      expect(result.graph.enabled).toBe(true);
+      expect(result.procedures.enabled).toBe(true);
+      expect(result.reflection.enabled).toBe(false);
+      expect(result.credentials.enabled).toBe(false);
+      expect(result.graph.autoLink).toBe(false);
+      expect(result.store.classifyBeforeWrite).toBe(false);
+    });
+
+    it("mode expert: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
+      process.env.OPENCLAW_CRED_KEY = "a-long-secret-key-at-least-16-chars";
+      try {
+        const result = hybridConfigSchema.parse({
+          ...validBase,
+          mode: "expert" as ConfigMode,
+          credentials: {
+            encryptionKey: "env:OPENCLAW_CRED_KEY",
+          },
+        });
+        expect(result.mode).toBe("expert");
+        expect(result.reflection.enabled).toBe(true);
+        expect(result.store.classifyBeforeWrite).toBe(true);
+        expect(result.graph.autoLink).toBe(true);
+        expect(result.credentials.enabled).toBe(true);
+        expect(result.credentials.autoDetect).toBe(true);
+        expect(result.credentials.autoCapture?.toolCalls).toBe(true);
+      } finally {
+        delete process.env.OPENCLAW_CRED_KEY;
+      }
+    });
+
+    it("mode full: enables search.hydeEnabled when search block present", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        mode: "full" as ConfigMode,
+        search: {},
+      });
+      expect(result.mode).toBe("full");
+      expect(result.search).toBeDefined();
+      expect(result.search!.hydeEnabled).toBe(true);
+    });
+
+    it("user overrides win over preset (mode essential + graph.enabled true); mode becomes Custom for verify", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        mode: "essential" as ConfigMode,
+        graph: { enabled: true },
+      });
+      expect(result.mode).toBeUndefined(); // overrides → show "Custom" in verify
+      expect(result.graph.enabled).toBe(true);
+      expect(result.autoClassify.enabled).toBe(false);
+    });
+
+    it("no mode: result.mode is undefined", () => {
+      const result = hybridConfigSchema.parse(validBase);
+      expect(result.mode).toBeUndefined();
+    });
   });
 });
