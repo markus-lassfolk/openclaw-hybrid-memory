@@ -96,6 +96,10 @@ export type ProcedureEntry = {
   reinforcedQuotes?: string[] | null;
   /** Phase 2: When this procedure was auto-promoted via reinforcement (epoch seconds). */
   promotedAt?: number | null;
+  /** FR-006 + multi-agent: Memory scope (global, user, agent, session). */
+  scope?: string;
+  /** FR-006 + multi-agent: Scope target (userId, agentId, or sessionId). */
+  scopeTarget?: string | null;
 };
 
 export type SearchResult = {

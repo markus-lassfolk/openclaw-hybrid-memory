@@ -286,9 +286,13 @@ export class FactsDB {
       .prepare(`PRAGMA table_info(procedures)`)
       .all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
-    if (colNames.has("scope")) return;
-    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
-    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope_target TEXT`);
+    // Issue #8: Check both columns independently, not just scope
+    if (!colNames.has("scope")) {
+      this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
+    }
+    if (!colNames.has("scope_target")) {
+      this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope_target TEXT`);
+    }
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_procedures_scope ON procedures(scope)`,
     );
@@ -1722,6 +1726,8 @@ export class FactsDB {
         }
       })(),
       promotedAt: (row.promoted_at as number) ?? null,
+      scope: (row.scope as string) ?? "global",
+      scopeTarget: (row.scope_target as string) ?? null,
     };
   }
 
@@ -1738,9 +1744,15 @@ export class FactsDB {
     confidence?: number;
     ttlDays?: number;
     sourceSessionId?: string;
+    /** FR-006 + multi-agent: Memory scope — global, user, agent, or session. Default global. */
+    scope?: "global" | "user" | "agent" | "session";
+    /** FR-006 + multi-agent: Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
+    scopeTarget?: string | null;
   }): ProcedureEntry {
     const id = proc.id ?? randomUUID();
     const now = Math.floor(Date.now() / 1000);
+    const scope = proc.scope ?? "global";
+    const scopeTarget = proc.scopeTarget ?? null;
     const existing = this.getProcedureById(id);
     if (existing) {
       const successCount = (proc.successCount ?? existing.successCount);
@@ -1748,7 +1760,7 @@ export class FactsDB {
       const confidence = proc.confidence ?? Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount)));
       this.liveDb
         .prepare(
-          `UPDATE procedures SET task_pattern = ?, recipe_json = ?, procedure_type = ?, success_count = ?, failure_count = ?, last_validated = ?, last_failed = ?, confidence = ?, ttl_days = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET task_pattern = ?, recipe_json = ?, procedure_type = ?, success_count = ?, failure_count = ?, last_validated = ?, last_failed = ?, confidence = ?, ttl_days = ?, scope = ?, scope_target = ?, updated_at = ? WHERE id = ?`,
         )
         .run(
           proc.taskPattern,
@@ -1760,6 +1772,8 @@ export class FactsDB {
           proc.lastFailed ?? existing.lastFailed,
           confidence,
           proc.ttlDays ?? existing.ttlDays,
+          scope,
+          scopeTarget,
           now,
           id,
         );
@@ -1767,8 +1781,8 @@ export class FactsDB {
     }
     this.liveDb
       .prepare(
-        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, last_validated, last_failed, confidence, ttl_days, promoted_to_skill, skill_path, source_sessions, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)`,
+        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, last_validated, last_failed, confidence, ttl_days, promoted_to_skill, skill_path, source_sessions, scope, scope_target, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -1782,6 +1796,8 @@ export class FactsDB {
         proc.confidence ?? 0.5,
         proc.ttlDays ?? 30,
         proc.sourceSessionId ?? null,
+        scope,
+        scopeTarget,
         now,
         now,
       );
