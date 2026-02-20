@@ -16,15 +16,13 @@ const CRED_ALGO = "aes-256-gcm";
 const CRED_KDF_VERSION = 2; // v1 = SHA-256 (legacy), v2 = scrypt
 
 /** Derive encryption key using scrypt (v2) or SHA-256 (v1 for backward compatibility). */
-function deriveKey(password: string, salt?: Buffer, version: number = CRED_KDF_VERSION): Buffer {
+function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
     // Legacy SHA-256 KDF (weak, kept for backward compatibility)
     return createHash("sha256").update(password, "utf8").digest();
   }
   // v2: scrypt with recommended parameters (N=16384, r=8, p=1)
-  // For testing purposes, if no salt provided, generate a deterministic one from the password
-  const actualSalt = salt ?? createHash("sha256").update(password + "test-salt", "utf8").digest().subarray(0, 16);
-  return scryptSync(password, actualSalt, 32, { N: 16384, r: 8, p: 1 });
+  return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
 }
 
 function encryptValue(plaintext: string, key: Buffer): Buffer {
