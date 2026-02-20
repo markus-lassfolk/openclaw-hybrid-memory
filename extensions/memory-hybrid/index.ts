@@ -95,6 +95,7 @@ import {
   getCorrectionSignalRegex,
 } from "./utils/language-keywords.js";
 import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "./services/self-correction-extract.js";
+import { initErrorReporter, capturePluginError, isErrorReporterActive } from "./services/error-reporter.js";
 import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { extractCredentialsFromToolCalls, type ToolCallCredential } from "./services/credential-scanner.js";
@@ -102,6 +103,7 @@ import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./s
 import { runDirectiveExtract, type DirectiveExtractResult, type DirectiveIncident } from "./services/directive-extract.js";
 import { runReinforcementExtract, type ReinforcementExtractResult, type ReinforcementIncident } from "./services/reinforcement-extract.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
+import { detectAuthFailure, buildCredentialQuery, formatCredentialHint, DEFAULT_AUTH_FAILURE_PATTERNS, type AuthFailurePattern } from "./services/auth-failure-detect.js";
 
 // ============================================================================
 // Backend Imports (extracted from god file for maintainability)
@@ -1520,6 +1522,15 @@ let lastProgressiveIndexIds: string[] = [];
 // - Updated on each before_agent_start event
 // - Used by memory_store to auto-scope facts to the current agent
 // - Falls back to cfg.multiAgent.orchestratorId if detection fails
+// 
+// ⚠️ THREADING WARNING: This is a module-level singleton. If OpenClaw's plugin
+// host ever switches to concurrent request handling, this variable could race
+// between agent sessions. Current implementation assumes serial execution per
+// plugin instance.
+//
+// Config option `multiAgent.strictAgentScoping` can be enabled to throw an error
+// if agent detection fails in "agent" or "auto" scope modes, rather than silently
+// falling back to orchestrator.
 let currentAgentId: string | null = null;
 
 /**
@@ -2423,6 +2434,16 @@ const memoryHybridPlugin = {
             // Auto-determine scope based on multiAgent config
             const agentId = currentAgentId || cfg.multiAgent.orchestratorId;
             const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
+            
+            // Strict agent scoping: throw if agent detection failed in agent/auto mode
+            if (cfg.multiAgent.strictAgentScoping && !currentAgentId && 
+                (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")) {
+              throw new Error(
+                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. ` +
+                `Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". ` +
+                `Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`
+              );
+            }
             
             if (cfg.multiAgent.defaultStoreScope === "global") {
               // Backward compatible: always global
@@ -5545,7 +5566,6 @@ const memoryHybridPlugin = {
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
-
           // FR-009: Use configurable candidate pool for progressive disclosure
           const fmt = cfg.autoRecall.injectionFormat;
           const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -6040,6 +6060,161 @@ const memoryHybridPlugin = {
       });
     }
 
+    // FR-047: Auto-recall on authentication failures (reactive memory trigger)
+    // Track auth failures per target per session to avoid spam
+    const authFailureRecallsThisSession = new Map<string, number>();
+    
+    if (cfg.autoRecall.enabled && cfg.autoRecall.authFailure.enabled) {
+      // Compile custom patterns once at handler registration time
+      const customPatterns: AuthFailurePattern[] = [];
+      for (const p of cfg.autoRecall.authFailure.patterns) {
+        try {
+          customPatterns.push({
+            regex: new RegExp(p, "i"),
+            type: "generic" as const,
+            hint: p,
+          });
+        } catch (err) {
+          api.logger.warn?.(`memory-hybrid: invalid regex pattern "${p}": ${err}`);
+        }
+      }
+      
+      // Merge with default patterns (config patterns should not include defaults to avoid duplication)
+      const allPatterns = [...DEFAULT_AUTH_FAILURE_PATTERNS, ...customPatterns];
+      
+      // Note: Multiple before_agent_start handlers exist in this plugin:
+      // 1. Main auto-recall (procedures + facts)
+      // 2. Auth failure recall (this one)
+      // 3. Credential auto-detect
+      // OpenClaw's event system merges returned { prependContext } by concatenation.
+      // Order: main auto-recall runs first, then this auth-failure handler, then credential auto-detect.
+      api.on("before_agent_start", async (event: unknown) => {
+        const e = event as { prompt?: string; messages?: unknown[] };
+        if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
+        
+        try {
+          
+          // Scan prompt for auth failures
+          let textToScan = e.prompt || "";
+          
+          // Also scan recent messages if available (tool results might be there)
+          if (e.messages && Array.isArray(e.messages)) {
+            const recentMessages = e.messages.slice(-5); // Last 5 messages
+            for (const msg of recentMessages) {
+              if (!msg || typeof msg !== "object") continue;
+              const msgObj = msg as Record<string, unknown>;
+              const content = msgObj.content;
+              if (typeof content === "string") {
+                textToScan += "\n" + content;
+              }
+            }
+          }
+          
+          // Detect auth failure
+          const detection = detectAuthFailure(textToScan, allPatterns);
+          if (!detection.detected || !detection.target) return;
+          
+          // Check if we've already recalled for this target in this session
+          const recallCount = authFailureRecallsThisSession.get(detection.target) || 0;
+          const maxRecalls = cfg.autoRecall.authFailure.maxRecallsPerTarget;
+          if (maxRecalls > 0 && recallCount >= maxRecalls) {
+            // Use debug level to avoid log spam for repeated failures
+            api.logger.debug?.(`memory-hybrid: auth failure for ${detection.target} already recalled ${recallCount} times this session, skipping`);
+            return;
+          }
+          
+          // Build credential query
+          const query = buildCredentialQuery(detection);
+          if (!query) return;
+          
+          api.logger.info?.(`memory-hybrid: auth failure detected for ${detection.target} (${detection.hint}), searching for credentials...`);
+          
+          // Search for credential facts
+          // FR-006: Apply scope filter (global + current agent)
+          const detectedAgentId = currentAgentId || cfg.multiAgent.orchestratorId;
+          const scopeFilter: ScopeFilter | undefined = detectedAgentId && detectedAgentId !== cfg.multiAgent.orchestratorId
+            ? { userId: cfg.autoRecall.scopeFilter?.userId ?? null, agentId: detectedAgentId, sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null }
+            : undefined;
+          
+          // Search both SQLite and vector backends
+          const ftsResults = factsDb.search(query, 5, { scopeFilter });
+          const vector = await embeddings.embed(query);
+          let lanceResults = await vectorDb.search(vector, 5, 0.3);
+          
+          // FR-006: Filter LanceDB results by scope using filterByScope (LanceDB doesn't store scope metadata)
+          lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+          
+          // Merge and filter for credential-related facts
+          const merged = mergeResults(
+            ftsResults.map((r) => ({ ...r, backend: "sqlite" as const })),
+            lanceResults.map((r) => ({ ...r, backend: "lancedb" as const })),
+            5,
+            factsDb,
+          );
+          
+          // FR-006: Validate merged results against scope (merged results may not have scope metadata)
+          const scopeValidatedMerged = scopeFilter
+            ? merged.filter((r) => factsDb.getById(r.entry.id, { scopeFilter }) != null)
+            : merged;
+          
+          // Filter to technical/credential facts
+          let credentialFacts = scopeValidatedMerged
+            .filter((r) => {
+              const fact = r.entry;
+              if (fact.category === "technical") return true;
+              if (fact.entity?.toLowerCase() === "credentials") return true;
+              const tags = fact.tags || [];
+              return tags.some((t) => ["credential", "ssh", "token", "api", "auth", "password"].includes(t.toLowerCase()));
+            });
+          
+          // Filter out vault pointers if includeVaultHints is false
+          if (!cfg.autoRecall.authFailure.includeVaultHints) {
+            credentialFacts = credentialFacts.filter((r) => {
+              const fact = r.entry;
+              return !fact.text.includes("stored in secure vault") && 
+                     (!fact.value || !String(fact.value).startsWith(VAULT_POINTER_PREFIX));
+            });
+          }
+          
+          credentialFacts = credentialFacts.slice(0, 3);
+          
+          if (credentialFacts.length === 0) {
+            api.logger.info?.(`memory-hybrid: no credential facts found for ${detection.target}`);
+            return;
+          }
+          
+          // Format hint and inject
+          const hint = formatCredentialHint(detection, credentialFacts.map((r) => r.entry));
+          if (hint) {
+            // Inject as prepended context (this will be added to the prompt)
+            api.logger.info?.(`memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`);
+            
+            // Track this recall
+            authFailureRecallsThisSession.set(detection.target, recallCount + 1);
+            
+            // Return the hint to be injected
+            // Hook contract validation: OpenClaw's before_agent_start hook must support
+            // returning { prependContext: string } which is automatically prepended to the
+            // agent's prompt. This is documented in OpenClaw's plugin API.
+            // If this contract changes or is not supported in your OpenClaw version,
+            // this will fail silently (hint won't be injected). Alternative injection
+            // mechanisms would be: tool response text, or system message via API.
+            return { prependContext: hint + "\n\n" };
+          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: auth failure recall failed: ${String(err)}`);
+        }
+      });
+    }
+
+    // FR-047: Clear auth failure dedup map on session end
+    if (cfg.autoRecall.enabled && cfg.autoRecall.authFailure.enabled) {
+      api.on("agent_end", async () => {
+        authFailureRecallsThisSession.clear();
+        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for new session");
+      });
+    }
+    
     // FR-004: Compaction on session end — migrate completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT
     if (cfg.memoryTiering.enabled && cfg.memoryTiering.compactionOnSessionEnd) {
       api.on("agent_end", async () => {
@@ -6367,19 +6542,38 @@ const memoryHybridPlugin = {
 
     api.registerService({
       id: PLUGIN_ID,
-      start: () => {
+      start: async () => {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
           `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
         );
 
+        // Initialize error reporter if configured
+        if (cfg.errorReporting) {
+          await initErrorReporter(
+            {
+              enabled: cfg.errorReporting.enabled,
+              dsn: cfg.errorReporting.dsn,
+              consent: cfg.errorReporting.consent,
+              environment: cfg.errorReporting.environment,
+              sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
+              maxBreadcrumbs: 0,
+            },
+            versionInfo.pluginVersion,
+            api.logger,
+          );
+          if (isErrorReporterActive()) {
+            api.logger.info("memory-hybrid: error reporting enabled");
+          }
+        }
+
         if (expired > 0) {
           const pruned = factsDb.pruneExpired();
           api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
         }
 
-        // WAL Recovery: replay uncommitted operations from previous session
+                // WAL Recovery: replay uncommitted operations from previous session
         if (wal) {
           const pendingEntries = wal.getValidEntries();
           if (pendingEntries.length > 0) {

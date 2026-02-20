@@ -101,6 +101,22 @@
       "label": "Progressive pinned recall count",
       "help": "In progressive_hybrid: facts with recallCount >= this or permanent decay are injected in full (default 3)"
     },
+    "autoRecall.authFailure.enabled": {
+      "label": "Auth failure auto-recall",
+      "help": "Detect authentication failures and auto-inject relevant credentials (default: true)"
+    },
+    "autoRecall.authFailure.patterns": {
+      "label": "Auth failure patterns",
+      "help": "Additional regex patterns to detect auth failures (merged with defaults). Should NOT include default patterns to avoid duplication."
+    },
+    "autoRecall.authFailure.maxRecallsPerTarget": {
+      "label": "Max recalls per target",
+      "help": "Max times to recall credentials for the same target per session. 0 = unlimited (default: 1)"
+    },
+    "autoRecall.authFailure.includeVaultHints": {
+      "label": "Include vault hints",
+      "help": "Inject credential hints even if they're stored in the vault (default: true)"
+    },
     "captureMaxChars": {
       "label": "Capture max characters",
       "help": "Max characters per fact: filter in auto-capture and truncate when storing (default 5000)"
@@ -367,7 +383,26 @@
               "summaryMaxChars": { "type": "number" },
               "useSummaryInInjection": { "type": "boolean" },
               "summarizeWhenOverBudget": { "type": "boolean" },
-              "summarizeModel": { "type": "string" }
+              "summarizeModel": { "type": "string" },
+              "authFailure": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean", "description": "Detect authentication failures and auto-inject credentials (default: true)" },
+                  "patterns": { 
+                    "type": "array", 
+                    "items": { "type": "string" },
+                    "description": "Additional regex patterns to detect auth failures (should NOT duplicate defaults)"
+                  },
+                  "maxRecallsPerTarget": { 
+                    "type": "number", 
+                    "minimum": 0,
+                    "description": "Max recalls per target per session; 0 = unlimited (default: 1)" 
+                  },
+                  "includeVaultHints": { "type": "boolean", "description": "Inject hints even when credentials are in vault (default: true)" }
+                },
+                "description": "Auto-recall credentials on authentication failures (issue #47)"
+              }
             }
           }
         ]

@@ -22,7 +22,14 @@
     "type": "git",
     "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git"
   },
-  "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "memory",
+    "sqlite",
+    "lancedb",
+    "embeddings"
+  ],
   "dependencies": {
     "@google/genai": "^1.41.0",
     "@lancedb/lancedb": "^0.23.0",
@@ -30,7 +37,11 @@
     "better-sqlite3": "^11.0.0",
     "openai": "^6.16.0"
   },
-  "openclaw": { "extensions": ["./index.ts"] },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
@@ -46,5 +57,10 @@
     "vitest": "^4.0.18"
   },
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme",
-  "bugs": { "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues" }
+  "bugs": {
+    "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues"
+  },
+  "optionalDependencies": {
+    "@sentry/node": "^8.0.0"
+  }
 }
