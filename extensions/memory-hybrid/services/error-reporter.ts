@@ -49,7 +49,7 @@ export function initErrorReporter(config: ErrorReporterConfig, pluginVersion: st
     dsn: config.dsn,
     release: `openclaw-hybrid-memory@${pluginVersion}`,
     environment: config.environment || "production",
-    sampleRate: config.sampleRate || 1.0,
+    sampleRate: config.sampleRate ?? 1.0,
     maxBreadcrumbs: 0,           // NO breadcrumbs (could contain user data)
     sendDefaultPii: false,       // NO PII
     autoSessionTracking: false,  // NO session tracking
@@ -100,6 +100,9 @@ function sanitizeEvent(event: SentryType.Event): SentryType.Event | null {
       subsystem: event.tags?.subsystem,
       operation: event.tags?.operation,
     },
+    contexts: event.contexts?.config_shape ? {
+      config_shape: event.contexts.config_shape,
+    } : undefined,
     // NO: user, request, breadcrumbs, contexts.device, extra
   };
 
@@ -118,7 +121,7 @@ function scrubString(input: string): string {
     // Paths
     .replace(/\/home\/[^/\s]+/g, '$HOME')
     .replace(/\/Users\/[^/\s]+/g, '$HOME')
-    .replace(/C:\\Users\\[^\\s]+/g, '%USERPROFILE%')
+    .replace(/C:\\Users\\[^\\\s]+/g, '%USERPROFILE%')
     // PII
     .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, '[EMAIL]')
     .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]')
