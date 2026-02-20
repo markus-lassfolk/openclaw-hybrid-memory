@@ -464,6 +464,147 @@ function inferServiceFromText(text: string): string {
   return "imported";
 }
 
+// ============================================================================
+// Tool-call credential extraction (auto-capture from tool inputs)
+// ============================================================================
+
+type ToolCallCredential = {
+  service: string;
+  type: CredentialType;
+  value: string;
+  url?: string;
+  notes?: string;
+};
+
+/** Extract hostname from a URL string for use as a service name. */
+function extractHostFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    const m = url.match(/https?:\/\/([^\s/:?#]+)/);
+    return m?.[1] ?? "api";
+  }
+}
+
+/**
+ * Slugify a string for use as a vault service name.
+ * Lowercases, replaces spaces/underscores with dashes, strips non-alphanumeric chars.
+ */
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "") || "imported";
+}
+
+/** Derive CredentialType from an environment variable name suffix. */
+function typeFromVarName(varName: string): CredentialType {
+  const lower = varName.toLowerCase();
+  if (lower.endsWith("_password")) return "password";
+  if (lower.endsWith("_token")) return "token";
+  if (lower.endsWith("_key")) return "api_key";
+  return "other";
+}
+
+/**
+ * Patterns for extracting credentials from tool call input strings.
+ * Each entry provides a regex and an extractor that maps a RegExp match + full text to a ToolCallCredential.
+ * Only tool *inputs* (what the agent sends) should be scanned — never outputs.
+ */
+const TOOL_CALL_CREDENTIAL_PATTERNS: Array<{
+  regex: RegExp;
+  extract: (match: RegExpMatchArray, fullText: string) => ToolCallCredential | null;
+}> = [
+  // sshpass -p <password> ssh [options] <user>@<host>
+  {
+    regex: /sshpass\s+-p\s+(\S+)\s+ssh(?:\s+\S+)*\s+([\w.-]+)@([\w.-]+)/i,
+    extract(m) {
+      const [, pass, user, host] = m;
+      if (!pass || pass.length < 4) return null;
+      return { service: `ssh://${user}@${host}`, type: "password", value: pass, notes: "auto-captured from sshpass tool call" };
+    },
+  },
+  // curl -H "Authorization: Bearer <token>" [URL]
+  {
+    regex: /curl\b[\s\S]*?-H\s+["']Authorization:\s+Bearer\s+([A-Za-z0-9_.~+/=-]{8,})/i,
+    extract(m, fullText) {
+      const urlMatch = fullText.match(/https?:\/\/[^\s'"]+/);
+      const service = urlMatch ? extractHostFromUrl(urlMatch[0]) : "api";
+      return { service, type: "bearer", value: m[1], url: urlMatch?.[0], notes: "auto-captured from curl Authorization Bearer tool call" };
+    },
+  },
+  // curl -u <user>:<pass> [URL]
+  {
+    regex: /curl\b[\s\S]*?-u\s+["']?([\w@.+-]+):([\S]+?)["']?(?:\s|$)/,
+    extract(m, fullText) {
+      const [, user, pass] = m;
+      if (!pass || pass.length < 4) return null;
+      const urlMatch = fullText.match(/https?:\/\/[^\s'"]+/);
+      const service = urlMatch ? extractHostFromUrl(urlMatch[0]) : slugify(user);
+      return { service, type: "password", value: pass, url: urlMatch?.[0], notes: `auto-captured from curl -u ${user} tool call` };
+    },
+  },
+  // -H "X-API-Key: <key>" (standalone or in curl)
+  {
+    regex: /-H\s+["']X-API-Key:\s+([A-Za-z0-9_-]{8,})["']/i,
+    extract(m, fullText) {
+      const urlMatch = fullText.match(/https?:\/\/[^\s'"]+/);
+      const service = urlMatch ? extractHostFromUrl(urlMatch[0]) : "api";
+      return { service, type: "api_key", value: m[1], url: urlMatch?.[0], notes: "auto-captured from X-API-Key header tool call" };
+    },
+  },
+  // Connection strings: postgres/mysql/mongodb/redis://user:pass@host/db
+  {
+    regex: /(postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|mssql):\/\/([\w.-]+):([\S]+?)@([\w.-]+(?::\d+)?)\/([\w-]*)/i,
+    extract(m) {
+      const [, proto, user, pass, host, db] = m;
+      if (!pass || pass.length < 4) return null;
+      const service = db ? `${proto.toLowerCase()}://${host}/${db}` : `${proto.toLowerCase()}://${host}`;
+      const url = `${proto.toLowerCase()}://${host}/${db ?? ""}`;
+      return { service, type: "password", value: pass, url, notes: `auto-captured connection string (user: ${user})` };
+    },
+  },
+  // export VAR=value where VAR matches *_KEY, *_TOKEN, *_PASSWORD, *_SECRET
+  {
+    regex: /\bexport\s+([A-Z][A-Z0-9_]*_(?:KEY|TOKEN|PASSWORD|SECRET))\s*=\s*["']?([^\s"';\n]{8,})["']?/i,
+    extract(m) {
+      const [, varName, val] = m;
+      const type = typeFromVarName(varName);
+      const service = slugify(varName.replace(/_(?:KEY|TOKEN|PASSWORD|SECRET)$/i, "").replace(/_/g, "-"));
+      return { service, type, value: val, notes: `auto-captured from export ${varName} tool call` };
+    },
+  },
+  // .env-style KEY=value (credential-like var names only), not preceded by 'export'
+  {
+    regex: /(?<![Ee][Xx][Pp][Oo][Rr][Tt]\s)(?<![A-Z0-9_])([A-Z][A-Z0-9_]*_(?:KEY|TOKEN|PASSWORD|SECRET))\s*=\s*["']?([^\s"';\n]{8,})["']?/,
+    extract(m) {
+      const [, varName, val] = m;
+      const type = typeFromVarName(varName);
+      const service = slugify(varName.replace(/_(?:KEY|TOKEN|PASSWORD|SECRET)$/i, "").replace(/_/g, "-"));
+      return { service, type, value: val, notes: `auto-captured from env assignment ${varName}` };
+    },
+  },
+];
+
+/**
+ * Scan a tool call input string for credential patterns.
+ * Returns a deduplicated list of extracted credentials (by service+type).
+ * Only tool *inputs* should be passed here — never outputs.
+ */
+function extractCredentialsFromToolCalls(text: string): ToolCallCredential[] {
+  const results: ToolCallCredential[] = [];
+  const seen = new Set<string>();
+  for (const { regex, extract } of TOOL_CALL_CREDENTIAL_PATTERNS) {
+    const match = regex.exec(text);
+    if (!match) continue;
+    const cred = extract(match, text);
+    if (!cred || cred.value.length < 4) continue;
+    const key = `${cred.service}:${cred.type}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      results.push(cred);
+    }
+  }
+  return results;
+}
+
 const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrated";
 
 /**
@@ -6308,6 +6449,52 @@ const memoryHybridPlugin = {
       });
     }
 
+    // Tool-call credential auto-capture: scan tool call inputs for credential patterns and store in vault
+    if (cfg.credentials.enabled && credentialsDb && cfg.credentials.autoCapture?.toolCalls) {
+      const logCaptures = cfg.credentials.autoCapture.logCaptures !== false;
+
+      api.on("agent_end", async (event: unknown) => {
+        const ev = event as { messages?: unknown[] };
+        if (!ev.messages || ev.messages.length === 0) return;
+        try {
+          for (const msg of ev.messages) {
+            if (!msg || typeof msg !== "object") continue;
+            const msgObj = msg as Record<string, unknown>;
+            if (msgObj.role !== "assistant") continue;
+
+            const toolCalls = msgObj.tool_calls;
+            if (!Array.isArray(toolCalls)) continue;
+
+            for (const tc of toolCalls) {
+              if (!tc || typeof tc !== "object") continue;
+              const tcObj = tc as Record<string, unknown>;
+              const fn = tcObj.function as Record<string, unknown> | undefined;
+              if (!fn) continue;
+              const args = fn.arguments;
+              if (typeof args !== "string" || args.length === 0) continue;
+
+              const creds = extractCredentialsFromToolCalls(args);
+              for (const cred of creds) {
+                if (!credentialsDb) continue;
+                credentialsDb.store({
+                  service: cred.service,
+                  type: cred.type,
+                  value: cred.value,
+                  url: cred.url,
+                  notes: cred.notes,
+                });
+                if (logCaptures) {
+                  api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${err}`);
+        }
+      });
+    }
+
     // ========================================================================
     // Service
     // ========================================================================
@@ -6572,6 +6759,7 @@ export const _testing = {
   extractCredentialMatch,
   isCredentialLike,
   inferServiceFromText,
+  extractCredentialsFromToolCalls,
   isStructuredForConsolidation,
   normalizeSuggestedLabel,
   unionFind,
