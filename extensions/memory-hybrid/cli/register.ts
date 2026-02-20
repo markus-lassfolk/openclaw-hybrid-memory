@@ -184,6 +184,23 @@ export type HybridMemCliContext = {
   }) => Promise<SelfCorrectionRunResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  /** Optional: used by stats for rich output (credentials, proposals, WAL, last run timestamps, storage sizes). */
+  richStatsExtras?: {
+    getCredentialsCount: () => number;
+    getProposalsPending: () => number;
+    getWalPending: () => number;
+    getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
+    getStorageSizes: () => { sqliteBytes?: number; lanceBytes?: number };
+  };
+  /** List/manage proposals and corrections (issue #56). Optional when personaProposals disabled or no workspace. */
+  listCommands?: {
+    listProposals: (opts: { status?: string }) => Promise<Array<{ id: string; title: string; targetFile: string; status: string; confidence: number; createdAt: number }>>;
+    proposalApprove: (id: string) => Promise<{ ok: boolean; error?: string }>;
+    proposalReject: (id: string, reason?: string) => Promise<{ ok: boolean; error?: string }>;
+    listCorrections: (opts: { workspace?: string }) => Promise<{ reportPath: string | null; items: string[] }>;
+    correctionsApproveAll: (opts: { workspace?: string }) => Promise<{ applied: number; error?: string }>;
+    showItem: (id: string) => Promise<{ type: "fact" | "proposal"; data: unknown } | null>;
+  };
 };
 
 /** Chainable command type (Commander-style). */
@@ -238,6 +255,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runBuildLanguageKeywords,
     runExtractDirectives,
     runExtractReinforcement,
+    listCommands,
   } = ctx;
 
   /** Run an async action and exit when done (avoids hang from open DB/handles when run as standalone CLI).
@@ -267,10 +285,12 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
 
   mem
     .command("stats")
-    .description("Show memory statistics with decay breakdown. Use --efficiency for tiers, sources, and token estimates.")
+    .description("Show memory statistics. Rich output includes procedures, rules, patterns, directives, graph, and operational info. Use --efficiency for tiers, sources, and token estimates.")
     .option("--efficiency", "Show tier/source breakdown, estimated tokens, and token-savings note")
-    .action(withExit(async (opts?: { efficiency?: boolean }) => {
+    .option("--brief", "Show only storage and decay counts (legacy-style)")
+    .action(withExit(async (opts?: { efficiency?: boolean; brief?: boolean }) => {
       const efficiency = opts?.efficiency ?? false;
+      const brief = opts?.brief ?? false;
       const sqlCount = factsDb.count();
       let lanceCount = 0;
       try {
@@ -281,16 +301,75 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       const breakdown = factsDb.statsBreakdown();
       const expired = factsDb.countExpired();
 
-      console.log(`memory-hybrid ${versionInfo.pluginVersion} (memory-manager ${versionInfo.memoryManagerVersion}, schema ${versionInfo.schemaVersion})`);
-      console.log(`SQLite facts:    ${sqlCount}`);
-      console.log(`LanceDB vectors: ${lanceCount}`);
-      console.log(`Total: ${sqlCount + lanceCount} (with overlap)`);
-      console.log(`\nBy decay class:`);
-      for (const [cls, cnt] of Object.entries(breakdown)) {
-        console.log(`  ${cls.padEnd(12)} ${cnt}`);
-      }
-      if (expired > 0) {
-        console.log(`\nExpired (pending prune): ${expired}`);
+      const extras = ctx.richStatsExtras;
+      const useRich = !brief && extras;
+
+      if (useRich) {
+        const byCategory = factsDb.statsBreakdownByCategory();
+        const procedures = factsDb.proceduresCount();
+        const proceduresValidated = factsDb.proceduresValidatedCount();
+        const proceduresPromoted = factsDb.proceduresPromotedCount();
+        const directives = factsDb.directivesCount();
+        const rules = byCategory["rule"] ?? 0;
+        const patterns = byCategory["pattern"] ?? 0;
+        const metaPatterns = factsDb.metaPatternsCount();
+        const links = factsDb.linksCount();
+        const entities = factsDb.entityCount();
+        const categoriesConfigured = getMemoryCategories();
+        const categoriesActive = Object.keys(byCategory).filter((c) => (byCategory[c] ?? 0) > 0).length;
+        const { getCredentialsCount, getProposalsPending, getWalPending, getLastRunTimestamps, getStorageSizes } = extras;
+        const credentialsCount = getCredentialsCount();
+        const proposalsPending = getProposalsPending();
+        const walPending = getWalPending();
+        const lastRun = getLastRunTimestamps();
+        const sizes = getStorageSizes();
+        const sqliteMB = sizes.sqliteBytes != null ? (sizes.sqliteBytes / (1024 * 1024)).toFixed(1) : null;
+        const lanceMB = sizes.lanceBytes != null ? (sizes.lanceBytes / (1024 * 1024)).toFixed(1) : null;
+
+        console.log(`memory-hybrid ${versionInfo.pluginVersion} (schema ${versionInfo.schemaVersion})\n`);
+        console.log("Storage:");
+        console.log(` SQLite: ${sqlCount.toLocaleString()} facts${sqliteMB != null ? ` (${sqliteMB} MB)` : ""}`);
+        console.log(` LanceDB: ${lanceCount.toLocaleString()} vectors${lanceMB != null ? ` (${lanceMB} MB)` : ""}`);
+        if (walPending > 0) console.log(` WAL: ${walPending} pending writes`);
+        console.log("");
+        console.log("Knowledge:");
+        const factsTotal = Object.values(byCategory).reduce((a, b) => a + b, 0);
+        console.log(` Facts: ${factsTotal.toLocaleString()}`);
+        console.log(` Entities: ${entities.toLocaleString()} distinct`);
+        console.log(` Categories: ${categoriesConfigured.length} configured, ${categoriesActive} active`);
+        console.log("");
+        console.log("Learned Behavior:");
+        console.log(` Procedures: ${procedures} (${proceduresValidated} validated, ${proceduresPromoted} promoted)`);
+        console.log(` Directives: ${directives}`);
+        console.log(` Rules: ${rules}`);
+        console.log(` Patterns: ${patterns}`);
+        if (metaPatterns > 0) console.log(` Meta-patterns: ${metaPatterns}`);
+        console.log("");
+        console.log("Graph:");
+        console.log(` Links: ${links.toLocaleString()} connections`);
+        console.log("");
+        console.log("Operational:");
+        console.log(` Credentials: ${credentialsCount} captured (vault: ${credentialsCount > 0 ? "enabled" : "disabled"})`);
+        if (proposalsPending > 0) console.log(` Proposals: ${proposalsPending} pending`);
+        if (lastRun.distill) console.log(` Last distill: ${lastRun.distill.trim()}`);
+        if (lastRun.reflect) console.log(` Last reflect: ${lastRun.reflect.trim()}`);
+        if (lastRun.compact) console.log(` Last compact: ${lastRun.compact.trim()}`);
+        console.log("");
+        console.log("Decay Distribution:");
+        for (const [cls, cnt] of Object.entries(breakdown)) {
+          console.log(` ${cls}: ${cnt}`);
+        }
+        if (expired > 0) console.log(`\nExpired (pending prune): ${expired}`);
+      } else {
+        console.log(`memory-hybrid ${versionInfo.pluginVersion} (memory-manager ${versionInfo.memoryManagerVersion}, schema ${versionInfo.schemaVersion})`);
+        console.log(`SQLite facts:    ${sqlCount}`);
+        console.log(`LanceDB vectors: ${lanceCount}`);
+        console.log(`Total: ${sqlCount + lanceCount} (with overlap)`);
+        console.log(`\nBy decay class:`);
+        for (const [cls, cnt] of Object.entries(breakdown)) {
+          console.log(`  ${cls.padEnd(12)} ${cnt}`);
+        }
+        if (expired > 0) console.log(`\nExpired (pending prune): ${expired}`);
       }
 
       if (efficiency) {
@@ -298,7 +377,6 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         const sourceBreakdown = factsDb.statsBreakdownBySource();
         const totalTokens = factsDb.estimateStoredTokens();
         const tokensByTier = factsDb.estimateStoredTokensByTier();
-
         console.log(`\n--- Efficiency ---`);
         console.log(`\nBy tier (hot/warm/cold):`);
         for (const t of ["hot", "warm", "cold"]) {
@@ -478,6 +556,234 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         const count = factsDb.getByCategory(cat).length;
         console.log(`  ${cat}: ${count} facts`);
       }
+    }));
+
+  // ---------- List / show / proposals / corrections (issue #56) ----------
+  mem
+    .command("list <type>")
+    .description("List items by type: patterns, rules, directives, procedures, proposals, or corrections")
+    .option("--limit <n>", "Max items to show", "50")
+    .option("--status <status>", "For proposals: pending|approved|rejected|applied. For corrections: pending|applied")
+    .action(withExit(async (type: string, opts?: { limit?: string; status?: string }) => {
+      const limit = Math.min(500, Math.max(1, parseInt(opts?.limit ?? "50", 10) || 50));
+      const t = (type ?? "").toLowerCase();
+      if (t === "patterns") {
+        const items = factsDb.listFactsByCategory("pattern", limit);
+        console.log(`Patterns (${items.length}):`);
+        items.forEach((e, i) => console.log(`  ${i + 1}. [${e.id}] ${(e.text || "").slice(0, 80)}${(e.text?.length ?? 0) > 80 ? "..." : ""}`));
+        return;
+      }
+      if (t === "rules") {
+        const items = factsDb.listFactsByCategory("rule", limit);
+        console.log(`Rules (${items.length}):`);
+        items.forEach((e, i) => console.log(`  ${i + 1}. [${e.id}] ${(e.text || "").slice(0, 80)}${(e.text?.length ?? 0) > 80 ? "..." : ""}`));
+        return;
+      }
+      if (t === "directives") {
+        const items = factsDb.listDirectives(limit);
+        console.log(`Directives (${items.length}):`);
+        items.forEach((e, i) => console.log(`  ${i + 1}. [${e.id}] ${(e.text || "").slice(0, 80)}${(e.text?.length ?? 0) > 80 ? "..." : ""}`));
+        return;
+      }
+      if (t === "procedures") {
+        const items = factsDb.listProcedures(limit);
+        console.log(`Procedures (${items.length}):`);
+        items.forEach((e, i) => console.log(`  ${i + 1}. [${e.id}] ${e.procedureType} — ${(e.taskPattern || "").slice(0, 60)}${(e.taskPattern?.length ?? 0) > 60 ? "..." : ""}`));
+        return;
+      }
+      if (t === "proposals" && listCommands) {
+        const items = await listCommands.listProposals({ status: opts?.status });
+        console.log(`Proposals (${items.length}):`);
+        items.forEach((p) => console.log(`  ${p.id}  ${p.status}  ${p.title}  → ${p.targetFile} (conf: ${p.confidence})`));
+        return;
+      }
+      if (t === "corrections" && listCommands) {
+        const { reportPath, items } = await listCommands.listCorrections({});
+        if (!reportPath) {
+          console.log("No self-correction report found. Run: openclaw hybrid-mem self-correction-run");
+          return;
+        }
+        console.log(`Corrections (from ${reportPath}, ${items.length} proposed):`);
+        items.forEach((line, i) => console.log(`  ${i + 1}. ${line.slice(0, 100)}${line.length > 100 ? "..." : ""}`));
+        return;
+      }
+      console.error(`Unknown type: ${type}. Use: patterns, rules, directives, procedures, proposals, or corrections.`);
+      process.exitCode = 1;
+    }));
+
+  mem
+    .command("show <id>")
+    .description("Show details of a fact or proposal by ID")
+    .action(withExit(async (id: string) => {
+      if (!id?.trim()) {
+        console.error("Usage: show <id>");
+        process.exitCode = 1;
+        return;
+      }
+      const fact = factsDb.getById(id.trim());
+      if (fact) {
+        console.log("Type: fact");
+        console.log(JSON.stringify({ id: fact.id, text: fact.text, category: fact.category, entity: fact.entity, key: fact.key, source: fact.source, created_at: fact.createdAt }, null, 2));
+        return;
+      }
+      if (listCommands) {
+        const result = await listCommands.showItem(id.trim());
+        if (result?.type === "proposal") {
+          console.log("Type: proposal");
+          console.log(JSON.stringify(result.data, null, 2));
+          return;
+        }
+      }
+      const proc = factsDb.getProcedureById(id.trim());
+      if (proc) {
+        console.log("Type: procedure");
+        console.log(JSON.stringify({ id: proc.id, taskPattern: proc.taskPattern, procedureType: proc.procedureType, successCount: proc.successCount, confidence: proc.confidence }, null, 2));
+        return;
+      }
+      console.error(`Not found: ${id}`);
+      process.exitCode = 1;
+    }));
+
+  const proposalsCmd = mem
+    .command("proposals")
+    .description("Manage persona proposals (list, approve, reject)");
+  proposalsCmd
+    .command("list")
+    .description("List persona proposals")
+    .option("--status <s>", "pending|approved|rejected|applied")
+    .action(withExit(async (opts?: { status?: string }) => {
+      if (!listCommands) {
+        console.error("Persona proposals not enabled or not available.");
+        process.exitCode = 1;
+        return;
+      }
+      const items = await listCommands.listProposals({ status: opts?.status });
+      if (items.length === 0) console.log("No proposals.");
+      else items.forEach((p) => console.log(`${p.id}  ${p.status}  ${p.title}  → ${p.targetFile}`));
+    }));
+  proposalsCmd
+    .command("approve <id>")
+    .description("Approve a persona proposal")
+    .action(withExit(async (id: string) => {
+      if (!listCommands) {
+        console.error("Persona proposals not enabled or not available.");
+        process.exitCode = 1;
+        return;
+      }
+      const r = await listCommands.proposalApprove(id?.trim() ?? "");
+      if (!r.ok) {
+        console.error(r.error ?? "Approve failed");
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Proposal ${id} approved. Use 'openclaw proposals apply ${id}' to apply to file.`);
+    }));
+  proposalsCmd
+    .command("reject <id>")
+    .description("Reject a persona proposal")
+    .option("--reason <text>", "Optional reason")
+    .action(withExit(async (id: string, opts?: { reason?: string }) => {
+      if (!listCommands) {
+        console.error("Persona proposals not enabled or not available.");
+        process.exitCode = 1;
+        return;
+      }
+      const r = await listCommands.proposalReject(id?.trim() ?? "", opts?.reason);
+      if (!r.ok) {
+        console.error(r.error ?? "Reject failed");
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Proposal ${id} rejected.`);
+    }));
+
+  const correctionsCmd = mem
+    .command("corrections")
+    .description("Self-correction proposals from last report (list, approve --all)");
+  correctionsCmd
+    .command("list")
+    .description("List proposed corrections from latest self-correction report")
+    .option("--workspace <path>", "Workspace root")
+    .action(withExit(async (opts?: { workspace?: string }) => {
+      if (!listCommands) {
+        console.error("List corrections not available.");
+        process.exitCode = 1;
+        return;
+      }
+      const { reportPath, items } = await listCommands.listCorrections({ workspace: opts?.workspace });
+      if (!reportPath) {
+        console.log("No self-correction report found. Run: openclaw hybrid-mem self-correction-run");
+        return;
+      }
+      console.log(`Report: ${reportPath}`);
+      if (items.length === 0) console.log("No proposed corrections.");
+      else items.forEach((line, i) => console.log(`  ${i + 1}. ${line.slice(0, 120)}${line.length > 120 ? "..." : ""}`));
+    }));
+  correctionsCmd
+    .command("approve")
+    .description("Apply all proposed TOOLS rules from latest report")
+    .option("--all", "Apply all (required)")
+    .option("--workspace <path>", "Workspace root")
+    .action(withExit(async (opts?: { all?: boolean; workspace?: string }) => {
+      if (!opts?.all) {
+        console.error("Use --all to apply all proposed corrections from the latest report.");
+        process.exitCode = 1;
+        return;
+      }
+      if (!listCommands) {
+        console.error("Corrections approve not available.");
+        process.exitCode = 1;
+        return;
+      }
+      const r = await listCommands.correctionsApproveAll({ workspace: opts?.workspace });
+      if (r.error) {
+        console.error(r.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Applied ${r.applied} rule(s) to TOOLS.md.`);
+    }));
+
+  mem
+    .command("review")
+    .description("Interactive review: step through pending proposals and corrections (a=approve, r=reject, s=skip)")
+    .option("--workspace <path>", "Workspace root for corrections report")
+    .action(withExit(async (opts?: { workspace?: string }) => {
+      if (!listCommands) {
+        console.error("Review not available (proposals/corrections not enabled).");
+        process.exitCode = 1;
+        return;
+      }
+      const proposals = await listCommands.listProposals({ status: "pending" });
+      const { items: correctionItems, reportPath } = await listCommands.listCorrections({ workspace: opts?.workspace });
+      const total = proposals.length + (correctionItems.length > 0 ? 1 : 0);
+      if (total === 0) {
+        console.log("No pending items to review.");
+        return;
+      }
+      console.log(`Pending: ${proposals.length} proposal(s), ${correctionItems.length > 0 ? "1 correction report" : "0"}.`);
+      for (const p of proposals) {
+        console.log("\n--- Proposal ---");
+        console.log(`ID: ${p.id}  Title: ${p.title}  Target: ${p.targetFile}`);
+        console.log(`  [a]pprove  [r]eject  [s]kip`);
+        const readline = await import("node:readline");
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise<string>((resolve) => rl.question("> ", (line) => { rl.close(); resolve((line ?? "").trim().toLowerCase()); }));
+        if (answer === "a") await listCommands.proposalApprove(p.id);
+        else if (answer === "r") await listCommands.proposalReject(p.id);
+      }
+      if (correctionItems.length > 0) {
+        console.log("\n--- Corrections (from report) ---");
+        console.log(`${correctionItems.length} proposed rule(s). [a]pprove all  [s]kip`);
+        const readline = await import("node:readline");
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise<string>((resolve) => rl.question("> ", (line) => { rl.close(); resolve((line ?? "").trim().toLowerCase()); }));
+        if (answer === "a") {
+          const r = await listCommands.correctionsApproveAll({ workspace: opts?.workspace });
+          console.log(r.error ?? `Applied ${r.applied} rule(s).`);
+        }
+      }
+      console.log("Done.");
     }));
 
   mem

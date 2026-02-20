@@ -843,6 +843,110 @@ describe("FactsDB.statsBreakdownBySource", () => {
   });
 });
 
+describe("FactsDB.statsBreakdownByCategory", () => {
+  it("groups non-superseded facts by category", () => {
+    db.store({ text: "A preference", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({ text: "A fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({ text: "Another preference", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const stats = db.statsBreakdownByCategory();
+    expect(stats.preference).toBe(2);
+    expect(stats.fact).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("FactsDB.proceduresCount / proceduresValidatedCount / proceduresPromotedCount", () => {
+  it("returns counts from procedures table", () => {
+    const total = db.proceduresCount();
+    const validated = db.proceduresValidatedCount();
+    const promoted = db.proceduresPromotedCount();
+    expect(typeof total).toBe("number");
+    expect(total).toBeGreaterThanOrEqual(0);
+    expect(validated).toBeGreaterThanOrEqual(0);
+    expect(promoted).toBeGreaterThanOrEqual(0);
+    expect(validated).toBeLessThanOrEqual(total);
+    expect(promoted).toBeLessThanOrEqual(total);
+  });
+});
+
+describe("FactsDB.linksCount", () => {
+  it("returns count of memory_links", () => {
+    const n = db.linksCount();
+    expect(typeof n).toBe("number");
+    expect(n).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("FactsDB.directivesCount", () => {
+  it("counts facts with source LIKE directive:%", () => {
+    const before = db.directivesCount();
+    db.store({
+      text: "User said always do X",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:session.jsonl",
+    });
+    const after = db.directivesCount();
+    expect(after).toBe(before + 1);
+  });
+});
+
+describe("FactsDB.metaPatternsCount", () => {
+  it("returns count of pattern facts with meta tag", () => {
+    const n = db.metaPatternsCount();
+    expect(typeof n).toBe("number");
+    expect(n).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("FactsDB.entityCount", () => {
+  it("returns distinct entity count for non-superseded facts", () => {
+    db.store({ text: "About user", category: "fact", importance: 0.7, entity: "user", key: null, value: null, source: "test" });
+    db.store({ text: "About org", category: "fact", importance: 0.7, entity: "org", key: null, value: null, source: "test" });
+    const n = db.entityCount();
+    expect(typeof n).toBe("number");
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("FactsDB.listFactsByCategory", () => {
+  it("returns non-superseded facts by category with limit", () => {
+    db.store({ text: "P1", category: "pattern", importance: 0.8, entity: null, key: null, value: null, source: "test" });
+    db.store({ text: "P2", category: "pattern", importance: 0.8, entity: null, key: null, value: null, source: "test" });
+    const items = db.listFactsByCategory("pattern", 10);
+    expect(Array.isArray(items)).toBe(true);
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    expect(items.every((e) => e.category === "pattern")).toBe(true);
+  });
+});
+
+describe("FactsDB.listDirectives", () => {
+  it("returns facts with source LIKE directive:%", () => {
+    const before = db.listDirectives(10);
+    db.store({
+      text: "Always do X",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:session.jsonl",
+    });
+    const after = db.listDirectives(10);
+    expect(after.length).toBe(before.length + 1);
+  });
+});
+
+describe("FactsDB.listProcedures", () => {
+  it("returns procedures ordered by updated_at DESC up to limit", () => {
+    const items = db.listProcedures(10);
+    expect(Array.isArray(items)).toBe(true);
+    expect(items.length).toBeLessThanOrEqual(10);
+  });
+});
+
 describe("FactsDB.estimateStoredTokens", () => {
   it("returns positive token estimate for stored facts", () => {
     db.store({ text: "A short fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
