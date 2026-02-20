@@ -6038,6 +6038,23 @@ const memoryHybridPlugin = {
     const authFailureRecallsThisSession = new Map<string, number>();
     
     if (cfg.autoRecall.enabled && cfg.autoRecall.authFailure.enabled) {
+      // Compile custom patterns once at handler registration time
+      const customPatterns: AuthFailurePattern[] = [];
+      for (const p of cfg.autoRecall.authFailure.patterns) {
+        try {
+          customPatterns.push({
+            regex: new RegExp(p, "i"),
+            type: "generic" as const,
+            hint: p,
+          });
+        } catch (err) {
+          api.logger.warn?.(`memory-hybrid: invalid regex pattern "${p}": ${err}`);
+        }
+      }
+      
+      // Merge with default patterns (config patterns should not include defaults to avoid duplication)
+      const allPatterns = [...DEFAULT_AUTH_FAILURE_PATTERNS, ...customPatterns];
+      
       // Note: Multiple before_agent_start handlers exist in this plugin:
       // 1. Main auto-recall (procedures + facts)
       // 2. Auth failure recall (this one)
@@ -6049,22 +6066,6 @@ const memoryHybridPlugin = {
         if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
         
         try {
-          // Build auth failure patterns from config (with ReDoS protection)
-          const patterns: AuthFailurePattern[] = [];
-          for (const p of cfg.autoRecall.authFailure.patterns) {
-            try {
-              patterns.push({
-                regex: new RegExp(p, "i"),
-                type: "generic" as const,
-                hint: p,
-              });
-            } catch (err) {
-              api.logger.warn?.(`memory-hybrid: invalid regex pattern "${p}": ${err}`);
-            }
-          }
-          
-          // Merge with default patterns (config patterns should not include defaults to avoid duplication)
-          const allPatterns = [...DEFAULT_AUTH_FAILURE_PATTERNS, ...patterns];
           
           // Scan prompt for auth failures
           let textToScan = e.prompt || "";
@@ -6129,15 +6130,25 @@ const memoryHybridPlugin = {
             : merged;
           
           // Filter to technical/credential facts
-          const credentialFacts = scopeValidatedMerged
+          let credentialFacts = scopeValidatedMerged
             .filter((r) => {
               const fact = r.entry;
               if (fact.category === "technical") return true;
               if (fact.entity?.toLowerCase() === "credentials") return true;
               const tags = fact.tags || [];
               return tags.some((t) => ["credential", "ssh", "token", "api", "auth", "password"].includes(t.toLowerCase()));
-            })
-            .slice(0, 3);
+            });
+          
+          // Filter out vault pointers if includeVaultHints is false
+          if (!cfg.autoRecall.authFailure.includeVaultHints) {
+            credentialFacts = credentialFacts.filter((r) => {
+              const fact = r.entry;
+              return !fact.text.includes("stored in secure vault") && 
+                     (!fact.value || !String(fact.value).startsWith(VAULT_POINTER_PREFIX));
+            });
+          }
+          
+          credentialFacts = credentialFacts.slice(0, 3);
           
           if (credentialFacts.length === 0) {
             api.logger.info?.(`memory-hybrid: no credential facts found for ${detection.target}`);
