@@ -123,6 +123,22 @@ Any key you set in config **overrides** the preset. So you can start from a mode
 
 Here you get Normal preset but with reflection enabled. Verify will report **Mode: Custom** because the resolved config no longer matches the Normal preset.
 
+### Array override behavior
+
+**Important:** When you override an array config value, your array **replaces** the preset array entirely — arrays are **not concatenated or merged**.
+
+For example, if the preset sets:
+```json
+"autoRecall": { "entityLookup": { "entities": ["user", "owner"] } }
+```
+
+And you set:
+```json
+"autoRecall": { "entityLookup": { "entities": ["project"] } }
+```
+
+The final result is `["project"]` (your value), **not** `["user", "owner", "project"]`. This applies to all array config fields (e.g., `ingest.paths`, `autoRecall.authFailure.patterns`).
+
 ---
 
 ## See also

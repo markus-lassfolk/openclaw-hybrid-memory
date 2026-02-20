@@ -240,14 +240,19 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractReinforcement,
   } = ctx;
 
-  /** Run an async action and exit when done (avoids hang from open DB/handles when run as standalone CLI). */
+  /** Run an async action and exit when done (avoids hang from open DB/handles when run as standalone CLI).
+   * Only force-exits when running as standalone CLI (argv contains 'openclaw'), not when called programmatically from gateway. */
   const withExit = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
     (...args: A) => {
+      const isStandaloneCli = process.argv.some((arg) => arg.includes("openclaw") || arg.includes("hybrid-mem"));
       Promise.resolve(fn(...args)).then(
-        () => process.exit(process.exitCode ?? 0),
+        () => {
+          if (isStandaloneCli) process.exit(process.exitCode ?? 0);
+        },
         (err: unknown) => {
           console.error(err);
-          process.exit(1);
+          if (isStandaloneCli) process.exit(1);
+          else throw err; // Propagate error when called programmatically
         },
       );
     };

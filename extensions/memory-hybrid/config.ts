@@ -398,6 +398,40 @@ function deepMergePreset(base: Record<string, unknown>, overrides: Record<string
   return out;
 }
 
+/** Deep-equal comparison that's order-independent for objects */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || a === undefined || b === undefined) return a === b;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== "object") return false;
+  
+  const aIsArray = Array.isArray(a);
+  const bIsArray = Array.isArray(b);
+  if (aIsArray !== bIsArray) return false;
+  
+  if (aIsArray) {
+    const aArr = a as unknown[];
+    const bArr = b as unknown[];
+    if (aArr.length !== bArr.length) return false;
+    for (let i = 0; i < aArr.length; i++) {
+      if (!deepEqual(aArr[i], bArr[i])) return false;
+    }
+    return true;
+  }
+  
+  const aObj = a as Record<string, unknown>;
+  const bObj = b as Record<string, unknown>;
+  const aKeys = Object.keys(aObj).sort();
+  const bKeys = Object.keys(bObj).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  if (!deepEqual(aKeys, bKeys)) return false;
+  
+  for (const key of aKeys) {
+    if (!deepEqual(aObj[key], bObj[key])) return false;
+  }
+  return true;
+}
+
 /** True if user value explicitly overrides a preset key (same key, different value). Extra keys in user (e.g. encryptionKey) do not count. */
 function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean {
   if (presetVal !== undefined && presetVal !== null && typeof presetVal === "object" && !Array.isArray(presetVal)) {
@@ -409,7 +443,7 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
     }
     return false;
   }
-  return JSON.stringify(userVal) !== JSON.stringify(presetVal);
+  return !deepEqual(userVal, presetVal);
 }
 
 /** Preset overrides per mode. Merged under user config so user keys win. See CONFIGURATION-MODES.md. */
@@ -742,6 +776,9 @@ export const hybridConfigSchema = {
         );
       }
       // Memory-only mode: user enabled credentials but did not set encryptionKey; capture only, stored in memory.
+      if (credRaw?.enabled === true) {
+        console.warn("⚠️  credentials.enabled but encryptionKey is missing or too short — running in capture-only mode (no persistent vault)");
+      }
       const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
       const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
         ? {
