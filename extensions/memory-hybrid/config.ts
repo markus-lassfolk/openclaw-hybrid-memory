@@ -38,6 +38,8 @@ export type MultiAgentConfig = {
   orchestratorId: string;
   /** Default storage scope for new facts. Options: "global" (backward compatible, default), "agent" (specialists auto-scope), "auto" (orchestrator→global, specialists→agent). */
   defaultStoreScope: "global" | "agent" | "auto";
+  /** When true, throw error if agent detection fails in "agent" or "auto" scope mode (instead of silently falling back to orchestrator). Default: false. */
+  strictAgentScoping?: boolean;
 };
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
@@ -765,6 +767,7 @@ export const hybridConfigSchema = {
         if (scope === "agent" || scope === "auto") return scope;
         return "global"; // backward compatible default
       })(),
+      strictAgentScoping: multiAgentRaw?.strictAgentScoping === true,
     };
 
     return {

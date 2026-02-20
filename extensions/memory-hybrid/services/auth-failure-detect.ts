@@ -136,6 +136,9 @@ export function buildCredentialQuery(detection: AuthFailureDetection): string | 
 /**
  * Format system hint for injection into agent context.
  * Returns a user-friendly message pointing to relevant credentials in memory.
+ * 
+ * SECURITY: Does not include fact.text to prevent credential leaks.
+ * Shows only safe metadata (entity, category, key).
  */
 export function formatCredentialHint(
   detection: AuthFailureDetection,
@@ -150,9 +153,14 @@ export function formatCredentialHint(
   
   for (let i = 0; i < Math.min(facts.length, 3); i++) {
     const f = facts[i];
-    const preview = f.text.slice(0, 80);
-    const categoryTag = f.category === "technical" ? "" : `[${f.category}] `;
-    lines.push(`  ${i + 1}. ${categoryTag}${preview}${f.text.length > 80 ? "…" : ""}`);
+    // Show only metadata to prevent credential leaks
+    const parts: string[] = [];
+    if (f.entity) parts.push(`entity: ${f.entity}`);
+    if (f.key) parts.push(`key: ${f.key}`);
+    if (f.category && f.category !== "technical") parts.push(`[${f.category}]`);
+    
+    const metadata = parts.length > 0 ? parts.join(", ") : "stored credential";
+    lines.push(`  ${i + 1}. ${metadata}`);
   }
   
   return lines.join("\n");
