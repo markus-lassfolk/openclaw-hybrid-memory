@@ -23,6 +23,7 @@ export type ProposalEntry = {
   reviewedBy: string | null;
   appliedAt: number | null;
   expiresAt: number | null;
+  rejectionReason: string | null;
 };
 
 export class ProposalsDB {
@@ -50,7 +51,8 @@ export class ProposalsDB {
         reviewed_at INTEGER,
         reviewed_by TEXT,
         applied_at INTEGER,
-        expires_at INTEGER
+        expires_at INTEGER,
+        rejection_reason TEXT
       )
     `);
 
@@ -125,13 +127,14 @@ export class ProposalsDB {
     id: string,
     status: string,
     reviewedBy?: string,
+    rejectionReason?: string,
   ): ProposalEntry | null {
     const now = Math.floor(Date.now() / 1000);
     this.db
       .prepare(
-        "UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+        "UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?",
       )
-      .run(status, now, reviewedBy ?? null, id);
+      .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id);
     return this.get(id);
   }
 
@@ -188,6 +191,7 @@ export class ProposalsDB {
       reviewedBy: row.reviewed_by,
       appliedAt: row.applied_at,
       expiresAt: row.expires_at,
+      rejectionReason: row.rejection_reason,
     };
   }
 

@@ -3950,9 +3950,9 @@ const memoryHybridPlugin = {
               const id = def.pluginJobId as string;
               if (!rootJobsArr.some((j) => j && (j.pluginJobId === id || legacyMatch[id]?.(j)))) {
                 rootJobsArr.push({ ...def });
-                writeFileSync(configPath, JSON.stringify(rootConfig, null, 2), "utf-8");
               }
             }
+            writeFileSync(configPath, JSON.stringify(rootConfig, null, 2), "utf-8");
           } catch {
             // non-fatal: cron jobs optional on install
           }
@@ -6144,12 +6144,12 @@ const memoryHybridPlugin = {
                 proposalsDb.updateStatus(id, "approved");
                 return { ok: true };
               },
-              proposalReject: async (id: string, _reason?: string) => {
+              proposalReject: async (id: string, reason?: string) => {
                 if (!proposalsDb) return { ok: false, error: "Proposals not available" };
                 const p = proposalsDb.get(id);
                 if (!p) return { ok: false, error: `Proposal ${id} not found` };
                 if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
-                proposalsDb.updateStatus(id, "rejected");
+                proposalsDb.updateStatus(id, "rejected", undefined, reason);
                 return { ok: true };
               },
               listCorrections: async (opts: { workspace?: string }) => {
@@ -6161,7 +6161,7 @@ const memoryHybridPlugin = {
               correctionsApproveAll: async (opts: { workspace?: string }) => {
                 const report = getLatestCorrectionReport(opts.workspace);
                 if (!report) return { applied: 0, error: "No self-correction report found" };
-                const items = parseReportSuggestedTools(report.content);
+                const items = parseReportProposedSections(report.content);
                 if (items.length === 0) return { applied: 0, error: "No suggested TOOLS rules in report (run self-correction-run first)" };
                 const toolsPath = join(opts.workspace ?? workspaceRoot(), "TOOLS.md");
                 if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
