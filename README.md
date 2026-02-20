@@ -2,9 +2,9 @@
 
 [**Documentation**](https://markus-lassfolk.github.io/openclaw-hybrid-memory/) · [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory)
 
-Your OpenClaw agent forgets everything between sessions. Preferences, decisions, technical context — all gone. You repeat yourself, and the agent can't build on past conversations.
+Your OpenClaw agent forgets everything between sessions. Preferences, decisions, technical context - all gone. You repeat yourself, and the agent can't build on past conversations.
 
-**Hybrid Memory** fixes this. It gives your agent **durable, structured, searchable memory** that persists across sessions, auto-captures what matters, and recalls it when relevant — without you lifting a finger.
+**Hybrid Memory** fixes this. It gives your agent **durable, structured, searchable memory** that persists across sessions, auto-captures what matters, and recalls it when relevant - without you lifting a finger.
 
 ---
 
@@ -25,37 +25,38 @@ Your OpenClaw agent forgets everything between sessions. Preferences, decisions,
 ## Features
 
 ### Core memory system
-- **Auto-capture** — automatically extracts preferences, decisions, facts, and entities from conversations
-- **Auto-recall** — injects relevant memories into context each turn (configurable token budget)
-- **Dual backend** — SQLite + FTS5 for fast structured lookups; LanceDB for semantic vector search
-- **Hierarchical files** — `memory/` directory with drill-down files indexed by semantic search (memorySearch)
-- **MEMORY.md index** — lightweight root index loaded every session; detail files loaded on demand
+- **Auto-capture** - automatically extracts preferences, decisions, facts, and entities from conversations
+- **Auto-recall** - injects relevant memories into context each turn (configurable token budget)
+- **Dual backend** - SQLite + FTS5 for fast structured lookups; LanceDB for semantic vector search
+- **Hierarchical files** - `memory/` directory with drill-down files indexed by semantic search (memorySearch)
+- **MEMORY.md index** - lightweight root index loaded every session; detail files loaded on demand
 
 ### Intelligence
 - **Auto-classify** — background LLM reclassifies facts into proper categories (7 built-in + custom)
 - **Category discovery** — LLM suggests new categories from your data patterns
+- **Auth failure auto-recall** — reactive memory trigger detects SSH/HTTP/API auth failures and automatically injects credentials ([docs/AUTH-FAILURE-AUTO-RECALL.md](docs/AUTH-FAILURE-AUTO-RECALL.md))
 - **Reflection layer** — synthesizes behavioral patterns and rules from accumulated facts ([docs/REFLECTION.md](docs/REFLECTION.md))
 - **Graph memory** — typed relationships between facts enable zero-LLM recall via graph traversal ([docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md))
 - **Session distillation** — batch-extracts durable facts from old conversation logs ([docs/SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md))
-- **Procedural memory** — extracts tool-call procedures from sessions, injects “last time this worked” in recall, auto-generates skills ([docs/PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md))
+- **Procedural memory** — extracts tool-call procedures from sessions, injects "last time this worked" in recall, auto-generates skills ([docs/PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md))
 
 ### Reliability
-- **Write-ahead log (WAL)** — crash-resilient memory operations with automatic recovery ([docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))
-- **Decay & pruning** — TTL-based expiry (permanent / stable / active / session / checkpoint); automatic hourly prune ([DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md))
-- **Deduplication** — fuzzy text hashing + embedding similarity detection + LLM-powered consolidation
-- **Compaction flush** — saves to both `memory_store` and daily files before context is truncated
+- **Write-ahead log (WAL)** - crash-resilient memory operations with automatic recovery ([docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))
+- **Decay & pruning** - TTL-based expiry (permanent / stable / active / session / checkpoint); automatic hourly prune ([DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md))
+- **Deduplication** - fuzzy text hashing + embedding similarity detection + LLM-powered consolidation
+- **Compaction flush** - saves to both `memory_store` and daily files before context is truncated
 
 ### Developer experience
-- **Full CLI** — 34 commands for stats, search, classify, consolidate, reflect, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
-- **One-command setup** — `openclaw hybrid-mem install` applies all recommended config
-- **Verify & fix** — `openclaw hybrid-mem verify --fix` diagnoses issues and applies safe fixes
-- **Clean uninstall** — `openclaw hybrid-mem uninstall` reverts to default memory; data kept unless `--clean-all`
+- **Full CLI** - 34 commands for stats, search, classify, consolidate, reflect, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
+- **One-command setup** - `openclaw hybrid-mem install` applies all recommended config
+- **Verify & fix** - `openclaw hybrid-mem verify --fix` diagnoses issues and applies safe fixes
+- **Clean uninstall** - `openclaw hybrid-mem uninstall` reverts to default memory; data kept unless `--clean-all`
 
 ### Optional features
-- **Credential vault** — opt-in encrypted storage for API keys, tokens, passwords ([docs/CREDENTIALS.md](docs/CREDENTIALS.md))
-- **Persona proposals** — agent self-evolution with human approval (proposes identity file changes; human reviews via CLI)
-- **Auto-tagging** — regex-inferred topic tags for filtered queries ([AUTO-TAGGING.md](docs/AUTO-TAGGING.md))
-- **Source dates** — preserve when facts originated, not just when they were stored
+- **Credential vault** - opt-in encrypted storage for API keys, tokens, passwords ([docs/CREDENTIALS.md](docs/CREDENTIALS.md))
+- **Persona proposals** - agent self-evolution with human approval (proposes identity file changes; human reviews via CLI)
+- **Auto-tagging** - regex-inferred topic tags for filtered queries ([AUTO-TAGGING.md](docs/AUTO-TAGGING.md))
+- **Source dates** - preserve when facts originated, not just when they were stored
 
 ---
 
@@ -78,8 +79,8 @@ openclaw hybrid-mem verify
 See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 **Other install options:**
-- [Autonomous setup](docs/SETUP-AUTONOMOUS.md) — let an OpenClaw agent install it for you
-- [Manual install](docs/QUICKSTART.md) — copy extension files and configure by hand
+- [Autonomous setup](docs/SETUP-AUTONOMOUS.md) - let an OpenClaw agent install it for you
+- [Manual install](docs/QUICKSTART.md) - copy extension files and configure by hand
 
 **If "plugin not found" blocks install:** Use `npx -y openclaw-hybrid-memory-install` or the [curl installer](https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh). See [UPGRADE-PLUGIN.md](docs/UPGRADE-PLUGIN.md#when-plugin-not-found-blocks-install).
 
@@ -87,8 +88,8 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Prerequisites
 
-- **OpenAI API key** (required) — for embeddings (`text-embedding-3-small`) and optional LLM features (`gpt-4o-mini`). The plugin will not load without it.
-- **Google Gemini API** (optional) — recommended for session distillation (1M+ token context window). See [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md).
+- **OpenAI API key** (required) - for embeddings (`text-embedding-3-small`) and optional LLM features (`gpt-4o-mini`). The plugin will not load without it.
+- **Google Gemini API** (optional) - recommended for session distillation (1M+ token context window). See [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md).
 
 ---
 
@@ -98,7 +99,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 | Document | Description |
 |----------|-------------|
-| **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, verify — get running in 10 minutes |
+| **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, verify - get running in 10 minutes |
 | **[HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)** | What happens each turn: auto-recall, auto-capture, background jobs, costs |
 | **[DEEP-DIVE.md](docs/DEEP-DIVE.md)** | Storage internals, search algorithms, tags, links, supersession, deduplication |
 | **[EXAMPLES.md](docs/EXAMPLES.md)** | Real-world recipes: project setup, tuning, tags, backfilling, maintenance routines |
@@ -153,7 +154,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Persona Proposals (opt-in)
 
-**Agent self-evolution with human approval** — agents propose changes to identity files based on observed patterns; humans review and approve via CLI. Enable with `"personaProposals": { "enabled": true }`. Agent tools: `persona_propose`, `persona_proposals_list`. Human-only CLI: `openclaw proposals review <id> <approve|reject>`, `openclaw proposals apply <id>`.
+**Agent self-evolution with human approval** - agents propose changes to identity files based on observed patterns; humans review and approve via CLI. Enable with `"personaProposals": { "enabled": true }`. Agent tools: `persona_propose`, `persona_proposals_list`. Human-only CLI: `openclaw proposals review <id> <approve|reject>`, `openclaw proposals apply <id>`.
 
 → Full doc: [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) (config, safety, workflow).
 
