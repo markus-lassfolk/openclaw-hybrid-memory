@@ -27,6 +27,17 @@ export class FactsDB {
   /** Cache TTL for superseded texts to avoid full table scan on every search. Increased to reduce thrashing. */
   private readonly SUPERSEDED_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
 
+  /**
+   * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
+   * Removes: NOT, AND, OR (uppercase), *, (, ), and quotes (already stripped).
+   */
+  private sanitizeFTS5Query(query: string): string {
+    return query
+      .replace(/['"*()]/g, "")
+      .replace(/\b(NOT|AND|OR)\b/g, "")
+      .trim();
+  }
+
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     this.dbPath = dbPath;
     this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
@@ -129,6 +140,27 @@ export class FactsDB {
     // ---- Procedural memory (issue #23): procedure columns on facts + procedures table ----
     this.migrateProcedureColumns();
     this.migrateProceduresTable();
+
+    // ---- Issue #40: Reinforcement-as-Metadata ----
+    this.migrateReinforcementColumns();
+
+    // ---- Phase 2: Reinforcement for procedures ----
+    this.migrateReinforcementColumnsProcedures();
+  }
+
+  /** Issue #40: Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
+  private migrateReinforcementColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("reinforced_count")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count INTEGER NOT NULL DEFAULT 0`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_reinforced_at INTEGER`);
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_quotes TEXT`); // JSON array of strings
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_reinforced ON facts(reinforced_count) WHERE reinforced_count > 0`,
+    );
   }
 
   /** FR-004: Add tier column; default 'warm' for existing rows. */
@@ -227,6 +259,22 @@ export class FactsDB {
         INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
       END
     `);
+  }
+
+  /** Phase 2: Add reinforcement tracking columns to procedures table (same pattern as facts). */
+  private migrateReinforcementColumnsProcedures(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(procedures)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("reinforced_count")) return;
+    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count INTEGER NOT NULL DEFAULT 0`);
+    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN last_reinforced_at INTEGER`);
+    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_quotes TEXT`); // JSON array of strings
+    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN promoted_at INTEGER`); // When auto-promoted via reinforcement
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_procedures_reinforced ON procedures(reinforced_count) WHERE reinforced_count > 0`,
+    );
   }
 
   /**
@@ -521,7 +569,10 @@ export class FactsDB {
     const validUntil = entry.validUntil ?? null;
     const supersedesId = entry.supersedesId ?? null;
     const scope = entry.scope ?? "global";
-    const scopeTarget = entry.scopeTarget ?? (scope === "global" ? null : null);
+    const scopeTarget = scope === "global" ? null : (entry.scopeTarget ?? null);
+    if (scope !== "global" && !scopeTarget) {
+      throw new Error(`scopeTarget required for non-global scope: ${scope}`);
+    }
     const procedureType = entry.procedureType ?? null;
     const successCount = entry.successCount ?? 0;
     const lastValidated = entry.lastValidated ?? null;
@@ -752,12 +803,14 @@ export class FactsDB {
       tierFilter?: "warm" | "all";
       /** FR-006: Scope filter — only return global + matching user/agent/session. */
       scopeFilter?: ScopeFilter | null;
+      /** Issue #40: Reinforcement boost — added to score when reinforced_count > 0 (default: 0.1). */
+      reinforcementBoost?: number;
     } = {},
   ): SearchResult[] {
-    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter } = options;
+    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter, reinforcementBoost = 0.1 } = options;
 
-    const safeQuery = query
-      .replace(/['"]/g, "")
+    const sanitized = this.sanitizeFTS5Query(query);
+    const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
       .map((w) => `"${w}"`)
@@ -788,7 +841,7 @@ export class FactsDB {
 
     const rows = this.liveDb
       .prepare(
-        `SELECT f.*, rank,
+        `SELECT f.*, bm25(facts_fts) as fts_score,
            CASE
              WHEN f.expires_at IS NULL THEN 1.0
              WHEN f.expires_at <= @now THEN 0.0
@@ -802,7 +855,7 @@ export class FactsDB {
            ${tagFilter}
            ${tierFilterClause}
            ${scopeFilterClauseStr}
-         ORDER BY rank
+         ORDER BY bm25(facts_fts)
          LIMIT @limit`,
       )
       .all({
@@ -817,16 +870,19 @@ export class FactsDB {
 
     if (rows.length === 0) return [];
 
-    const minRank = Math.min(...rows.map((r) => r.rank as number));
-    const maxRank = Math.max(...rows.map((r) => r.rank as number));
-    const range = maxRank - minRank || 1;
+    const minScore = Math.min(...rows.map((r) => r.fts_score as number));
+    const maxScore = Math.max(...rows.map((r) => r.fts_score as number));
+    const range = maxScore - minScore || 1;
 
     const results = rows.map((row) => {
-      const rawScore = 1 - ((row.rank as number) - minRank) / range;
+      const rawScore = 1 - ((row.fts_score as number) - minScore) / range;
       const bm25Score = Number.isNaN(rawScore) ? 0.8 : rawScore;
       const freshness = (row.freshness as number) || 1.0;
       const confidence = (row.confidence as number) || 1.0;
-      const composite = bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15;
+      const reinforcedCount = (row.reinforced_count as number) || 0;
+      // Issue #40: Add reinforcement boost when fact has been praised
+      const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
+      const composite = Math.min(1.0, bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15 + reinforcement);
       const entry = this.rowToEntry(row);
       // FR-005: Apply dynamic salience (access boost + time decay)
       const salienceScore = computeDynamicSalience(composite, entry);
@@ -992,8 +1048,8 @@ export class FactsDB {
     if (results.length < limit) {
       const remaining = limit - results.length;
       const seenIds = new Set(results.map((r) => r.id));
-      const words = text
-        .replace(/['"]/g, "")
+      const sanitized = this.sanitizeFTS5Query(text);
+      const words = sanitized
         .split(/\s+/)
         .filter((w) => w.length > 2)
         .slice(0, 5)
@@ -1056,6 +1112,18 @@ export class FactsDB {
       successCount: (row.success_count as number) ?? undefined,
       lastValidated: (row.last_validated as number) ?? undefined,
       sourceSessions: (row.source_sessions as string) ?? undefined,
+      reinforcedCount: (row.reinforced_count as number) ?? 0,
+      lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
+      reinforcedQuotes: (() => {
+        const raw = row.reinforced_quotes as string | null;
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
+        } catch {
+          return null;
+        }
+      })(),
     };
   }
 
@@ -1332,6 +1400,100 @@ export class FactsDB {
     return true;
   }
 
+  /**
+   * Helper: Parse existing reinforced_quotes JSON, append a new quote snippet, and cap at 10 entries.
+   * Returns the updated JSON string.
+   */
+  private appendReinforcementQuote(existingJson: string | null, newSnippet: string): string {
+    let quotes: string[] = [];
+    if (existingJson) {
+      try {
+        const parsed = JSON.parse(existingJson);
+        if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
+      } catch {
+        // Corrupted JSON — start fresh
+      }
+    }
+    quotes.push(newSnippet.slice(0, 200));
+    if (quotes.length > 10) quotes = quotes.slice(-10);
+    return JSON.stringify(quotes);
+  }
+
+  /**
+   * Issue #40: Annotate a fact with reinforcement from user praise.
+   * Increments reinforced_count, updates last_reinforced_at, appends quote (max 10 quotes kept).
+   * Wraps read-modify-write in a transaction to prevent race conditions.
+   * Returns true if fact was updated.
+   */
+  reinforceFact(id: string, quoteSnippet: string): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+    
+    const tx = this.liveDb.transaction(() => {
+      const row = this.liveDb
+        .prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`)
+        .get(id) as { reinforced_quotes: string | null } | undefined;
+      if (!row) return false;
+
+      const quotesJson = this.appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
+
+      this.liveDb
+        .prepare(
+          `UPDATE facts SET reinforced_count = reinforced_count + 1, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
+        )
+        .run(nowSec, quotesJson, id);
+      return true;
+    });
+    
+    return tx();
+  }
+
+  /**
+   * Phase 2: Annotate a procedure with reinforcement from user praise.
+   * Increments reinforced_count, updates last_reinforced_at, appends quote (max 10 quotes kept).
+   * Checks if reinforced_count reaches promotion threshold and auto-promotes if needed.
+   * Wraps read-modify-write in a transaction to prevent race conditions.
+   * Returns true if procedure was updated.
+   */
+  reinforceProcedure(id: string, quoteSnippet: string, promotionThreshold = 2): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+    
+    const tx = this.liveDb.transaction(() => {
+      const row = this.liveDb
+        .prepare(`SELECT reinforced_quotes, reinforced_count, confidence FROM procedures WHERE id = ?`)
+        .get(id) as { reinforced_quotes: string | null; reinforced_count: number; confidence: number } | undefined;
+      if (!row) return false;
+
+      const quotesJson = this.appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
+
+      const newReinforcedCount = (row.reinforced_count ?? 0) + 1;
+
+      // Phase 2: Auto-promote if reinforced_count >= threshold and confidence < 0.8
+      let newConfidence = row.confidence;
+      let promotedAt: number | null = null;
+      if (newReinforcedCount >= promotionThreshold && row.confidence < 0.8) {
+        newConfidence = Math.max(row.confidence, 0.8);
+        promotedAt = nowSec;
+      }
+
+      if (promotedAt !== null) {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ?, confidence = ?, promoted_at = ? WHERE id = ?`,
+          )
+          .run(newReinforcedCount, nowSec, quotesJson, newConfidence, promotedAt, id);
+      } else {
+        this.liveDb
+          .prepare(
+            `UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
+          )
+          .run(newReinforcedCount, nowSec, quotesJson, id);
+      }
+      return true;
+    });
+    
+    return tx();
+  }
+
   saveCheckpoint(context: {
     intent: string;
     state: string;
@@ -1527,6 +1689,19 @@ export class FactsDB {
       createdAt: (row.created_at as number) ?? 0,
       updatedAt: (row.updated_at as number) ?? 0,
       sourceSessions: (row.source_sessions as string) ?? undefined,
+      reinforcedCount: (row.reinforced_count as number) ?? 0,
+      lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
+      reinforcedQuotes: (() => {
+        const raw = row.reinforced_quotes as string | null;
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
+        } catch {
+          return null;
+        }
+      })(),
+      promotedAt: (row.promoted_at as number) ?? null,
     };
   }
 
@@ -1601,8 +1776,8 @@ export class FactsDB {
 
   /** Find procedure by task_pattern hash or normalized match (for dedupe). */
   findProcedureByTaskPattern(taskPattern: string, limit = 5): ProcedureEntry[] {
-    const safeQuery = taskPattern
-      .replace(/['"]/g, "")
+    const sanitized = this.sanitizeFTS5Query(taskPattern);
+    const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
       .slice(0, 5)
@@ -1621,10 +1796,13 @@ export class FactsDB {
     }
   }
 
-  /** Search procedures by task description (FTS). Returns positive procedures first, then negative. */
-  searchProcedures(taskDescription: string, limit = 10): ProcedureEntry[] {
-    const safeQuery = taskDescription
-      .replace(/['"]/g, "")
+  /** 
+   * Search procedures by task description (FTS). Returns positive procedures first, then negative.
+   * Phase 2: Applies reinforcement boost to score when reinforced_count > 0.
+   */
+  searchProcedures(taskDescription: string, limit = 10, reinforcementBoost = 0.1): ProcedureEntry[] {
+    const sanitized = this.sanitizeFTS5Query(taskDescription);
+    const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
       .slice(0, 8)
@@ -1634,10 +1812,42 @@ export class FactsDB {
     try {
       const rows = this.liveDb
         .prepare(
-          `SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type DESC, p.confidence DESC, CASE WHEN p.last_validated IS NULL THEN 1 ELSE 0 END, p.last_validated DESC LIMIT ?`,
+          `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`,
         )
-        .all(safeQuery, limit) as Array<Record<string, unknown>>;
-      return rows.map((r) => this.procedureRowToEntry(r));
+        .all(safeQuery, limit * 2) as Array<Record<string, unknown>>;
+      
+      if (rows.length === 0) return [];
+      
+      // Phase 2: Compute composite score: FTS relevance + confidence + reinforcement
+      const minFtsScore = Math.min(...rows.map((r) => r.fts_score as number));
+      const maxFtsScore = Math.max(...rows.map((r) => r.fts_score as number));
+      const ftsRange = maxFtsScore - minFtsScore || 1;
+      
+      type ScoredRow = Record<string, unknown> & { boostedScore: number };
+      const scored: ScoredRow[] = rows.map((r) => {
+        const reinforcedCount = (r.reinforced_count as number) ?? 0;
+        const confidence = (r.confidence as number) ?? 0.5;
+        const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
+        // Normalize FTS score to 0-1 range (inverted because bm25 returns negative scores)
+        const rawFtsScore = 1 - ((r.fts_score as number) - minFtsScore) / ftsRange;
+        const ftsScore = Number.isNaN(rawFtsScore) ? 0.8 : rawFtsScore;
+        // Composite: 60% FTS relevance, 40% confidence, plus reinforcement boost (capped at 1.0)
+        const boostedScore = Math.min(1.0, ftsScore * 0.6 + confidence * 0.4 + reinforcement);
+        return { ...r, boostedScore };
+      });
+
+      // Sort by procedure_type (positive first), then boosted score, then validation
+      scored.sort((a, b) => {
+        const typeA = (a.procedure_type as string) === "positive" ? 1 : 0;
+        const typeB = (b.procedure_type as string) === "positive" ? 1 : 0;
+        if (typeB !== typeA) return typeB - typeA;
+        if (b.boostedScore !== a.boostedScore) return b.boostedScore - a.boostedScore;
+        const lastValA = (a.last_validated as number) ?? 0;
+        const lastValB = (b.last_validated as number) ?? 0;
+        return lastValB - lastValA;
+      });
+
+      return scored.slice(0, limit).map((r) => this.procedureRowToEntry(r));
     } catch {
       return [];
     }

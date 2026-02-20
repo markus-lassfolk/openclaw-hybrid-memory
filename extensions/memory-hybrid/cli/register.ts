@@ -114,6 +114,7 @@ export type HybridMemCliContext = {
   mergeResults: typeof mergeResults;
   parseSourceDate: (v: string | number | null | undefined) => number | null;
   getMemoryCategories: () => string[];
+  cfg: { distill?: { reinforcementBoost?: number; reinforcementProcedureBoost?: number; reinforcementPromotionThreshold?: number } };
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
   runVerify: (opts: { fix: boolean; logFile?: string }, sink: VerifyCliSink) => Promise<void>;
@@ -174,14 +175,17 @@ export type HybridMemCliContext = {
     approve?: boolean;
     noApplyTools?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
+  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
 };
 
 /** Chainable command type (Commander-style). */
 type Chainable = {
   command(name: string): Chainable;
   description(desc: string): Chainable;
-  action(fn: (...args: unknown[]) => void | Promise<void>): Chainable;
+  action(fn: (...args: any[]) => void | Promise<void>): Chainable;
   option(flags: string, desc?: string, defaultValue?: string): Chainable;
+  requiredOption(flags: string, desc?: string, defaultValue?: string): Chainable;
   argument(name: string, desc?: string): Chainable;
 };
 
@@ -194,6 +198,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     mergeResults: merge,
     parseSourceDate: parseDate,
     getMemoryCategories,
+    cfg,
     runStore,
     runInstall,
     runVerify,
@@ -220,6 +225,8 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runSelfCorrectionRun,
     runCompaction,
     runBuildLanguageKeywords,
+    runExtractDirectives,
+    runExtractReinforcement,
   } = ctx;
 
   mem
@@ -372,7 +379,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         opts.userId || opts.agentId || opts.sessionId
           ? { userId: opts.userId ?? null, agentId: opts.agentId ?? null, sessionId: opts.sessionId ?? null }
           : undefined;
-      const searchOpts = { tag, includeSuperseded: opts.includeSuperseded === true, scopeFilter, ...(asOfSec != null ? { asOf: asOfSec } : {}) };
+      const searchOpts = {
+        tag,
+        includeSuperseded: opts.includeSuperseded === true,
+        scopeFilter,
+        reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+        ...(asOfSec != null ? { asOf: asOfSec } : {}),
+      };
       const sqlResults = factsDb.search(query, limit, searchOpts);
       let lanceResults: SearchResult[] = [];
       if (!tag) {
@@ -663,6 +676,41 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       } else {
         console.log(`\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`);
         for (const p of result.paths) console.log(`  ${p}`);
+      }
+    });
+
+  mem
+    .command("extract-directives")
+    .description("Issue #39: Extract directive incidents from session JSONL (10 categories)")
+    .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
+    .option("--verbose", "Log each directive as it is detected")
+    .option("--dry-run", "Show what would be extracted without storing")
+    .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+      const days = parseInt(opts.days || "3", 10);
+      const result = await runExtractDirectives({ days, verbose: opts.verbose, dryRun: opts.dryRun });
+      console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
+      if (opts.dryRun) {
+        console.log(`[dry-run] Would store ${result.incidents.length} directives as facts.`);
+      } else {
+        console.log(`Stored ${result.incidents.length} directives as facts.`);
+      }
+    });
+
+  mem
+    .command("extract-reinforcement")
+    .description("Issue #40: Extract reinforcement incidents from session JSONL and annotate facts/procedures")
+    .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
+    .option("--verbose", "Log each reinforcement as it is detected")
+    .option("--dry-run", "Show what would be annotated without storing")
+    .action(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+      const days = parseInt(opts.days || "3", 10);
+      const result = await runExtractReinforcement({ days, verbose: opts.verbose, dryRun: opts.dryRun });
+      console.log(`\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`);
+      if (opts.dryRun) {
+        console.log(`[dry-run] Would annotate facts/procedures with reinforcement data.`);
+      } else {
+        const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
+        console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
       }
     });
 

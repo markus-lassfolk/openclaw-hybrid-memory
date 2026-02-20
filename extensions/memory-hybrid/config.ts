@@ -230,7 +230,20 @@ export type HybridMemoryConfig = {
   /** FR-004: Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
   /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
-  distill?: { apiKey?: string; defaultModel?: string };
+  distill?: {
+    apiKey?: string;
+    defaultModel?: string;
+    /** Issue #39: Enable directive extraction from sessions (default: true). */
+    extractDirectives?: boolean;
+    /** Issue #40: Enable reinforcement extraction from sessions (default: true). */
+    extractReinforcement?: boolean;
+    /** Issue #40: Reinforcement boost added to facts search score (default: 0.1). */
+    reinforcementBoost?: number;
+    /** Phase 2: Reinforcement boost added to procedures search score (default: 0.1). */
+    reinforcementProcedureBoost?: number;
+    /** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
+    reinforcementPromotionThreshold?: number;
+  };
   /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
   languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };
   /** Optional: ingest workspace markdown files as facts (skills, TOOLS.md, etc.) */
@@ -606,6 +619,17 @@ export const hybridConfigSchema = {
         ? {
             apiKey: typeof distillRaw.apiKey === "string" ? distillRaw.apiKey : undefined,
             defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
+            extractDirectives: distillRaw.extractDirectives !== false,
+            extractReinforcement: distillRaw.extractReinforcement !== false,
+            reinforcementBoost: typeof distillRaw.reinforcementBoost === "number" && distillRaw.reinforcementBoost >= 0 && distillRaw.reinforcementBoost <= 1.0
+              ? distillRaw.reinforcementBoost
+              : 0.1,
+            reinforcementProcedureBoost: typeof distillRaw.reinforcementProcedureBoost === "number" && distillRaw.reinforcementProcedureBoost >= 0 && distillRaw.reinforcementProcedureBoost <= 1.0
+              ? distillRaw.reinforcementProcedureBoost
+              : 0.1,
+            reinforcementPromotionThreshold: typeof distillRaw.reinforcementPromotionThreshold === "number" && distillRaw.reinforcementPromotionThreshold >= 1
+              ? Math.floor(distillRaw.reinforcementPromotionThreshold)
+              : 2,
           }
         : undefined;
 

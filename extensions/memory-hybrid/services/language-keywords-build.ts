@@ -11,6 +11,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   ENGLISH_KEYWORDS,
+  buildMergedFromTranslations,
   type LanguageKeywordsFile,
   type LanguageExtractionTemplate,
   type KeywordGroup,
@@ -353,6 +354,35 @@ export async function runBuildLanguageKeywords(
     opts.model,
   );
 
+  const merged = buildMergedFromTranslations(translations);
+  const directiveSignalsByCategory: Record<string, string[]> = {};
+  for (const [fileKey, mergedKey] of Object.entries({
+    explicit_memory: "directiveExplicitMemory",
+    future_behavior: "directiveFutureBehavior",
+    absolute_rule: "directiveAbsoluteRule",
+    preference: "directivePreference",
+    warning: "directiveWarning",
+    procedural: "directiveProcedural",
+    implicit_correction: "directiveImplicitCorrection",
+    conditional_rule: "directiveConditionalRule",
+    correction: "correctionSignals",
+  } as Record<string, string>)) {
+    const list = merged[mergedKey as KeywordGroup];
+    if (Array.isArray(list) && list.length > 0) directiveSignalsByCategory[fileKey] = list;
+  }
+  const reinforcementCategories: Record<string, string[]> = {};
+  for (const [fileKey, mergedKey] of Object.entries({
+    strongPraise: "reinforcementStrongPraise",
+    methodConfirmation: "reinforcementMethodConfirmation",
+    relief: "reinforcementRelief",
+    comparativePraise: "reinforcementComparativePraise",
+    sharingSignals: "reinforcementSharingSignals",
+  } as Record<string, string>)) {
+    const list = merged[mergedKey as KeywordGroup];
+    if (Array.isArray(list) && list.length > 0) reinforcementCategories[fileKey] = list;
+  }
+  reinforcementCategories.genericPoliteness = ["thanks", "thank you", "ok", "okay", "got it"];
+
   const filePath = join(sqliteDir, LANG_FILE_NAME);
   const data: LanguageKeywordsFile = {
     version: 2,
@@ -361,6 +391,8 @@ export async function runBuildLanguageKeywords(
     translations,
     triggerStructures: Object.keys(triggerStructures).length > 0 ? triggerStructures : undefined,
     extraction: Object.keys(extraction).length > 0 ? extraction : undefined,
+    directiveSignalsByCategory: Object.keys(directiveSignalsByCategory).length > 0 ? directiveSignalsByCategory : undefined,
+    reinforcementCategories: Object.keys(reinforcementCategories).length > 0 ? reinforcementCategories : undefined,
   };
 
   if (opts.dryRun) {
@@ -375,7 +407,7 @@ export async function runBuildLanguageKeywords(
   try {
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
-    clearKeywordCache();
+    await clearKeywordCache();
   } catch (e) {
     return { ok: false, error: String(e) };
   }

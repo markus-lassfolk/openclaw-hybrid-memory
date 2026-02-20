@@ -180,7 +180,7 @@ describe("filterByScope", () => {
     const inScope = makeResult({ text: "In scope", id: "id-1" });
     const outOfScope = makeResult({ text: "Out of scope", id: "id-2" });
     const results = [inScope, outOfScope];
-    const getById = (id: string, opts?: { scopeFilter?: { userId?: string } }) => {
+    const getById = (id: string, opts?: { scopeFilter?: { userId?: string | null } | null }) => {
       if (id === "id-2" && opts?.scopeFilter?.userId === "alice") return null;
       return { id };
     };

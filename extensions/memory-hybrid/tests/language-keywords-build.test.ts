@@ -11,14 +11,14 @@ import { setKeywordsPath, clearKeywordCache } from "../utils/language-keywords.j
 describe("language-keywords-build", () => {
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "lang-kw-build-test-"));
-    clearKeywordCache();
+    await clearKeywordCache();
     setKeywordsPath("");
   });
 
-  afterEach(() => {
-    clearKeywordCache();
+  afterEach(async () => {
+    await clearKeywordCache();
     setKeywordsPath("");
     try {
       if (tmpDir) rmSync(tmpDir, { recursive: true });
