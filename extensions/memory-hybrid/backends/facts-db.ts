@@ -146,6 +146,9 @@ export class FactsDB {
 
     // ---- Phase 2: Reinforcement for procedures ----
     this.migrateReinforcementColumnsProcedures();
+
+    // ---- FR-006 + multi-agent: Memory scoping for procedures ----
+    this.migrateProcedureScopeColumns();
   }
 
   /** Issue #40: Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -274,6 +277,23 @@ export class FactsDB {
     this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN promoted_at INTEGER`); // When auto-promoted via reinforcement
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_procedures_reinforced ON procedures(reinforced_count) WHERE reinforced_count > 0`,
+    );
+  }
+
+  /** FR-006 + multi-agent: Add scope and scope_target columns to procedures table (same pattern as facts). */
+  private migrateProcedureScopeColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(procedures)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has("scope")) return;
+    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
+    this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope_target TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_procedures_scope ON procedures(scope)`,
+    );
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_procedures_scope_target ON procedures(scope, scope_target) WHERE scope_target IS NOT NULL`,
     );
   }
 
@@ -1800,7 +1820,7 @@ export class FactsDB {
    * Search procedures by task description (FTS). Returns positive procedures first, then negative.
    * Phase 2: Applies reinforcement boost to score when reinforced_count > 0.
    */
-  searchProcedures(taskDescription: string, limit = 10, reinforcementBoost = 0.1): ProcedureEntry[] {
+  searchProcedures(taskDescription: string, limit = 10, reinforcementBoost = 0.1, scopeFilter?: ScopeFilter): ProcedureEntry[] {
     const sanitized = this.sanitizeFTS5Query(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
@@ -1810,11 +1830,12 @@ export class FactsDB {
       .join(" OR ");
     if (!safeQuery) return [];
     try {
+      // FR-006 + multi-agent: Apply scope filter to procedures search
+      const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
+      const baseSql = `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`;
       const rows = this.liveDb
-        .prepare(
-          `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`,
-        )
-        .all(safeQuery, limit * 2) as Array<Record<string, unknown>>;
+        .prepare(baseSql)
+        .all(safeQuery, ...scopeParams, limit * 2) as Array<Record<string, unknown>>;
       
       if (rows.length === 0) return [];
       
@@ -1863,7 +1884,7 @@ export class FactsDB {
    * - Reinforcement boost for user-praised procedures (configurable)
    * Returns procedures with relevanceScore, sorted by composite score.
    */
-  searchProceduresRanked(taskDescription: string, limit = 10, reinforcementBoost = 0.1): Array<ProcedureEntry & { relevanceScore: number }> {
+  searchProceduresRanked(taskDescription: string, limit = 10, reinforcementBoost = 0.1, scopeFilter?: ScopeFilter): Array<ProcedureEntry & { relevanceScore: number }> {
     const sanitized = this.sanitizeFTS5Query(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
@@ -1881,15 +1902,17 @@ export class FactsDB {
     const RECENT_FAILURE_PENALTY = 0.5;
     
     try {
+      // FR-006 + multi-agent: Apply scope filter to procedures search
+      const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
       const rows = this.liveDb
         .prepare(
           `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p 
            JOIN procedures_fts fts ON p.rowid = fts.rowid 
-           WHERE procedures_fts MATCH ? 
+           WHERE procedures_fts MATCH ?${scopeClause} 
            ORDER BY bm25(procedures_fts) 
            LIMIT ?`,
         )
-        .all(safeQuery, limit * 3) as Array<Record<string, unknown>>;
+        .all(safeQuery, ...scopeParams, limit * 3) as Array<Record<string, unknown>>;
       
       if (rows.length === 0) return [];
       
@@ -1967,8 +1990,8 @@ export class FactsDB {
   }
 
   /** Get negative procedures whose task_pattern might match the given description (for warnings). */
-  getNegativeProceduresMatching(taskDescription: string, limit = 5): ProcedureEntry[] {
-    const all = this.searchProcedures(taskDescription, limit * 2);
+  getNegativeProceduresMatching(taskDescription: string, limit = 5, scopeFilter?: ScopeFilter): ProcedureEntry[] {
+    const all = this.searchProcedures(taskDescription, limit * 2, 0.1, scopeFilter);
     return all.filter((p) => p.procedureType === "negative").slice(0, limit);
   }
 
