@@ -1,0 +1,173 @@
+/**
+ * Error Reporter Service for GlitchTip/Sentry Integration
+ * 
+ * SECURITY REQUIREMENTS (NON-NEGOTIABLE):
+ * - consent: false by default — user must explicitly opt in
+ * - sendDefaultPii: false always
+ * - maxBreadcrumbs: 0 — breadcrumbs can contain user prompts
+ * - ALL default Sentry integrations disabled (they capture HTTP requests, console output, etc.)
+ * - beforeSend rebuilds event from scratch using allowlist
+ * - NEVER include: memory text, prompts, API keys, home paths, IPs, emails
+ */
+
+import type * as SentryType from "@sentry/node";
+
+export interface ErrorReporterConfig {
+  enabled: boolean;
+  dsn: string;        // Sentry/GlitchTip DSN
+  environment?: string; // "production" | "development"
+  maxBreadcrumbs: number; // default 0 (no breadcrumbs — privacy)
+  sampleRate: number;  // 0.0-1.0, default 1.0
+  consent: boolean;    // explicit opt-in required
+}
+
+let Sentry: typeof SentryType | null = null;
+let initialized = false;
+
+/**
+ * Initialize error reporter with STRICT privacy settings
+ */
+export function initErrorReporter(config: ErrorReporterConfig, pluginVersion: string): void {
+  if (!config.enabled || !config.consent || !config.dsn) {
+    console.log('[ErrorReporter] Disabled: enabled=%s, consent=%s, dsn=%s',
+      config.enabled, config.consent, !!config.dsn);
+    return;
+  }
+
+  // Lazy-load @sentry/node (optional peer dependency)
+  try {
+    Sentry = require("@sentry/node");
+  } catch (err) {
+    console.warn('[ErrorReporter] @sentry/node not installed. Error reporting disabled.');
+    console.warn('[ErrorReporter] Install with: npm install @sentry/node --save-optional');
+    return;
+  }
+
+  if (!Sentry) return;
+
+  Sentry.init({
+    dsn: config.dsn,
+    release: `openclaw-hybrid-memory@${pluginVersion}`,
+    environment: config.environment || "production",
+    sampleRate: config.sampleRate || 1.0,
+    maxBreadcrumbs: 0,           // NO breadcrumbs (could contain user data)
+    sendDefaultPii: false,       // NO PII
+    autoSessionTracking: false,  // NO session tracking
+    integrations: [],            // NO default integrations (they capture too much)
+    beforeSend(event) {
+      return sanitizeEvent(event);
+    },
+    beforeBreadcrumb() {
+      return null; // Drop ALL breadcrumbs
+    },
+  });
+
+  initialized = true;
+  console.log('[ErrorReporter] Initialized with DSN:', config.dsn.split('@')[0] + '@***');
+}
+
+/**
+ * Sanitize event using ALLOWLIST approach: rebuild event with only safe fields
+ */
+function sanitizeEvent(event: SentryType.Event): SentryType.Event | null {
+  if (!event) return null;
+
+  const safe: SentryType.Event = {
+    event_id: event.event_id,
+    timestamp: event.timestamp,
+    platform: "node",
+    level: event.level,
+    release: event.release,
+    environment: event.environment,
+    // Only keep exception type and sanitized message
+    exception: event.exception ? {
+      values: event.exception.values?.map(v => ({
+        type: v.type,
+        value: scrubString(v.value || ""),
+        stacktrace: v.stacktrace ? {
+          frames: v.stacktrace.frames?.map(f => ({
+            filename: sanitizePath(f.filename || ""),
+            function: f.function,
+            lineno: f.lineno,
+            colno: f.colno,
+            in_app: f.in_app,
+            // NO: abs_path, context_line, pre_context, post_context, vars
+          }))
+        } : undefined,
+      }))
+    } : undefined,
+    tags: {
+      subsystem: event.tags?.subsystem,
+      operation: event.tags?.operation,
+    },
+    // NO: user, request, breadcrumbs, contexts.device, extra
+  };
+
+  return safe;
+}
+
+/**
+ * Scrub sensitive data from strings
+ */
+function scrubString(input: string): string {
+  return input
+    // API keys
+    .replace(/sk-[A-Za-z0-9]{20,}/g, '[REDACTED]')
+    .replace(/ghp_[A-Za-z0-9]{36}/g, '[REDACTED]')
+    .replace(/Bearer\s+[\w.-]+/gi, '[REDACTED]')
+    // Paths
+    .replace(/\/home\/[^/\s]+/g, '$HOME')
+    .replace(/\/Users\/[^/\s]+/g, '$HOME')
+    .replace(/C:\\Users\\[^\\s]+/g, '%USERPROFILE%')
+    // PII
+    .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, '[EMAIL]')
+    .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]')
+    // Truncate
+    .slice(0, 500);
+}
+
+/**
+ * Sanitize file paths: keep only relative plugin paths
+ */
+function sanitizePath(path: string): string {
+  // Keep only relative plugin paths
+  const idx = path.indexOf('extensions/memory-hybrid/');
+  if (idx >= 0) {
+    return path.slice(idx);
+  }
+
+  // Scrub user-specific paths
+  return path
+    .replace(/\/home\/[^/]+/g, '$HOME')
+    .replace(/\/Users\/[^/]+/g, '$HOME')
+    .replace(/C:\\Users\\[^\\]+/g, '%USERPROFILE%');
+}
+
+/**
+ * Capture a plugin error with context
+ */
+export function capturePluginError(error: Error, context: {
+  operation: string;
+  subsystem: string;
+  configShape?: Record<string, string>;
+}): void {
+  if (!initialized || !Sentry) {
+    return;
+  }
+
+  Sentry.withScope((scope) => {
+    scope.setTag("subsystem", context.subsystem);
+    scope.setTag("operation", context.operation);
+    if (context.configShape) {
+      scope.setContext("config_shape", context.configShape);
+    }
+    Sentry.captureException(error);
+  });
+}
+
+/**
+ * Check if error reporter is active
+ */
+export function isErrorReporterActive(): boolean {
+  return initialized;
+}

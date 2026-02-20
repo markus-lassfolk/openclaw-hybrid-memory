@@ -95,6 +95,7 @@ import {
   getCorrectionSignalRegex,
 } from "./utils/language-keywords.js";
 import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "./services/self-correction-extract.js";
+import { initErrorReporter, capturePluginError, isErrorReporterActive } from "./services/error-reporter.js";
 import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { runBuildLanguageKeywords as runBuildLanguageKeywordsService } from "./services/language-keywords-build.js";
@@ -6318,15 +6319,33 @@ const memoryHybridPlugin = {
         const sqlCount = factsDb.count();
         const expired = factsDb.countExpired();
         api.logger.info(
-          `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
+          `memory-hybrid: initialized v\${versionInfo.pluginVersion} (sqlite: \${sqlCount} facts, lance: \${resolvedLancePath}, model: \${cfg.embedding.model})`,
         );
+
+        // Initialize error reporter if configured
+        if (cfg.errorReporting) {
+          initErrorReporter(
+            {
+              enabled: cfg.errorReporting.enabled,
+              dsn: cfg.errorReporting.dsn,
+              consent: cfg.errorReporting.consent,
+              environment: cfg.errorReporting.environment,
+              sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
+              maxBreadcrumbs: 0,
+            },
+            versionInfo.pluginVersion,
+          );
+          if (isErrorReporterActive()) {
+            api.logger.info("memory-hybrid: error reporting enabled");
+          }
+        }
 
         if (expired > 0) {
           const pruned = factsDb.pruneExpired();
-          api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
+          api.logger.info(`memory-hybrid: startup prune removed \${pruned} expired facts`);
         }
 
-        // WAL Recovery: replay uncommitted operations from previous session
+                // WAL Recovery: replay uncommitted operations from previous session
         if (wal) {
           const pendingEntries = wal.getValidEntries();
           if (pendingEntries.length > 0) {
