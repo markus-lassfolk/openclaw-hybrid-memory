@@ -5424,27 +5424,53 @@ const memoryHybridPlugin = {
           // Procedural memory: inject relevant procedures and negative warnings (issue #23)
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
-            const procs = factsDb.searchProcedures(e.prompt, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
-            const negs = factsDb.getNegativeProceduresMatching(e.prompt, 2);
+            const rankedProcs = factsDb.searchProceduresRanked(e.prompt, 5, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
+            const positiveFiltered = rankedProcs.filter((p) => p.procedureType === "positive" && p.relevanceScore > 0.4);
+            const negativeUnfiltered = rankedProcs.filter((p) => p.procedureType === "negative");
             const procLines: string[] = [];
-            const positiveList = procs.filter((p) => p.procedureType === "positive");
+            
+            // Positive procedures with relevance score
+            const positiveList = positiveFiltered;
             if (positiveList.length > 0) {
               procLines.push("Last time this worked:");
-              for (const p of positiveList.slice(0, 2)) {
+              for (const p of positiveList.slice(0, 3)) {
                 try {
-                  const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>).map((s) => s.tool).filter(Boolean).join(" → ");
-                  procLines.push(`- ${p.taskPattern.slice(0, 60)}…: ${steps}`);
+                  const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>)
+                    .map((s) => s.tool)
+                    .filter(Boolean)
+                    .join(" → ");
+                  const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
+                  const confidence = Math.round(p.relevanceScore * 100);
+                  procLines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 50)}… (${steps})`);
                 } catch {
-                  procLines.push(`- ${p.taskPattern.slice(0, 80)}`);
+                  const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
+                  const confidence = Math.round(p.relevanceScore * 100);
+                  procLines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 70)}…`);
                 }
               }
             }
+            
+            // Negative procedures (known failures)
+            const negs = negativeUnfiltered;
             if (negs.length > 0) {
               procLines.push("⚠️ Known issue (avoid):");
               for (const n of negs.slice(0, 2)) {
-                procLines.push(`- ${n.taskPattern.slice(0, 70)}…`);
+                try {
+                  const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
+                  const confidence = Math.round(n.relevanceScore * 100);
+                  const steps = (JSON.parse(n.recipeJson) as Array<{ tool?: string }>)
+                    .map((s) => s.tool)
+                    .filter(Boolean)
+                    .join(" → ");
+                  procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`);
+                } catch {
+                  const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
+                  const confidence = Math.round(n.relevanceScore * 100);
+                  procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 70)}…`);
+                }
               }
             }
+            
             if (procLines.length > 0) {
               procedureBlock = "<relevant-procedures>\n" + procLines.join("\n") + "\n</relevant-procedures>";
             }
