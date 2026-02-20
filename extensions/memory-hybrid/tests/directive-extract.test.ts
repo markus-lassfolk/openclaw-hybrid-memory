@@ -197,6 +197,28 @@ describe("directive-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("extractRule should handle URI followed by directive without period separator", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-uri-edge.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"mailto:user@example.com Remember: this is important"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Understood."}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.incidents.length).toBe(1);
+    // Verify the colon after "Remember" is correctly identified as directive separator
+    // and not confused with the mailto: URI scheme colon
+    expect(result.incidents[0].extractedRule.toLowerCase()).toContain("this is important");
+    expect(result.incidents[0].extractedRule).not.toMatch(/^user@example\.com/);
+    expect(result.incidents[0].extractedRule).not.toMatch(/^mailto/);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   it("extractRule should not use ssh: scheme colon as directive separator", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-ssh.jsonl");

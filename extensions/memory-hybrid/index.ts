@@ -369,7 +369,7 @@ const SENSITIVE_PATTERNS = [
   /credit.?card/i,
   /AKIA[0-9A-Z]{16}/, // AWS access keys
   /-----BEGIN .*PRIVATE KEY/, // Private key headers (RSA, EC, etc.)
-  /:\/\/[^\s:]+:[^\s@]+@/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host)
+  /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host) - Note: usernames with colons will fail
 ];
 
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
@@ -4276,7 +4276,7 @@ const memoryHybridPlugin = {
                 const taskPattern = incident.toolCallSequence.join(" -> ");
                 const procedures = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
                 for (const proc of procedures) {
-                  factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold);
+                  factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold ?? 2);
                 }
               }
             }
@@ -4453,8 +4453,9 @@ const memoryHybridPlugin = {
             for (const e of entries) {
               const full = join(dir, e.name);
               const relPath = join(rel, e.name);
-              if (e.isDirectory()) walk(full, relPath);
-              else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
+              if (e.isDirectory()) {
+                try { walk(full, relPath); } catch { /* ignore */ }
+              } else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
             }
           }
           walk(memoryDir);
