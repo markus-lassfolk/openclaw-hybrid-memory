@@ -4453,8 +4453,9 @@ const memoryHybridPlugin = {
             for (const e of entries) {
               const full = join(dir, e.name);
               const relPath = join(rel, e.name);
-              if (e.isDirectory()) walk(full, relPath);
-              else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
+              if (e.isDirectory()) {
+                try { walk(full, relPath); } catch { /* directory may have been removed */ }
+              } else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
             }
           }
           walk(memoryDir);
