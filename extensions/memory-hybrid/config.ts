@@ -418,7 +418,6 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     autoCapture: true,
     autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: false } },
     autoClassify: { enabled: false, suggestCategories: false },
-    credentials: { enabled: false },
     store: { fuzzyDedupe: true, classifyBeforeWrite: false },
     graph: { enabled: false },
     procedures: { enabled: false },
@@ -433,7 +432,6 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     autoCapture: true,
     autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: true } },
     autoClassify: { enabled: true, suggestCategories: true },
-    credentials: { enabled: false },
     store: { fuzzyDedupe: false, classifyBeforeWrite: false },
     graph: { enabled: true, autoLink: false, useInRecall: true },
     procedures: { enabled: true, requireApprovalForPromote: true },
@@ -699,7 +697,11 @@ export const hybridConfigSchema = {
     if (encKeyRaw.startsWith("env:")) {
       const envVar = encKeyRaw.slice(4).trim();
       const val = process.env[envVar];
-      if (val) encryptionKey = val;
+      if (val) {
+        encryptionKey = val;
+      } else if (credRaw?.enabled === true) {
+        throw new Error(`credentials.enabled is true but environment variable ${envVar} is not set. Set the variable or use a direct key (not recommended for production).`);
+      }
     } else if (encKeyRaw.length >= 16) {
       encryptionKey = encKeyRaw;
     }
