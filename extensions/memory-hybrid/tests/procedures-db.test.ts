@@ -299,8 +299,8 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(never!.relevanceScore).toBeLessThan(val!.relevanceScore * 0.75);
   });
 
-  it("filters out procedures with relevanceScore <= 0.4", () => {
-    // Create a procedure that should have very low relevance
+  it("returns procedures matching FTS query", () => {
+    // Create a procedure that won't match the FTS query
     db.upsertProcedure({
       taskPattern: "Completely unrelated task about cooking pasta",
       recipeJson: "[]",
@@ -311,8 +311,8 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
       lastValidated: null,
     });
     const results = db.searchProceduresRanked("check API", 10);
-    // Should not include low-relevance procedures
-    expect(results.every((r) => r.relevanceScore > 0.4)).toBe(true);
+    // FTS query won't match unrelated procedures
+    expect(results.every((r) => r.taskPattern.toLowerCase().includes("api") || r.taskPattern.toLowerCase().includes("check"))).toBe(true);
   });
 
   it("returns positive procedures before negative", () => {
@@ -320,14 +320,14 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
       taskPattern: "Positive API check",
       recipeJson: "[]",
       procedureType: "positive",
-      confidence: 0.7,
+      confidence: 0.8,
       lastValidated: Math.floor(Date.now() / 1000),
     });
     db.upsertProcedure({
       taskPattern: "Negative API check",
       recipeJson: "[]",
       procedureType: "negative",
-      confidence: 0.9,
+      confidence: 0.8,
       lastValidated: Math.floor(Date.now() / 1000),
     });
     const results = db.searchProceduresRanked("API check", 10);

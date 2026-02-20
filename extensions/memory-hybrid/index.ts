@@ -5423,7 +5423,7 @@ const memoryHybridPlugin = {
           // Procedural memory: inject relevant procedures and negative warnings (issue #23)
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
-            const rankedProcs = factsDb.searchProceduresRanked(e.prompt, 5);
+            const rankedProcs = factsDb.searchProceduresRanked(e.prompt, 5, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
             const filtered = rankedProcs.filter((p) => p.relevanceScore > 0.4);
             const procLines: string[] = [];
             
