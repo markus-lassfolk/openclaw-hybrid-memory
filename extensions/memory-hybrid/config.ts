@@ -707,7 +707,7 @@ export const hybridConfigSchema = {
     const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
 
     let credentials: CredentialsConfig;
-    if (shouldEnable) {
+    if (shouldEnable && hasValidKey) {
       const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
       const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
         ? {
@@ -719,7 +719,39 @@ export const hybridConfigSchema = {
       credentials = {
         enabled: true,
         store: "sqlite",
-        encryptionKey: hasValidKey ? encryptionKey : "",
+        encryptionKey,
+        autoDetect: credRaw?.autoDetect === true,
+        autoCapture,
+        expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
+          ? Math.floor(credRaw.expiryWarningDays)
+          : 7,
+      };
+    } else if (shouldEnable && !hasValidKey) {
+      // User explicitly set an encryption key but it's invalid or unresolved → fail fast (no silent fallback to unencrypted).
+      if (encKeyRaw.startsWith("env:")) {
+        const envVar = encKeyRaw.slice(4).trim();
+        throw new Error(
+          `Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or use memory-only (omit credentials.encryptionKey). Run 'openclaw hybrid-mem verify --fix' for help.`,
+        );
+      }
+      if (encKeyRaw.length > 0) {
+        throw new Error(
+          "credentials.encryptionKey must be at least 16 characters (or use env:VAR). Run 'openclaw hybrid-mem verify --fix' for help.",
+        );
+      }
+      // Memory-only mode: user enabled credentials but did not set encryptionKey; capture only, stored in memory.
+      const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
+      const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
+        ? {
+            toolCalls: autoCaptureRaw.toolCalls === true,
+            patterns: "builtin",
+            logCaptures: autoCaptureRaw.logCaptures !== false,
+          }
+        : undefined;
+      credentials = {
+        enabled: true,
+        store: "sqlite",
+        encryptionKey: "",
         autoDetect: credRaw?.autoDetect === true,
         autoCapture,
         expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0

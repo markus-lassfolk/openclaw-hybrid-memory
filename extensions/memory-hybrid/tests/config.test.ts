@@ -336,11 +336,26 @@ describe("hybridConfigSchema.parse", () => {
       ...validBase,
       credentials: {
         enabled: true,
-        encryptionKey: "short",
+        // No encryptionKey → memory-only (capture only, no vault)
       },
     });
     expect(result.credentials.enabled).toBe(true);
     expect(result.credentials.encryptionKey).toBe("");
+  });
+
+  it("throws when credentials enabled with short or unresolved encryption key", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...validBase,
+        credentials: { enabled: true, encryptionKey: "short" },
+      }),
+    ).toThrow(/encryptionKey must be at least 16 characters/);
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...validBase,
+        credentials: { enabled: true, encryptionKey: "env:MISSING_ENV_VAR_XYZ" },
+      }),
+    ).toThrow(/Credentials encryption key env var MISSING_ENV_VAR_XYZ is not set/);
   });
 
   it("parses custom categories", () => {
