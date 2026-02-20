@@ -224,6 +224,192 @@ async function handleUserCommand(message: string, authenticatedSession: Session)
 }
 ```
 
+## Multi-Agent Configuration
+
+**Multi-agent scoping** enables specialist agents (Forge, Scholar, Hearth) to build domain expertise while maintaining shared global knowledge with the orchestrator (Maeve).
+
+### Configuration
+
+Add `multiAgent` section to plugin config:
+
+```json
+{
+  "multiAgent": {
+    "orchestratorId": "main",
+    "defaultStoreScope": "auto"
+  }
+}
+```
+
+**Options:**
+
+- **orchestratorId** (default: `"main"`): Agent ID of the main orchestrator
+  - The orchestrator sees all memories (no scope filter)
+  - All other agents are considered "specialists"
+
+- **defaultStoreScope** (default: `"global"`):
+  - `"global"`: All agents store to global scope (existing behavior, backward compatible)
+  - `"agent"`: All agents store to agent-specific scope (full isolation except explicit global stores)
+  - `"auto"`: **Recommended** — Orchestrator stores global, specialists store agent-scoped
+
+### Recommended Setup: "auto" Mode
+
+```json
+{
+  "multiAgent": {
+    "orchestratorId": "main",
+    "defaultStoreScope": "auto"
+  }
+}
+```
+
+**Behavior:**
+
+| Agent | Stores | Sees (auto-recall) | Rationale |
+|-------|--------|-------------------|-----------|
+| **Maeve (orchestrator)** | `scope='global'` | All memories | Needs full context for coordination |
+| **Forge (coding)** | `scope='agent'` `target='forge'` | Global + Forge | Builds code expertise privately |
+| **Scholar (research)** | `scope='agent'` `target='scholar'` | Global + Scholar | Accumulates research methods |
+| **Hearth (HA)** | `scope='agent'` `target='hearth'` | Global + Hearth | Home Assistant domain knowledge |
+
+**Explicit overrides:** Any agent can still explicitly store with `scope: "global"` to share knowledge.
+
+### Examples
+
+#### Store domain expertise (automatic with "auto" mode)
+
+```typescript
+// Forge (specialist agent) — automatically scoped to agent='forge'
+await memory_store({
+  text: "Always use Vitest for testing in this codebase",
+  category: "technical"
+});
+// Stored with: scope='agent', scopeTarget='forge'
+```
+
+#### Store shared knowledge explicitly
+
+```typescript
+// Any agent — explicitly mark as global
+await memory_store({
+  text: "Markus prefers terse technical responses",
+  scope: "global"
+});
+// Stored with: scope='global' — visible to all agents
+```
+
+#### Cross-agent queries
+
+```typescript
+// Maeve (orchestrator) can query Hearth's domain knowledge
+await memory_recall({
+  query: "NIBE heat pump configuration",
+  agentId: "hearth"  // Explicitly query Hearth's scope
+});
+```
+
+### Runtime Agent Detection
+
+The plugin automatically detects the current agent ID from the `before_agent_start` event payload:
+
+```typescript
+api.on("before_agent_start", (event) => {
+  const agentId = event.agentId || event.session?.agentId || "main";
+  // Used for auto-scoping stores and filtering auto-recall
+});
+```
+
+**Fallback chain:**
+1. `event.agentId` (direct property)
+2. `event.session?.agentId` (session context)
+3. `currentAgentId` (cached from previous event)
+4. `multiAgent.orchestratorId` (config default)
+
+**Logging:** When agent detection fails or returns `null`, a warning is logged.
+
+### Procedures (Learned Skills) Scoping
+
+Procedures (learned tool sequences) are also scoped by agent:
+
+```typescript
+// Forge learns a git commit procedure
+// Automatically scoped to agent='forge'
+upsertProcedure({
+  taskPattern: "Commit changes with conventional message",
+  recipeJson: "[...]",
+  procedureType: "positive",
+  scope: "agent",
+  scopeTarget: "forge"
+});
+
+// Hearth won't see Forge's procedures in auto-recall
+// Maeve (orchestrator) sees all procedures for coordination
+```
+
+**Tool usage:** `memory_recall_procedures` respects scoping:
+
+```typescript
+// Defaults to current agent scope
+await memory_recall_procedures({ taskDescription: "commit code" });
+
+// Explicit cross-agent query
+await memory_recall_procedures({
+  taskDescription: "Home Assistant automation",
+  agentId: "hearth"
+});
+```
+
+### Testing Multi-Agent Setup
+
+**Test scope isolation:**
+
+```bash
+# Store as Forge (via session or config)
+openclaw sessions send --to forge --message 'Remember: Always run npm test before commit'
+
+# Query as Hearth (should NOT see Forge's memory)
+openclaw hybrid-mem search "npm test" --agent-id hearth
+# Expected: 0 results ✅
+
+# Query as Forge (should see it)
+openclaw hybrid-mem search "npm test" --agent-id forge
+# Expected: 1 result ✅
+```
+
+**Test global sharing:**
+
+```bash
+# Store global fact
+openclaw hybrid-mem store --text "Markus prefers dark mode" --scope global
+
+# Query from any agent (should all see it)
+openclaw hybrid-mem search "dark mode" --agent-id forge
+openclaw hybrid-mem search "dark mode" --agent-id hearth
+# Both return 1 result ✅
+```
+
+### Troubleshooting
+
+**Symptom:** Agent memories not isolated (all agents see everything)
+
+**Check:**
+1. `multiAgent.defaultStoreScope` is set to `"auto"` or `"agent"` (not `"global"`)
+2. Agent ID detection is working (check logs for warnings)
+3. OpenClaw passes `agentId` in `before_agent_start` event payload
+
+**Symptom:** Warning: "Agent detection failed - no agentId in event payload"
+
+**Fix:**
+- Verify OpenClaw version supports multi-agent (check release notes)
+- Check that `event.agentId` or `event.session.agentId` is populated
+- Temporarily set `multiAgent.orchestratorId` to match the agent having issues
+
+**Symptom:** Specialist agent sees orchestrator's memories but not own
+
+**Check:**
+- `currentAgentId` might be stuck on `"main"` — restart OpenClaw gateway
+- Agent naming mismatch (e.g., config says `"forge"` but session uses `"Forge"`) — IDs are case-sensitive
+
 ## Migration
 
 Existing facts get `scope = 'global'` and `scope_target = NULL` automatically. No data migration required.

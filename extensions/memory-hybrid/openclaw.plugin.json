@@ -301,6 +301,16 @@
     "procedures.skillsAutoPath": {
       "label": "Auto-skills path",
       "help": "Path for auto-generated skills (default: skills/auto)"
+    },
+    "multiAgent.orchestratorId": {
+      "label": "Orchestrator Agent ID",
+      "placeholder": "main",
+      "help": "Agent ID of the orchestrator (main agent). This agent sees all scopes. Default: 'main'."
+    },
+    "multiAgent.defaultStoreScope": {
+      "label": "Default Store Scope",
+      "placeholder": "global",
+      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
     }
   },
   "configSchema": {
@@ -497,6 +507,19 @@
           "spawnModel": { "type": "string", "description": "Model for spawn when analyzeViaSpawn is true (default: gemini)" }
         },
         "description": "Self-correction analysis (issue #34): semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
+      },
+      "multiAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "orchestratorId": { "type": "string", "description": "Agent ID of the orchestrator (main agent). This agent sees all scopes. Default: 'main'." },
+          "defaultStoreScope": { 
+            "type": "string", 
+            "enum": ["global", "agent", "auto"],
+            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+          }
+        },
+        "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults (FR-006 + multi-agent)"
       }
     },
     "required": ["embedding"]

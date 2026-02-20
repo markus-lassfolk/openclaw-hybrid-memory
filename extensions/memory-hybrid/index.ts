@@ -1495,6 +1495,26 @@ let postUpgradeTimeout: ReturnType<typeof setTimeout> | null = null;
 /** FR-009: Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
 let lastProgressiveIndexIds: string[] = [];
 
+/** FR-006 + multi-agent: Runtime-detected agent identity. Used for dynamic scope filtering and default store scope. */
+// FR-006 + multi-agent: Runtime-detected agent identity
+// 
+// ⚠️ MODULE-LEVEL STATE WARNING:
+// This is a singleton variable shared across all plugin invocations within the same OpenClaw process.
+// ASSUMPTION: OpenClaw plugins are single-threaded and do not run in parallel for different agents.
+// If OpenClaw ever implements multi-threaded plugin execution, this approach will cause race conditions
+// (Agent A's memory operations could be attributed to Agent B).
+//
+// Mitigation strategies (if threading is added):
+// 1. Use AsyncLocalStorage to maintain per-request context
+// 2. Use a Map keyed by session/request ID
+// 3. Pass agentId explicitly through all memory operations
+//
+// Current behavior:
+// - Updated on each before_agent_start event
+// - Used by memory_store to auto-scope facts to the current agent
+// - Falls back to cfg.multiAgent.orchestratorId if detection fails
+let currentAgentId: string | null = null;
+
 /**
  * WAL helpers — wrap the write-before-commit / remove-after-commit pattern.
  * Each call site was 8–12 lines of identical boilerplate; these reduce it to 1–2 lines.
@@ -1769,16 +1789,27 @@ const memoryHybridPlugin = {
           };
           const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
           
-          // FR-006: Scope filtering
+          // FR-006 + multi-agent: Scope filtering with auto-detection
           // ⚠️ SECURITY WARNING: userId/agentId/sessionId are caller-controlled parameters.
           // In multi-tenant production environments, these should be derived from authenticated
           // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
           // Accepting arbitrary scope filters allows users to access other users' private memories.
           // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
-          const scopeFilter: ScopeFilter | undefined =
-            userId || agentId || sessionId
-              ? { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null }
-              : undefined;
+          let scopeFilter: ScopeFilter | undefined;
+          if (userId || agentId || sessionId) {
+            // Explicit scope parameters provided - use them
+            scopeFilter = { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
+          } else if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
+            // No explicit params - merge agent scope with configured scopeFilter
+            scopeFilter = { 
+              userId: cfg.autoRecall.scopeFilter?.userId ?? null, 
+              agentId: currentAgentId, 
+              sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null 
+            };
+          } else {
+            // Orchestrator or no agent detected - see all memories
+            scopeFilter = undefined;
+          }
 
           // FR-009: Fetch by id (fact id or 1-based index from last progressive index)
           if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -2009,11 +2040,29 @@ const memoryHybridPlugin = {
             limit: Type.Optional(
               Type.Number({ description: "Max procedures to return (default: 5)" }),
             ),
+            agentId: Type.Optional(
+              Type.String({
+                description: "⚠️ SECURITY: Caller-controlled parameter. FR-006 + multi-agent: Filter procedures for specific agent.",
+              }),
+            ),
+            userId: Type.Optional(
+              Type.String({
+                description: "⚠️ SECURITY: Caller-controlled parameter. FR-006: Filter procedures for specific user.",
+              }),
+            ),
+            sessionId: Type.Optional(
+              Type.String({
+                description: "⚠️ SECURITY: Caller-controlled parameter. FR-006: Filter procedures for specific session.",
+              }),
+            ),
           }),
           async execute(_toolCallId: string, params: Record<string, unknown>) {
-            const { taskDescription, limit = 5 } = params as {
+            const { taskDescription, limit = 5, agentId, userId, sessionId } = params as {
               taskDescription: string;
               limit?: number;
+              agentId?: string;
+              userId?: string;
+              sessionId?: string;
             };
             const q = typeof taskDescription === "string" && taskDescription.trim().length > 0
               ? taskDescription.trim()
@@ -2024,8 +2073,26 @@ const memoryHybridPlugin = {
                 details: { count: 0 },
               };
             }
-            const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
-            const negatives = factsDb.getNegativeProceduresMatching(q, 3);
+            
+            // FR-006 + multi-agent: Build scope filter (same logic as memory_recall)
+            let scopeFilter: ScopeFilter | undefined;
+            if (userId || agentId || sessionId) {
+              // Explicit scope parameters provided - use them
+              scopeFilter = { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
+            } else if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
+              // No explicit params - merge agent scope with configured scopeFilter
+              scopeFilter = { 
+                userId: cfg.autoRecall.scopeFilter?.userId ?? null, 
+                agentId: currentAgentId, 
+                sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null 
+              };
+            } else {
+              // Orchestrator or no agent detected - see all procedures
+              scopeFilter = undefined;
+            }
+            
+            const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost ?? 0.1, scopeFilter);
+            const negatives = factsDb.getNegativeProceduresMatching(q, 3, scopeFilter);
             const lines: string[] = [];
             const positiveList = procedures.filter((p) => p.procedureType === "positive");
             if (positiveList.length > 0) {
@@ -2337,11 +2404,39 @@ const memoryHybridPlugin = {
           }, api.logger);
 
           // Now commit to actual storage (FR-010: optional supersedes for manual supersession; FR-006: scope)
-          const scope = paramScope ?? "global";
-          const scopeTarget =
-            scope === "global"
-              ? null
-              : (paramScopeTarget?.trim() ?? null);
+          // FR-006 + multi-agent: Smart default scope based on agent identity and config
+          let scope: string;
+          let scopeTarget: string | null;
+          
+          if (paramScope) {
+            // Explicit scope parameter always takes precedence
+            scope = paramScope;
+            scopeTarget = scope === "global" ? null : (paramScopeTarget?.trim() ?? null);
+          } else {
+            // Auto-determine scope based on multiAgent config
+            const agentId = currentAgentId || cfg.multiAgent.orchestratorId;
+            const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
+            
+            if (cfg.multiAgent.defaultStoreScope === "global") {
+              // Backward compatible: always global
+              scope = "global";
+              scopeTarget = null;
+            } else if (cfg.multiAgent.defaultStoreScope === "agent") {
+              // Always agent-scoped (for fully isolated setups)
+              scope = "agent";
+              scopeTarget = agentId;
+            } else {
+              // "auto" mode: orchestrator → global, specialists → agent
+              if (isOrchestrator) {
+                scope = "global";
+                scopeTarget = null;
+              } else {
+                scope = "agent";
+                scopeTarget = agentId;
+              }
+            }
+          }
+          
           if (scope !== "global" && !scopeTarget) {
             return {
               content: [
@@ -5415,16 +5510,75 @@ const memoryHybridPlugin = {
     // Lifecycle Hooks
     // ========================================================================
 
+    // FR-006 + multi-agent: Agent detection must run independently of autoRecall
+    // to support multi-agent scoping even when autoRecall is disabled
+    api.on("before_agent_start", async (event: unknown) => {
+      const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
+      
+      // Detect current agent identity at runtime
+      const detectedAgentId = e.agentId || e.session?.agentId || currentAgentId;
+      if (detectedAgentId) {
+        currentAgentId = detectedAgentId;
+      } else {
+        // Issue #9: Log when agent detection fails - fall back to orchestrator
+        api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
+        currentAgentId = cfg.multiAgent.orchestratorId;
+        
+        // Issue #9: Warn when we're in agent/auto mode but had to fall back
+        if (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto") {
+          api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
+        }
+      }
+    });
+
     if (cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event: unknown) => {
-        const e = event as { prompt?: string };
+        const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
+        
         if (!e.prompt || e.prompt.length < 5) return;
 
         try {
+
+          // FR-009: Use configurable candidate pool for progressive disclosure
+          const fmt = cfg.autoRecall.injectionFormat;
+          const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
+          const searchLimit = isProgressive
+            ? (cfg.autoRecall.progressiveMaxCandidates ?? Math.max(cfg.autoRecall.limit, 15))
+            : cfg.autoRecall.limit;
+          const { minScore } = cfg.autoRecall;
+          const limit = searchLimit;
+          const tierFilter = cfg.memoryTiering.enabled ? "warm" : "all";
+          
+          // FR-006 + multi-agent: Build scope filter dynamically from detected agentId
+          // Merge agent-detected scope with configured scopeFilter for multi-tenant support
+          let scopeFilter: ScopeFilter | undefined;
+          if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
+            // Specialist agent — merge with configured scopeFilter to preserve userId
+            scopeFilter = {
+              userId: cfg.autoRecall.scopeFilter?.userId ?? null,
+              agentId: currentAgentId,
+              sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null,
+            };
+          } else if (
+            cfg.autoRecall.scopeFilter &&
+            (cfg.autoRecall.scopeFilter.userId || cfg.autoRecall.scopeFilter.agentId || cfg.autoRecall.scopeFilter.sessionId)
+          ) {
+            // Orchestrator or explicit config override
+            scopeFilter = {
+              userId: cfg.autoRecall.scopeFilter.userId ?? null,
+              agentId: cfg.autoRecall.scopeFilter.agentId ?? null,
+              sessionId: cfg.autoRecall.scopeFilter.sessionId ?? null,
+            };
+          } else {
+            // No filter — orchestrator sees all (backward compatible)
+            scopeFilter = undefined;
+          }
+
           // Procedural memory: inject relevant procedures and negative warnings (issue #23)
+          // FR-006 + multi-agent: Apply scope filter to procedure search
           let procedureBlock = "";
           if (cfg.procedures.enabled) {
-            const rankedProcs = factsDb.searchProceduresRanked(e.prompt, 5, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
+            const rankedProcs = factsDb.searchProceduresRanked(e.prompt, 5, cfg.distill?.reinforcementProcedureBoost ?? 0.1, scopeFilter);
             const positiveFiltered = rankedProcs.filter((p) => p.procedureType === "positive" && p.relevanceScore > 0.4);
             const negativeUnfiltered = rankedProcs.filter((p) => p.procedureType === "negative");
             const procLines: string[] = [];
@@ -5476,25 +5630,6 @@ const memoryHybridPlugin = {
             }
           }
           const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
-
-          // FR-009: Use configurable candidate pool for progressive disclosure
-          const fmt = cfg.autoRecall.injectionFormat;
-          const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
-          const searchLimit = isProgressive
-            ? (cfg.autoRecall.progressiveMaxCandidates ?? Math.max(cfg.autoRecall.limit, 15))
-            : cfg.autoRecall.limit;
-          const { minScore } = cfg.autoRecall;
-          const limit = searchLimit;
-          const tierFilter = cfg.memoryTiering.enabled ? "warm" : "all";
-          const scopeFilter =
-            cfg.autoRecall.scopeFilter &&
-            (cfg.autoRecall.scopeFilter.userId || cfg.autoRecall.scopeFilter.agentId || cfg.autoRecall.scopeFilter.sessionId)
-              ? {
-                  userId: cfg.autoRecall.scopeFilter.userId ?? null,
-                  agentId: cfg.autoRecall.scopeFilter.agentId ?? null,
-                  sessionId: cfg.autoRecall.scopeFilter.sessionId ?? null,
-                }
-              : undefined;
 
           // FR-004: HOT tier — always inject first (cap by hotMaxTokens)
           let hotBlock = "";

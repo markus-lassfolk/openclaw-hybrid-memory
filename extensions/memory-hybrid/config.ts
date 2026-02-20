@@ -32,6 +32,14 @@ export type AutoClassifyConfig = {
 /** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index (agent fetches on demand), progressive_hybrid = pinned in full + rest as index */
 export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive" | "progressive_hybrid";
 
+/** Multi-agent memory scoping configuration (FR-006 + dynamic agent detection) */
+export type MultiAgentConfig = {
+  /** Agent ID of the orchestrator (main agent). Default: "main". This agent sees all scopes. */
+  orchestratorId: string;
+  /** Default storage scope for new facts. Options: "global" (backward compatible, default), "agent" (specialists auto-scope), "auto" (orchestrator→global, specialists→agent). */
+  defaultStoreScope: "global" | "agent" | "auto";
+};
+
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
   enabled: boolean;
@@ -252,6 +260,8 @@ export type HybridMemoryConfig = {
   search?: SearchConfig;
   /** Optional: self-correction analysis (issue #34) — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
   selfCorrection?: SelfCorrectionConfig;
+  /** Multi-agent memory scoping — dynamic agent detection and scope defaults (default: orchestratorId="main", defaultStoreScope="global") */
+  multiAgent: MultiAgentConfig;
 };
 
 /** Self-correction pipeline (issue #34): semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
@@ -711,6 +721,20 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
+    // Parse multi-agent config (FR-006 + dynamic agent detection)
+    const multiAgentRaw = cfg.multiAgent as Record<string, unknown> | undefined;
+    const multiAgent: MultiAgentConfig = {
+      orchestratorId: 
+        typeof multiAgentRaw?.orchestratorId === "string" && multiAgentRaw.orchestratorId.trim().length > 0
+          ? multiAgentRaw.orchestratorId.trim()
+          : "main",
+      defaultStoreScope: (() => {
+        const scope = multiAgentRaw?.defaultStoreScope;
+        if (scope === "agent" || scope === "auto") return scope;
+        return "global"; // backward compatible default
+      })(),
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -739,6 +763,7 @@ export const hybridConfigSchema = {
       ingest,
       search,
       selfCorrection,
+      multiAgent,
     };
   },
 };
