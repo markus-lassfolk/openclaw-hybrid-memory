@@ -707,7 +707,7 @@ export const hybridConfigSchema = {
     const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
 
     let credentials: CredentialsConfig;
-    if (shouldEnable && hasValidKey) {
+    if (shouldEnable) {
       const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
       const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
         ? {
@@ -719,27 +719,7 @@ export const hybridConfigSchema = {
       credentials = {
         enabled: true,
         store: "sqlite",
-        encryptionKey,
-        autoDetect: credRaw?.autoDetect === true,
-        autoCapture,
-        expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
-          ? Math.floor(credRaw.expiryWarningDays)
-          : 7,
-      };
-    } else if (shouldEnable && !hasValidKey) {
-      // Memory-only mode: capture (autoDetect, autoCapture) enabled, vault disabled (no encryption key).
-      const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
-      const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
-        ? {
-            toolCalls: autoCaptureRaw.toolCalls === true,
-            patterns: "builtin",
-            logCaptures: autoCaptureRaw.logCaptures !== false,
-          }
-        : undefined;
-      credentials = {
-        enabled: true,
-        store: "sqlite",
-        encryptionKey: "",
+        encryptionKey: hasValidKey ? encryptionKey : "",
         autoDetect: credRaw?.autoDetect === true,
         autoCapture,
         expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
@@ -1017,7 +997,7 @@ export const hybridConfigSchema = {
       selfCorrection,
       multiAgent,
       errorReporting,
-      mode: appliedMode !== undefined && hasPresetOverrides ? undefined : appliedMode,
+      mode: appliedMode !== undefined && hasPresetOverrides ? "custom" : appliedMode,
     };
   },
 };
