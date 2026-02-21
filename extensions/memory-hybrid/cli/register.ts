@@ -11,6 +11,7 @@ import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { ensureCronJobs } from "./cron-jobs.js";
 
 export type FindDuplicatesResult = {
   pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }>;
@@ -901,7 +902,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         return;
       }
       console.log("Config written: " + result.configPath);
-      console.log(`Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify. Add cron jobs via 'openclaw cron add' if needed (see docs/SESSION-DISTILLATION.md).`);
+      console.log(`Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify.`);
+
+      const cronResult = ensureCronJobs("install");
+      if (cronResult.created.length > 0) {
+        console.log(`\nCron jobs created: ${cronResult.created.join(", ")}`);
+      }
+
       console.log("\nNext steps:");
       console.log(`  1. Set embedding.apiKey in plugins.entries["${result.pluginId}"].config (or use env:OPENAI_API_KEY in config).`);
       console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
@@ -918,6 +925,16 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         { fix: !!opts.fix, logFile: opts.logFile },
         { log: (s) => console.log(s), error: (s) => console.error(s) },
       );
+
+      if (opts.fix) {
+        const cronResult = ensureCronJobs("fix");
+        if (cronResult.created.length > 0) {
+          console.log(`Created missing cron jobs: ${cronResult.created.join(", ")}`);
+        }
+        if (cronResult.reEnabled.length > 0) {
+          console.log(`Re-enabled cron jobs: ${cronResult.reEnabled.join(", ")}`);
+        }
+      }
     }));
 
   (() => {

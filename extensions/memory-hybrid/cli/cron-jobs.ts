@@ -3,6 +3,10 @@
  * These jobs are created during install and can be restored via verify --fix.
  */
 
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+
 export type CronSchedule = { kind: "cron"; expr: string };
 
 export interface PluginCronJob {
@@ -48,3 +52,77 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     featureGate: null,
   },
 ];
+
+function getCronJobsPath(): string {
+  return join(homedir(), ".openclaw", "cron", "jobs.json");
+}
+
+interface CronJobEntry {
+  pluginJobId?: string;
+  name?: string;
+  schedule?: CronSchedule;
+  command?: string;
+  enabled?: boolean;
+  featureGate?: string | null;
+  [key: string]: unknown;
+}
+
+function readCronJobs(): CronJobEntry[] {
+  const path = getCronJobsPath();
+  if (!existsSync(path)) return [];
+  try {
+    const data = JSON.parse(readFileSync(path, "utf-8"));
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCronJobs(jobs: CronJobEntry[]): void {
+  const path = getCronJobsPath();
+  const dir = join(homedir(), ".openclaw", "cron");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(jobs, null, 2) + "\n");
+}
+
+function findExisting(jobs: CronJobEntry[], pluginJob: PluginCronJob): CronJobEntry | undefined {
+  return jobs.find(j =>
+    j.pluginJobId === pluginJob.pluginJobId ||
+    j.name === pluginJob.name
+  );
+}
+
+/**
+ * Ensure plugin cron jobs exist.
+ * mode "install": create missing jobs (skip existing even if disabled — respect user choice)
+ * mode "fix": create missing jobs AND re-enable disabled plugin jobs
+ */
+export function ensureCronJobs(mode: "install" | "fix"): { created: string[]; reEnabled: string[] } {
+  const jobs = readCronJobs();
+  const created: string[] = [];
+  const reEnabled: string[] = [];
+
+  for (const pluginJob of PLUGIN_CRON_JOBS) {
+    const existing = findExisting(jobs, pluginJob);
+    if (!existing) {
+      jobs.push({
+        pluginJobId: pluginJob.pluginJobId,
+        name: pluginJob.name,
+        schedule: pluginJob.schedule,
+        command: pluginJob.command,
+        enabled: true,
+        featureGate: pluginJob.featureGate,
+      });
+      created.push(pluginJob.name);
+    } else if (mode === "fix" && existing.enabled === false && existing.pluginJobId?.startsWith("hybrid-mem:")) {
+      existing.enabled = true;
+      reEnabled.push(pluginJob.name);
+    }
+  }
+
+  if (created.length > 0 || reEnabled.length > 0) {
+    writeCronJobs(jobs);
+  }
+
+  return { created, reEnabled };
+}
