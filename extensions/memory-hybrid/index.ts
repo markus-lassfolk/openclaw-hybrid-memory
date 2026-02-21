@@ -1601,6 +1601,29 @@ let lastProgressiveIndexIds: string[] = [];
 let currentAgentId: string | null = null;
 
 /**
+ * Helper to build scope filter for tool handlers (memory_recall, memory_recall_procedures).
+ * Handles explicit parameters, agent-scoped filtering, and orchestrator fallback.
+ */
+function buildToolScopeFilter(
+  params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
+  currentAgent: string | null,
+  config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } }
+): ScopeFilter | undefined {
+  const { userId, agentId, sessionId } = params;
+  if (userId || agentId || sessionId) {
+    return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
+  } else if (currentAgent && currentAgent !== config.multiAgent.orchestratorId) {
+    return {
+      userId: config.autoRecall.scopeFilter?.userId ?? null,
+      agentId: currentAgent,
+      sessionId: config.autoRecall.scopeFilter?.sessionId ?? null
+    };
+  } else {
+    return undefined;
+  }
+}
+
+/**
  * WAL helpers — wrap the write-before-commit / remove-after-commit pattern.
  * Each call site was 8–12 lines of identical boilerplate; these reduce it to 1–2 lines.
  */
@@ -1909,21 +1932,7 @@ const memoryHybridPlugin = {
           // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
           // Accepting arbitrary scope filters allows users to access other users' private memories.
           // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
-          let scopeFilter: ScopeFilter | undefined;
-          if (userId || agentId || sessionId) {
-            // Explicit scope parameters provided - use them
-            scopeFilter = { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
-          } else if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
-            // No explicit params - merge agent scope with configured scopeFilter
-            scopeFilter = { 
-              userId: cfg.autoRecall.scopeFilter?.userId ?? null, 
-              agentId: currentAgentId, 
-              sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null 
-            };
-          } else {
-            // Orchestrator or no agent detected - see all memories
-            scopeFilter = undefined;
-          }
+          const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentId, cfg);
 
           // Fetch by id (fact id or 1-based index from last progressive index)
           if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -2196,22 +2205,8 @@ const memoryHybridPlugin = {
             }
             
             // Build scope filter (same logic as memory_recall)
-            let scopeFilter: ScopeFilter | undefined;
-            if (userId || agentId || sessionId) {
-              // Explicit scope parameters provided - use them
-              scopeFilter = { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
-            } else if (currentAgentId && currentAgentId !== cfg.multiAgent.orchestratorId) {
-              // No explicit params - merge agent scope with configured scopeFilter
-              scopeFilter = { 
-                userId: cfg.autoRecall.scopeFilter?.userId ?? null, 
-                agentId: currentAgentId, 
-                sessionId: cfg.autoRecall.scopeFilter?.sessionId ?? null 
-              };
-            } else {
-              // Orchestrator or no agent detected - see all procedures
-              scopeFilter = undefined;
-            }
-            
+            const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentId, cfg);
+
             const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost ?? 0.1, scopeFilter);
             const negatives = factsDb.getNegativeProceduresMatching(q, 3, scopeFilter);
             const lines: string[] = [];
@@ -2361,6 +2356,24 @@ const memoryHybridPlugin = {
           const key = paramKey || extracted.key;
           const value = paramValue || extracted.value;
 
+          // FR-006: Compute scope early so it's available for classify-before-write UPDATE path
+          const scope = paramScope ?? "global";
+          const scopeTarget =
+            scope === "global"
+              ? null
+              : (paramScopeTarget?.trim() ?? null);
+          if (scope !== "global" && !scopeTarget) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId).`,
+                },
+              ],
+              details: { error: "scope_target_required" },
+            };
+          }
+
           // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
           // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
           if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
@@ -2494,6 +2507,8 @@ const memoryHybridPlugin = {
                     tags,
                     validFrom: nowSec,
                     supersedesId: classification.targetId,
+                    scope,
+                    scopeTarget,
                   });
                   factsDb.supersede(classification.targetId, newEntry.id);
 
@@ -2532,7 +2547,7 @@ const memoryHybridPlugin = {
           }, api.logger);
 
           // Now commit to actual storage (optional supersedes for manual supersession; scope)
-          // Smart default scope based on agent identity and config
+          // Smart default scope based on agent identity and config (FR-006: scope for normal path; classify UPDATE path uses scope computed above)
           let scope: "global" | "user" | "agent" | "session";
           let scopeTarget: string | null;
           
@@ -3925,6 +3940,10 @@ const memoryHybridPlugin = {
             : undefined;
           const category = (opts.category ?? "other") as MemoryCategory;
 
+          // FR-006: Compute scope early so it's available for classify-before-write UPDATE path
+          const scope = opts.scope ?? "global";
+          const scopeTarget = scope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
+
           if (cfg.store.classifyBeforeWrite) {
             let vector: number[] | undefined;
             try {
@@ -3963,6 +3982,8 @@ const memoryHybridPlugin = {
                         tags: tags ?? extractTags(text, entity),
                         validFrom: sourceDate ?? nowSec,
                         supersedesId: classification.targetId,
+                        scope,
+                        scopeTarget,
                       });
                       factsDb.supersede(classification.targetId, newEntry.id);
                       try {
@@ -3982,8 +4003,7 @@ const memoryHybridPlugin = {
             }
           }
 
-          const scope = opts.scope ?? "global";
-          const scopeTarget = scope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
+          // FR-006: scope already computed above
           const supersedesId = opts.supersedes?.trim();
           const nowSec = supersedesId ? Math.floor(Date.now() / 1000) : undefined;
           const entry = factsDb.store({
@@ -6420,6 +6440,7 @@ const memoryHybridPlugin = {
               },
             };
           })(),
+          tieringEnabled: cfg.memoryTiering.enabled,
         });
 
       },
@@ -6447,15 +6468,14 @@ const memoryHybridPlugin = {
       const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
       
       // Detect current agent identity at runtime
-      const detectedAgentId = e.agentId || e.session?.agentId || currentAgentId;
+      // Detect current agent identity at runtime (do not use cached currentAgentId so warnings always fire when detection fails)
+      const detectedAgentId = e.agentId || e.session?.agentId;
       if (detectedAgentId) {
         currentAgentId = detectedAgentId;
       } else {
-        // Log when agent detection fails - fall back to orchestrator
+        // Issue #9: Log when agent detection fails - fall back to orchestrator or keep current
         api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
-        currentAgentId = cfg.multiAgent.orchestratorId;
-        
-        // Warn when we're in agent/auto mode but had to fall back
+        currentAgentId = currentAgentId || cfg.multiAgent.orchestratorId;
         if (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto") {
           api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
         }

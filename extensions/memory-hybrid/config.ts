@@ -249,9 +249,6 @@ export type ErrorReportingConfig = {
   sampleRate?: number;
 };
 
-/** Hardcoded DSN for community error reporting mode */
-export const COMMUNITY_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@villapolly.duckdns.org/1";
-
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
