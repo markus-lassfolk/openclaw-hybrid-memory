@@ -770,7 +770,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .option("--workspace <path>", "Workspace root for corrections report")
     .action(withExit(async (opts?: { workspace?: string }) => {
       // Check if running in non-interactive environment
-      if (process.stdin.isTTY === false) {
+      if (!process.stdin.isTTY) {
         console.error("Error: 'review' command requires an interactive terminal (TTY).");
         console.error("Use individual commands instead: 'proposals approve <id>', 'corrections approve --all', etc.");
         process.exitCode = 1;

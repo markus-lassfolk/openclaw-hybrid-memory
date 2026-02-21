@@ -1391,6 +1391,42 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
 /** Progress reporter for batch CLI commands (optional). */
 type ClassifyProgressReporter = { update: (current: number) => void; done: () => void };
 
+/** Progress bar when stdout is TTY; otherwise no-op (caller can use sink.log). */
+function createProgressReporter(
+  sink: { log: (s: string) => void },
+  total: number,
+  label: string,
+): { update: (current: number, extra?: string) => void; done: () => void } {
+  const isTTY = typeof process.stdout?.isTTY === "boolean" && process.stdout.isTTY;
+  const width = 40;
+  let lastLen = 0;
+  let lastPct = -1;
+  return {
+    update(current: number, extra?: string) {
+      if (total <= 0) return;
+      const pct = Math.min(100, Math.floor((current / total) * 100));
+      if (!isTTY) {
+        // Only log at milestones to avoid spam in non-TTY (25%, 50%, 75%, 100%)
+        if (pct === 100 || (pct >= 25 && pct !== lastPct && pct % 25 === 0)) {
+          sink.log(`${label}: ${pct}% (${current}/${total})${extra ? ` ${extra}` : ""}`);
+          lastPct = pct;
+        }
+        return;
+      }
+      const filled = Math.min(width, Math.round((current / total) * width));
+      const arrow = filled < width ? 1 : 0;
+      const dots = Math.max(0, width - filled - arrow);
+      const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
+      const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
+      process.stdout.write("\r" + line + " ".repeat(Math.max(0, lastLen - line.length)));
+      lastLen = line.length;
+    },
+    done() {
+      if (isTTY && lastLen > 0) process.stdout.write("\n");
+    },
+  };
+}
+
 /**
  * Run classify command: optional discovery, then batch classify with limit and dryRun.
  * Used by CLI; returns counts and optional breakdown for printing.
@@ -3939,7 +3975,7 @@ const memoryHybridPlugin = {
               [prefix + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
               [prefix + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
               [prefix + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-              [prefix + "monthly-consolidation"]: (j) => /monthly-consolidation|monthly|consolidation/i.test(String(j.name ?? "")),
+              [prefix + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
             };
             mkdirSync(cronDir, { recursive: true });
             let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] } : {};
@@ -4417,7 +4453,7 @@ const memoryHybridPlugin = {
                   [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
                   [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
                   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-                  [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation|monthly|consolidation/i.test(String(j.name ?? "")),
+                  [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
                 };
                 try {
                   mkdirSync(cronDir, { recursive: true });
@@ -4465,7 +4501,7 @@ const memoryHybridPlugin = {
                     [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
                     [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
                     [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-                    [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation|monthly|consolidation/i.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
                   };
                   for (const def of definedJobs) {
                     const id = def.pluginJobId as string;
@@ -4605,7 +4641,7 @@ const memoryHybridPlugin = {
         async function runExtractProceduresForCli(
           opts: { sessionDir?: string; days?: number; dryRun: boolean },
         ): Promise<ExtractProceduresResult> {
-          if (!cfg.procedures?.enabled) {
+          if (cfg.procedures?.enabled === false) {
             return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
           }
           const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
@@ -5252,42 +5288,6 @@ const memoryHybridPlugin = {
             } catch { /* skip malformed lines */ }
           }
           return parts.join("\n\n");
-        }
-
-        /** Progress bar when stdout is TTY; otherwise no-op (caller can use sink.log). */
-        function createProgressReporter(
-          sink: { log: (s: string) => void },
-          total: number,
-          label: string,
-        ): { update: (current: number, extra?: string) => void; done: () => void } {
-          const isTTY = typeof process.stdout?.isTTY === "boolean" && process.stdout.isTTY;
-          const width = 40;
-          let lastLen = 0;
-          let lastPct = -1;
-          return {
-            update(current: number, extra?: string) {
-              if (total <= 0) return;
-              const pct = Math.min(100, Math.floor((current / total) * 100));
-              if (!isTTY) {
-                // Only log at milestones to avoid spam in non-TTY (25%, 50%, 75%, 100%)
-                if (pct === 100 || (pct >= 25 && pct !== lastPct && pct % 25 === 0)) {
-                  sink.log(`${label}: ${pct}% (${current}/${total})${extra ? ` ${extra}` : ""}`);
-                  lastPct = pct;
-                }
-                return;
-              }
-              const filled = Math.min(width, Math.round((current / total) * width));
-              const arrow = filled < width ? 1 : 0;
-              const dots = Math.max(0, width - filled - arrow);
-              const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
-              const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
-              process.stdout.write("\r" + line + " ".repeat(Math.max(0, lastLen - line.length)));
-              lastLen = line.length;
-            },
-            done() {
-              if (isTTY && lastLen > 0) process.stdout.write("\n");
-            },
-          };
         }
 
         async function runDistillForCli(
@@ -6059,10 +6059,10 @@ const memoryHybridPlugin = {
             const memoryDir = dirname(resolvedSqlitePath);
             async function dirSizeAsync(p: string): Promise<number> {
               try {
-                // Try using du -sb for faster directory size calculation (Linux/macOS)
+                // Try using du -sk for faster directory size calculation (Linux/macOS)
                 const { execFile } = await import("node:child_process");
                 return await new Promise<number>((resolve) => {
-                  execFile("du", ["-sb", p], (error, stdout) => {
+                  execFile("du", ["-sk", p], (error, stdout) => {
                     if (error) {
                       // Fallback to statSync if du fails (e.g., on Windows)
                       try {
@@ -6074,7 +6074,7 @@ const memoryHybridPlugin = {
                       return;
                     }
                     const match = /^(\d+)/.exec(stdout.trim());
-                    resolve(match ? parseInt(match[1], 10) : 0);
+                    resolve(match ? parseInt(match[1], 10) * 1024 : 0);
                   });
                 });
               } catch {
