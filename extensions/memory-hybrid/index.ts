@@ -2703,19 +2703,12 @@ const memoryHybridPlugin = {
 
           if (memoryId) {
             // Support prefix matching: if the ID looks truncated (not a full UUID),
-            // try to find the full ID via SQLite text search
+            // try to find the full ID via direct prefix search
             let resolvedId = memoryId;
             if (memoryId.length < 36 && !memoryId.includes("-")) {
-              const candidates = factsDb.search(memoryId, 20);
-              const match = candidates.find(c => c.entry.id.startsWith(memoryId));
-              if (match) {
-                resolvedId = match.entry.id;
-              } else {
-                // Also try direct prefix search in SQLite
-                const prefixMatch = factsDb.findByIdPrefix(memoryId);
-                if (prefixMatch) {
-                  resolvedId = prefixMatch;
-                }
+              const prefixMatch = factsDb.findByIdPrefix(memoryId);
+              if (prefixMatch) {
+                resolvedId = prefixMatch;
               }
             }
 
