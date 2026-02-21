@@ -32,6 +32,7 @@ describe("Error Reporter", () => {
         {
           enabled: true,
           dsn: "https://fake@example.com/1",
+          mode: "self-hosted",
           consent: false, // NO CONSENT
           maxBreadcrumbs: 0,
           sampleRate: 1.0,
@@ -50,6 +51,7 @@ describe("Error Reporter", () => {
         {
           enabled: false, // DISABLED
           dsn: "https://fake@example.com/1",
+          mode: "self-hosted",
           consent: true,
           maxBreadcrumbs: 0,
           sampleRate: 1.0,
@@ -61,22 +63,57 @@ describe("Error Reporter", () => {
       expect(isErrorReporterActive()).toBe(false);
     });
 
-    it("should not initialize without DSN", async () => {
+    it("should not initialize self-hosted mode without DSN", async () => {
       const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
+      
+      const mockLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+      };
       
       await initErrorReporter(
         {
           enabled: true,
-          dsn: "", // NO DSN
+          mode: "self-hosted",
           consent: true,
           maxBreadcrumbs: 0,
           sampleRate: 1.0,
         },
-        "1.0.0"
+        "1.0.0",
+        mockLogger
       );
       
       // Should NOT be active
       expect(isErrorReporterActive()).toBe(false);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Self-hosted mode requires a DSN")
+      );
+    });
+
+    it("should use community DSN in community mode", async () => {
+      const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
+      
+      const mockLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+      };
+      
+      await initErrorReporter(
+        {
+          enabled: true,
+          mode: "community",
+          consent: true,
+          maxBreadcrumbs: 0,
+          sampleRate: 1.0,
+        },
+        "1.0.0",
+        mockLogger
+      );
+      
+      // Community mode should log that it's using community mode
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Using community mode")
+      );
     });
   });
 
