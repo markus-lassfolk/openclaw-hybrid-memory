@@ -178,6 +178,33 @@
       "label": "Expiry warning days",
       "help": "Warn when credentials expire within this many days (default 7)"
     },
+    "errorReporting.enabled": {
+      "label": "Error reporting enabled",
+      "help": "Send anonymous error reports to help developers prioritize bug fixes (default: false, opt-in)"
+    },
+    "errorReporting.consent": {
+      "label": "Error reporting consent",
+      "help": "Explicit user consent required for error reporting (default: false)"
+    },
+    "errorReporting.mode": {
+      "label": "Error reporting mode",
+      "help": "community (anonymous telemetry to developers) or self-hosted (your own Sentry/GlitchTip instance). Default: community"
+    },
+    "errorReporting.dsn": {
+      "label": "Error reporting DSN",
+      "sensitive": true,
+      "placeholder": "https://<key>@your-instance.example/1",
+      "help": "Custom DSN for self-hosted mode. Not needed for community mode."
+    },
+    "errorReporting.environment": {
+      "label": "Error reporting environment",
+      "placeholder": "production",
+      "help": "Environment tag for reported errors (default: production)"
+    },
+    "errorReporting.sampleRate": {
+      "label": "Error reporting sample rate",
+      "help": "Fraction of errors to report 0–1 (default: 1.0)"
+    },
     "wal.enabled": {
       "label": "Write-Ahead Log",
       "help": "Enable WAL for crash resilience - logs memory operations before committing (default: enabled)"
@@ -454,6 +481,20 @@
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
         "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
+      },
+      "errorReporting": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": false, "description": "Enable error reporting (default: false, opt-in)" },
+          "consent": { "type": "boolean", "default": false, "description": "Explicit user consent required (default: false)" },
+          "mode": { "type": "string", "enum": ["community", "self-hosted"], "default": "community", "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance." },
+          "dsn": { "type": "string", "description": "Custom DSN for self-hosted mode. Community mode uses built-in endpoint." },
+          "environment": { "type": "string", "default": "production", "description": "Environment tag (default: production)" },
+          "sampleRate": { "type": "number", "minimum": 0, "maximum": 1, "default": 1.0, "description": "Sample rate 0–1 (default: 1.0)" }
+        },
+        "required": ["enabled", "consent"],
+        "description": "Opt-in error reporting to GlitchTip/Sentry. See docs/ERROR-REPORTING.md."
       },
       "distill": {
         "type": "object",

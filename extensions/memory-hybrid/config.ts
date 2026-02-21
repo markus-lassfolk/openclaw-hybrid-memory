@@ -240,11 +240,17 @@ export type CredentialsConfig = {
 /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
 export type ErrorReportingConfig = {
   enabled: boolean;
-  dsn: string;
+  /** DSN for self-hosted mode. Not required in schema (only at runtime for self-hosted). */
+  dsn?: string;
   consent: boolean;
+  /** "community" (default): use hardcoded community DSN. "self-hosted": require custom DSN. */
+  mode: "community" | "self-hosted";
   environment?: string;
   sampleRate?: number;
 };
+
+/** Hardcoded DSN for community error reporting mode */
+export const COMMUNITY_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@villapolly.duckdns.org/1";
 
 export type HybridMemoryConfig = {
   embedding: {
@@ -995,29 +1001,35 @@ export const hybridConfigSchema = {
     const errorReporting: ErrorReportingConfig | undefined =
       errorReportingRaw && typeof errorReportingRaw === "object"
         ? (() => {
-            const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn : "";
             const enabled = errorReportingRaw.enabled === true;
+            const consent = errorReportingRaw.consent === true;
+            const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
+            const modeRaw = typeof errorReportingRaw.mode === "string" ? errorReportingRaw.mode : "community";
+            const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
             
-            // Validate DSN when enabled: reject placeholders
-            if (enabled && dsnRaw) {
+            // Validate DSN when enabled in self-hosted mode
+            if (enabled && mode === "self-hosted") {
+              if (!dsnRaw) {
+                throw new Error(
+                  'errorReporting mode is "self-hosted" but dsn is empty or missing. ' +
+                  'Provide a valid DSN or switch to mode: "community".'
+                );
+              }
+              // Reject placeholders
               const placeholderPatterns = /<key>|<host>|<project-id>|YOUR_DSN|PLACEHOLDER/i;
               if (placeholderPatterns.test(dsnRaw)) {
                 throw new Error(
                   'errorReporting.dsn contains placeholder values. ' +
-                  'Replace <key>, <host>, <project-id> with actual values, or set enabled: false.'
+                  'Replace <key>, <host>, <project-id> with actual values, or use mode: "community".'
                 );
               }
             }
             
-            // If enabled=true but DSN is empty, throw error
-            if (enabled && !dsnRaw) {
-              throw new Error('errorReporting.enabled is true but dsn is empty or missing.');
-            }
-            
             return {
               enabled,
-              dsn: dsnRaw,
-              consent: errorReportingRaw.consent === true,
+              consent,
+              mode,
+              dsn: dsnRaw || undefined,
               environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
               sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
                 ? errorReportingRaw.sampleRate

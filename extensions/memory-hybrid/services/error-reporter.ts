@@ -14,12 +14,18 @@ import type * as SentryType from "@sentry/node";
 
 export interface ErrorReporterConfig {
   enabled: boolean;
-  dsn: string;        // Sentry/GlitchTip DSN
+  /** DSN for self-hosted mode. Community mode uses COMMUNITY_DSN constant. */
+  dsn?: string;
+  /** "community" (default): use hardcoded community DSN. "self-hosted": require custom DSN from config. */
+  mode: "community" | "self-hosted";
   environment?: string; // "production" | "development"
   maxBreadcrumbs: number; // PRIVACY: Always passed as 0 (breadcrumbs can contain user prompts). Not user-configurable.
   sampleRate: number;  // 0.0-1.0, default 1.0
   consent: boolean;    // explicit opt-in required
 }
+
+/** Hardcoded DSN for community error reporting (anonymous telemetry) */
+const COMMUNITY_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@villapolly.duckdns.org/1";
 
 let Sentry: typeof SentryType | null = null;
 let initialized = false;
@@ -37,10 +43,25 @@ export async function initErrorReporter(
     logger = loggerInstance;
   }
   
-  if (!config.enabled || !config.consent || !config.dsn) {
-    logger.info?.('[ErrorReporter] Disabled: enabled=%s, consent=%s, dsn=%s',
-      config.enabled, config.consent, !!config.dsn);
+  if (!config.enabled || !config.consent) {
+    logger.info?.('[ErrorReporter] Disabled: enabled=%s, consent=%s',
+      config.enabled, config.consent);
     return;
+  }
+
+  // Resolve DSN based on mode
+  let resolvedDsn: string;
+  if (config.mode === "community") {
+    resolvedDsn = COMMUNITY_DSN;
+    logger.info?.('[ErrorReporter] Using community mode (anonymous telemetry)');
+  } else {
+    // self-hosted mode
+    if (!config.dsn) {
+      logger.warn?.('[ErrorReporter] Self-hosted mode requires a DSN but none was provided. Error reporting disabled.');
+      return;
+    }
+    resolvedDsn = config.dsn;
+    logger.info?.('[ErrorReporter] Using self-hosted mode');
   }
 
   // Lazy-load @sentry/node (optional peer dependency)
@@ -55,7 +76,7 @@ export async function initErrorReporter(
   if (!Sentry) return;
 
   Sentry.init({
-    dsn: config.dsn,
+    dsn: resolvedDsn,
     release: `openclaw-hybrid-memory@${pluginVersion}`,
     environment: config.environment || "production",
     sampleRate: config.sampleRate ?? 1.0,
@@ -72,7 +93,7 @@ export async function initErrorReporter(
   });
 
   initialized = true;
-  const dsnHost = config.dsn.split('@')[1] || '***';
+  const dsnHost = resolvedDsn.split('@')[1] || '***';
   logger.info?.('[ErrorReporter] Initialized with DSN host:', dsnHost);
 }
 
