@@ -260,8 +260,8 @@ export function capturePluginError(error: Error, context: {
   }
   errorDedup.set(fingerprint, now);
 
-  // Prevent memory leak: prune entries older than 60s (cap check every 50 entries)
-  if (errorDedup.size > 50) {
+  // Prevent memory leak: prune stale entries every 10 new entries
+  if (errorDedup.size % 10 === 0) {
     for (const [key, ts] of errorDedup) {
       if (now - ts > 60000) errorDedup.delete(key);
     }

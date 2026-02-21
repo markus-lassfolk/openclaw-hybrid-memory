@@ -2758,6 +2758,12 @@ const memoryHybridPlugin = {
             try {
               lanceDeleted = await vectorDb.delete(memoryId);
             } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "vector",
+                operation: "forget-delete",
+                phase: "runtime",
+                backend: "lancedb",
+              });
               api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
             }
 
@@ -2799,6 +2805,12 @@ const memoryHybridPlugin = {
               try {
                 await vectorDb.delete(id);
               } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  subsystem: "vector",
+                  operation: "forget-supersede-delete",
+                  phase: "runtime",
+                  backend: "lancedb",
+                });
                 api.logger.warn(`memory-hybrid: LanceDB delete during supersede failed: ${err}`);
               }
               return {
@@ -2975,7 +2987,17 @@ const memoryHybridPlugin = {
               expires?: number | null;
             };
             if (!credentialsDb) throw new Error("Credentials store not available");
-            credentialsDb.store({ service, type, value, url, notes, expires });
+            try {
+              credentialsDb.store({ service, type, value, url, notes, expires });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-store",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             return {
               content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
               details: { service, type },
@@ -2998,7 +3020,18 @@ const memoryHybridPlugin = {
           async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { service, type } = params as { service: string; type?: CredentialType };
             if (!credentialsDb) throw new Error("Credentials store not available");
-            const entry = credentialsDb.get(service, type);
+            let entry;
+            try {
+              entry = credentialsDb.get(service, type);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-get",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             if (!entry) {
               return {
                 content: [{ type: "text", text: `No credential found for service "${service}"${type ? ` (type: ${type})` : ""}.` }],
@@ -3040,7 +3073,18 @@ const memoryHybridPlugin = {
           parameters: Type.Object({}),
           async execute() {
             if (!credentialsDb) throw new Error("Credentials store not available");
-            const items = credentialsDb.list();
+            let items;
+            try {
+              items = credentialsDb.list();
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-list",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             if (items.length === 0) {
               return {
                 content: [{ type: "text", text: "No credentials stored." }],
@@ -3071,7 +3115,18 @@ const memoryHybridPlugin = {
           async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { service, type } = params as { service: string; type?: CredentialType };
             if (!credentialsDb) throw new Error("Credentials store not available");
-            const deleted = credentialsDb.delete(service, type);
+            let deleted;
+            try {
+              deleted = credentialsDb.delete(service, type);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-delete",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             if (!deleted) {
               return {
                 content: [{ type: "text", text: `No credential found for "${service}"${type ? ` (type: ${type})` : ""}.` }],
