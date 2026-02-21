@@ -2702,22 +2702,51 @@ const memoryHybridPlugin = {
           };
 
           if (memoryId) {
-            const sqlDeleted = factsDb.delete(memoryId);
+            // Support prefix matching: if the ID looks truncated (not a full UUID),
+            // try to find the full ID via SQLite text search
+            let resolvedId = memoryId;
+            if (memoryId.length < 36 && !memoryId.includes("-")) {
+              const candidates = factsDb.search(memoryId, 20);
+              const match = candidates.find(c => c.entry.id.startsWith(memoryId));
+              if (match) {
+                resolvedId = match.entry.id;
+              } else {
+                // Also try direct prefix search in SQLite
+                const prefixMatch = factsDb.findByIdPrefix(memoryId);
+                if (prefixMatch) {
+                  resolvedId = prefixMatch;
+                }
+              }
+            }
+
+            const sqlDeleted = factsDb.delete(resolvedId);
             let lanceDeleted = false;
             try {
-              lanceDeleted = await vectorDb.delete(memoryId);
+              lanceDeleted = await vectorDb.delete(resolvedId);
             } catch (err) {
               api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
+            }
+
+            if (!sqlDeleted && !lanceDeleted) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to delete memory "${memoryId}" — not found in either backend. Use the full UUID from memory_recall.`,
+                  },
+                ],
+                details: { action: "not_found", id: memoryId, resolvedId },
+              };
             }
 
             return {
               content: [
                 {
                   type: "text",
-                  text: `Memory ${memoryId} forgotten (sqlite: ${sqlDeleted}, lance: ${lanceDeleted}).`,
+                  text: `Memory ${resolvedId} forgotten (sqlite: ${sqlDeleted}, lance: ${lanceDeleted}).`,
                 },
               ],
-              details: { action: "deleted", id: memoryId },
+              details: { action: "deleted", id: resolvedId },
             };
           }
 
@@ -2764,7 +2793,7 @@ const memoryHybridPlugin = {
             const list = results
               .map(
                 (r) =>
-                  `- [${r.entry.id.slice(0, 8)}] (${r.backend}) ${r.entry.text.slice(0, 60)}...`,
+                  `- [${r.entry.id}] (${r.backend}) ${r.entry.text.slice(0, 80)}`,
               )
               .join("\n");
 
