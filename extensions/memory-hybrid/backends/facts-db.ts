@@ -993,6 +993,32 @@ export class FactsDB {
     return results;
   }
 
+  /** Find a fact ID by prefix (for truncated ID resolution).
+   * Returns { id } for unique match, { ambiguous, count } for multiple, or null for no match.
+   * Requires at least 4 hex chars to prevent full-table scans and reduce ambiguity. */
+  findByIdPrefix(prefix: string): { id: string } | { ambiguous: true; count: number } | null {
+    if (!prefix || prefix.length < 4) return null;
+    // Only allow hex characters (UUIDs are hex + dashes, but truncated prefixes are hex-only)
+    if (!/^[0-9a-f]+$/i.test(prefix)) return null;
+    // Insert dashes at UUID positions to match stored format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    let pattern = prefix.toLowerCase();
+    if (prefix.length > 8 && !prefix.includes("-")) {
+      const parts: string[] = [];
+      parts.push(pattern.slice(0, 8));
+      if (pattern.length > 8) parts.push(pattern.slice(8, 12));
+      if (pattern.length > 12) parts.push(pattern.slice(12, 16));
+      if (pattern.length > 16) parts.push(pattern.slice(16, 20));
+      if (pattern.length > 20) parts.push(pattern.slice(20));
+      pattern = parts.join("-");
+    }
+    const rows = this.liveDb.prepare(
+      `SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 3`
+    ).all(pattern) as Array<{ id: string }>;
+    if (rows.length === 0) return null;
+    if (rows.length === 1) return { id: rows[0].id };
+    return { ambiguous: true, count: rows.length >= 3 ? 3 : rows.length };
+  }
+
   delete(id: string): boolean {
     const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
