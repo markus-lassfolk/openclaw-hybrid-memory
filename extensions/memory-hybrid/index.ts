@@ -133,6 +133,7 @@ import { registerUtilityTools } from "./tools/utility-tools.js";
 import { createLifecycleHooks, type LifecycleContext } from "./lifecycle/hooks.js";
 import { registerProposalsCli, type ProposalsCliContext } from "./cli/proposals.js";
 import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
+import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.js";
 
 // ============================================================================
 // Backend Imports (extracted from god file for maintainability)
@@ -250,164 +251,27 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    if (typeof factsDb?.close === "function") {
-      try {
-        factsDb.close();
-      } catch {
-        // ignore
-      }
-    }
-    if (typeof vectorDb?.close === "function") {
-      try {
-        vectorDb.close();
-      } catch {
-        // ignore
-      }
-    }
-    if (credentialsDb) {
-      try {
-        credentialsDb.close();
-      } catch {
-        // ignore
-      }
-      credentialsDb = null;
-    }
-    if (proposalsDb) {
-      try {
-        proposalsDb.close();
-      } catch {
-        // ignore
-      }
-      proposalsDb = null;
-    }
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb });
+    credentialsDb = null;
+    proposalsDb = null;
 
     cfg = hybridConfigSchema.parse(api.pluginConfig);
-    resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
-    resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
-    setKeywordsPath(dirname(resolvedSqlitePath));
-    const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
-    factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
-    vectorDb = new VectorDB(resolvedLancePath, vectorDim);
-    vectorDb.setLogger(api.logger);
-    embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
-    openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
-
-    if (cfg.credentials.enabled) {
-      const credPath = join(dirname(resolvedSqlitePath), "credentials.db");
-      credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey ?? "");
-      const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-      api.logger.info(
-        encrypted
-          ? `memory-hybrid: credentials vault enabled (encrypted) (${credPath})`
-          : `memory-hybrid: credentials vault enabled (plaintext; secure by other means) (${credPath})`
-      );
-    } else {
-      credentialsDb = null;
-    }
-
-    // Initialize Write-Ahead Log for crash resilience
-    if (cfg.wal.enabled) {
-      const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
-      wal = new WriteAheadLog(walPath, cfg.wal.maxAge);
-      api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
-    } else {
-      wal = null;
-    }
-
-    if (cfg.personaProposals.enabled) {
-      const proposalsPath = join(dirname(resolvedSqlitePath), "proposals.db");
-      proposalsDb = new ProposalsDB(proposalsPath);
-      api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
-    } else {
-      proposalsDb = null;
-    }
-
-    // Load previously discovered categories so they remain available after restart
-    const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
-    if (existsSync(discoveredPath)) {
-      try {
-        const loaded = JSON.parse(readFileSync(discoveredPath, "utf-8")) as string[];
-        if (Array.isArray(loaded) && loaded.length > 0) {
-          setMemoryCategories([...getMemoryCategories(), ...loaded]);
-          api.logger.info(`memory-hybrid: loaded ${loaded.length} discovered categories`);
-        }
-      } catch {
-        // ignore invalid or missing file
-      }
-    }
+    // Initialize all databases and services
+    const dbContext = initializeDatabases(cfg, api);
+    factsDb = dbContext.factsDb;
+    vectorDb = dbContext.vectorDb;
+    embeddings = dbContext.embeddings;
+    openai = dbContext.openai;
+    credentialsDb = dbContext.credentialsDb;
+    wal = dbContext.wal;
+    proposalsDb = dbContext.proposalsDb;
+    resolvedLancePath = dbContext.resolvedLancePath;
+    resolvedSqlitePath = dbContext.resolvedSqlitePath;
 
     api.logger.info(
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
     );
-
-    // Prerequisite checks (async, non-blocking): verify keys and model access so user gets clear errors
-    void (async () => {
-      try {
-        await embeddings.embed("verify");
-        api.logger.info("memory-hybrid: embedding API check OK");
-      } catch (e) {
-        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-          subsystem: "embeddings",
-          operation: "init-verify",
-          phase: "initialization",
-          backend: "openai",
-        });
-        api.logger.error(
-          `memory-hybrid: Embedding API check failed — ${String(e)}. ` +
-            "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.",
-        );
-      }
-      if (cfg.credentials.enabled && credentialsDb) {
-        try {
-          const items = credentialsDb.list();
-          if (items.length > 0) {
-            const first = items[0];
-            credentialsDb.get(first.service, first.type as CredentialType);
-          }
-          api.logger.info("memory-hybrid: credentials vault check OK");
-        } catch (e) {
-          capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-            subsystem: "credentials",
-            operation: "vault-verify",
-            phase: "initialization",
-            backend: "sqlite",
-          });
-          api.logger.error(
-            `memory-hybrid: Credentials vault check failed — ${String(e)}. ` +
-              "Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.",
-          );
-        }
-        // When vault is enabled: once per install, move existing credential facts into vault and redact from memory
-        const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
-        if (!existsSync(migrationFlagPath)) {
-          try {
-            const result = await migrateCredentialsToVault({
-              factsDb,
-              vectorDb,
-              embeddings,
-              credentialsDb,
-              migrationFlagPath,
-              markDone: true,
-            });
-            if (result.migrated > 0) {
-              api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
-            }
-            if (result.errors.length > 0) {
-              api.logger.warn(`memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`);
-            }
-          } catch (e) {
-            capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-              subsystem: "credentials",
-              operation: "migration-to-vault",
-              phase: "initialization",
-              backend: "sqlite",
-            });
-            api.logger.warn(`memory-hybrid: credential migration failed: ${e}`);
-          }
-        }
-      }
-    })();
 
     // ========================================================================
     // Tools
