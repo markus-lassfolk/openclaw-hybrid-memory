@@ -2356,9 +2356,9 @@ const memoryHybridPlugin = {
           const key = paramKey || extracted.key;
           const value = paramValue || extracted.value;
 
-          // FR-006: Compute scope early so it's available for classify-before-write UPDATE path
-          const scope = paramScope ?? "global";
-          const scopeTarget =
+          // FR-006: Compute scope early so it's available for classify-before-write UPDATE path; normal path may overwrite with multiAgent logic below
+          let scope: "global" | "user" | "agent" | "session" = paramScope ?? "global";
+          let scopeTarget: string | null =
             scope === "global"
               ? null
               : (paramScopeTarget?.trim() ?? null);
@@ -2547,10 +2547,7 @@ const memoryHybridPlugin = {
           }, api.logger);
 
           // Now commit to actual storage (optional supersedes for manual supersession; scope)
-          // Smart default scope based on agent identity and config (FR-006: scope for normal path; classify UPDATE path uses scope computed above)
-          let scope: "global" | "user" | "agent" | "session";
-          let scopeTarget: string | null;
-          
+          // Smart default scope based on agent identity and config (FR-006: overwrite for normal path when not explicit)
           if (paramScope) {
             // Explicit scope parameter always takes precedence
             scope = paramScope;
