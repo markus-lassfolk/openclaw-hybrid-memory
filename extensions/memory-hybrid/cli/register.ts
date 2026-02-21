@@ -184,6 +184,14 @@ export type HybridMemCliContext = {
   }) => Promise<SelfCorrectionRunResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  /** Export memory to vanilla OpenClaw–compatible MEMORY.md + memory/ directory layout. */
+  runExport: (opts: {
+    outputPath: string;
+    excludeCredentials?: boolean;
+    includeCredentials?: boolean;
+    sources?: string[];
+    mode?: "replace" | "additive";
+  }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
   /** Optional: used by stats for rich output (credentials, proposals, WAL, last run timestamps, storage sizes). */
   richStatsExtras?: {
     getCredentialsCount: () => number;
@@ -255,6 +263,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runBuildLanguageKeywords,
     runExtractDirectives,
     runExtractReinforcement,
+    runExport,
     listCommands,
   } = ctx;
 
@@ -1160,6 +1169,34 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           `\nIngest done: ${result.stored} stored, ${result.skipped} skipped (${result.extracted} extracted from ${result.files} files)`,
         );
       }
+    }));
+
+  mem
+    .command("export")
+    .description("Export memory to vanilla OpenClaw–compatible MEMORY.md + memory/**/*.md layout. Plain markdown, one file per fact.")
+    .requiredOption("--output <path>", "Output directory (created if missing)")
+    .option("--include-credentials", "Include credential pointer facts (default: exclude)")
+    .option("--source <sources>", "Filter by fact source: comma-separated (e.g. conversation,cli,distillation,ingest,reflection). Omit for all.")
+    .option("--mode <mode>", "replace = clear output first; additive = add/overwrite (default: replace)", "replace")
+    .action(withExit(async (opts: { output: string; includeCredentials?: boolean; source?: string; mode?: string }) => {
+      const outputPath = opts.output.trim();
+      const sources = opts.source ? opts.source.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      const mode = opts.mode === "additive" ? "additive" : "replace";
+      if (!runExport) {
+        console.error("Export not available.");
+        process.exitCode = 1;
+        return;
+      }
+      const result = await runExport({
+        outputPath,
+        excludeCredentials: !opts.includeCredentials,
+        includeCredentials: !!opts.includeCredentials,
+        sources,
+        mode,
+      });
+      console.log(
+        `Export done: ${result.factsExported} facts, ${result.proceduresExported} procedures → ${result.filesWritten} files in ${result.outputPath}`,
+      );
     }));
 
   mem

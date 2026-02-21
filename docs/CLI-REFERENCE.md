@@ -48,6 +48,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar (e.g. `Distilling sessions: 45% [=====>...] 12/27`). `--model M` picks the LLM (e.g. `gemini-2.0-flash` for Gemini; config `distill.defaultModel` used when omitted). Gemini uses larger batches (500k tokens). Oversized sessions chunked with 10% overlap. |
 | `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
+| `export --output <path> [--include-credentials] [--source X,Y,Z] [--mode replace\|additive]` | Export memory to vanilla OpenClaw–compatible `MEMORY.md` + `memory/` directory layout. Plain markdown, one file per fact. Default: exclude credentials, replace mode. Filter by fact source (e.g. conversation, distillation, cli, ingest, reflection). |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
 | `record-distill` | Record that session distillation was run (timestamp for `verify`). |
 | `extract-procedures [--dir path] [--days N] [--dry-run]` | Extract tool-call procedures from session JSONL; store positive/negative procedures. |
@@ -58,6 +59,26 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `scope prune-session <session-id>` | Delete session-scoped memories for a given session (cleared on session end). |
 | `scope promote --id <fact-id> --scope global or agent [--scope-target <target>]` | Promote a session-scoped memory to global or agent scope (persists after session end). |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
+
+---
+
+## Export
+
+```
+openclaw hybrid-mem export --output <path> [--include-credentials] [--source <sources>] [--mode replace|additive]
+```
+
+Export all memory (facts + procedures) to a vanilla OpenClaw–compatible layout: `MEMORY.md` root index + `memory/<category>/` markdown files. Plain markdown, one file per fact; compatible with memorySearch and memory-core. Use for inspection, backup, or copying to another bot.
+
+| Option | Description |
+|--------|-------------|
+| `--output <path>` | Output directory (created if missing). **Required.** |
+| `--include-credentials` | Include credential pointer facts (default: exclude). Never exports actual secrets. |
+| `--source <sources>` | Filter by fact source: comma-separated (e.g. `conversation,cli,distillation,ingest,reflection`). Omit for all. |
+| `--mode replace` | Clear output directory first, then write (default). |
+| `--mode additive` | Add/overwrite; do not clear. Existing files overwritten on conflict. |
+
+**Layout:** `MEMORY.md`, `manifest.json`, `memory/<category>/<tag>/<slug>-<id>.md` (one file per fact). Re-import via `openclaw hybrid-mem backfill --workspace <path>` or copy into a vanilla workspace.
 
 ---
 
