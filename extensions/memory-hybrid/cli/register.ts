@@ -358,8 +358,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log(` Links: ${links.toLocaleString()} connections`);
         console.log("");
         console.log("Operational:");
-        const vaultEnabled = cfg.credentials?.vaultEnabled !== false && Boolean(cfg.credentials?.encryptionKey);
-        console.log(` Credentials: ${credentialsCount} captured (vault: ${vaultEnabled ? "enabled" : "disabled"})`);
+        const vaultEnabled = cfg.credentials?.enabled === true;
+        const vaultEncrypted = (cfg.credentials?.encryptionKey?.length ?? 0) >= 16;
+        console.log(` Credentials: ${credentialsCount} captured (vault: ${vaultEnabled ? (vaultEncrypted ? "enabled, encrypted" : "enabled, plaintext") : "disabled"})`);
         if (proposalsPending > 0) console.log(` Proposals: ${proposalsPending} pending`);
         if (lastRun.distill) console.log(` Last distill: ${lastRun.distill.trim()}`);
         if (lastRun.reflect) console.log(` Last reflect: ${lastRun.reflect.trim()}`);
@@ -1426,7 +1427,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .action(withExit(async () => {
       const result = await runMigrateToVault();
       if (result === null) {
-        console.error("Credentials vault is disabled. Enable it in plugin config (credentials.encryptionKey) and restart.");
+        console.error("Credentials vault is disabled. Enable it in plugin config (credentials.enabled) and restart.");
         return;
       }
       console.log(`Migrated: ${result.migrated}, skipped: ${result.skipped}`);

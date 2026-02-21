@@ -752,7 +752,7 @@ export const hybridConfigSchema = {
       };
     }
 
-    // Parse credentials config (opt-in). Enable automatically when a valid encryption key is set.
+    // Parse credentials config (opt-in). Vault works with or without encryption; encryption is a user choice.
     const credRaw = cfg.credentials as Record<string, unknown> | undefined;
     const explicitlyDisabled = credRaw?.enabled === false;
     const encKeyRaw = typeof credRaw?.encryptionKey === "string" ? credRaw.encryptionKey : "";
@@ -760,48 +760,30 @@ export const hybridConfigSchema = {
     if (encKeyRaw.startsWith("env:")) {
       const envVar = encKeyRaw.slice(4).trim();
       const val = process.env[envVar];
-      if (val) {
+      if (val && val.length >= 16) {
         encryptionKey = val;
-      } else if (credRaw?.enabled === true) {
-        throw new Error(`Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or use memory-only (omit credentials.encryptionKey). Run 'openclaw hybrid-mem verify --fix' for help.`);
+      } else if (encKeyRaw.length > 0 && credRaw?.enabled === true) {
+        // User set env:VAR for encryption but it's missing or too short → fail (they asked for encryption).
+        throw new Error(`Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or omit credentials.encryptionKey for an unencrypted vault. Run 'openclaw hybrid-mem verify --fix' for help.`);
       }
     } else if (encKeyRaw.length >= 16) {
       encryptionKey = encKeyRaw;
+    } else if (encKeyRaw.length > 0) {
+      // User set a short encryption key → fail (they asked for encryption).
+      throw new Error(
+        "credentials.encryptionKey must be at least 16 characters (or use env:VAR). Omit it for an unencrypted vault. Run 'openclaw hybrid-mem verify --fix' for help.",
+      );
     }
     const hasValidKey = encryptionKey.length >= 16;
     const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
 
     let credentials: CredentialsConfig;
-    if (shouldEnable && hasValidKey) {
+    if (shouldEnable) {
       const opts = parseCredentialOptions(credRaw);
       credentials = {
         enabled: true,
         store: "sqlite",
-        encryptionKey,
-        ...opts,
-      };
-    } else if (shouldEnable && !hasValidKey) {
-      // User explicitly set an encryption key but it's invalid or unresolved → fail fast (no silent fallback to unencrypted).
-      if (encKeyRaw.startsWith("env:")) {
-        const envVar = encKeyRaw.slice(4).trim();
-        throw new Error(
-          `Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or use memory-only (omit credentials.encryptionKey). Run 'openclaw hybrid-mem verify --fix' for help.`,
-        );
-      }
-      if (encKeyRaw.length > 0) {
-        throw new Error(
-          "credentials.encryptionKey must be at least 16 characters (or use env:VAR). Run 'openclaw hybrid-mem verify --fix' for help.",
-        );
-      }
-      // Memory-only mode: user enabled credentials but did not set encryptionKey; capture only, stored in memory.
-      if (credRaw?.enabled === true) {
-        console.warn("⚠️  credentials.enabled but encryptionKey is missing or too short — running in capture-only mode (no persistent vault)");
-      }
-      const opts = parseCredentialOptions(credRaw);
-      credentials = {
-        enabled: true,
-        store: "sqlite",
-        encryptionKey: "",
+        encryptionKey: hasValidKey ? encryptionKey : "",
         ...opts,
       };
     } else {
