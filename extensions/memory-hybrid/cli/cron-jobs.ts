@@ -30,7 +30,7 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     pluginJobId: "hybrid-mem:weekly-deep-maintenance",
     name: "Weekly Deep Maintenance",
     schedule: { kind: "cron", expr: "0 4 * * 6" }, // Saturday 04:00
-    command: "hybrid-mem extract-procedures && hybrid-mem extract-directives && hybrid-mem extract-reinforcement && hybrid-mem self-correction-run && hybrid-mem scope && hybrid-mem compact",
+    command: "hybrid-mem extract-procedures && hybrid-mem extract-directives && hybrid-mem extract-reinforcement && hybrid-mem self-correction-run && hybrid-mem compact",
     featureGate: null,
   },
   {
@@ -44,7 +44,7 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     pluginJobId: "hybrid-mem:monthly-consolidation",
     name: "Monthly Consolidation",
     schedule: { kind: "cron", expr: "0 5 1 * *" }, // 1st of month 05:00
-    command: "hybrid-mem consolidate && hybrid-mem build-languages && hybrid-mem backfill-decay",
+    command: "hybrid-mem consolidate && hybrid-mem build-languages && hybrid-mem generate-auto-skills && hybrid-mem backfill-decay",
     featureGate: null,
   },
 ];
