@@ -1,6 +1,7 @@
 /**
- * Credentials Store (opt-in, encrypted)
- * Secure credential storage with AES-256-GCM encryption and scrypt KDF.
+ * Credentials Store (opt-in)
+ * Optional AES-256-GCM encryption with scrypt KDF. When no encryption key is set,
+ * values are stored in plaintext; the user may secure data by other means (e.g. filesystem permissions).
  */
 
 import Database from "better-sqlite3";
@@ -14,6 +15,7 @@ const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
 const CRED_ALGO = "aes-256-gcm";
 const CRED_KDF_VERSION = 2; // v1 = SHA-256 (legacy), v2 = scrypt
+const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 
 /** Derive encryption key using scrypt (v2) or SHA-256 (v1 for backward compatibility). */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
@@ -59,19 +61,20 @@ export class CredentialsDB {
   private key: Buffer;
   private kdfVersion: number;
   private salt: Buffer;
+  /** When false, values are stored and read as plaintext (no encryption). */
+  private readonly encrypted: boolean;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
   // After migration completes, this field is cleared to minimize exposure in memory.
-  // Alternative approaches (e.g., prompting user for password again during migration) would break unattended operation.
   private password: string | null;
 
   constructor(dbPath: string, encryptionKey: string) {
     this.dbPath = dbPath;
+    this.encrypted = encryptionKey.length >= 16;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.applyPragmas();
     
-    // Create vault_meta table for KDF version and salt
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS vault_meta (
         key TEXT PRIMARY KEY,
@@ -96,27 +99,35 @@ export class CredentialsDB {
       CREATE INDEX IF NOT EXISTS idx_credentials_service ON credentials(service)
     `);
     
-    // Initialize or load KDF version and salt
-    // TEST COVERAGE NEEDED: This security-critical migration logic should be covered by tests:
-    // 1. New vault: verify vault_meta is written and credentials are decryptable across instances
-    // 2. Legacy vault (no vault_meta): verify migration to scrypt on first get() and subsequent decryptability
-    // 3. Crash resilience: verify transaction rollback prevents partial migration
     const versionRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as { value: Buffer } | undefined;
     const saltRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as { value: Buffer } | undefined;
     
+    if (!this.encrypted) {
+      // Plaintext vault: no key derived
+      this.kdfVersion = CRED_KDF_PLAINTEXT;
+      this.salt = Buffer.alloc(0);
+      this.key = Buffer.alloc(0);
+      this.password = null;
+      if (versionRow && versionRow.value[0] !== CRED_KDF_PLAINTEXT) {
+        throw new Error(
+          "Credentials vault was created with encryption. Set credentials.encryptionKey (or OPENCLAW_CRED_KEY) to open it, or use a new vault path for an unencrypted vault."
+        );
+      }
+      if (!versionRow) {
+        this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([CRED_KDF_PLAINTEXT]));
+      }
+      return;
+    }
+    
     if (!versionRow || !saltRow) {
-      // New vault or legacy vault without metadata
       const hasCredentials = (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
       
       if (hasCredentials) {
-        // Legacy vault with SHA-256 KDF - mark for migration
         this.kdfVersion = 1;
-        this.salt = Buffer.alloc(0); // SHA-256 doesn't use salt
+        this.salt = Buffer.alloc(0);
         this.key = deriveKey(encryptionKey, this.salt, 1);
         this.password = encryptionKey;
-        // Migration will happen on first successful get()
       } else {
-        // New vault - use scrypt
         this.kdfVersion = CRED_KDF_VERSION;
         this.salt = randomBytes(32);
         this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
@@ -125,11 +136,16 @@ export class CredentialsDB {
         this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
       }
     } else {
-      // Existing vault with metadata
       this.kdfVersion = versionRow.value[0];
-      this.salt = saltRow.value;
-      this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
-      this.password = this.kdfVersion === 1 ? encryptionKey : null;
+      if (this.kdfVersion === CRED_KDF_PLAINTEXT) {
+        this.salt = Buffer.alloc(0);
+        this.key = Buffer.alloc(0);
+        this.password = null;
+      } else {
+        this.salt = saltRow.value;
+        this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
+        this.password = this.kdfVersion === 1 ? encryptionKey : null;
+      }
     }
   }
 
@@ -156,7 +172,9 @@ export class CredentialsDB {
     expires?: number | null;
   }): CredentialEntry {
     const now = Math.floor(Date.now() / 1000);
-    const encrypted = encryptValue(entry.value, this.key);
+    const stored = this.encrypted
+      ? encryptValue(entry.value, this.key)
+      : Buffer.from(entry.value, "utf8");
     this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
@@ -171,7 +189,7 @@ export class CredentialsDB {
       .run(
         entry.service,
         entry.type,
-        encrypted,
+        stored,
         entry.url ?? null,
         entry.notes ?? null,
         now,
@@ -196,9 +214,10 @@ export class CredentialsDB {
       : (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1").get(service) as Record<string, unknown> | undefined);
     if (!row) return null;
     const buf = row.value as Buffer;
-    const value = decryptValue(buf, this.key);
+    const value = this.encrypted
+      ? decryptValue(buf, this.key)
+      : buf.toString("utf8");
     
-    // Trigger migration if this is a legacy vault (successful decryption proves correct password)
     if (this.kdfVersion === 1) {
       try {
         this.migrateLegacyVault();

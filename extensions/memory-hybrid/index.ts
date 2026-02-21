@@ -1681,13 +1681,15 @@ const memoryHybridPlugin = {
     embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model);
     openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
-    if (cfg.credentials.enabled && cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16) {
+    if (cfg.credentials.enabled) {
       const credPath = join(dirname(resolvedSqlitePath), "credentials.db");
-      credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey);
-      api.logger.info(`memory-hybrid: credentials vault enabled (${credPath})`);
-    } else if (cfg.credentials.enabled) {
-      credentialsDb = null;
-      api.logger.info("memory-hybrid: credentials capture enabled (vault disabled — no encryption key); captured credentials stored in memory.");
+      credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey ?? "");
+      const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
+      api.logger.info(
+        encrypted
+          ? `memory-hybrid: credentials vault enabled (encrypted) (${credPath})`
+          : `memory-hybrid: credentials vault enabled (plaintext; secure by other means) (${credPath})`
+      );
     } else {
       credentialsDb = null;
     }
@@ -4091,11 +4093,10 @@ const memoryHybridPlugin = {
           if (cfg.credentials.enabled) {
             log(`  credentials.autoDetect: ${bool(cfg.credentials.autoDetect === true)}`);
             log(`  credentials.autoCapture.toolCalls (tool I/O): ${bool(cfg.credentials.autoCapture?.toolCalls === true)}`);
-            if (!cfg.credentials.encryptionKey || cfg.credentials.encryptionKey.length < 16) {
-              log(`  → Credentials: capture only (stored in memory); set credentials.encryptionKey for encrypted vault.`);
-            }
+            const vaultEncrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
+            log(`  → Credentials vault: ${vaultEncrypted ? "encrypted" : "plaintext (secure by other means)"}`);
           } else if (cfg.mode === "expert" || cfg.mode === "full") {
-            log(`  → Credentials (vault): off — set credentials.encryptionKey (or env:OPENCLAW_CRED_KEY) to enable vault and credential capture from tool I/O.`);
+            log(`  → Credentials (vault): off — set credentials.enabled to use vault (optionally set credentials.encryptionKey for encryption).`);
           }
           log(`  store.fuzzyDedupe: ${bool(cfg.store.fuzzyDedupe)}`);
           log(`  store.classifyBeforeWrite: ${bool(cfg.store.classifyBeforeWrite === true)}`);
@@ -4138,25 +4139,28 @@ const memoryHybridPlugin = {
           }
           let credentialsOk = true;
           if (cfg.credentials.enabled) {
-            const keyDefined = !!cfg.credentials.encryptionKey && cfg.credentials.encryptionKey.length >= 16;
-            if (!keyDefined) {
-              log("\nCredentials: capture enabled, vault disabled (no encryption key). Captured credentials stored in memory. Set credentials.encryptionKey for encrypted vault.");
-            } else if (credentialsDb) {
+            if (credentialsDb) {
               try {
                 const items = credentialsDb.list();
                 if (items.length > 0) {
                   const first = items[0];
                   credentialsDb.get(first.service, first.type as CredentialType);
                 }
-                log(`\nCredentials (vault): key set, OK (${items.length} stored)`);
+                const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
+                log(`\nCredentials (vault): OK (${items.length} stored)${encrypted ? " [encrypted]" : " [plaintext]"}`);
               } catch (e) {
-                issues.push(`Credentials vault: ${String(e)} (wrong key or corrupted DB)`);
-                fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the same key used when credentials were stored, or disable credentials in config. See docs/CREDENTIALS.md.`);
+                issues.push(`Credentials vault: ${String(e)}`);
+                const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
+                if (encrypted) {
+                  fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.`);
+                } else {
+                  fixes.push(`Credentials vault: ${String(e)}. If this vault was created with encryption, set credentials.encryptionKey. See docs/CREDENTIALS.md.`);
+                }
                 credentialsOk = false;
-                log(`\nCredentials (vault): FAIL — ${String(e)} (check OPENCLAW_CRED_KEY / encryptionKey)`);
+                log(`\nCredentials (vault): FAIL — ${String(e)}`);
               }
             } else {
-              log("\nCredentials (vault): key set (vault not opened in this process)");
+              log("\nCredentials (vault): enabled (vault not opened in this process)");
             }
           }
           const memoryDir = dirname(resolvedSqlitePath);

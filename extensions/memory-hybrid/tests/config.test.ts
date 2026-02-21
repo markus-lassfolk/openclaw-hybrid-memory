@@ -331,12 +331,12 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.credentials.encryptionKey).toBe("abcdefghij1234567890");
   });
 
-  it("allows credentials enabled without key (memory-only mode)", () => {
+  it("allows credentials enabled without key (vault plaintext)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       credentials: {
         enabled: true,
-        // No encryptionKey → memory-only (capture only, no vault)
+        // No encryptionKey → vault in plaintext (user secures by other means)
       },
     });
     expect(result.credentials.enabled).toBe(true);

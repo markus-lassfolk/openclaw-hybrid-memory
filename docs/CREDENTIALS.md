@@ -6,7 +6,7 @@ nav_order: 2
 ---
 # Credential Management (Opt-in)
 
-The hybrid-memory plugin supports an **opt-in credential store** for structured, encrypted storage of API keys, tokens, passwords, and other authentication data.
+The hybrid-memory plugin supports an **opt-in credential store** for structured storage of API keys, tokens, passwords, and other authentication data. **Encryption is optional:** you can use the vault with or without an encryption key; without a key, values are stored in plaintext and you may secure the data by other means (e.g. filesystem permissions, full-disk encryption).
 
 ## Dual-mode: Vault vs memory
 
@@ -37,11 +37,14 @@ So when vault is enabled, **all** stored credentials end up only in the vault, w
 
 ## Enable
 
-Set a valid **encryptionKey** in your memory-hybrid config; the credential store is **enabled automatically** when the key is set (or when the referenced env var is set). You can also set `"enabled": true` explicitly. To keep it off despite a key in config, set `"enabled": false`.
+Set `"enabled": true` in your memory-hybrid config to use the credential vault. Optionally set **encryptionKey** to encrypt values at rest; if omitted, the vault stores values in plaintext (you may secure the file by other means).
+
+**With encryption (recommended when storing secrets):**
 
 ```json
 {
   "credentials": {
+    "enabled": true,
     "store": "sqlite",
     "encryptionKey": "env:OPENCLAW_CRED_KEY",
     "autoDetect": true,
@@ -54,17 +57,19 @@ Set a valid **encryptionKey** in your memory-hybrid config; the credential store
 }
 ```
 
-- **encryptionKey**: `env:VAR_NAME` (e.g. `env:OPENCLAW_CRED_KEY`) or a 16+ character secret. When set and valid, the credential store is enabled automatically.
-- **enabled** (optional): Set to `false` to disable even if encryptionKey is present.
-- **autoDetect** (optional): When true, detects credential patterns (Bearer tokens, API keys, SSH) in conversation and prompts the agent to offer storing them
-- **autoCapture** (optional): Auto-capture credentials directly from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below)
-- **expiryWarningDays** (optional): Days before expiry to warn (default: 7)
-
-**Required:** Set the `OPENCLAW_CRED_KEY` environment variable to a secret of at least 16 characters. This key is used to encrypt credentials at rest.
+Set the `OPENCLAW_CRED_KEY` environment variable to a secret of at least 16 characters:
 
 ```bash
 export OPENCLAW_CRED_KEY="your-secret-key-min-16-chars"
 ```
+
+**Without encryption (plaintext vault):** Omit `encryptionKey` (or set `enabled: true` only). The vault is fully functional; values are stored in plaintext. Secure the credentials file (e.g. `~/.openclaw/memory/credentials.db`) via filesystem permissions or full-disk encryption if desired.
+
+- **encryptionKey** (optional): `env:VAR_NAME` (e.g. `env:OPENCLAW_CRED_KEY`) or a 16+ character secret. When set and valid, the vault is encrypted at rest. When omitted, the vault is plaintext.
+- **enabled**: Set to `true` to enable the vault; set to `false` to disable.
+- **autoDetect** (optional): When true, detects credential patterns in conversation and prompts the agent to offer storing them.
+- **autoCapture** (optional): Auto-capture credentials from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below).
+- **expiryWarningDays** (optional): Days before expiry to warn (default: 7).
 
 ## API (Tools)
 

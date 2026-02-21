@@ -236,3 +236,31 @@ describe("CredentialsDB cross-instance", () => {
     db2.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plaintext vault (no encryption key)
+// ---------------------------------------------------------------------------
+
+describe("CredentialsDB plaintext vault", () => {
+  it("stores and retrieves values without encryption when key is empty", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-plain-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "api", type: "api_key", value: "plain-secret" });
+    const got = plainDb.get("api", "api_key");
+    expect(got).not.toBeNull();
+    expect(got!.value).toBe("plain-secret");
+    plainDb.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("throws when opening encrypted vault without key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-enc-"));
+    const dbPath = join(dir, "creds.db");
+    const encDb = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    encDb.store({ service: "x", type: "token", value: "secret" });
+    encDb.close();
+    expect(() => new CredentialsDB(dbPath, "")).toThrow(/vault was created with encryption/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

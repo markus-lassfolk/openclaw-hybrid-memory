@@ -476,11 +476,11 @@
         "properties": {
           "enabled": { "type": "boolean" },
           "store": { "type": "string", "enum": ["sqlite"] },
-          "encryptionKey": { "type": "string" },
+          "encryptionKey": { "type": "string", "description": "Optional. When set (16+ chars or env:VAR), vault is encrypted. When unset, vault is plaintext; user may secure by other means (e.g. filesystem permissions)." },
           "autoDetect": { "type": "boolean", "description": "Detect credential patterns in conversation and prompt to store" },
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
-        "description": "Opt-in credential store: enabled=true, encryptionKey=env:OPENCLAW_CRED_KEY"
+        "description": "Credential vault: enabled=true. Optionally set encryptionKey (or env:OPENCLAW_CRED_KEY) for encryption; omit for plaintext vault."
       },
       "errorReporting": {
         "type": "object",
@@ -502,7 +502,12 @@
         "description": "Gemini for session distillation (1M context). Optional; use env GOOGLE_API_KEY if not set.",
         "properties": {
           "apiKey": { "type": "string", "description": "Gemini/Google API key or env:VAR_NAME" },
-          "defaultModel": { "type": "string", "description": "Default model for distill (recommended: gemini-3-pro-preview)" }
+          "defaultModel": { "type": "string", "description": "Default model for distill (recommended: gemini-3-pro-preview)" },
+          "extractDirectives": { "type": "boolean", "description": "Enable directive extraction from sessions (default: true)" },
+          "extractReinforcement": { "type": "boolean", "description": "Enable reinforcement extraction from sessions (default: true)" },
+          "reinforcementBoost": { "type": "number", "description": "Reinforcement boost added to facts search score (default: 0.1)" },
+          "reinforcementProcedureBoost": { "type": "number", "description": "Reinforcement boost for procedures search (default: 0.1)" },
+          "reinforcementPromotionThreshold": { "type": "number", "description": "Reinforcements to trigger auto-promotion of procedures (default: 2)" }
         }
       },
       "languageKeywords": {
@@ -606,6 +611,37 @@
           }
         },
         "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults"
+      },
+      "memoryTiering": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable dynamic memory tiering hot/warm/cold (default: true in normal+ presets)" },
+          "hotMaxTokens": { "type": "number", "description": "Max tokens for HOT tier at session start (default: 2000)" },
+          "compactionOnSessionEnd": { "type": "boolean", "description": "Run compaction on agent_end (default: true)" },
+          "inactivePreferenceDays": { "type": "number", "description": "Days without access to treat as inactive (default: 7)" },
+          "hotMaxFacts": { "type": "number", "description": "Cap HOT tier facts when promoting (default: 50)" }
+        },
+        "description": "Dynamic memory tiering: hot/warm/cold"
+      },
+      "ingest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns relative to workspace (e.g. skills/**/*.md, TOOLS.md)" },
+          "chunkSize": { "type": "number", "description": "Chunk size in chars for LLM extraction (default: 800)" },
+          "overlap": { "type": "number", "description": "Overlap between chunks (default: 100)" }
+        },
+        "description": "Ingest workspace markdown files as facts"
+      },
+      "search": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hydeEnabled": { "type": "boolean", "description": "Use HyDE query expansion for vector search (default: false)" },
+          "hydeModel": { "type": "string", "description": "Model for HyDE generation (default: gpt-4o-mini)" }
+        },
+        "description": "Search tweaks: HyDE query expansion"
       }
     },
     "required": ["embedding"]
