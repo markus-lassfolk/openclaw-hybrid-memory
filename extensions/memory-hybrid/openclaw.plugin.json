@@ -478,6 +478,15 @@
           "store": { "type": "string", "enum": ["sqlite"] },
           "encryptionKey": { "type": "string", "description": "Optional. When set (16+ chars or env:VAR), vault is encrypted. When unset, vault is plaintext; user may secure by other means (e.g. filesystem permissions)." },
           "autoDetect": { "type": "boolean", "description": "Detect credential patterns in conversation and prompt to store" },
+          "autoCapture": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "toolCalls": { "type": "boolean", "description": "Scan tool call inputs for credential patterns and store in vault" },
+              "logCaptures": { "type": "boolean", "description": "Emit info log on each capture (default: true)" }
+            },
+            "description": "Auto-capture credentials from tool call inputs"
+          },
           "expiryWarningDays": { "type": "number", "description": "Days before expiry to warn (default 7)" }
         },
         "description": "Credential vault: enabled=true. Optionally set encryptionKey (or env:OPENCLAW_CRED_KEY) for encryption; omit for plaintext vault."
