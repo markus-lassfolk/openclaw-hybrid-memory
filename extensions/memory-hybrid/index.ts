@@ -49,6 +49,7 @@ import { extractProceduresFromSessions } from "./services/procedure-extractor.js
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
+import { runExport } from "./services/export-memory.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
@@ -821,10 +822,14 @@ async function runReflection(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  config: { defaultWindow: number; minObservations: number },
+  config: { defaultWindow: number; minObservations: number; enabled?: boolean },
   opts: { window: number; dryRun: boolean; model: string },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }> {
+  // Feature-gating: exit 0 if reflection is disabled
+  if (config.enabled === false) {
+    return { factsAnalyzed: 0, patternsExtracted: 0, patternsStored: 0, window: opts.window };
+  }
   const windowDays = Math.min(90, Math.max(1, opts.window));
   const recentFacts = factsDb.getRecentFacts(windowDays);
 
@@ -1383,6 +1388,45 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
   }
 }
 
+/** Progress reporter for batch CLI commands (optional). */
+type ClassifyProgressReporter = { update: (current: number) => void; done: () => void };
+
+/** Progress bar when stdout is TTY; otherwise no-op (caller can use sink.log). */
+function createProgressReporter(
+  sink: { log: (s: string) => void },
+  total: number,
+  label: string,
+): { update: (current: number, extra?: string) => void; done: () => void } {
+  const isTTY = typeof process.stdout?.isTTY === "boolean" && process.stdout.isTTY;
+  const width = 40;
+  let lastLen = 0;
+  let lastPct = -1;
+  return {
+    update(current: number, extra?: string) {
+      if (total <= 0) return;
+      const pct = Math.min(100, Math.floor((current / total) * 100));
+      if (!isTTY) {
+        // Only log at milestones to avoid spam in non-TTY (25%, 50%, 75%, 100%)
+        if (pct === 100 || (pct >= 25 && pct !== lastPct && pct % 25 === 0)) {
+          sink.log(`${label}: ${pct}% (${current}/${total})${extra ? ` ${extra}` : ""}`);
+          lastPct = pct;
+        }
+        return;
+      }
+      const filled = Math.min(width, Math.round((current / total) * width));
+      const arrow = filled < width ? 1 : 0;
+      const dots = Math.max(0, width - filled - arrow);
+      const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
+      const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
+      process.stdout.write("\r" + line + " ".repeat(Math.max(0, lastLen - line.length)));
+      lastLen = line.length;
+    },
+    done() {
+      if (isTTY && lastLen > 0) process.stdout.write("\n");
+    },
+  };
+}
+
 /**
  * Run classify command: optional discovery, then batch classify with limit and dryRun.
  * Used by CLI; returns counts and optional breakdown for printing.
@@ -1394,6 +1438,7 @@ async function runClassifyForCli(
   opts: { dryRun: boolean; limit: number; model?: string },
   discoveredPath: string,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  progressReporter?: ClassifyProgressReporter,
 ): Promise<{ reclassified: number; total: number; breakdown?: Record<string, number> }> {
   const classifyModel = opts.model || config.model;
   const categories = getMemoryCategories();
@@ -1407,16 +1452,25 @@ async function runClassifyForCli(
     others = factsDb.getByCategory("other").slice(0, opts.limit);
   }
 
+  const numBatches = Math.ceil(others.length / config.batchSize);
+  if (!progressReporter && numBatches > 0) {
+    const sink = { log: (m: string) => logger.info(m) };
+    progressReporter = createProgressReporter(sink, numBatches, "Classifying");
+  }
   let totalReclassified = 0;
+  let batchIndex = 0;
   for (let i = 0; i < others.length; i += config.batchSize) {
+    progressReporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
     const results = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
       if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
     }
+    batchIndex++;
     if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
   }
+  progressReporter?.done();
 
   const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
   return { reclassified: totalReclassified, total: others.length, breakdown };
@@ -3902,6 +3956,51 @@ const memoryHybridPlugin = {
             return { ok: true, configPath, dryRun: true, written: false, configJson: after, pluginId: PLUGIN_ID };
           }
           writeFileSync(configPath, after, "utf-8");
+          // Create maintenance cron jobs on fresh install (same definitions as verify --fix, no re-enable)
+          try {
+            const cronDir = join(openclawDir, "cron");
+            const cronStorePath = join(cronDir, "jobs.json");
+            const prefix = "hybrid-mem:";
+            const installJobs = [
+              { pluginJobId: prefix + "nightly-distill", name: "nightly-memory-sweep", schedule: "0 2 * * *", channel: "system", message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "weekly-reflection", name: "weekly-reflection", schedule: "0 3 * * 0", channel: "system", message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: "0 4 * * 0", channel: "system", message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "self-correction-analysis", name: "self-correction-analysis", schedule: "30 2 * * *", channel: "system", message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: "0 4 * * 6", channel: "system", message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "monthly-consolidation", name: "monthly-consolidation", schedule: "0 5 1 * *", channel: "system", message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+            ] as Array<Record<string, unknown>>;
+            const legacyMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
+              [prefix + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
+              [prefix + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
+              [prefix + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+              [prefix + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+              [prefix + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+              [prefix + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
+            };
+            mkdirSync(cronDir, { recursive: true });
+            let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] } : {};
+            if (!Array.isArray(store.jobs)) store.jobs = [];
+            const jobsArr = store.jobs as Array<Record<string, unknown>>;
+            for (const def of installJobs) {
+              const id = def.pluginJobId as string;
+              if (!jobsArr.some((j) => j && (j.pluginJobId === id || legacyMatch[id]?.(j)))) {
+                jobsArr.push({ ...def });
+              }
+            }
+            writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
+            let rootConfig = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+            if (!Array.isArray(rootConfig.jobs)) rootConfig.jobs = [];
+            const rootJobsArr = rootConfig.jobs as Array<Record<string, unknown>>;
+            for (const def of installJobs) {
+              const id = def.pluginJobId as string;
+              if (!rootJobsArr.some((j) => j && (j.pluginJobId === id || legacyMatch[id]?.(j)))) {
+                rootJobsArr.push({ ...def });
+              }
+            }
+            writeFileSync(configPath, JSON.stringify(rootConfig, null, 2), "utf-8");
+          } catch {
+            // non-fatal: cron jobs optional on install
+          }
           return { ok: true, configPath, dryRun: false, written: true, pluginId: PLUGIN_ID };
         }
 
@@ -4286,37 +4385,75 @@ const memoryHybridPlugin = {
                 }
                 const cronDir = join(openclawDir, "cron");
                 const cronStorePath = join(cronDir, "jobs.json");
+                const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
                 const nightlyJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill",
                   name: "nightly-memory-sweep",
                   schedule: "0 2 * * *",
                   channel: "system",
-                  message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Then run openclaw hybrid-mem record-distill.",
+                  message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.",
                   isolated: true,
                   model: "gemini",
+                  enabled: true,
                 };
                 const weeklyJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection",
                   name: "weekly-reflection",
                   schedule: "0 3 * * 0",
                   channel: "system",
-                  message: "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.",
+                  message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.",
                   isolated: true,
                   model: "gemini",
+                  enabled: true,
                 };
                 const weeklyExtractProceduresJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures",
                   name: "weekly-extract-procedures",
                   schedule: "0 4 * * 0",
                   channel: "system",
-                  message: "Run procedural memory extraction: openclaw hybrid-mem extract-procedures --days 7. Extracts tool-call procedures from session logs; run generate-auto-skills when needed.",
+                  message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.",
                   isolated: true,
                   model: "gemini",
+                  enabled: true,
                 };
                 const selfCorrectionJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis",
                   name: "self-correction-analysis",
                   schedule: "30 2 * * *",
                   channel: "system",
-                  message: "Run nightly self-correction analysis: openclaw hybrid-mem self-correction-run. Uses last 3 days of sessions; multi-language correction detection from .language-keywords.json (run build-languages first for non-English). Report: workspace memory/reports/self-correction-YYYY-MM-DD.md.",
+                  message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.",
                   isolated: true,
                   model: "sonnet",
+                  enabled: true,
+                };
+                const weeklyDeepMaintenanceJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance",
+                  name: "weekly-deep-maintenance",
+                  schedule: "0 4 * * 6",
+                  channel: "system",
+                  message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.",
+                  isolated: true,
+                  model: "sonnet",
+                  enabled: true,
+                };
+                const monthlyConsolidationJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation",
+                  name: "monthly-consolidation",
+                  schedule: "0 5 1 * *",
+                  channel: "system",
+                  message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.",
+                  isolated: true,
+                  model: "sonnet",
+                  enabled: true,
+                };
+                const definedJobs = [nightlyJob, weeklyJob, weeklyExtractProceduresJob, selfCorrectionJob, weeklyDeepMaintenanceJob, monthlyConsolidationJob] as Array<Record<string, unknown>>;
+                const legacyNameMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
+                  [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
+                  [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
+                  [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+                  [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+                  [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+                  [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
                 };
                 try {
                   mkdirSync(cronDir, { recursive: true });
@@ -4326,30 +4463,25 @@ const memoryHybridPlugin = {
                   }
                   if (!Array.isArray(store.jobs)) store.jobs = [];
                   const jobs = store.jobs as Array<Record<string, unknown>>;
-                  const hasNightly = jobs.some((j) => j && String(j.name).toLowerCase().includes("nightly-memory-sweep"));
-                  const hasWeekly = jobs.some((j) => j && /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")));
-                  const hasExtractProcedures = jobs.some((j) => j && /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")));
-                  const hasSelfCorrection = jobs.some((j) => j && /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")));
                   let jobsChanged = false;
-                  if (!hasNightly) {
-                    jobs.push(nightlyJob as Record<string, unknown>);
-                    jobsChanged = true;
-                    applied.push("Added nightly-memory-sweep job to " + cronStorePath);
-                  }
-                  if (!hasWeekly) {
-                    jobs.push(weeklyJob as Record<string, unknown>);
-                    jobsChanged = true;
-                    applied.push("Added weekly-reflection job to " + cronStorePath);
-                  }
-                  if (!hasExtractProcedures) {
-                    jobs.push(weeklyExtractProceduresJob as Record<string, unknown>);
-                    jobsChanged = true;
-                    applied.push("Added weekly-extract-procedures job to " + cronStorePath);
-                  }
-                  if (!hasSelfCorrection) {
-                    jobs.push(selfCorrectionJob as Record<string, unknown>);
-                    jobsChanged = true;
-                    applied.push("Added self-correction-analysis job to " + cronStorePath);
+                  for (const def of definedJobs) {
+                    const id = def.pluginJobId as string;
+                    const existing = jobs.find((j) => j && (j.pluginJobId === id || legacyNameMatch[id]?.(j)));
+                    if (existing) {
+                      if (opts.fix && existing.enabled === false) {
+                        existing.enabled = true;
+                        jobsChanged = true;
+                        applied.push(`Re-enabled job ${def.name} (${id})`);
+                      }
+                      if (!existing.pluginJobId) {
+                        existing.pluginJobId = id;
+                        jobsChanged = true;
+                      }
+                    } else {
+                      jobs.push({ ...def });
+                      jobsChanged = true;
+                      applied.push(`Added ${def.name} job to ${cronStorePath}`);
+                    }
                   }
                   if (jobsChanged) {
                     writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
@@ -4359,32 +4491,35 @@ const memoryHybridPlugin = {
                 }
                 // Also add missing jobs to openclaw.json so schedulers that read from there see them
                 try {
-                  const rootJobs = fixConfig.jobs;
-                  if (Array.isArray(rootJobs)) {
-                    const arr = rootJobs as Array<Record<string, unknown>>;
-                    const hasNightlyInConfig = arr.some((j) => j && String(j.name).toLowerCase().includes("nightly-memory-sweep"));
-                    const hasWeeklyInConfig = arr.some((j) => j && /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")));
-                    const hasExtractProceduresInConfig = arr.some((j) => j && /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")));
-                    const hasSelfCorrectionInConfig = arr.some((j) => j && /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")));
-                    if (!hasNightlyInConfig) {
-                      arr.push(nightlyJob as Record<string, unknown>);
+                  let rootJobs = fixConfig.jobs;
+                  if (!Array.isArray(rootJobs)) rootJobs = [];
+                  fixConfig.jobs = rootJobs;
+                  const arr = rootJobs as Array<Record<string, unknown>>;
+                  const legacyNameMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
+                    [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name).toLowerCase().includes("nightly-memory-sweep"),
+                    [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
+                  };
+                  for (const def of definedJobs) {
+                    const id = def.pluginJobId as string;
+                    const existing = arr.find((j) => j && (j.pluginJobId === id || legacyNameMatch[id]?.(j)));
+                    if (existing) {
+                      if (opts.fix && existing.enabled === false) {
+                        existing.enabled = true;
+                        changed = true;
+                        applied.push(`Re-enabled job ${def.name} (${id}) in ${defaultConfigPath}`);
+                      }
+                      if (!existing.pluginJobId) {
+                        existing.pluginJobId = id;
+                        changed = true;
+                      }
+                    } else {
+                      arr.push({ ...def });
                       changed = true;
-                      applied.push("Added nightly-memory-sweep job to " + defaultConfigPath);
-                    }
-                    if (!hasWeeklyInConfig) {
-                      arr.push(weeklyJob as Record<string, unknown>);
-                      changed = true;
-                      applied.push("Added weekly-reflection job to " + defaultConfigPath);
-                    }
-                    if (!hasExtractProceduresInConfig) {
-                      arr.push(weeklyExtractProceduresJob as Record<string, unknown>);
-                      changed = true;
-                      applied.push("Added weekly-extract-procedures job to " + defaultConfigPath);
-                    }
-                    if (!hasSelfCorrectionInConfig) {
-                      arr.push(selfCorrectionJob as Record<string, unknown>);
-                      changed = true;
-                      applied.push("Added self-correction-analysis job to " + defaultConfigPath);
+                      applied.push("Added " + (def.name as string) + " job to " + defaultConfigPath);
                     }
                   }
                 } catch (e) {
@@ -4506,6 +4641,9 @@ const memoryHybridPlugin = {
         async function runExtractProceduresForCli(
           opts: { sessionDir?: string; days?: number; dryRun: boolean },
         ): Promise<ExtractProceduresResult> {
+          if (cfg.procedures?.enabled === false) {
+            return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
+          }
           const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
           let filePaths: string[] | undefined;
           if (opts.days != null && opts.days > 0) {
@@ -4917,6 +5055,8 @@ const memoryHybridPlugin = {
           const limit = opts.limit ?? 0;
           let stored = 0;
           let skipped = 0;
+          const totalCandidates = limit > 0 ? Math.min(allCandidates.length, limit) : allCandidates.length;
+          const progress = createProgressReporter(sink, totalCandidates, "Backfilling");
           const sourceDateSec = (s: string | null) => {
             if (!s || typeof s !== "string") return null;
             const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
@@ -4925,10 +5065,13 @@ const memoryHybridPlugin = {
             const sec = Math.floor(ms / 1000);
             return isNaN(sec) ? null : sec;
           };
+          let processed = 0;
           for (const fact of allCandidates) {
             if (limit > 0 && stored >= limit) break;
+            progress.update(processed + 1);
             if (factsDb.hasDuplicate(fact.text)) {
               skipped++;
+              processed++;
               continue;
             }
             const entry = factsDb.store({
@@ -4956,8 +5099,10 @@ const memoryHybridPlugin = {
               sink.warn(`memory-hybrid: backfill vector store failed for "${fact.text.slice(0, 50)}...": ${err}`);
             }
             stored++;
+            processed++;
           }
-          return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: false };
+          progress.done();
+          return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: opts.dryRun };
         }
 
         const DEFAULT_INGEST_PATHS = ["skills/**/*.md", "TOOLS.md", "AGENTS.md"];
@@ -5149,6 +5294,10 @@ const memoryHybridPlugin = {
           opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number },
           sink: DistillCliSink,
         ): Promise<DistillCliResult> {
+          // Feature-gating: exit 0 if distill is disabled
+          if (cfg.distill?.enabled === false) {
+            return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
+          }
           const sessionFiles = gatherSessionFiles({
             all: opts.all,
             days: opts.days ?? (opts.all ? 90 : 3),
@@ -5188,8 +5337,9 @@ const memoryHybridPlugin = {
           if (currentBatch.trim()) batches.push(currentBatch);
           const distillPrompt = loadPrompt("distill-sessions");
           const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; source_date?: string; tags?: string[] }> = [];
+          const progress = createProgressReporter(sink, batches.length, "Distilling sessions");
           for (let b = 0; b < batches.length; b++) {
-            sink.log(`Processing batch ${b + 1}/${batches.length}...`);
+            progress.update(b + 1);
             const userContent = distillPrompt + "\n\n" + batches[b];
             try {
               const content = await chatComplete({
@@ -5221,6 +5371,7 @@ const memoryHybridPlugin = {
               sink.warn(`memory-hybrid: distill LLM batch ${b + 1} failed: ${err}`);
             }
           }
+          progress.done();
           if (opts.dryRun) {
             sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
             return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored: 0, skipped: 0, dryRun: true };
@@ -5367,6 +5518,9 @@ const memoryHybridPlugin = {
           approve?: boolean;
           noApplyTools?: boolean;
         }): Promise<SelfCorrectionRunResult> {
+          if (!cfg.selfCorrection) {
+            return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null };
+          }
           const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
           const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
           const reportDir = join(workspaceRoot, "memory", "reports");
@@ -5829,6 +5983,8 @@ const memoryHybridPlugin = {
           runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
           runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
           runIngestFiles: (opts, sink) => runIngestFilesForCli(opts, sink),
+          runExport: (opts) =>
+            Promise.resolve(runExport(factsDb, opts, { pluginVersion: versionInfo.pluginVersion, schemaVersion: versionInfo.schemaVersion })),
           runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
@@ -5838,15 +5994,19 @@ const memoryHybridPlugin = {
           runConfigSetHelp: (key) => Promise.resolve(runConfigSetHelpForCli(key)),
           runFindDuplicates: (opts) =>
             runFindDuplicates(factsDb, embeddings, opts, api.logger),
-          runConsolidate: (opts) =>
-            runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger),
+          runConsolidate: (opts) => {
+            if (!cfg.embedding?.apiKey || cfg.embedding.apiKey.length < 10) {
+              return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
+            }
+            return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger);
+          },
           runReflection: (opts) =>
             runReflection(
               factsDb,
               vectorDb,
               embeddings,
               openai,
-              { defaultWindow: cfg.reflection.defaultWindow, minObservations: cfg.reflection.minObservations },
+              { defaultWindow: cfg.reflection.defaultWindow, minObservations: cfg.reflection.minObservations, enabled: cfg.reflection.enabled },
               opts,
               api.logger,
             ),
@@ -5855,15 +6015,17 @@ const memoryHybridPlugin = {
           runReflectionMeta: (opts) =>
             runReflectionMeta(factsDb, vectorDb, embeddings, openai, opts, api.logger),
           reflectionConfig: cfg.reflection,
-          runClassify: (opts) =>
-            runClassifyForCli(
+          runClassify: (opts) => {
+            return runClassifyForCli(
               factsDb,
               openai,
               cfg.autoClassify,
               opts,
               join(dirname(resolvedSqlitePath), ".discovered-categories.json"),
               { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) },
-            ),
+              undefined,
+            );
+          },
           autoClassifyConfig: cfg.autoClassify,
           runCompaction: () =>
             Promise.resolve(
@@ -5893,10 +6055,193 @@ const memoryHybridPlugin = {
             runExtractDirectivesForCli(opts),
           runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) =>
             runExtractReinforcementForCli(opts),
+          richStatsExtras: (() => {
+            const memoryDir = dirname(resolvedSqlitePath);
+            async function dirSizeAsync(p: string): Promise<number> {
+              try {
+                // Try using du -sk for faster directory size calculation (Linux/macOS)
+                const { execFile } = await import("node:child_process");
+                return await new Promise<number>((resolve) => {
+                  execFile("du", ["-sk", p], (error, stdout) => {
+                    if (error) {
+                      // Fallback to statSync if du fails (e.g., on Windows)
+                      try {
+                        const st = statSync(p);
+                        resolve(st.isDirectory() ? 0 : st.size);
+                      } catch {
+                        resolve(0);
+                      }
+                      return;
+                    }
+                    const match = /^(\d+)/.exec(stdout.trim());
+                    resolve(match ? parseInt(match[1], 10) * 1024 : 0);
+                  });
+                });
+              } catch {
+                return 0;
+              }
+            }
+            return {
+              getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
+              getProposalsPending: () =>
+                proposalsDb ? proposalsDb.list({ status: "pending" }).length : 0,
+              getWalPending: () => (wal ? wal.getValidEntries().length : 0),
+              getLastRunTimestamps: () => {
+                const out: { distill?: string; reflect?: string; compact?: string } = {};
+                for (const [key, file] of [
+                  ["distill", ".distill_last_run"],
+                  ["reflect", ".reflect_last_run"],
+                  ["compact", ".compact_last_run"],
+                ] as const) {
+                  const path = join(memoryDir, file);
+                  if (existsSync(path)) {
+                    try {
+                      const line = readFileSync(path, "utf-8").split("\n")[0]?.trim() ?? "";
+                      if (line) out[key] = line;
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                }
+                return out;
+              },
+              getStorageSizes: async () => {
+                let sqliteBytes: number | undefined;
+                let lanceBytes: number | undefined;
+                try {
+                  if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
+                } catch {
+                  /* ignore */
+                }
+                try {
+                  if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
+                } catch {
+                  /* ignore */
+                }
+                return { sqliteBytes, lanceBytes };
+              },
+            };
+          })(),
+          listCommands: (() => {
+            const workspaceRoot = () => process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+            const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
+
+            /** Parse report: items from "Suggested TOOLS.md rules" and "Proposed (review before applying)" for display. */
+            function parseReportProposedSections(content: string): string[] {
+              const lines = content.split("\n");
+              const items: string[] = [];
+              let inSection = false;
+              for (let i = 0; i < lines.length; i++) {
+                const trimmed = lines[i].trim();
+                if (trimmed.startsWith("## Suggested TOOLS.md rules") || trimmed === "## Proposed (review before applying)") {
+                  inSection = true;
+                  continue;
+                }
+                if (trimmed.startsWith("## ")) {
+                  inSection = false;
+                  continue;
+                }
+                if (inSection && trimmed.startsWith("- ") && trimmed.length > 2) items.push(trimmed.slice(2).trim());
+              }
+              return items;
+            }
+
+            /** Parse only "Suggested TOOLS.md rules" bullet lines (for applying to TOOLS.md). */
+            function parseReportSuggestedTools(content: string): string[] {
+              const lines = content.split("\n");
+              const items: string[] = [];
+              let inSuggested = false;
+              for (let i = 0; i < lines.length; i++) {
+                const trimmed = lines[i].trim();
+                if (trimmed.startsWith("## Suggested TOOLS.md rules")) {
+                  inSuggested = true;
+                  continue;
+                }
+                if (trimmed.startsWith("## ")) inSuggested = false;
+                if (inSuggested && trimmed.startsWith("- ") && trimmed.length > 2) items.push(trimmed.slice(2).trim());
+              }
+              return items;
+            }
+
+            function getLatestCorrectionReport(workspace?: string): { path: string; content: string } | null {
+              const dir = reportDir(workspace);
+              if (!existsSync(dir)) return null;
+              const files = readdirSync(dir)
+                .filter((f) => f.startsWith("self-correction-") && f.endsWith(".md"))
+                .sort()
+                .reverse();
+              if (files.length === 0) return null;
+              const path = join(dir, files[0]);
+              try {
+                const content = readFileSync(path, "utf-8");
+                return { path, content };
+              } catch {
+                return null;
+              }
+            }
+
+            return {
+              listProposals: async (opts: { status?: string }) => {
+                if (!proposalsDb) return [];
+                const list = proposalsDb.list({ status: opts.status });
+                return list.map((p) => ({
+                  id: p.id,
+                  title: p.title,
+                  targetFile: p.targetFile,
+                  status: p.status,
+                  confidence: p.confidence,
+                  createdAt: p.createdAt,
+                }));
+              },
+              proposalApprove: async (id: string) => {
+                if (!proposalsDb) return { ok: false, error: "Proposals not available" };
+                const p = proposalsDb.get(id);
+                if (!p) return { ok: false, error: `Proposal ${id} not found` };
+                if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
+                proposalsDb.updateStatus(id, "approved");
+                return { ok: true };
+              },
+              proposalReject: async (id: string, reason?: string) => {
+                if (!proposalsDb) return { ok: false, error: "Proposals not available" };
+                const p = proposalsDb.get(id);
+                if (!p) return { ok: false, error: `Proposal ${id} not found` };
+                if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
+                proposalsDb.updateStatus(id, "rejected", undefined, reason);
+                return { ok: true };
+              },
+              listCorrections: async (opts: { workspace?: string }) => {
+                const report = getLatestCorrectionReport(opts.workspace);
+                if (!report) return { reportPath: null, items: [] };
+                const items = parseReportProposedSections(report.content);
+                return { reportPath: report.path, items };
+              },
+              correctionsApproveAll: async (opts: { workspace?: string }) => {
+                const report = getLatestCorrectionReport(opts.workspace);
+                if (!report) return { applied: 0, error: "No self-correction report found" };
+                const items = parseReportSuggestedTools(report.content);
+                if (items.length === 0) return { applied: 0, error: "No suggested TOOLS rules in report (run self-correction-run first)" };
+                const toolsPath = join(opts.workspace ?? workspaceRoot(), "TOOLS.md");
+                if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
+                const scCfg = cfg.selfCorrection ?? { toolsSection: "Self-correction rules" };
+                const section = typeof scCfg === "object" && scCfg && "toolsSection" in scCfg ? (scCfg.toolsSection as string) : "Self-correction rules";
+                const { inserted } = insertRulesUnderSection(toolsPath, section, items);
+                return { applied: inserted };
+              },
+              showItem: async (id: string) => {
+                const fact = factsDb.getById(id);
+                if (fact) return { type: "fact" as const, data: fact };
+                if (proposalsDb) {
+                  const p = proposalsDb.get(id);
+                  if (p) return { type: "proposal" as const, data: p };
+                }
+                return null;
+              },
+            };
+          })(),
         });
 
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem extract-directives", "hybrid-mem extract-reinforcement", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem extract-directives", "hybrid-mem extract-reinforcement", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem list", "hybrid-mem show", "hybrid-mem proposals list", "hybrid-mem proposals approve", "hybrid-mem proposals reject", "hybrid-mem corrections list", "hybrid-mem corrections approve", "hybrid-mem review", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
