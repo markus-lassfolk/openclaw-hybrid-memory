@@ -131,6 +131,7 @@ import { registerGraphTools } from "./tools/graph-tools.js";
 import { registerPersonaTools } from "./tools/persona-tools.js";
 import { registerUtilityTools } from "./tools/utility-tools.js";
 import { createLifecycleHooks, type LifecycleContext } from "./lifecycle/hooks.js";
+import { registerProposalsCli, type ProposalsCliContext } from "./cli/proposals.js";
 
 // ============================================================================
 // Backend Imports (extracted from god file for maintainability)
@@ -428,35 +429,6 @@ const memoryHybridPlugin = {
     if (cfg.personaProposals.enabled && proposalsDb) {
       registerPersonaTools({ proposalsDb, cfg, resolvedSqlitePath }, api);
 
-      // Shared helper: audit trail logging (used by CLI commands)
-      const auditProposal = async (
-        action: string,
-        proposalId: string,
-        details?: any,
-        logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }
-      ) => {
-        const auditDir = join(dirname(resolvedSqlitePath), "decisions");
-        await mkdir(auditDir, { recursive: true });
-        const timestamp = new Date().toISOString();
-        const entry = {
-          timestamp,
-          action,
-          proposalId,
-          ...details,
-        };
-        const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
-        try {
-          await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
-        } catch (err) {
-          const msg = `Audit log write failed: ${err}`;
-          if (logger?.warn) {
-            logger.warn(`memory-hybrid: ${msg}`);
-          } else if (logger?.error) {
-            logger.error(msg);
-          }
-        }
-      };
-
       // NOTE: persona_proposal_review and persona_proposal_apply are intentionally
       // NOT registered as agent-callable tools. They are CLI-only commands to ensure
       // human approval is required. This prevents agents from self-approving and
@@ -472,122 +444,22 @@ const memoryHybridPlugin = {
             }
           }
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "proposals",
+            operation: "periodic-prune",
+          });
           api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
         }
       }, 24 * 60 * 60_000); // daily
 
       // Register CLI commands for human-only review/apply operations
       api.registerCli(({ program }) => {
-        const proposals = program.command("proposals").description("Manage persona proposals (human-only commands)");
-
-        proposals
-          .command("review <proposalId> <action>")
-          .description("Approve or reject a persona proposal (action: approve|reject)")
-          .option("--reviewed-by <name>", "Name/ID of reviewer")
-          .action(async (proposalId: string, action: string, opts: { reviewedBy?: string }) => {
-            if (action !== "approve" && action !== "reject") {
-              console.error("Action must be 'approve' or 'reject'");
-              process.exit(1);
-            }
-
-            const proposal = proposalsDb!.get(proposalId);
-            if (!proposal) {
-              console.error(`Proposal ${proposalId} not found`);
-              process.exit(1);
-            }
-
-            if (proposal.status !== "pending") {
-              console.error(`Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`);
-              process.exit(1);
-            }
-
-            const newStatus = action === "approve" ? "approved" : "rejected";
-            proposalsDb!.updateStatus(proposalId, newStatus, opts.reviewedBy);
-
-            await auditProposal(action, proposalId, {
-              reviewedBy: opts.reviewedBy ?? "cli-user",
-              previousStatus: "pending",
-              newStatus,
-            }, { error: console.error });
-
-            console.log(`Proposal ${proposalId} ${action}d.`);
-            if (action === "approve") {
-              console.log(`\nUse 'openclaw proposals apply ${proposalId}' to apply the change.`);
-            }
-          });
-
-        proposals
-          .command("apply <proposalId>")
-          .description("Apply an approved persona proposal to its target identity file")
-          .action(async (proposalId: string) => {
-            const proposal = proposalsDb!.get(proposalId);
-            if (!proposal) {
-              console.error(`Proposal ${proposalId} not found`);
-              process.exit(1);
-            }
-
-            if (proposal.status !== "approved") {
-              console.error(`Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`);
-              process.exit(1);
-            }
-
-            // Re-validate targetFile against current allowedFiles config (defense against config changes or DB tampering)
-            if (!cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
-              console.error(`Target file ${proposal.targetFile} is no longer in allowedFiles. Cannot apply.`);
-              console.error(`Current allowedFiles: ${cfg.personaProposals.allowedFiles.join(", ")}`);
-              process.exit(1);
-            }
-
-            // Additional path traversal defense (even though schema validates at creation)
-            if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
-              console.error(`Invalid target file path: ${proposal.targetFile}. Path traversal detected.`);
-              process.exit(1);
-            }
-
-            // Resolve target file path
-            const targetPath = api.resolvePath(proposal.targetFile);
-
-            if (!existsSync(targetPath)) {
-              console.error(`Target file ${proposal.targetFile} not found at ${targetPath}`);
-              process.exit(1);
-            }
-
-            // Create backup
-            const backupPath = `${targetPath}.backup-${Date.now()}`;
-            try {
-              const original = readFileSync(targetPath, "utf-8");
-              writeFileSync(backupPath, original);
-
-              // Escape HTML comment sequences to prevent breakout
-              const escapeHtmlComment = (text: string): string => {
-                return text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
-              };
-
-              // Apply change (simple append strategy)
-              // TODO: Future enhancement - use LLM for smart diff application, content validation, merge conflict resolution
-              const timestamp = new Date().toISOString();
-              const safeObservation = escapeHtmlComment(proposal.observation);
-              const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
-              writeFileSync(targetPath, original + changeBlock);
-
-              // Mark as applied only after successful file write
-              proposalsDb!.markApplied(proposalId);
-
-              await auditProposal("applied", proposalId, {
-                targetFile: proposal.targetFile,
-                targetPath,
-                backupPath,
-                timestamp,
-              }, { error: console.error });
-
-              console.log(`Proposal ${proposalId} applied to ${proposal.targetFile}`);
-              console.log(`Backup saved: ${backupPath}`);
-              console.log(`\nChange:\n${proposal.suggestedChange}`);
-            } catch (err) {
-              console.error(`Failed to apply proposal: ${err}`);
-              process.exit(1);
-            }
-          });
+        registerProposalsCli(program, {
+          proposalsDb: proposalsDb!,
+          cfg,
+          resolvedSqlitePath,
+          api,
+        });
       });
     }
 
