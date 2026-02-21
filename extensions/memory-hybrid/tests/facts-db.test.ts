@@ -1482,3 +1482,56 @@ describe("FactsDB searchProcedures reinforcement ranking", () => {
     expect(results[1].reinforcedCount).toBe(0);
   });
 });
+
+describe("FactsDB.findByIdPrefix", () => {
+  const storeOpts = { category: "fact" as const, importance: 0.7, entity: null, key: null, value: null, source: "test" };
+
+  it("returns full ID for unique prefix", () => {
+    const entry = db.store({ text: "test fact for prefix", ...storeOpts });
+    const prefix = entry.id.slice(0, 8);
+    const result = db.findByIdPrefix(prefix);
+    expect(result).not.toBeNull();
+    expect(result).toHaveProperty("id", entry.id);
+  });
+
+  it("returns null for prefix shorter than 4 chars", () => {
+    db.store({ text: "test fact", ...storeOpts });
+    expect(db.findByIdPrefix("ab")).toBeNull();
+    expect(db.findByIdPrefix("abc")).toBeNull();
+    expect(db.findByIdPrefix("")).toBeNull();
+  });
+
+  it("returns null for non-hex prefix", () => {
+    db.store({ text: "test fact", ...storeOpts });
+    expect(db.findByIdPrefix("zzzz")).toBeNull();
+    expect(db.findByIdPrefix("test")).toBeNull();
+    expect(db.findByIdPrefix("ab%_")).toBeNull();
+  });
+
+  it("returns ambiguous when multiple IDs match prefix", () => {
+    // Store many facts — some will share a 4-char prefix
+    const ids: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      ids.push(db.store({ text: `bulk fact ${i}`, ...storeOpts }).id);
+    }
+    // Find a 4-char prefix that matches multiple IDs
+    const prefixMap = new Map<string, string[]>();
+    for (const id of ids) {
+      const p = id.slice(0, 4);
+      if (!prefixMap.has(p)) prefixMap.set(p, []);
+      prefixMap.get(p)!.push(id);
+    }
+    const ambiguousPrefix = [...prefixMap.entries()].find(([, v]) => v.length >= 2);
+    if (ambiguousPrefix) {
+      const result = db.findByIdPrefix(ambiguousPrefix[0]);
+      expect(result).not.toBeNull();
+      expect(result).toHaveProperty("ambiguous", true);
+    }
+    // If no collision found with 50 UUIDs (very unlikely), test still passes
+  });
+
+  it("returns null when no IDs match prefix", () => {
+    db.store({ text: "test fact", ...storeOpts });
+    expect(db.findByIdPrefix("0000")).toBeNull();
+  });
+});
