@@ -23,7 +23,7 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     pluginJobId: "hybrid-mem:nightly-distill",
     name: "Nightly Distillation",
     schedule: { kind: "cron", expr: "0 2 * * *" },
-    command: "hybrid-mem distill --days 3",
+    command: "hybrid-mem distill --days 3 && hybrid-mem record-distill",
     featureGate: null, // always runs
   },
   {
