@@ -993,14 +993,19 @@ export class FactsDB {
     return results;
   }
 
-  /** Find a fact ID by prefix (for truncated ID resolution). Returns full ID or null. */
-  findByIdPrefix(prefix: string): string | null {
-    if (!prefix || prefix.length < 4) return null; // too short, ambiguous
-    const row = this.liveDb.prepare(
-      `SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 2`
+  /** Find a fact ID by prefix (for truncated ID resolution).
+   * Returns { id } for unique match, { ambiguous, count } for multiple, or null for no match.
+   * Requires at least 4 hex chars to prevent full-table scans and reduce ambiguity. */
+  findByIdPrefix(prefix: string): { id: string } | { ambiguous: true; count: number } | null {
+    if (!prefix || prefix.length < 4) return null;
+    // Only allow hex characters (UUIDs are hex + dashes, but truncated prefixes are hex-only)
+    if (!/^[0-9a-f]+$/i.test(prefix)) return null;
+    const rows = this.liveDb.prepare(
+      `SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 3`
     ).all(prefix) as Array<{ id: string }>;
-    // Only return if exactly one match (unambiguous)
-    return row.length === 1 ? row[0].id : null;
+    if (rows.length === 0) return null;
+    if (rows.length === 1) return { id: rows[0].id };
+    return { ambiguous: true, count: rows.length >= 3 ? rows.length : rows.length }; // 3+ means "at least 3"
   }
 
   delete(id: string): boolean {

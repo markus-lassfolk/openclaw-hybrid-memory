@@ -2703,24 +2703,48 @@ const memoryHybridPlugin = {
 
           if (memoryId) {
             // Support prefix matching: if the ID looks truncated (not a full UUID),
-            // try to find the full ID via direct prefix search
+            // try to resolve the full ID via prefix search
             let resolvedId = memoryId;
             if (memoryId.length < 36 && !memoryId.includes("-")) {
-              const prefixMatch = factsDb.findByIdPrefix(memoryId);
-              if (prefixMatch) {
-                resolvedId = prefixMatch;
+              const prefixResult = factsDb.findByIdPrefix(memoryId);
+              if (prefixResult && "ambiguous" in prefixResult) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Prefix "${memoryId}" is ambiguous (matches ${prefixResult.count}+ facts). Use the full UUID from memory_recall.`,
+                    },
+                  ],
+                  details: { action: "ambiguous", prefix: memoryId, matchCount: prefixResult.count },
+                };
+              }
+              if (prefixResult && "id" in prefixResult) {
+                resolvedId = prefixResult.id;
               }
             }
 
             const sqlDeleted = factsDb.delete(resolvedId);
             let lanceDeleted = false;
+            let lanceError: string | null = null;
             try {
               lanceDeleted = await vectorDb.delete(resolvedId);
             } catch (err) {
+              lanceError = err instanceof Error ? err.message : String(err);
               api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
             }
 
             if (!sqlDeleted && !lanceDeleted) {
+              if (lanceError) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Deletion failed for "${memoryId}": SQLite not found, LanceDB error: ${lanceError}`,
+                    },
+                  ],
+                  details: { action: "error", originalId: memoryId, resolvedId, error: lanceError },
+                };
+              }
               return {
                 content: [
                   {
@@ -2728,18 +2752,19 @@ const memoryHybridPlugin = {
                     text: `Failed to delete memory "${memoryId}" — not found in either backend. Use the full UUID from memory_recall.`,
                   },
                 ],
-                details: { action: "not_found", id: memoryId, resolvedId },
+                details: { action: "not_found", originalId: memoryId, resolvedId },
               };
             }
 
+            const resolveNote = resolvedId !== memoryId ? ` (resolved from prefix "${memoryId}")` : "";
             return {
               content: [
                 {
                   type: "text",
-                  text: `Memory ${resolvedId} forgotten (sqlite: ${sqlDeleted}, lance: ${lanceDeleted}).`,
+                  text: `Memory ${resolvedId} forgotten${resolveNote} (sqlite: ${sqlDeleted}, lance: ${lanceDeleted}).`,
                 },
               ],
-              details: { action: "deleted", id: resolvedId },
+              details: { action: "deleted", originalId: memoryId, resolvedId },
             };
           }
 
@@ -2784,10 +2809,11 @@ const memoryHybridPlugin = {
             }
 
             const list = results
-              .map(
-                (r) =>
-                  `- [${r.entry.id}] (${r.backend}) ${r.entry.text.slice(0, 80)}`,
-              )
+              .map((r) => {
+                const preview = r.entry.text.replace(/\s+/g, " ").slice(0, 80).trim();
+                const ellipsis = r.entry.text.length > 80 ? "…" : "";
+                return `- [${r.entry.id}] (${r.backend}) ${preview}${ellipsis}`;
+              })
               .join("\n");
 
             return {
