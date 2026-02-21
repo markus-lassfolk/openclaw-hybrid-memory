@@ -316,7 +316,7 @@ export async function flushErrorReporter(timeoutMs = 2000): Promise<boolean> {
 /**
  * Test error reporter diagnostics
  */
-function testErrorReporter(): { ok: boolean; error?: string } {
+export function testErrorReporter(): { ok: boolean; error?: string } {
   if (!Sentry) {
     return { ok: false, error: "@sentry/node not loaded" };
   }
@@ -329,7 +329,7 @@ function testErrorReporter(): { ok: boolean; error?: string } {
 /**
  * Capture a test error to verify reporting works
  */
-function captureTestError(): string | null {
+export function captureTestError(): string | null {
   if (!initialized || !Sentry) {
     return null;
   }
