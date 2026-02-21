@@ -307,27 +307,6 @@ describe("Error Reporter", () => {
       expect(typeof result).toBe("boolean");
     });
 
-    it("should export testErrorReporter", async () => {
-      const { testErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
-      expect(typeof testErrorReporter).toBe("function");
-
-      const result = testErrorReporter();
-      expect(result).toHaveProperty("ok");
-      expect(typeof result.ok).toBe("boolean");
-      if (!result.ok) {
-        expect(result.error).toBeDefined();
-      }
-    });
-
-    it("should export captureTestError", async () => {
-      const { captureTestError, isErrorReporterActive } = await import("../services/error-reporter.js");
-      expect(typeof captureTestError).toBe("function");
-
-      const eventId = captureTestError();
-      // Should return string (event ID) when initialized, null when not
-      expect(typeof eventId === 'string' || eventId === null).toBe(true);
-    });
-
     it("should export addOperationBreadcrumb", async () => {
       const { addOperationBreadcrumb } = await import("../services/error-reporter.js");
       expect(typeof addOperationBreadcrumb).toBe("function");

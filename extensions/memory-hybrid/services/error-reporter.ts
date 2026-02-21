@@ -156,13 +156,19 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
         )
       } : {}),
       ...(event.contexts?.runtime ? {
-        runtime: event.contexts.runtime
+        runtime: { name: event.contexts.runtime.name, version: event.contexts.runtime.version }
       } : {}),
       ...(event.contexts?.os ? {
         os: { name: event.contexts.os.name } // Only name, no version
       } : {}),
     },
-    breadcrumbs: event.breadcrumbs, // Already filtered by beforeBreadcrumb
+    breadcrumbs: event.breadcrumbs?.filter(b => b.category?.startsWith('plugin.')).map(b => ({
+      category: b.category,
+      level: b.level,
+      timestamp: b.timestamp,
+      type: b.type,
+      // Strip message and data to prevent leaking user content
+    })),
     // NO: user, request, contexts.device, extra
   };
 
@@ -310,7 +316,7 @@ export async function flushErrorReporter(timeoutMs = 2000): Promise<boolean> {
 /**
  * Test error reporter diagnostics
  */
-export function testErrorReporter(): { ok: boolean; error?: string } {
+function testErrorReporter(): { ok: boolean; error?: string } {
   if (!Sentry) {
     return { ok: false, error: "@sentry/node not loaded" };
   }
@@ -323,7 +329,7 @@ export function testErrorReporter(): { ok: boolean; error?: string } {
 /**
  * Capture a test error to verify reporting works
  */
-export function captureTestError(): string | null {
+function captureTestError(): string | null {
   if (!initialized || !Sentry) {
     return null;
   }
