@@ -1000,12 +1000,23 @@ export class FactsDB {
     if (!prefix || prefix.length < 4) return null;
     // Only allow hex characters (UUIDs are hex + dashes, but truncated prefixes are hex-only)
     if (!/^[0-9a-f]+$/i.test(prefix)) return null;
+    // Insert dashes at UUID positions to match stored format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    let pattern = prefix.toLowerCase();
+    if (prefix.length > 8 && !prefix.includes("-")) {
+      const parts: string[] = [];
+      parts.push(pattern.slice(0, 8));
+      if (pattern.length > 8) parts.push(pattern.slice(8, 12));
+      if (pattern.length > 12) parts.push(pattern.slice(12, 16));
+      if (pattern.length > 16) parts.push(pattern.slice(16, 20));
+      if (pattern.length > 20) parts.push(pattern.slice(20));
+      pattern = parts.join("-");
+    }
     const rows = this.liveDb.prepare(
       `SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 3`
-    ).all(prefix) as Array<{ id: string }>;
+    ).all(pattern) as Array<{ id: string }>;
     if (rows.length === 0) return null;
     if (rows.length === 1) return { id: rows[0].id };
-    return { ambiguous: true, count: rows.length >= 3 ? rows.length : rows.length }; // 3+ means "at least 3"
+    return { ambiguous: true, count: rows.length >= 3 ? 3 : rows.length };
   }
 
   delete(id: string): boolean {

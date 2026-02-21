@@ -2708,11 +2708,12 @@ const memoryHybridPlugin = {
             if (memoryId.length < 36 && !memoryId.includes("-")) {
               const prefixResult = factsDb.findByIdPrefix(memoryId);
               if (prefixResult && "ambiguous" in prefixResult) {
+                const countText = prefixResult.count >= 3 ? `${prefixResult.count}+` : `${prefixResult.count}`;
                 return {
                   content: [
                     {
                       type: "text",
-                      text: `Prefix "${memoryId}" is ambiguous (matches ${prefixResult.count}+ facts). Use the full UUID from memory_recall.`,
+                      text: `Prefix "${memoryId}" is ambiguous (matches ${countText} facts). Use the full UUID from memory_recall.`,
                     },
                   ],
                   details: { action: "ambiguous", prefix: memoryId, matchCount: prefixResult.count },
@@ -2810,8 +2811,9 @@ const memoryHybridPlugin = {
 
             const list = results
               .map((r) => {
-                const preview = r.entry.text.replace(/\s+/g, " ").slice(0, 80).trim();
-                const ellipsis = r.entry.text.length > 80 ? "…" : "";
+                const normalized = r.entry.text.replace(/\s+/g, " ");
+                const preview = normalized.slice(0, 80).trim();
+                const ellipsis = normalized.length > 80 ? "…" : "";
                 return `- [${r.entry.id}] (${r.backend}) ${preview}${ellipsis}`;
               })
               .join("\n");
