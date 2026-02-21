@@ -108,13 +108,36 @@ export class CredentialsDB {
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);
       this.password = null;
-      if (versionRow && versionRow.value[0] !== CRED_KDF_PLAINTEXT) {
+      if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] !== CRED_KDF_PLAINTEXT) {
         throw new Error(
           "Credentials vault was created with encryption. Set credentials.encryptionKey (or OPENCLAW_CRED_KEY) to open it, or use a new vault path for an unencrypted vault."
         );
       }
       if (!versionRow) {
+        // C1 FIX: Check if vault has encrypted data before marking as plaintext
+        const hasCredentials = (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
+        if (hasCredentials) {
+          throw new Error(
+            "Credentials vault contains data but no encryption metadata. This vault may have encrypted credentials. Provide credentials.encryptionKey to open it."
+          );
+        }
         this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([CRED_KDF_PLAINTEXT]));
+      }
+      return;
+    }
+    
+    // Check if vault is plaintext first (before assuming legacy)
+    if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] === CRED_KDF_PLAINTEXT) {
+      // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
+      // @ts-expect-error - Override readonly property to match DB state
+      this.encrypted = false;
+      this.kdfVersion = CRED_KDF_PLAINTEXT;
+      this.salt = Buffer.alloc(0);
+      this.key = Buffer.alloc(0);
+      this.password = null;
+      // Optionally warn that key is being ignored
+      if (encryptionKey.length >= 16) {
+        console.warn("Credentials vault is in plaintext mode (kdf_version=0). The provided encryption key is being ignored.");
       }
       return;
     }
@@ -136,16 +159,10 @@ export class CredentialsDB {
         this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
       }
     } else {
-      this.kdfVersion = versionRow.value[0];
-      if (this.kdfVersion === CRED_KDF_PLAINTEXT) {
-        this.salt = Buffer.alloc(0);
-        this.key = Buffer.alloc(0);
-        this.password = null;
-      } else {
-        this.salt = saltRow.value;
-        this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
-        this.password = this.kdfVersion === 1 ? encryptionKey : null;
-      }
+      this.kdfVersion = Buffer.isBuffer(versionRow.value) ? versionRow.value[0] : CRED_KDF_VERSION;
+      this.salt = saltRow.value;
+      this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
+      this.password = this.kdfVersion === 1 ? encryptionKey : null;
     }
   }
 

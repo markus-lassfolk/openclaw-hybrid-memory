@@ -762,14 +762,14 @@ export const hybridConfigSchema = {
       const val = process.env[envVar];
       if (val && val.length >= 16) {
         encryptionKey = val;
-      } else if (encKeyRaw.length > 0 && credRaw?.enabled === true) {
-        // User set env:VAR for encryption but it's missing or too short → fail (they asked for encryption).
+      } else if (encKeyRaw.length > 0) {
+        // M3 FIX: env:VAR explicitly set but missing/too short → fail regardless of enabled flag
         throw new Error(`Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or omit credentials.encryptionKey for an unencrypted vault. Run 'openclaw hybrid-mem verify --fix' for help.`);
       }
     } else if (encKeyRaw.length >= 16) {
       encryptionKey = encKeyRaw;
     } else if (encKeyRaw.length > 0) {
-      // User set a short encryption key → fail (they asked for encryption).
+      // H1 FIX: User set a short encryption key (1-15 chars) → fail regardless of enabled flag
       throw new Error(
         "credentials.encryptionKey must be at least 16 characters (or use env:VAR). Omit it for an unencrypted vault. Run 'openclaw hybrid-mem verify --fix' for help.",
       );
@@ -780,6 +780,10 @@ export const hybridConfigSchema = {
     let credentials: CredentialsConfig;
     if (shouldEnable) {
       const opts = parseCredentialOptions(credRaw);
+      // M1 FIX: Log info message when plaintext mode is chosen explicitly
+      if (!hasValidKey && credRaw?.enabled === true) {
+        console.info("Credentials vault enabled (plaintext mode — no encryption key set)");
+      }
       credentials = {
         enabled: true,
         store: "sqlite",
