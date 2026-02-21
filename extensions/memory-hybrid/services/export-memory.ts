@@ -180,7 +180,8 @@ ${memLinks.length > 200 ? `\n... and ${memLinks.length - 200} more\n` : ""}
   writeFileSync(join(outputPath, "MEMORY.md"), memContent, "utf-8");
   filesWritten++;
 
-  // manifest.json
+  // manifest.json (increment filesWritten first to include manifest itself)
+  filesWritten++;
   const manifest = {
     version: versionInfo.pluginVersion,
     schemaVersion: versionInfo.schemaVersion,
@@ -195,7 +196,6 @@ ${memLinks.length > 200 ? `\n... and ${memLinks.length - 200} more\n` : ""}
     },
   };
   writeFileSync(join(outputPath, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
-  filesWritten++;
 
   return {
     factsExported: facts.length,
