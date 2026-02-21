@@ -821,10 +821,14 @@ async function runReflection(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  config: { defaultWindow: number; minObservations: number },
+  config: { defaultWindow: number; minObservations: number; enabled?: boolean },
   opts: { window: number; dryRun: boolean; model: string },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }> {
+  // Feature-gating: exit 0 if reflection is disabled
+  if (config.enabled === false) {
+    return { factsAnalyzed: 0, patternsExtracted: 0, patternsStored: 0, window: opts.window };
+  }
   const windowDays = Math.min(90, Math.max(1, opts.window));
   const recentFacts = factsDb.getRecentFacts(windowDays);
 
@@ -3921,16 +3925,20 @@ const memoryHybridPlugin = {
             const cronStorePath = join(cronDir, "jobs.json");
             const prefix = "hybrid-mem:";
             const installJobs = [
-              { pluginJobId: prefix + "nightly-distill", name: "nightly-memory-sweep", schedule: "0 2 * * *", channel: "system", message: "Run nightly session distillation: last 3 days. Then run openclaw hybrid-mem record-distill.", isolated: true, model: "gemini", enabled: true },
-              { pluginJobId: prefix + "weekly-reflection", name: "weekly-reflection", schedule: "0 3 * * 0", channel: "system", message: "Run memory reflection. Use memory_reflect tool.", isolated: true, model: "gemini", enabled: true },
-              { pluginJobId: prefix + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: "0 4 * * 0", channel: "system", message: "Run openclaw hybrid-mem extract-procedures --days 7.", isolated: true, model: "gemini", enabled: true },
-              { pluginJobId: prefix + "self-correction-analysis", name: "self-correction-analysis", schedule: "30 2 * * *", channel: "system", message: "Run openclaw hybrid-mem self-correction-run.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "nightly-distill", name: "nightly-memory-sweep", schedule: "0 2 * * *", channel: "system", message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "weekly-reflection", name: "weekly-reflection", schedule: "0 3 * * 0", channel: "system", message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: "0 4 * * 0", channel: "system", message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "self-correction-analysis", name: "self-correction-analysis", schedule: "30 2 * * *", channel: "system", message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: "0 4 * * 6", channel: "system", message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "monthly-consolidation", name: "monthly-consolidation", schedule: "0 5 1 * *", channel: "system", message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
             ] as Array<Record<string, unknown>>;
             const legacyMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
               [prefix + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
               [prefix + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
               [prefix + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
               [prefix + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+              [prefix + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+              [prefix + "monthly-consolidation"]: (j) => /monthly-consolidation|monthly|consolidation/i.test(String(j.name ?? "")),
             };
             mkdirSync(cronDir, { recursive: true });
             let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] } : {};
@@ -4346,7 +4354,7 @@ const memoryHybridPlugin = {
                   name: "nightly-memory-sweep",
                   schedule: "0 2 * * *",
                   channel: "system",
-                  message: "Run nightly session distillation: last 3 days, Gemini model, isolated session. Then run openclaw hybrid-mem record-distill.",
+                  message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.",
                   isolated: true,
                   model: "gemini",
                   enabled: true,
@@ -4356,7 +4364,7 @@ const memoryHybridPlugin = {
                   name: "weekly-reflection",
                   schedule: "0 3 * * 0",
                   channel: "system",
-                  message: "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.",
+                  message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.",
                   isolated: true,
                   model: "gemini",
                   enabled: true,
@@ -4366,7 +4374,7 @@ const memoryHybridPlugin = {
                   name: "weekly-extract-procedures",
                   schedule: "0 4 * * 0",
                   channel: "system",
-                  message: "Run procedural memory extraction: openclaw hybrid-mem extract-procedures --days 7. Extracts tool-call procedures from session logs; run generate-auto-skills when needed.",
+                  message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.",
                   isolated: true,
                   model: "gemini",
                   enabled: true,
@@ -4376,17 +4384,39 @@ const memoryHybridPlugin = {
                   name: "self-correction-analysis",
                   schedule: "30 2 * * *",
                   channel: "system",
-                  message: "Run nightly self-correction analysis: openclaw hybrid-mem self-correction-run. Uses last 3 days of sessions; multi-language correction detection from .language-keywords.json (run build-languages first for non-English). Report: workspace memory/reports/self-correction-YYYY-MM-DD.md.",
+                  message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.",
                   isolated: true,
                   model: "sonnet",
                   enabled: true,
                 };
-                const definedJobs = [nightlyJob, weeklyJob, weeklyExtractProceduresJob, selfCorrectionJob] as Array<Record<string, unknown>>;
+                const weeklyDeepMaintenanceJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance",
+                  name: "weekly-deep-maintenance",
+                  schedule: "0 4 * * 6",
+                  channel: "system",
+                  message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.",
+                  isolated: true,
+                  model: "sonnet",
+                  enabled: true,
+                };
+                const monthlyConsolidationJob = {
+                  pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation",
+                  name: "monthly-consolidation",
+                  schedule: "0 5 1 * *",
+                  channel: "system",
+                  message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.",
+                  isolated: true,
+                  model: "sonnet",
+                  enabled: true,
+                };
+                const definedJobs = [nightlyJob, weeklyJob, weeklyExtractProceduresJob, selfCorrectionJob, weeklyDeepMaintenanceJob, monthlyConsolidationJob] as Array<Record<string, unknown>>;
                 const legacyNameMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
                   [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
                   [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
                   [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
                   [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+                  [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+                  [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation|monthly|consolidation/i.test(String(j.name ?? "")),
                 };
                 try {
                   mkdirSync(cronDir, { recursive: true });
@@ -4433,6 +4463,8 @@ const memoryHybridPlugin = {
                     [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
                     [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
                     [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+                    [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation|monthly|consolidation/i.test(String(j.name ?? "")),
                   };
                   for (const def of definedJobs) {
                     const id = def.pluginJobId as string;
@@ -5033,7 +5065,7 @@ const memoryHybridPlugin = {
             processed++;
           }
           progress.done();
-          return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: false };
+          return { stored, skipped, candidates: allCandidates.length, files: files.length, dryRun: opts.dryRun };
         }
 
         const DEFAULT_INGEST_PATHS = ["skills/**/*.md", "TOOLS.md", "AGENTS.md"];
@@ -5230,16 +5262,23 @@ const memoryHybridPlugin = {
           const isTTY = typeof process.stdout?.isTTY === "boolean" && process.stdout.isTTY;
           const width = 40;
           let lastLen = 0;
+          let lastPct = -1;
           return {
             update(current: number, extra?: string) {
               if (total <= 0) return;
+              const pct = Math.min(100, Math.floor((current / total) * 100));
               if (!isTTY) {
-                sink.log(`${label}: ${current}/${total}${extra ? ` ${extra}` : ""}`);
+                // Only log at milestones to avoid spam in non-TTY (25%, 50%, 75%, 100%)
+                if (pct === 100 || (pct >= 25 && pct !== lastPct && pct % 25 === 0)) {
+                  sink.log(`${label}: ${pct}% (${current}/${total})${extra ? ` ${extra}` : ""}`);
+                  lastPct = pct;
+                }
                 return;
               }
-              const pct = Math.min(100, Math.floor((current / total) * 100));
               const filled = Math.min(width, Math.round((current / total) * width));
-              const bar = "=".repeat(filled) + ">".repeat(filled < width ? 1 : 0) + ".".repeat(Math.max(0, width - filled - 1));
+              const arrow = filled < width ? 1 : 0;
+              const dots = Math.max(0, width - filled - arrow);
+              const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
               const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
               process.stdout.write("\r" + line + " ".repeat(Math.max(0, lastLen - line.length)));
               lastLen = line.length;
@@ -5254,6 +5293,10 @@ const memoryHybridPlugin = {
           opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number },
           sink: DistillCliSink,
         ): Promise<DistillCliResult> {
+          // Feature-gating: exit 0 if distill is disabled
+          if (cfg.distill?.enabled === false) {
+            return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
+          }
           const sessionFiles = gatherSessionFiles({
             all: opts.all,
             days: opts.days ?? (opts.all ? 90 : 3),
@@ -5960,7 +6003,7 @@ const memoryHybridPlugin = {
               vectorDb,
               embeddings,
               openai,
-              { defaultWindow: cfg.reflection.defaultWindow, minObservations: cfg.reflection.minObservations },
+              { defaultWindow: cfg.reflection.defaultWindow, minObservations: cfg.reflection.minObservations, enabled: cfg.reflection.enabled },
               opts,
               api.logger,
             ),
@@ -6011,15 +6054,26 @@ const memoryHybridPlugin = {
             runExtractReinforcementForCli(opts),
           richStatsExtras: (() => {
             const memoryDir = dirname(resolvedSqlitePath);
-            function dirSize(p: string): number {
+            async function dirSizeAsync(p: string): Promise<number> {
               try {
-                const st = statSync(p);
-                if (!st.isDirectory()) return st.size;
-                let total = 0;
-                for (const name of readdirSync(p)) {
-                  total += dirSize(join(p, name));
-                }
-                return total;
+                // Try using du -sb for faster directory size calculation (Linux/macOS)
+                const { execFile } = await import("node:child_process");
+                return await new Promise<number>((resolve) => {
+                  execFile("du", ["-sb", p], (error, stdout) => {
+                    if (error) {
+                      // Fallback to statSync if du fails (e.g., on Windows)
+                      try {
+                        const st = statSync(p);
+                        resolve(st.isDirectory() ? 0 : st.size);
+                      } catch {
+                        resolve(0);
+                      }
+                      return;
+                    }
+                    const match = /^(\d+)/.exec(stdout.trim());
+                    resolve(match ? parseInt(match[1], 10) : 0);
+                  });
+                });
               } catch {
                 return 0;
               }
@@ -6048,7 +6102,7 @@ const memoryHybridPlugin = {
                 }
                 return out;
               },
-              getStorageSizes: () => {
+              getStorageSizes: async () => {
                 let sqliteBytes: number | undefined;
                 let lanceBytes: number | undefined;
                 try {
@@ -6057,7 +6111,7 @@ const memoryHybridPlugin = {
                   /* ignore */
                 }
                 try {
-                  if (existsSync(resolvedLancePath)) lanceBytes = dirSize(resolvedLancePath);
+                  if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
                 } catch {
                   /* ignore */
                 }
