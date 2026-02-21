@@ -119,6 +119,9 @@ import {
   cosineSimilarity,
   parsePatternsFromReflectionResponse,
 } from "./services/reflection.js";
+import { runFindDuplicates } from "./services/find-duplicates.js";
+import { findSimilarByEmbedding } from "./services/vector-search.js";
+import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "./services/credential-migration.js";
 import { registerMemoryTools, type PluginContext as MemoryToolsContext } from "./tools/memory-tools.js";
 import { registerCredentialTools } from "./tools/credential-tools.js";
 import { registerGraphTools } from "./tools/graph-tools.js";
@@ -138,137 +141,6 @@ import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 // ============================================================================
 
 /** Get top-N existing facts by embedding similarity. Resolves vector search ids via factsDb (filters superseded). Falls back to empty array on vector search failure. */
-async function findSimilarByEmbedding(
-  vectorDb: VectorDB,
-  factsDb: { getById(id: string): MemoryEntry | null },
-  vector: number[],
-  limit: number,
-  minScore = 0.3,
-): Promise<MemoryEntry[]> {
-  const results = await vectorDb.search(vector, limit, minScore);
-  const entries: MemoryEntry[] = [];
-  for (const r of results) {
-    const entry = factsDb.getById(r.entry.id);
-    if (entry && entry.supersededAt == null) entries.push(entry);
-  }
-  return entries;
-}
-
-
-
-// ============================================================================
-// Tool-call credential extraction (auto-capture from tool inputs)
-// ============================================================================
-
-// Extraction logic moved to services/credential-scanner.ts
-
-const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrated";
-
-/**
- * When vault is enabled: move existing credential facts from memory into the vault and replace them with pointers.
- * Idempotent: facts that are already pointers (value starts with vault:) are skipped.
- * Returns { migrated, skipped, errors }. If markDone is true, writes a flag file so init only runs once.
- */
-async function migrateCredentialsToVault(opts: {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  embeddings: Embeddings;
-  credentialsDb: CredentialsDB;
-  migrationFlagPath: string;
-  markDone: boolean;
-}): Promise<{ migrated: number; skipped: number; errors: string[] }> {
-  const { factsDb, vectorDb, embeddings, credentialsDb, migrationFlagPath, markDone } = opts;
-  let migrated = 0;
-  let skipped = 0;
-  const errors: string[] = [];
-
-  const results = factsDb.lookup("Credentials");
-  const toMigrate = results.filter(
-    (r) =>
-      !r.entry.text.includes("stored in secure vault") &&
-      (r.entry.value == null || !String(r.entry.value).startsWith(VAULT_POINTER_PREFIX)),
-  );
-
-  for (const { entry } of toMigrate) {
-    const parsed = tryParseCredentialForVault(
-      entry.text,
-      entry.entity,
-      entry.key,
-      entry.value,
-    );
-    if (!parsed) {
-      skipped++;
-      continue;
-    }
-    try {
-      credentialsDb.store({
-        service: parsed.service,
-        type: parsed.type,
-        value: parsed.secretValue,
-        url: parsed.url,
-        notes: parsed.notes,
-      });
-      factsDb.delete(entry.id);
-      try {
-        await vectorDb.delete(entry.id);
-      } catch {
-        // LanceDB row might not exist
-      }
-      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-      const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
-      const pointerEntry = factsDb.store({
-        text: pointerText,
-        category: "technical" as MemoryCategory,
-        importance: BATCH_STORE_IMPORTANCE,
-        entity: "Credentials",
-        key: parsed.service,
-        value: pointerValue,
-        source: "conversation",
-        decayClass: "permanent",
-        tags: ["auth", ...extractTags(pointerText, "Credentials")],
-      });
-      try {
-        const vector = await embeddings.embed(pointerText);
-        if (!(await vectorDb.hasDuplicate(vector))) {
-          await vectorDb.store({
-            text: pointerText,
-            vector,
-            importance: BATCH_STORE_IMPORTANCE,
-            category: "technical",
-            id: pointerEntry.id,
-          });
-        }
-      } catch (e) {
-        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-          subsystem: "vector",
-          operation: "store-migration-pointer",
-          phase: "initialization",
-          backend: "lancedb",
-        });
-        errors.push(`vector store for ${parsed.service}: ${String(e)}`);
-      }
-      migrated++;
-    } catch (e) {
-      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-        subsystem: "credentials",
-        operation: "migrate-fact-to-vault",
-        phase: "initialization",
-        backend: "sqlite",
-      });
-      errors.push(`${parsed.service}: ${String(e)}`);
-    }
-  }
-
-  if (markDone) {
-    try {
-      writeFileSync(migrationFlagPath, "1", "utf8");
-    } catch (e) {
-      errors.push(`write migration flag: ${String(e)}`);
-    }
-  }
-  return { migrated, skipped, errors };
-}
-
 /** True if fact looks like identifier/number (IP, email, phone, UUID, etc.). Used by consolidate to skip by default (2.2/2.4). */
 function isStructuredForConsolidation(
   text: string,
@@ -309,71 +181,6 @@ function detectCategory(text: string): MemoryCategory {
 // ============================================================================
 // LLM-based Auto-Classifier
 // ============================================================================
-
-/**
- * Find-duplicates (2.2): report pairs of facts with embedding similarity ≥ threshold.
- * Does not modify store. By default skips identifier-like facts; use includeStructured to include.
- */
-async function runFindDuplicates(
-  factsDb: FactsDB,
-  embeddings: Embeddings,
-  opts: { threshold: number; includeStructured: boolean; limit: number },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-): Promise<{
-  pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }>;
-  candidatesCount: number;
-  skippedStructured: number;
-}> {
-  const facts = factsDb.getFactsForConsolidation(opts.limit);
-  const skippedStructured = opts.includeStructured ? 0 : facts.filter((f) => isStructuredForConsolidation(f.text, f.entity, f.key)).length;
-  const candidateFacts = opts.includeStructured
-    ? facts
-    : facts.filter((f) => !isStructuredForConsolidation(f.text, f.entity, f.key));
-  if (candidateFacts.length < 2) {
-    logger.info("memory-hybrid: find-duplicates — fewer than 2 candidate facts");
-    return { pairs: [], candidatesCount: candidateFacts.length, skippedStructured };
-  }
-
-  const idToFact = new Map(candidateFacts.map((f) => [f.id, f]));
-  const ids = candidateFacts.map((f) => f.id);
-
-  logger.info(`memory-hybrid: find-duplicates — embedding ${ids.length} facts...`);
-  const vectors: number[][] = [];
-  for (let i = 0; i < ids.length; i += 20) {
-    const batch = ids.slice(i, i + 20);
-    for (const id of batch) {
-      const f = idToFact.get(id)!;
-      const vec = await safeEmbed(embeddings, f.text, (msg) => logger.warn(msg));
-      vectors.push(vec ?? []);
-    }
-    if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
-  }
-
-  const idToIndex = new Map(ids.map((id, idx) => [id, idx]));
-  const pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }> = [];
-  const searchLimit = Math.min(100, ids.length);
-
-  // Use LanceDB vector search (indexed) instead of O(n²) pairwise loop
-  for (let i = 0; i < ids.length; i++) {
-    const vi = vectors[i];
-    if (vi.length === 0) continue;
-    const results = await vectorDb.search(vi, searchLimit, opts.threshold);
-    for (const r of results) {
-      const j = idToIndex.get(r.entry.id);
-      if (j !== undefined && j > i) {
-        pairs.push({
-          idA: ids[i],
-          idB: ids[j],
-          score: r.score,
-          textA: idToFact.get(ids[i])!.text,
-          textB: idToFact.get(ids[j])!.text,
-        });
-      }
-    }
-  }
-  logger.info(`memory-hybrid: find-duplicates — ${pairs.length} pairs ≥ ${opts.threshold}`);
-  return { pairs, candidatesCount: candidateFacts.length, skippedStructured };
-}
 
 /** Minimum "other" facts before we run category discovery (avoid noise on tiny sets). */
 // ============================================================================
@@ -3179,7 +2986,7 @@ const memoryHybridPlugin = {
           runConfigSet: (key, value) => Promise.resolve(runConfigSetForCli(key, value)),
           runConfigSetHelp: (key) => Promise.resolve(runConfigSetHelpForCli(key)),
           runFindDuplicates: (opts) =>
-            runFindDuplicates(factsDb, embeddings, opts, api.logger),
+            runFindDuplicates(factsDb, vectorDb, embeddings, safeEmbed, opts, api.logger),
           runConsolidate: (opts) => {
             if (!cfg.embedding?.apiKey || cfg.embedding.apiKey.length < 10) {
               return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
