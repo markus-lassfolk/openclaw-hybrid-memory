@@ -7669,10 +7669,10 @@ const memoryHybridPlugin = {
           })();
         }, 20000);
       },
-      stop: async () => {
-        // Flush any pending error reports before shutdown
+      stop: () => {
+        // Flush any pending error reports before shutdown (non-blocking)
         if (isErrorReporterActive()) {
-          await flushErrorReporter(2000);
+          flushErrorReporter(2000).catch(() => {});
         }
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }

@@ -162,7 +162,8 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
         os: { name: event.contexts.os.name } // Only name, no version
       } : {}),
     },
-    // NO: user, request, breadcrumbs, contexts.device, extra
+    breadcrumbs: event.breadcrumbs, // Already filtered by beforeBreadcrumb
+    // NO: user, request, contexts.device, extra
   };
 
   return safe;
@@ -224,7 +225,7 @@ export function sanitizePath(path: string): string {
 
   // Fallback: if path contains node_modules or extensions, return basename
   if (path.includes('node_modules') || path.includes('extensions')) {
-    const parts = path.split('/');
+    const parts = path.split(/[/\\]/);
     return parts[parts.length - 1] || path;
   }
 
@@ -341,8 +342,7 @@ export function captureTestError(): string | null {
 export function addOperationBreadcrumb(subsystem: string, operation: string): void {
   if (!Sentry || !initialized) return;
   Sentry.addBreadcrumb({
-    category: `plugin.${subsystem}`,
-    message: operation,
+    category: `plugin.${subsystem}.${operation}`,
     level: "info"
   });
 }
