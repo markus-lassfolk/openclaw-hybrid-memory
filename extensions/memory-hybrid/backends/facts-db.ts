@@ -993,6 +993,16 @@ export class FactsDB {
     return results;
   }
 
+  /** Find a fact ID by prefix (for truncated ID resolution). Returns full ID or null. */
+  findByIdPrefix(prefix: string): string | null {
+    if (!prefix || prefix.length < 4) return null; // too short, ambiguous
+    const row = this.liveDb.prepare(
+      `SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 2`
+    ).all(prefix) as Array<{ id: string }>;
+    // Only return if exactly one match (unambiguous)
+    return row.length === 1 ? row[0].id : null;
+  }
+
   delete(id: string): boolean {
     const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
