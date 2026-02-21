@@ -49,6 +49,7 @@ import { extractProceduresFromSessions } from "./services/procedure-extractor.js
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
+import { runExport } from "./services/export-memory.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
@@ -5982,6 +5983,8 @@ const memoryHybridPlugin = {
           runGenerateAutoSkills: (opts) => runGenerateAutoSkillsForCli(opts),
           runBackfill: (opts, sink) => runBackfillForCli(opts, sink),
           runIngestFiles: (opts, sink) => runIngestFilesForCli(opts, sink),
+          runExport: (opts) =>
+            Promise.resolve(runExport(factsDb, opts, { pluginVersion: versionInfo.pluginVersion, schemaVersion: versionInfo.schemaVersion })),
           runDistill: (opts, sink) => runDistillForCli(opts, sink),
           runMigrateToVault: () => runMigrateToVaultForCli(),
           runUninstall: (opts) => Promise.resolve(runUninstallForCli(opts)),
