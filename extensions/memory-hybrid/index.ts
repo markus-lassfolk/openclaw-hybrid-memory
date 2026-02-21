@@ -6212,7 +6212,7 @@ const memoryHybridPlugin = {
               listCorrections: async (opts: { workspace?: string }) => {
                 const report = getLatestCorrectionReport(opts.workspace);
                 if (!report) return { reportPath: null, items: [] };
-                const items = parseReportSuggestedTools(report.content);
+                const items = parseReportProposedSections(report.content);
                 return { reportPath: report.path, items };
               },
               correctionsApproveAll: async (opts: { workspace?: string }) => {
