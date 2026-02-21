@@ -1609,6 +1609,100 @@ export class FactsDB {
     return stats;
   }
 
+  /** Category breakdown for non-superseded facts (for rich stats). */
+  statsBreakdownByCategory(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT category, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY category`,
+      )
+      .all() as Array<{ category: string; cnt: number }>;
+    const stats: Record<string, number> = {};
+    for (const row of rows) {
+      stats[row.category || "other"] = row.cnt;
+    }
+    return stats;
+  }
+
+  /** Count of procedures (from procedures table). Returns 0 if table does not exist. */
+  proceduresCount(): number {
+    try {
+      const row = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM procedures`).get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Count of procedures with last_validated set (validated at least once). */
+  proceduresValidatedCount(): number {
+    try {
+      const row = this.liveDb
+        .prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE last_validated IS NOT NULL`)
+        .get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Count of procedures promoted to skill (promoted_to_skill = 1). */
+  proceduresPromotedCount(): number {
+    try {
+      const row = this.liveDb
+        .prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE promoted_to_skill = 1`)
+        .get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Count of rows in memory_links (graph connections). Returns 0 if table does not exist. */
+  linksCount(): number {
+    try {
+      const row = this.liveDb
+        .prepare(`SELECT COUNT(*) as cnt FROM memory_links`)
+        .get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Count of facts with source LIKE 'directive:%' (extracted directives). */
+  directivesCount(): number {
+    const row = this.liveDb
+      .prepare(
+        `SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND source LIKE 'directive:%'`,
+      )
+      .get() as { cnt: number };
+    return row?.cnt ?? 0;
+  }
+
+  /** Count of facts with category = 'pattern' and tag 'meta' (meta-patterns). */
+  metaPatternsCount(): number {
+    try {
+      const row = this.liveDb
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND category = 'pattern' AND (',' || COALESCE(tags,'') || ',') LIKE '%,meta,%'`,
+        )
+        .get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Distinct entity count (non-null, non-empty entity values). */
+  entityCount(): number {
+    const row = this.liveDb
+      .prepare(
+        `SELECT COUNT(DISTINCT entity) as cnt FROM facts WHERE superseded_at IS NULL AND entity IS NOT NULL AND entity != ''`,
+      )
+      .get() as { cnt: number };
+    return row?.cnt ?? 0;
+  }
+
   /** Estimated total tokens stored (summary or text) for non-superseded facts. Uses same heuristic as auto-recall. */
   estimateStoredTokens(): number {
     const rows = this.liveDb
@@ -1675,6 +1769,26 @@ export class FactsDB {
     const rows = this.liveDb
       .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
       .all(category) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
+  /** List non-superseded facts by category (for CLI list command). */
+  listFactsByCategory(category: string, limit = 100): MemoryEntry[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts WHERE category = ? AND (superseded_at IS NULL) ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(category, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
+  /** List directive facts (source LIKE 'directive:%'), non-superseded, by created_at DESC. */
+  listDirectives(limit = 100): MemoryEntry[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts WHERE source LIKE 'directive:%' AND (superseded_at IS NULL) ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(limit) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToEntry(row));
   }
 
@@ -1804,6 +1918,18 @@ export class FactsDB {
         now,
       );
     return this.getProcedureById(id)!;
+  }
+
+  /** List procedures ordered by updated_at DESC. Returns up to limit (default 100). */
+  listProcedures(limit = 100): ProcedureEntry[] {
+    try {
+      const rows = this.liveDb
+        .prepare(`SELECT * FROM procedures ORDER BY updated_at DESC, created_at DESC LIMIT ?`)
+        .all(limit) as Array<Record<string, unknown>>;
+      return rows.map((r) => this.procedureRowToEntry(r));
+    } catch {
+      return [];
+    }
   }
 
   getProcedureById(id: string): ProcedureEntry | null {
