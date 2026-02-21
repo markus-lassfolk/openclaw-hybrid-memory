@@ -4250,8 +4250,12 @@ const memoryHybridPlugin = {
           }
           let extractProceduresDefined = false;
           let selfCorrectionDefined = false;
+          let weeklyDeepMaintenanceDefined = false;
+          let monthlyConsolidationDefined = false;
           const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
           const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
+          const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
+          const monthlyConsolidationRe = /monthly-consolidation/i;
           if (existsSync(cronStorePath)) {
             try {
               const raw = readFileSync(cronStorePath, "utf-8");
@@ -4260,10 +4264,12 @@ const memoryHybridPlugin = {
               if (Array.isArray(jobs)) {
                 if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
                 if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
+                if (jobs.some((j: unknown) => weeklyDeepMaintenanceRe.test(String((j as Record<string, unknown>)?.name ?? "")))) weeklyDeepMaintenanceDefined = true;
+                if (jobs.some((j: unknown) => monthlyConsolidationRe.test(String((j as Record<string, unknown>)?.name ?? "")))) monthlyConsolidationDefined = true;
               }
             } catch { /* ignore */ }
           }
-          if ((!extractProceduresDefined || !selfCorrectionDefined) && existsSync(defaultConfigPath)) {
+          if (existsSync(defaultConfigPath)) {
             try {
               const raw = readFileSync(defaultConfigPath, "utf-8");
               const root = JSON.parse(raw) as Record<string, unknown>;
@@ -4271,10 +4277,14 @@ const memoryHybridPlugin = {
               if (Array.isArray(jobs)) {
                 if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
                 if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
+                if (jobs.some((j: unknown) => weeklyDeepMaintenanceRe.test(String((j as Record<string, unknown>)?.name ?? "")))) weeklyDeepMaintenanceDefined = true;
+                if (jobs.some((j: unknown) => monthlyConsolidationRe.test(String((j as Record<string, unknown>)?.name ?? "")))) monthlyConsolidationDefined = true;
               } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
                 const keyed = jobs as Record<string, unknown>;
                 if (Object.keys(keyed).some((k) => extractProceduresRe.test(k))) extractProceduresDefined = true;
                 if (Object.keys(keyed).some((k) => selfCorrectionRe.test(k))) selfCorrectionDefined = true;
+                if (Object.keys(keyed).some((k) => weeklyDeepMaintenanceRe.test(k))) weeklyDeepMaintenanceDefined = true;
+                if (Object.keys(keyed).some((k) => monthlyConsolidationRe.test(k))) monthlyConsolidationDefined = true;
               }
             } catch { /* ignore */ }
           }
@@ -4302,6 +4312,18 @@ const memoryHybridPlugin = {
           } else {
             log("  self-correction-analysis: not defined");
             fixes.push("Optional: Set up self-correction analysis via jobs. See docs/SELF-CORRECTION-PIPELINE.md. Run 'openclaw hybrid-mem verify --fix' to add.");
+          }
+          if (weeklyDeepMaintenanceDefined) {
+            log("  weekly-deep-maintenance: defined");
+          } else {
+            log("  weekly-deep-maintenance: not defined");
+            fixes.push("Optional: Set up weekly deep maintenance via jobs. Run 'openclaw hybrid-mem verify --fix' to add.");
+          }
+          if (monthlyConsolidationDefined) {
+            log("  monthly-consolidation: defined");
+          } else {
+            log("  monthly-consolidation: not defined");
+            fixes.push("Optional: Set up monthly consolidation via jobs. Run 'openclaw hybrid-mem verify --fix' to add.");
           }
           log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
           if (opts.logFile && existsSync(opts.logFile)) {
