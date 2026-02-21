@@ -7319,6 +7319,7 @@ const memoryHybridPlugin = {
             {
               enabled: cfg.errorReporting.enabled,
               dsn: cfg.errorReporting.dsn,
+              mode: cfg.errorReporting.mode ?? "community",
               consent: cfg.errorReporting.consent,
               environment: cfg.errorReporting.environment,
               sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
