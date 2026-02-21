@@ -97,7 +97,7 @@ import {
   getCorrectionSignalRegex,
 } from "./utils/language-keywords.js";
 import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "./services/self-correction-extract.js";
-import { initErrorReporter, capturePluginError, isErrorReporterActive, addOperationBreadcrumb } from "./services/error-reporter.js";
+import { initErrorReporter, capturePluginError, isErrorReporterActive, addOperationBreadcrumb, flushErrorReporter } from "./services/error-reporter.js";
 import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { extractCredentialsFromToolCalls, type ToolCallCredential } from "./services/credential-scanner.js";
@@ -7400,7 +7400,7 @@ const memoryHybridPlugin = {
               consent: cfg.errorReporting.consent,
               environment: cfg.errorReporting.environment,
               sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
-              maxBreadcrumbs: 0,
+              maxBreadcrumbs: 10,
             },
             versionInfo.pluginVersion,
             api.logger,
@@ -7614,7 +7614,11 @@ const memoryHybridPlugin = {
           })();
         }, 20000);
       },
-      stop: () => {
+      stop: async () => {
+        // Flush any pending error reports before shutdown
+        if (isErrorReporterActive()) {
+          await flushErrorReporter(2000);
+        }
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }

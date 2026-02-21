@@ -260,6 +260,13 @@ export function capturePluginError(error: Error, context: {
   }
   errorDedup.set(fingerprint, now);
 
+  // Prevent memory leak: prune entries older than 60s (cap check every 50 entries)
+  if (errorDedup.size > 50) {
+    for (const [key, ts] of errorDedup) {
+      if (now - ts > 60000) errorDedup.delete(key);
+    }
+  }
+
   let eventId: string | undefined;
   Sentry.withScope((scope) => {
     scope.setTag("subsystem", context.subsystem);
