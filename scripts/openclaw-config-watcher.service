@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenClaw config validator (watches openclaw.json for changes)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/markus/.openclaw/scripts/safe-config-write.sh --watch
+Restart=on-failure
+RestartSec=5
+User=markus
+
+[Install]
+WantedBy=default.target
