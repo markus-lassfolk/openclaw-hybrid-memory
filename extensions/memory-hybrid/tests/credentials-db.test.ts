@@ -263,4 +263,90 @@ describe("CredentialsDB plaintext vault", () => {
     expect(() => new CredentialsDB(dbPath, "")).toThrow(/vault was created with encryption/);
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("list() works in plaintext mode", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-plain-list-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "service1", type: "api_key", value: "val1" });
+    plainDb.store({ service: "service2", type: "token", value: "val2" });
+    const list = plainDb.list();
+    expect(list.length).toBe(2);
+    expect(list.map((l) => l.service)).toContain("service1");
+    expect(list.map((l) => l.service)).toContain("service2");
+    plainDb.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("delete() works in plaintext mode", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-plain-del-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "delme", type: "api_key", value: "secret" });
+    expect(plainDb.delete("delme", "api_key")).toBe(true);
+    expect(plainDb.get("delme", "api_key")).toBeNull();
+    plainDb.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("round-trip: create plaintext vault, close, reopen plaintext, verify data intact", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-round-"));
+    const dbPath = join(dir, "creds.db");
+    const db1 = new CredentialsDB(dbPath, "");
+    db1.store({ service: "persist", type: "password", value: "my-password-123" });
+    db1.close();
+    const db2 = new CredentialsDB(dbPath, "");
+    const got = db2.get("persist", "password");
+    expect(got).not.toBeNull();
+    expect(got!.value).toBe("my-password-123");
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("plaintext vault (kdf_version=0) opened with a valid key: key is ignored with warning", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-plain-with-key-"));
+    const dbPath = join(dir, "creds.db");
+    // Create plaintext vault
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "test", type: "api_key", value: "plain-value" });
+    plainDb.close();
+    // Capture warning during construction
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(String(args[0]));
+    };
+    // Reopen with a valid key (should handle gracefully and warn)
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    console.warn = originalWarn;
+    // Verify warning was issued
+    expect(warnings.some((w) => w.includes("plaintext mode"))).toBe(true);
+    // Verify data is still accessible in plaintext
+    const got = db2.get("test", "api_key");
+    expect(got).not.toBeNull();
+    expect(got!.value).toBe("plain-value");
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy encrypted vault (no vault_meta) + empty key
+// ---------------------------------------------------------------------------
+
+describe("CredentialsDB legacy vault mode mismatch", () => {
+  it("legacy encrypted vault (has data, no vault_meta) + empty key must throw", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-legacy-"));
+    const dbPath = join(dir, "creds.db");
+    // Manually create a legacy encrypted vault (no vault_meta, but has encrypted data)
+    const encDb = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    encDb.store({ service: "legacy", type: "api_key", value: "encrypted-secret" });
+    // Manually delete vault_meta to simulate legacy vault
+    const db = encDb["db"]; // Access private db
+    db.prepare("DELETE FROM vault_meta").run();
+    encDb.close();
+    // Try to open without key → must throw
+    expect(() => new CredentialsDB(dbPath, "")).toThrow(/vault contains data/);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
