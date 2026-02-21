@@ -358,6 +358,80 @@ describe("hybridConfigSchema.parse", () => {
     ).toThrow(/Credentials encryption key env var MISSING_ENV_VAR_XYZ is not set/);
   });
 
+  it("errorReporting defaults to undefined when not provided", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.errorReporting).toBeUndefined();
+  });
+
+  it("parses errorReporting in community mode", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: true,
+        mode: "community",
+      },
+    });
+    expect(result.errorReporting).toBeDefined();
+    expect(result.errorReporting?.enabled).toBe(true);
+    expect(result.errorReporting?.consent).toBe(true);
+    expect(result.errorReporting?.mode).toBe("community");
+    expect(result.errorReporting?.dsn).toBeUndefined();
+  });
+
+  it("parses errorReporting in self-hosted mode with DSN", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: true,
+        mode: "self-hosted",
+        dsn: "https://abc123@glitchtip.example.com/1",
+      },
+    });
+    expect(result.errorReporting).toBeDefined();
+    expect(result.errorReporting?.mode).toBe("self-hosted");
+    expect(result.errorReporting?.dsn).toBe("https://abc123@glitchtip.example.com/1");
+  });
+
+  it("throws when self-hosted mode enabled without DSN", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...validBase,
+        errorReporting: {
+          enabled: true,
+          consent: true,
+          mode: "self-hosted",
+        },
+      }),
+    ).toThrow(/mode is "self-hosted" but dsn is empty or missing/);
+  });
+
+  it("throws when DSN contains placeholders", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...validBase,
+        errorReporting: {
+          enabled: true,
+          consent: true,
+          mode: "self-hosted",
+          dsn: "https://<key>@<host>/<project-id>",
+        },
+      }),
+    ).toThrow(/dsn contains placeholder values/);
+  });
+
+  it("defaults mode to community when not specified", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: true,
+      },
+    });
+    expect(result.errorReporting?.mode).toBe("community");
+  });
+
   it("parses custom categories", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
