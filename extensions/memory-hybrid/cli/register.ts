@@ -209,6 +209,8 @@ export type HybridMemCliContext = {
     correctionsApproveAll: (opts: { workspace?: string }) => Promise<{ applied: number; error?: string }>;
     showItem: (id: string) => Promise<{ type: "fact" | "proposal"; data: unknown } | null>;
   };
+  /** FR-004: Whether memory tiering is enabled (used to filter cold-tier facts from search). */
+  tieringEnabled: boolean;
 };
 
 /** Chainable command type (Commander-style). */
@@ -265,6 +267,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractReinforcement,
     runExport,
     listCommands,
+    tieringEnabled,
   } = ctx;
 
   /** Run an async action and exit when done (avoids hang from open DB/handles when run as standalone CLI).
@@ -514,7 +517,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           console.warn(`memory-hybrid: vector search failed: ${err}`);
         }
       }
-      const merged = merge(sqlResults, lanceResults, limit, factsDb);
+      let merged = merge(sqlResults, lanceResults, limit, factsDb);
+
+      // FR-004: Exclude COLD tier from search results (Lance results may include cold facts)
+      if (tieringEnabled && merged.length > 0) {
+        merged = merged.filter((r) => {
+          const full = factsDb.getById(r.entry.id);
+          return full && full.tier !== "cold";
+        }).slice(0, limit);
+      }
 
       const output = merged.map((r) => ({
         id: r.entry.id,
