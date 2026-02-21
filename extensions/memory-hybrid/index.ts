@@ -111,6 +111,9 @@ import { extractStructuredFields } from "./services/fact-extraction.js";
 import { getMemoryTriggers, detectCredentialPatterns, extractCredentialMatch, isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX, inferServiceFromText, SENSITIVE_PATTERNS } from "./services/auto-capture.js";
 import { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel } from "./services/auto-classifier.js";
 import { runConsolidate, unionFind, getRoot, isStructuredForConsolidation } from "./services/consolidation.js";
+import { shouldCapture as shouldCaptureUtil, detectCategory as detectCategoryUtil } from "./services/capture-utils.js";
+import { buildToolScopeFilter } from "./utils/scope-filter.js";
+import { walWrite, walRemove } from "./services/wal-helpers.js";
 import {
   runReflection,
   runReflectionRules,
@@ -141,41 +144,19 @@ import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 // ============================================================================
 
 /** Get top-N existing facts by embedding similarity. Resolves vector search ids via factsDb (filters superseded). Falls back to empty array on vector search failure. */
-/** True if fact looks like identifier/number (IP, email, phone, UUID, etc.). Used by consolidate to skip by default (2.2/2.4). */
-function isStructuredForConsolidation(
-  text: string,
-  entity: string | null,
-  key: string | null,
-): boolean {
-  if (/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(text)) return true;
-  if (/[\w.-]+@[\w.-]+\.\w+/.test(text)) return true;
-  if (/\+\d{10,}/.test(text) || /\b\d{10,}\b/.test(text)) return true;
-  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)) return true;
-  const k = (key ?? "").toLowerCase();
-  const e = (entity ?? "").toLowerCase();
-  if (["email", "phone", "api_key", "ip", "uuid", "password"].some((x) => k.includes(x) || e.includes(x))) return true;
-  if (SENSITIVE_PATTERNS.some((r) => r.test(text))) return true;
-  return false;
-}
-
+/** Wrappers for extracted helper functions that need access to module-level config */
 function shouldCapture(text: string): boolean {
-  if (text.length < 10 || text.length > cfg.captureMaxChars) return false;
-  if (text.includes("<relevant-memories>")) return false;
-  if (text.startsWith("<") && text.includes("</")) return false;
-  if (text.includes("**") && text.includes("\n-")) return false;
-  const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
-  if (emojiCount > 3) return false;
-  if (SENSITIVE_PATTERNS.some((r) => r.test(text))) return false;
-  return getMemoryTriggers().some((r) => r.test(text));
+  return shouldCaptureUtil(text, cfg.captureMaxChars, getMemoryTriggers());
 }
 
 function detectCategory(text: string): MemoryCategory {
-  const lower = text.toLowerCase();
-  if (getCategoryDecisionRegex().test(lower)) return "decision";
-  if (getCategoryPreferenceRegex().test(lower)) return "preference";
-  if (/\+\d{10,}|@[\w.-]+\.\w+/.test(lower) || getCategoryEntityRegex().test(lower)) return "entity";
-  if (getCategoryFactRegex().test(lower)) return "fact";
-  return "other";
+  return detectCategoryUtil(
+    text,
+    getCategoryDecisionRegex(),
+    getCategoryPreferenceRegex(),
+    getCategoryEntityRegex(),
+    getCategoryFactRegex(),
+  );
 }
 
 // ============================================================================
@@ -242,58 +223,6 @@ let lastProgressiveIndexIds: string[] = [];
 // falling back to orchestrator.
 let currentAgentId: string | null = null;
 
-/**
- * Helper to build scope filter for tool handlers (memory_recall, memory_recall_procedures).
- * Handles explicit parameters, agent-scoped filtering, and orchestrator fallback.
- */
-function buildToolScopeFilter(
-  params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
-  currentAgent: string | null,
-  config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } }
-): ScopeFilter | undefined {
-  const { userId, agentId, sessionId } = params;
-  if (userId || agentId || sessionId) {
-    return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
-  } else if (currentAgent && currentAgent !== config.multiAgent.orchestratorId) {
-    return {
-      userId: config.autoRecall.scopeFilter?.userId ?? null,
-      agentId: currentAgent,
-      sessionId: config.autoRecall.scopeFilter?.sessionId ?? null
-    };
-  } else {
-    return undefined;
-  }
-}
-
-/**
- * WAL helpers — wrap the write-before-commit / remove-after-commit pattern.
- * Each call site was 8–12 lines of identical boilerplate; these reduce it to 1–2 lines.
- */
-function walWrite(
-  operation: "store" | "update",
-  data: Record<string, unknown>,
-  logger: { warn: (msg: string) => void },
-): string {
-  const id = randomUUID();
-  if (wal) {
-    try {
-      wal.write({ id, timestamp: Date.now(), operation, data: data as any });
-    } catch (err) {
-      logger.warn(`memory-hybrid: WAL write failed: ${err}`);
-    }
-  }
-  return id;
-}
-
-function walRemove(id: string, logger: { warn: (msg: string) => void }): void {
-  if (wal) {
-    try {
-      wal.remove(id);
-    } catch (err) {
-      logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
-    }
-  }
-}
 
 const PLUGIN_ID = "openclaw-hybrid-memory";
 
@@ -483,8 +412,8 @@ const memoryHybridPlugin = {
       { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentId },
       api,
       buildToolScopeFilter,
-      walWrite,
-      walRemove,
+      (operation, data, logger) => walWrite(wal, operation, data, logger),
+      (id, logger) => walRemove(wal, id, logger),
       findSimilarByEmbedding
     );
 
@@ -668,8 +597,8 @@ const memoryHybridPlugin = {
       runReflection,
       runReflectionRules,
       runReflectionMeta,
-      (operation, data) => walWrite(operation, data, api.logger),
-      (id) => walRemove(id, api.logger)
+      (operation, data) => walWrite(wal, operation, data, api.logger),
+      (id) => walRemove(wal, id, api.logger)
     );
 
     // ========================================================================
@@ -3254,8 +3183,8 @@ const memoryHybridPlugin = {
       lastProgressiveIndexIds,
       restartPendingCleared,
       resolvedSqlitePath,
-      walWrite,
-      walRemove,
+      walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+      walRemove: (id, logger) => walRemove(wal, id, logger),
       findSimilarByEmbedding,
       shouldCapture,
       detectCategory,
@@ -3356,7 +3285,7 @@ const memoryHybridPlugin = {
                 api.logger.warn(`memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`);
               }
                 
-                walRemove(entry.id, api.logger);
+                walRemove(wal, entry.id, api.logger);
               } catch (err) {
                 api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
                 failed++;
