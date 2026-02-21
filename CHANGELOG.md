@@ -21,6 +21,36 @@ Bug-fix release: credentials encryption key handling and config mode reporting f
 
 ---
 
+## [2026.2.210] - 2026-02-21
+
+Consolidated release: verify reports all six optional cron jobs, scope/cold-tier and multi-agent fixes, error-reporting cleanup, cron job definitions, credentials/error-reporter/memory-forget fixes, config-set and open issues #53–#56.
+
+### Added
+
+- **Verify:** Optional/suggested jobs list now includes all six jobs: `nightly-memory-sweep`, `weekly-reflection`, `weekly-extract-procedures`, `self-correction-analysis`, `weekly-deep-maintenance`, `monthly-consolidation` (previously only four were shown).
+- **Cron job definitions:** New `cli/cron-jobs.ts` module; nightly-distill cron includes `record-distill` step; cron commands add `generate-auto-skills` and drop no-op scope command (PR #66, issues #53–#56).
+- **Config-set help:** Fix help parsing for `openclaw hybrid-mem config-set --help`; full preset includes ingest paths (PR #63).
+- **Export CLI:** `openclaw hybrid-mem export` for vanilla OpenClaw–compatible MEMORY.md and memory/ directory layout (PR #57).
+- **Error reporting schema:** Community/self-hosted mode and config-set support; `mode` passed to `initErrorReporter` (PR #58, #59).
+- **Credentials:** `credentials.autoCapture` in plugin config schema; deploy snippet and vault-without-encryption option (PR #63).
+- **Proposals/corrections:** List proposals, approve/reject, list corrections, approve-all from report; `listCorrections` uses `parseReportProposedSections` for both sections (issues #53–#56).
+- **.gitignore:** `.claude/settings.json` added to ignore list.
+
+### Fixed
+
+- **Scope and cold-tier (from dev):** Scope computed early for classify-before-write so UPDATE path gets correct scope/scopeTarget; CLI search filters out cold-tier facts when tiering is enabled (`tieringEnabled` in CLI context), matching memory_recall and auto-recall.
+- **Multi-agent (from feature/multi-agent-memory-scoping):** Stale cached agent ID no longer silences detection failure warnings; `buildToolScopeFilter` helper deduplicates scope filter logic; warning logs always emitted when agent detection fails; fallback uses `currentAgentId || orchestratorId` when detection fails.
+- **Error reporting:** Remove duplicate `COMMUNITY_DSN` from config.ts (kept only in error-reporter.ts); breadcrumbs, Windows paths, async stop handler; credential CRUD and memory_forget error capture; rate limiter pruning and maxBreadcrumbs init; `flushErrorReporter` wired into shutdown (PR #60).
+- **memory-forget:** Prefix matching UX, input validation, distinguish errors from not-found, tests; remove FTS text search for ID prefix resolution; show full UUIDs, report actual deletion failures (PR #61).
+- **Credentials:** Critical plaintext vault bugs from council review fixed (PR #63).
+- **Self-correction / procedures:** Verify --fix adds procedural and self-correction jobs; directive-extract 'remember' for URI+directive edge case; store rejection reason, config writes, correction parsers; TTY detection, feature gates, regex matching, macOS compatibility, scope issues (PR #57).
+
+### Changed
+
+- **Version bump** — Release 2026.02.21 (npm `2026.2.210`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.2.200] - 2026-02-20
 
 Major feature release including procedural memory, directive extraction, reinforcement tracking, multi-agent scoping, auth-failure auto-recall, privacy-first error reporting, and credential auto-capture.
@@ -255,7 +285,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.201...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.210...HEAD
+[2026.2.210]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.210
 [2026.2.201]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.201
 [2026.2.200]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.200
 [2026.2.181]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.181
