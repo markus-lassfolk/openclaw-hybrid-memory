@@ -322,7 +322,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         const proposalsPending = getProposalsPending();
         const walPending = getWalPending();
         const lastRun = getLastRunTimestamps();
-        const sizes = getStorageSizes();
+        const sizes = await getStorageSizes();
         const sqliteMB = sizes.sqliteBytes != null ? (sizes.sqliteBytes / (1024 * 1024)).toFixed(1) : null;
         const lanceMB = sizes.lanceBytes != null ? (sizes.lanceBytes / (1024 * 1024)).toFixed(1) : null;
 
@@ -349,7 +349,8 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
         console.log(` Links: ${links.toLocaleString()} connections`);
         console.log("");
         console.log("Operational:");
-        console.log(` Credentials: ${credentialsCount} captured (vault: ${credentialsCount > 0 ? "enabled" : "disabled"})`);
+        const vaultEnabled = cfg.credentials?.vaultEnabled !== false && Boolean(cfg.credentials?.encryptionKey);
+        console.log(` Credentials: ${credentialsCount} captured (vault: ${vaultEnabled ? "enabled" : "disabled"})`);
         if (proposalsPending > 0) console.log(` Proposals: ${proposalsPending} pending`);
         if (lastRun.distill) console.log(` Last distill: ${lastRun.distill.trim()}`);
         if (lastRun.reflect) console.log(` Last reflect: ${lastRun.reflect.trim()}`);
@@ -759,6 +760,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     .description("Interactive review: step through pending proposals and corrections (a=approve, r=reject, s=skip)")
     .option("--workspace <path>", "Workspace root for corrections report")
     .action(withExit(async (opts?: { workspace?: string }) => {
+      // Check if running in non-interactive environment
+      if (process.stdin.isTTY === false) {
+        console.error("Error: 'review' command requires an interactive terminal (TTY).");
+        console.error("Use individual commands instead: 'proposals approve <id>', 'corrections approve --all', etc.");
+        process.exitCode = 1;
+        return;
+      }
       if (!listCommands) {
         console.error("Review not available (proposals/corrections not enabled).");
         process.exitCode = 1;
