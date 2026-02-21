@@ -97,7 +97,7 @@ import {
   getCorrectionSignalRegex,
 } from "./utils/language-keywords.js";
 import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "./services/self-correction-extract.js";
-import { initErrorReporter, capturePluginError, isErrorReporterActive } from "./services/error-reporter.js";
+import { initErrorReporter, capturePluginError, isErrorReporterActive, addOperationBreadcrumb, flushErrorReporter } from "./services/error-reporter.js";
 import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { extractCredentialsFromToolCalls, type ToolCallCredential } from "./services/credential-scanner.js";
@@ -552,10 +552,22 @@ async function migrateCredentialsToVault(opts: {
           });
         }
       } catch (e) {
+        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+          subsystem: "vector",
+          operation: "store-migration-pointer",
+          phase: "initialization",
+          backend: "lancedb",
+        });
         errors.push(`vector store for ${parsed.service}: ${String(e)}`);
       }
       migrated++;
     } catch (e) {
+      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+        subsystem: "credentials",
+        operation: "migrate-fact-to-vault",
+        phase: "initialization",
+        backend: "sqlite",
+      });
       errors.push(`${parsed.service}: ${String(e)}`);
     }
   }
@@ -1735,6 +1747,12 @@ const memoryHybridPlugin = {
         await embeddings.embed("verify");
         api.logger.info("memory-hybrid: embedding API check OK");
       } catch (e) {
+        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+          subsystem: "embeddings",
+          operation: "init-verify",
+          phase: "initialization",
+          backend: "openai",
+        });
         api.logger.error(
           `memory-hybrid: Embedding API check failed — ${String(e)}. ` +
             "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.",
@@ -1749,6 +1767,12 @@ const memoryHybridPlugin = {
           }
           api.logger.info("memory-hybrid: credentials vault check OK");
         } catch (e) {
+          capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+            subsystem: "credentials",
+            operation: "vault-verify",
+            phase: "initialization",
+            backend: "sqlite",
+          });
           api.logger.error(
             `memory-hybrid: Credentials vault check failed — ${String(e)}. ` +
               "Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.",
@@ -1773,6 +1797,12 @@ const memoryHybridPlugin = {
               api.logger.warn(`memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`);
             }
           } catch (e) {
+            capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+              subsystem: "credentials",
+              operation: "migration-to-vault",
+              phase: "initialization",
+              backend: "sqlite",
+            });
             api.logger.warn(`memory-hybrid: credential migration failed: ${e}`);
           }
         }
@@ -2000,6 +2030,7 @@ const memoryHybridPlugin = {
           let lanceResults: SearchResult[] = [];
           if (!tag) {
             try {
+              addOperationBreadcrumb("search", "vector-recall");
               let textToEmbed = query;
               if (cfg.search?.hydeEnabled) {
                 try {
@@ -2022,6 +2053,12 @@ const memoryHybridPlugin = {
               lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
               lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
             } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "search",
+                operation: "vector-recall",
+                phase: "runtime",
+                backend: "lancedb",
+              });
               api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
             }
           }
@@ -2350,6 +2387,7 @@ const memoryHybridPlugin = {
                 tags: ["auth", ...extractTags(pointerText, "Credentials")],
               });
               try {
+                addOperationBreadcrumb("vector", "store-credential-pointer");
                 const vector = await embeddings.embed(pointerText);
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({
@@ -2361,6 +2399,12 @@ const memoryHybridPlugin = {
                   });
                 }
               } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  subsystem: "vector",
+                  operation: "store-credential-pointer",
+                  phase: "runtime",
+                  backend: "lancedb",
+                });
                 api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
               }
               return {
@@ -2565,6 +2609,7 @@ const memoryHybridPlugin = {
           }
 
           try {
+            addOperationBreadcrumb("vector", "store-fact");
             if (vector && !(await vectorDb.hasDuplicate(vector))) {
               await vectorDb.store({
                 text: textToStore,
@@ -2575,6 +2620,12 @@ const memoryHybridPlugin = {
               });
             }
           } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "vector",
+              operation: "store-fact",
+              phase: "runtime",
+              backend: "lancedb",
+            });
             api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
           }
 
@@ -2731,6 +2782,12 @@ const memoryHybridPlugin = {
               lanceDeleted = await vectorDb.delete(resolvedId);
             } catch (err) {
               lanceError = err instanceof Error ? err.message : String(err);
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "vector",
+                operation: "forget-delete",
+                phase: "runtime",
+                backend: "lancedb",
+              });
               api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
             }
 
@@ -2796,6 +2853,12 @@ const memoryHybridPlugin = {
               try {
                 await vectorDb.delete(id);
               } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  subsystem: "vector",
+                  operation: "forget-supersede-delete",
+                  phase: "runtime",
+                  backend: "lancedb",
+                });
                 api.logger.warn(`memory-hybrid: LanceDB delete during supersede failed: ${err}`);
               }
               return {
@@ -2974,7 +3037,17 @@ const memoryHybridPlugin = {
               expires?: number | null;
             };
             if (!credentialsDb) throw new Error("Credentials store not available");
-            credentialsDb.store({ service, type, value, url, notes, expires });
+            try {
+              credentialsDb.store({ service, type, value, url, notes, expires });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-store",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             return {
               content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
               details: { service, type },
@@ -2997,7 +3070,18 @@ const memoryHybridPlugin = {
           async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { service, type } = params as { service: string; type?: CredentialType };
             if (!credentialsDb) throw new Error("Credentials store not available");
-            const entry = credentialsDb.get(service, type);
+            let entry;
+            try {
+              entry = credentialsDb.get(service, type);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-get",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             if (!entry) {
               return {
                 content: [{ type: "text", text: `No credential found for service "${service}"${type ? ` (type: ${type})` : ""}.` }],
@@ -3039,7 +3123,18 @@ const memoryHybridPlugin = {
           parameters: Type.Object({}),
           async execute() {
             if (!credentialsDb) throw new Error("Credentials store not available");
-            const items = credentialsDb.list();
+            let items;
+            try {
+              items = credentialsDb.list();
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-list",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             if (items.length === 0) {
               return {
                 content: [{ type: "text", text: "No credentials stored." }],
@@ -3070,7 +3165,18 @@ const memoryHybridPlugin = {
           async execute(_toolCallId: string, params: Record<string, unknown>) {
             const { service, type } = params as { service: string; type?: CredentialType };
             if (!credentialsDb) throw new Error("Credentials store not available");
-            const deleted = credentialsDb.delete(service, type);
+            let deleted;
+            try {
+              deleted = credentialsDb.delete(service, type);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-delete",
+                phase: "runtime",
+                backend: "sqlite",
+              });
+              throw err;
+            }
             if (!deleted) {
               return {
                 content: [{ type: "text", text: `No credential found for "${service}"${type ? ` (type: ${type})` : ""}.` }],
@@ -7399,7 +7505,7 @@ const memoryHybridPlugin = {
               consent: cfg.errorReporting.consent,
               environment: cfg.errorReporting.environment,
               sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
-              maxBreadcrumbs: 0,
+              maxBreadcrumbs: 10,
             },
             versionInfo.pluginVersion,
             api.logger,
@@ -7614,6 +7720,10 @@ const memoryHybridPlugin = {
         }, 20000);
       },
       stop: () => {
+        // Flush any pending error reports before shutdown (non-blocking)
+        if (isErrorReporterActive()) {
+          flushErrorReporter(2000).catch(() => {});
+        }
         if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
         if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
         if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
