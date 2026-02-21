@@ -132,6 +132,7 @@ import { registerPersonaTools } from "./tools/persona-tools.js";
 import { registerUtilityTools } from "./tools/utility-tools.js";
 import { createLifecycleHooks, type LifecycleContext } from "./lifecycle/hooks.js";
 import { registerProposalsCli, type ProposalsCliContext } from "./cli/proposals.js";
+import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
 
 // ============================================================================
 // Backend Imports (extracted from god file for maintainability)
@@ -184,13 +185,17 @@ let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
-let pruneTimer: ReturnType<typeof setInterval> | null = null;
-let classifyTimer: ReturnType<typeof setInterval> | null = null;
-let classifyStartupTimeout: ReturnType<typeof setTimeout> | null = null;
-let proposalsPruneTimer: ReturnType<typeof setInterval> | null = null;
-let languageKeywordsTimer: ReturnType<typeof setInterval> | null = null;
-let languageKeywordsStartupTimeout: ReturnType<typeof setTimeout> | null = null;
-let postUpgradeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Timer references (wrapped in objects so they can be passed by reference)
+const timers = {
+  pruneTimer: { value: null as ReturnType<typeof setInterval> | null },
+  classifyTimer: { value: null as ReturnType<typeof setInterval> | null },
+  classifyStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
+  proposalsPruneTimer: { value: null as ReturnType<typeof setInterval> | null },
+  languageKeywordsTimer: { value: null as ReturnType<typeof setInterval> | null },
+  languageKeywordsStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
+  postUpgradeTimeout: { value: null as ReturnType<typeof setTimeout> | null },
+};
 
 /** Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
 let lastProgressiveIndexIds: string[] = [];
@@ -435,7 +440,7 @@ const memoryHybridPlugin = {
       // applying their own proposals, maintaining the security guarantee.
 
       // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop)
-      proposalsPruneTimer = setInterval(() => {
+      timers.proposalsPruneTimer.value = setInterval(() => {
         try {
           if (proposalsDb) {
             const pruned = proposalsDb.pruneExpired();
@@ -3074,264 +3079,23 @@ const memoryHybridPlugin = {
     // Service
     // ========================================================================
 
-    api.registerService({
-      id: PLUGIN_ID,
-      start: async () => {
-        const sqlCount = factsDb.count();
-        const expired = factsDb.countExpired();
-        api.logger.info(
-          `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
-        );
-
-        // Initialize error reporter if configured
-        if (cfg.errorReporting) {
-          await initErrorReporter(
-            {
-              enabled: cfg.errorReporting.enabled,
-              dsn: cfg.errorReporting.dsn,
-              mode: cfg.errorReporting.mode ?? "community",
-              consent: cfg.errorReporting.consent,
-              environment: cfg.errorReporting.environment,
-              sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
-              maxBreadcrumbs: 10,
-            },
-            versionInfo.pluginVersion,
-            api.logger,
-          );
-          if (isErrorReporterActive()) {
-            api.logger.info("memory-hybrid: error reporting enabled");
-          }
-        }
-
-        if (expired > 0) {
-          const pruned = factsDb.pruneExpired();
-          api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
-        }
-
-                // WAL Recovery: replay uncommitted operations from previous session
-        if (wal) {
-          const pendingEntries = wal.getValidEntries();
-          if (pendingEntries.length > 0) {
-            api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
-            let recovered = 0;
-            let failed = 0;
-
-            for (const entry of pendingEntries) {
-              try {
-                if (entry.operation === "store" || entry.operation === "update") {
-                  const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
-                  
-                  // Check if already stored (idempotency)
-                  if (!factsDb.hasDuplicate(text)) {
-                    // Store to SQLite
-                    const stored = factsDb.store({
-                      text,
-                      category: (category as MemoryCategory) || "other",
-                      importance: importance ?? 0.7,
-                      entity: entity || null,
-                      key: key || null,
-                      value: value || null,
-                      source: source || "wal-recovery",
-                      decayClass,
-                      summary,
-                      tags,
-                    });
-
-                    // Store to LanceDB (async, best effort) with same fact id for classification
-                    if (entry.data.vector) {
-                      void vectorDb.store({
-                        text,
-                        vector: entry.data.vector,
-                        importance: importance ?? 0.7,
-                        category: category || "other",
-                        id: stored.id,
-                      }).catch((err) => {
-                        api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
-                      });
-                    }
-
-                    recovered++;
-                  }
-              } else {
-                // Known but unhandled operation type (e.g., "delete")
-                api.logger.warn(`memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`);
-              }
-                
-                walRemove(wal, entry.id, api.logger);
-              } catch (err) {
-                api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
-                failed++;
-              }
-            }
-
-            if (recovered > 0 || failed > 0) {
-              api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
-            }
-
-            // Prune any remaining stale entries
-            const pruned = wal.pruneStale();
-            if (pruned > 0) {
-              api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
-            }
-          }
-        }
-
-        pruneTimer = setInterval(() => {
-          try {
-            const hardPruned = factsDb.pruneExpired();
-            const softPruned = factsDb.decayConfidence();
-            if (hardPruned > 0 || softPruned > 0) {
-              api.logger.info(
-                `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed`,
-              );
-            }
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: periodic prune failed: ${err}`);
-          }
-        }, 60 * 60_000); // every hour
-
-        // Daily auto-classify: reclassify "other" facts using LLM (if enabled)
-        if (cfg.autoClassify.enabled) {
-          const CLASSIFY_INTERVAL = 24 * 60 * 60_000; // 24 hours
-          const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
-
-          // Run once shortly after startup (5 min delay to let things settle)
-          classifyStartupTimeout = setTimeout(async () => {
-            try {
-              await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
-                discoveredCategoriesPath: discoveredPath,
-              });
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: startup auto-classify failed: ${err}`);
-            }
-          }, 5 * 60_000);
-
-          classifyTimer = setInterval(async () => {
-            try {
-              await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
-                discoveredCategoriesPath: discoveredPath,
-              });
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: daily auto-classify failed: ${err}`);
-            }
-          }, CLASSIFY_INTERVAL);
-
-          api.logger.info(
-            `memory-hybrid: auto-classify enabled (model: ${cfg.autoClassify.model}, interval: 24h, batch: ${cfg.autoClassify.batchSize})`,
-          );
-        }
-
-        // Auto-build multilingual keywords: run once at startup if no file, then weekly (captures language drift)
-        if (cfg.languageKeywords.autoBuild) {
-          const langFilePath = getLanguageKeywordsFilePath();
-          const runBuild = async () => {
-            try {
-              const facts = factsDb.getFactsForConsolidation(300);
-              const result = await runBuildLanguageKeywordsService(
-                facts,
-                openai,
-                dirname(resolvedSqlitePath),
-                { model: cfg.autoClassify.model, dryRun: false },
-              );
-              if (result.ok && result.languagesAdded > 0) {
-                api.logger.info(
-                  `memory-hybrid: language keywords updated (${result.topLanguages.join(", ")}, +${result.languagesAdded} languages)`,
-                );
-              } else if (result.ok) {
-                api.logger.info(`memory-hybrid: language keywords build done (${result.topLanguages.join(", ")})`);
-              } else {
-                api.logger.warn(`memory-hybrid: language keywords build failed: ${result.error}`);
-              }
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: language keywords build failed: ${err}`);
-            }
-          };
-
-          if (langFilePath && !existsSync(langFilePath)) {
-            api.logger.info("memory-hybrid: no language keywords file; building from memory samples in 3s…");
-            languageKeywordsStartupTimeout = setTimeout(() => {
-              void runBuild();
-              languageKeywordsStartupTimeout = null;
-            }, 3000);
-          }
-
-          const weeklyMs = cfg.languageKeywords.weeklyIntervalDays * 24 * 60 * 60 * 1000;
-          languageKeywordsTimer = setInterval(() => void runBuild(), weeklyMs);
-          api.logger.info(
-            `memory-hybrid: language keywords auto-build enabled (every ${cfg.languageKeywords.weeklyIntervalDays} days)`,
-          );
-        }
-
-        // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
-        const versionFile = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
-        postUpgradeTimeout = setTimeout(() => {
-          postUpgradeTimeout = null;
-          let lastVer = "";
-          try {
-            lastVer = readFileSync(versionFile, "utf-8").trim();
-          } catch {
-            /* ignore */
-          }
-          if (lastVer === versionInfo.pluginVersion) return;
-          api.logger.info(
-            "memory-hybrid: post-upgrade pipeline starting (build-languages, self-correction, reflection, procedures)…",
-          );
-          void (async () => {
-            const { spawnSync } = await import("node:child_process");
-            const runCli = (args: string[]) => {
-              const r = spawnSync("openclaw", ["hybrid-mem", ...args], {
-                encoding: "utf-8",
-                timeout: 120_000,
-                cwd: homedir(),
-              });
-              if (r.status !== 0 && r.stderr) {
-                api.logger.warn?.(`memory-hybrid: post-upgrade ${args[0]} failed: ${(r.stderr as string).slice(0, 200)}`);
-              }
-              return r.status === 0;
-            };
-            try {
-              const langPath = getLanguageKeywordsFilePath();
-              if (langPath && !existsSync(langPath)) runCli(["build-languages"]);
-              runCli(["self-correction-run"]);
-              if (cfg.reflection.enabled) {
-                runCli(["reflect", "--window", String(cfg.reflection.defaultWindow)]);
-                runCli(["reflect-rules"]);
-              }
-              runCli(["extract-procedures"]);
-              runCli(["generate-auto-skills"]);
-              writeFileSync(versionFile, versionInfo.pluginVersion, "utf-8");
-              api.logger.info("memory-hybrid: post-upgrade pipeline done.");
-            } catch (e) {
-              api.logger.warn?.(`memory-hybrid: post-upgrade pipeline error: ${e}`);
-            }
-          })();
-        }, 20000);
-      },
-      stop: () => {
-        // Flush any pending error reports before shutdown (non-blocking)
-        if (isErrorReporterActive()) {
-          flushErrorReporter(2000).catch(() => {});
-        }
-        if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
-        if (classifyStartupTimeout) { clearTimeout(classifyStartupTimeout); classifyStartupTimeout = null; }
-        if (classifyTimer) { clearInterval(classifyTimer); classifyTimer = null; }
-        if (proposalsPruneTimer) { clearInterval(proposalsPruneTimer); proposalsPruneTimer = null; }
-        if (languageKeywordsStartupTimeout) {
-          clearTimeout(languageKeywordsStartupTimeout);
-          languageKeywordsStartupTimeout = null;
-        }
-        if (languageKeywordsTimer) { clearInterval(languageKeywordsTimer); languageKeywordsTimer = null; }
-        if (postUpgradeTimeout) {
-          clearTimeout(postUpgradeTimeout);
-          postUpgradeTimeout = null;
-        }
-        factsDb.close();
-        vectorDb.close();
-        if (credentialsDb) { credentialsDb.close(); credentialsDb = null; }
-        if (proposalsDb) { proposalsDb.close(); proposalsDb = null; }
-        api.logger.info("memory-hybrid: stopped");
-      },
-    });
+    // Register plugin service with lifecycle handlers
+    api.registerService(
+      createPluginService({
+        PLUGIN_ID,
+        factsDb,
+        vectorDb,
+        credentialsDb,
+        proposalsDb,
+        wal,
+        cfg,
+        openai,
+        resolvedLancePath,
+        resolvedSqlitePath,
+        api,
+        timers,
+      })
+    );
   },
 };
 
