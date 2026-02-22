@@ -193,10 +193,11 @@ export async function runStoreForCli(
       }
 
       // Step 2: Write pointer to factsDb
+      let pointerEntry: any;
       try {
         const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
         const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-        const pointerEntry = factsDb.store({
+        pointerEntry = factsDb.store({
           text: pointerText,
           category: "technical" as MemoryCategory,
           importance: CLI_STORE_IMPORTANCE,
