@@ -281,7 +281,12 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       let lanceCount = 0;
       try {
         lanceCount = await vectorDb.count();
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'vector-count',
+          severity: 'info',
+          subsystem: 'cli'
+        });
         // vectorDb may be unavailable
       }
       const breakdown = factsDb.statsBreakdown();

@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { getReinforcementCategoryRegexes } from "../utils/language-keywords.js";
 import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type ReinforcementIncident = {
   userMessage: string;
@@ -182,7 +183,12 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
     let lines: string[];
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'read-session-file',
+        severity: 'info',
+        subsystem: 'reinforcement-extract'
+      });
       continue;
     }
 
@@ -198,7 +204,12 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
         if (!role) continue;
         const text = extractMessageText(msg.content);
         messages.push({ role, text, content: msg.content });
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'parse-session-line',
+          severity: 'info',
+          subsystem: 'reinforcement-extract'
+        });
         // skip malformed lines
       }
     }

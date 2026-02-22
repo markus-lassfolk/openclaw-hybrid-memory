@@ -174,7 +174,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
                   const confidence = Math.round(p.relevanceScore * 100);
                   procLines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 50)}… (${steps})`);
-                } catch {
+                } catch (err) {
+                  capturePluginError(err as Error, {
+                    operation: 'json-parse-recipe',
+                    severity: 'info',
+                    subsystem: 'lifecycle'
+                  });
                   const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
                   const confidence = Math.round(p.relevanceScore * 100);
                   procLines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 70)}…`);
@@ -195,7 +200,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     .filter(Boolean)
                     .join(" → ");
                   procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`);
-                } catch {
+                } catch (err) {
+                  capturePluginError(err as Error, {
+                    operation: 'json-parse-recipe',
+                    severity: 'info',
+                    subsystem: 'lifecycle'
+                  });
                   const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
                   const confidence = Math.round(n.relevanceScore * 100);
                   procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 70)}…`);
@@ -791,7 +801,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("before_agent_start", async () => {
         try {
           await access(pendingPath);
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'access-pending-file',
+            severity: 'info',
+            subsystem: 'lifecycle'
+          });
           return;
         }
         try {
@@ -1133,7 +1148,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               let parsedArgs: Record<string, unknown> = {};
               try {
                 parsedArgs = JSON.parse(args);
-              } catch {
+              } catch (err) {
+                capturePluginError(err as Error, {
+                  operation: 'json-parse-tool-args',
+                  severity: 'info',
+                  subsystem: 'lifecycle'
+                });
                 // If args aren't valid JSON, scan the raw string as fallback
               }
 

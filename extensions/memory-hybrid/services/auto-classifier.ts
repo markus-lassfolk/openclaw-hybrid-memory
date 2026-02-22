@@ -105,7 +105,12 @@ async function discoverCategoriesFromOther(
   let existingList: string[] = [];
   try {
     existingList = JSON.parse(await readFile(discoveredCategoriesPath, "utf-8")) as string[];
-  } catch {
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: 'read-discovered-categories',
+      severity: 'info',
+      subsystem: 'classifier'
+    });
     // file doesn't exist yet
   }
   const merged = [...new Set([...existingList, ...newCategoryNames])];
@@ -162,7 +167,12 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       }
     }
     return map;
-  } catch {
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: 'classify-batch',
+      severity: 'info',
+      subsystem: 'classifier'
+    });
     return new Map();
   }
 }

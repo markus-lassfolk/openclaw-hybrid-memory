@@ -10,6 +10,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
@@ -238,7 +239,12 @@ export class CredentialsDB {
     if (this.kdfVersion === 1) {
       try {
         this.migrateLegacyVault();
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'migrate-vault',
+          severity: 'info',
+          subsystem: 'credentials'
+        });
         // Migration is best-effort; failure should not block credential retrieval
       }
     }
@@ -312,7 +318,16 @@ export class CredentialsDB {
   }
 
   close(): void {
-    try { this.db.close(); } catch { /* already closed */ }
+    try {
+      this.db.close();
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'db-close',
+        severity: 'info',
+        subsystem: 'credentials'
+      });
+      /* already closed */
+    }
   }
 }
 

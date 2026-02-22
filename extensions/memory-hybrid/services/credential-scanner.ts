@@ -1,13 +1,14 @@
 /**
  * Credential Scanner Service
- * 
+ *
  * Scans tool call inputs for credential patterns (passwords, tokens, API keys, etc.)
  * and extracts them for secure storage in the vault.
- * 
+ *
  * SECURITY: Only scan tool *inputs*, never outputs (which may contain secrets from APIs).
  */
 
 import type { CredentialType } from "../config.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type ToolCallCredential = {
   service: string;     // e.g., "ssh://user@host", "github", "api.example.com"
@@ -33,7 +34,12 @@ export function extractHostFromUrl(url: string): string {
         !hostname.endsWith('.')) {
       return hostname;
     }
-  } catch {
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: 'parse-url',
+      severity: 'info',
+      subsystem: 'credentials'
+    });
     // Fallback: regex extraction with same validation
     const m = url.match(/https?:\/\/([a-z0-9.-]+)/i);
     if (m?.[1]) {
@@ -200,11 +206,21 @@ export function extractCredentialsFromToolCalls(text: string): ToolCallCredentia
             results.push(cred);
           }
         } catch (extractErr) {
+          capturePluginError(extractErr as Error, {
+            operation: 'extract-credential',
+            severity: 'info',
+            subsystem: 'credentials'
+          });
           // Skip this match if extraction fails, continue with others
           continue;
         }
       }
     } catch (regexErr) {
+      capturePluginError(regexErr as Error, {
+        operation: 'scan-pattern',
+        severity: 'info',
+        subsystem: 'credentials'
+      });
       // Skip this pattern if regex fails, continue with others
       continue;
     }

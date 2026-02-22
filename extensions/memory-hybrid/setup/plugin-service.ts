@@ -314,7 +314,12 @@ export function createPluginService(ctx: PluginServiceContext) {
         let lastVer = "";
         try {
           lastVer = readFileSync(versionFile, "utf-8").trim();
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'read-version-file',
+            severity: 'info',
+            subsystem: 'plugin-service'
+          });
           /* ignore */
         }
         if (lastVer === versionInfo.pluginVersion) return;

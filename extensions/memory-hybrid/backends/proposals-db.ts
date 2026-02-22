@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export type ProposalEntry = {
   id: string;
@@ -182,7 +183,12 @@ export class ProposalsDB {
       if (!Array.isArray(evidenceSessions)) {
         evidenceSessions = [];
       }
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'json-parse-evidence',
+        severity: 'info',
+        subsystem: 'proposals'
+      });
       // Corrupted JSON - fallback to empty array
       evidenceSessions = [];
     }
@@ -208,7 +214,12 @@ export class ProposalsDB {
   close(): void {
     try {
       this.db.close();
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'db-close',
+        severity: 'info',
+        subsystem: 'proposals'
+      });
       /* already closed */
     }
   }
