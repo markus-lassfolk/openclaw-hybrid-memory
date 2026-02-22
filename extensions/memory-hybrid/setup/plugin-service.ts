@@ -104,6 +104,7 @@ export function createPluginService(ctx: PluginServiceContext) {
             },
             versionInfo.pluginVersion,
             api.logger,
+            api.context?.agentId,
           );
           if (isErrorReporterActive()) {
             api.logger.info("memory-hybrid: error reporting enabled");
