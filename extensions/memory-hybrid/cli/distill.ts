@@ -52,11 +52,12 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
       const maxSessionTokens = Math.max(0, parseInt(opts.maxSessionTokens || "0") || 0);
+      const days = opts.days ? parseInt(opts.days, 10) : undefined;
       const result = await runDistill(
         {
           dryRun: !!opts.dryRun,
           all: !!opts.all,
-          days: opts.days ? parseInt(opts.days) : undefined,
+          days: Number.isFinite(days) ? days : undefined,
           since: opts.since?.trim() || undefined,
           model: opts.model,
           verbose: !!opts.verbose,
@@ -165,7 +166,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--verbose", "Log each directive as it is detected")
     .option("--dry-run", "Show what would be extracted without storing")
     .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
-      const days = parseInt(opts.days || "3", 10);
+      const days = parseInt(opts.days ?? "3", 10);
       const result = await runExtractDirectives({ days, verbose: opts.verbose, dryRun: opts.dryRun });
       console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
       if (opts.dryRun) {
@@ -184,7 +185,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--verbose", "Log each reinforcement as it is detected")
     .option("--dry-run", "Show what would be annotated without storing")
     .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
-      const days = parseInt(opts.days || "3", 10);
+      const days = parseInt(opts.days ?? "3", 10);
       const result = await runExtractReinforcement({ days, verbose: opts.verbose, dryRun: opts.dryRun });
       console.log(`\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`);
       if (opts.dryRun) {
