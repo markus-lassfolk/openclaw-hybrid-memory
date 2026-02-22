@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, constants } from "node:fs";
+import { open } from "node:fs/promises";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { FactsDB } from "../backends/facts-db.js";
@@ -144,7 +145,22 @@ export function initializeDatabases(
       }
       // When vault is enabled: once per install, move existing credential facts into vault and redact from memory
       const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
-      if (!existsSync(migrationFlagPath)) {
+      // Atomic flag creation to prevent race condition with multiple processes
+      let shouldMigrate = false;
+      try {
+        const handle = await open(migrationFlagPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+        await handle.writeFile("1", "utf8");
+        await handle.close();
+        shouldMigrate = true; // We won the race, proceed with migration
+      } catch (err: any) {
+        if (err.code === "EEXIST") {
+          // Another process already created the flag - skip migration
+          shouldMigrate = false;
+        } else {
+          throw err; // Unexpected error
+        }
+      }
+      if (shouldMigrate) {
         try {
           const result = await migrateCredentialsToVault({
             factsDb,
@@ -152,7 +168,7 @@ export function initializeDatabases(
             embeddings,
             credentialsDb,
             migrationFlagPath,
-            markDone: true,
+            markDone: false, // Flag already created atomically above
           });
           if (result.migrated > 0) {
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
