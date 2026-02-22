@@ -2438,14 +2438,26 @@ export class FactsDB {
     return this.backfillDecayClasses();
   }
 
-  /** Get reflection statistics - stub for future implementation */
+  /** Get reflection statistics */
   statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
-    return { reflectionPatternsCount: 0, reflectionRulesCount: 0 };
+    const patternsRow = this.liveDb
+      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'pattern'`)
+      .get() as { count: number } | undefined;
+    const rulesRow = this.liveDb
+      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'rule'`)
+      .get() as { count: number } | undefined;
+    return {
+      reflectionPatternsCount: patternsRow?.count ?? 0,
+      reflectionRulesCount: rulesRow?.count ?? 0,
+    };
   }
 
-  /** Get self-correction incidents count - stub for future implementation */
+  /** Get self-correction incidents count */
   selfCorrectionIncidentsCount(): number {
-    return 0;
+    const row = this.liveDb
+      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'self-correction'`)
+      .get() as { count: number } | undefined;
+    return row?.count ?? 0;
   }
 
   /** Get language keywords count - stub for future implementation */
@@ -2456,7 +2468,7 @@ export class FactsDB {
   /** Get statistics by source */
   statsBySource(): Record<string, number> {
     const rows = this.liveDb
-      .prepare(`SELECT source, COUNT(*) as count FROM facts GROUP BY source`)
+      .prepare(`SELECT source, COUNT(*) as count FROM facts WHERE superseded_at IS NULL GROUP BY source`)
       .all() as Array<{ source: string; count: number }>;
     return Object.fromEntries(rows.map((r) => [r.source, r.count]));
   }

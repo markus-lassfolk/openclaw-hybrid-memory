@@ -2044,6 +2044,7 @@ export async function runDistillForCli(
         }
         continue;
       }
+      continue;
     }
     if (factsDb.hasDuplicate(fact.text)) {
       skipped++;
