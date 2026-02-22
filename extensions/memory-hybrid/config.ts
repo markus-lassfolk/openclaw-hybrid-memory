@@ -391,12 +391,12 @@ export function getDefaultCronModel(
   if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
     const defaultModel = pluginConfig.distill.defaultModel?.trim();
     if (defaultModel) return defaultModel;
-    return tier === "heavy" ? "gemini-2.0-flash" : "gemini-2.0-flash";
+    return tier === "heavy" ? "gemini-2.0-flash-thinking-exp-01-21" : "gemini-2.0-flash";
   }
   if (pluginConfig.claude?.apiKey && pluginConfig.claude.apiKey.length >= 10) {
     const defaultModel = pluginConfig.claude.defaultModel?.trim();
     if (defaultModel) return defaultModel;
-    return tier === "heavy" ? "claude-sonnet-4-20250514" : "claude-sonnet-4-20250514";
+    return tier === "heavy" ? "claude-opus-4-20250514" : "claude-sonnet-4-20250514";
   }
   if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
     const reflectionModel = pluginConfig.reflection?.model?.trim();

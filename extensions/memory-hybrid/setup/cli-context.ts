@@ -493,11 +493,14 @@ function buildListCommands(ctx: HandlerContext, api: ClawdbotPluginApi): NonNull
       if (!p) return { ok: false, error: `Proposal ${id} not found` };
       if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
       proposalsDb.updateStatus(id, "approved");
-      const applyResult = applyApprovedProposal(
+      const applyResult = await applyApprovedProposal(
         { proposalsDb, cfg, resolvedSqlitePath, api },
         id,
       );
-      if (!applyResult.ok) return { ok: false, error: applyResult.error };
+      if (!applyResult.ok) {
+        proposalsDb.updateStatus(id, "pending");
+        return { ok: false, error: applyResult.error };
+      }
       return { ok: true };
     },
     proposalReject: async (id: string, reason?: string) => {

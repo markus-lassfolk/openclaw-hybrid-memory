@@ -102,19 +102,19 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
       console.log(proposal.suggestedChange);
       if (opts?.diff) {
         const targetPath = ctx.api.resolvePath(proposal.targetFile);
+        console.log("");
+        console.log("── Preview (diff) ──");
         if (existsSync(targetPath)) {
           const current = readFileSync(targetPath, "utf-8");
-          const lines = proposal.suggestedChange.split(/\n/);
-          console.log("");
-          console.log("── Preview (diff) ──");
           console.log(`--- ${proposal.targetFile} (current)`);
           console.log(`+++ ${proposal.targetFile} (with suggestion)`);
-          for (const line of lines) {
+          for (const line of current.split(/\n/)) {
+            console.log(`  ${line}`);
+          }
+          for (const line of proposal.suggestedChange.split(/\n/)) {
             console.log(`+ ${line}`);
           }
         } else {
-          console.log("");
-          console.log("── Preview (diff) ──");
           console.log("(target file not found; showing suggested content as addition)");
           for (const line of proposal.suggestedChange.split(/\n/)) {
             console.log(`+ ${line}`);
@@ -155,7 +155,7 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
 
       console.log(`Proposal ${proposalId} ${action}d.`);
       if (action === "approve") {
-        const applyResult = applyApprovedProposal(ctx, proposalId);
+        const applyResult = await applyApprovedProposal(ctx, proposalId);
         if (applyResult.ok) {
           console.log(`Applied to ${applyResult.targetFile}. Backup: ${applyResult.backupPath}`);
         } else {
@@ -168,7 +168,7 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
     .command("apply <proposalId>")
     .description("Apply an approved persona proposal to its target identity file")
     .action(async (proposalId: string) => {
-      const result = applyApprovedProposal(ctx, proposalId);
+      const result = await applyApprovedProposal(ctx, proposalId);
       if (!result.ok) {
         console.error(result.error);
         process.exit(1);
@@ -185,10 +185,10 @@ export type ApplyProposalContext = Pick<ProposalsCliContext, "proposalsDb" | "cf
  * Apply an approved proposal to its target file and mark as applied.
  * Used by CLI "apply" and after "approve" so approval auto-applies (fixes #82).
  */
-export function applyApprovedProposal(
+export async function applyApprovedProposal(
   ctx: ApplyProposalContext,
   proposalId: string,
-): { ok: true; targetFile: string; backupPath: string; suggestedChange: string } | { ok: false; error: string } {
+): Promise<{ ok: true; targetFile: string; backupPath: string; suggestedChange: string } | { ok: false; error: string }> {
   const proposal = ctx.proposalsDb.get(proposalId);
   if (!proposal) {
     return { ok: false, error: `Proposal ${proposalId} not found` };
@@ -224,7 +224,7 @@ export function applyApprovedProposal(
     const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
     writeFileSync(targetPath, original + changeBlock);
     ctx.proposalsDb.markApplied(proposalId);
-    auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
+    await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
       targetFile: proposal.targetFile,
       targetPath,
       backupPath,
