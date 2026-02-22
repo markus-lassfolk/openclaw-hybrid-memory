@@ -330,11 +330,11 @@ export type SelfCorrectionConfig = {
   applyToolsByDefault: boolean;
   /** When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (or suggest if applyToolsByDefault is false) (default: false). */
   autoRewriteTools: boolean;
-  /** When true and incident count > spawnThreshold, run Phase 2 via `openclaw sessions spawn --model gemini` for large context (default: false). */
+  /** When true and incident count > spawnThreshold, run Phase 2 via `openclaw sessions spawn --model <model>` for large context. Model is chosen from config (Gemini/OpenAI/Claude) when spawnModel is empty (default: false). */
   analyzeViaSpawn: boolean;
   /** Use spawn for Phase 2 when incidents exceed this count (default: 15). */
   spawnThreshold: number;
-  /** Model for spawn when analyzeViaSpawn is true (default: gemini). */
+  /** Model for spawn when analyzeViaSpawn is true. Empty = use provider default from config (see getDefaultCronModel). */
   spawnModel: string;
 };
 
@@ -364,6 +364,56 @@ export function setMemoryCategories(categories: string[]): void {
 
 export function isValidCategory(cat: string): boolean {
   return _runtimeCategories.includes(cat);
+}
+
+/** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
+export type CronModelTier = "default" | "heavy";
+
+/** Minimal plugin config shape for resolving cron job model (no full parse). */
+export type CronModelConfig = {
+  embedding?: { apiKey?: string };
+  distill?: { apiKey?: string; defaultModel?: string };
+  reflection?: { model?: string };
+  /** Optional: when present, use for cron LLM (e.g. Claude). */
+  claude?: { apiKey?: string; defaultModel?: string };
+};
+
+/**
+ * Resolve which LLM model to use for a maintenance cron job based on user config.
+ * Prefer provider the user has configured: Gemini (distill) > OpenAI (embedding/reflection) > Claude (if set) > fallback.
+ * No hardcoded aliases: uses config defaults or sensible per-provider defaults.
+ */
+export function getDefaultCronModel(
+  pluginConfig: CronModelConfig | undefined,
+  tier: CronModelTier,
+): string {
+  if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
+    const defaultModel = pluginConfig.distill.defaultModel?.trim();
+    if (defaultModel) return defaultModel;
+    return tier === "heavy" ? "gemini-2.0-flash" : "gemini-2.0-flash";
+  }
+  if (pluginConfig.claude?.apiKey && pluginConfig.claude.apiKey.length >= 10) {
+    const defaultModel = pluginConfig.claude.defaultModel?.trim();
+    if (defaultModel) return defaultModel;
+    return tier === "heavy" ? "claude-sonnet-4-20250514" : "claude-sonnet-4-20250514";
+  }
+  if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
+    const reflectionModel = pluginConfig.reflection?.model?.trim();
+    if (reflectionModel) return reflectionModel;
+    return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  }
+  return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+}
+
+/** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
+export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
+  return {
+    embedding: cfg.embedding,
+    distill: cfg.distill,
+    reflection: cfg.reflection,
+    claude: (cfg as Record<string, unknown>).claude as CronModelConfig["claude"],
+  };
 }
 
 export type MemoryCategory = string;
@@ -985,7 +1035,7 @@ export const hybridConfigSchema = {
               typeof scRaw.spawnThreshold === "number" && scRaw.spawnThreshold >= 1
                 ? Math.floor(scRaw.spawnThreshold)
                 : 15,
-            spawnModel: typeof scRaw.spawnModel === "string" ? scRaw.spawnModel : "gemini",
+            spawnModel: typeof scRaw.spawnModel === "string" ? scRaw.spawnModel : "",
           }
         : undefined;
 

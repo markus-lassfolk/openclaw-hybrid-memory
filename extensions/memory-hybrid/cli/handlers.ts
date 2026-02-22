@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
@@ -75,24 +75,35 @@ import {
   getRestartPendingPath,
 } from "../utils/constants.js";
 
-// Shared cron job definitions used by install and verify --fix
+// Shared cron job definitions used by install and verify --fix.
+// Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config (getDefaultCronModel).
+// modelTier: "default" = standard LLM, "heavy" = larger context; resolved to concrete model from OpenAI/Gemini/Claude config.
+// Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
-const MAINTENANCE_CRON_JOBS = [
-  // Nightly: distill + prune + extract-daily (runs every night at 02:00)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run these commands in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\nCheck if distill is enabled (config distill.enabled !== false) before step 2. Exit 0 if disabled. Report counts.", isolated: true, model: "gemini", enabled: true },
-  // Weekly reflection: patterns + rules + meta (Sundays 03:00)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly memory reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck if reflection is enabled (config reflection.enabled !== false). Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-  // Weekly extraction: procedures + directives + reinforcement (Sundays 04:00)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "gemini", enabled: true },
-  // Nightly self-correction (02:30)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
-  // Weekly deep maintenance: compact + scope promote (Saturdays 04:00)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, model: "sonnet", enabled: true },
-  // Monthly consolidation (1st of month 05:00)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs before each step.", isolated: true, model: "sonnet", enabled: true },
-  // Weekly persona proposals (Sundays 10:00)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Generate persona proposals from recent reflection insights:\n1. Search memory for recent patterns, rules, and meta-patterns from the last 7 days\n2. Read SOUL.md, USER.md, and IDENTITY.md\n3. For insights not yet captured in identity files, create persona proposals\n4. If there are pending proposals, notify the user via their preferred channel", isolated: true, model: "sonnet", enabled: true },
-] as Array<Record<string, unknown>>;
+const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
+  // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\nCheck distill.enabled before step 2. Exit 0 if disabled. Report counts.", isolated: true, modelTier: "default", enabled: true },
+  // Daily 02:30 | self-correction-analysis | self-correction-run
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true },
+  // Sunday 04:00 | weekly-extract-procedures | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "default", enabled: true },
+  // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
+  // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user via their preferred channel. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true },
+];
+
+/** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier). */
+function resolveCronJob(def: Record<string, unknown> & { modelTier?: "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
+  const { modelTier, ...rest } = def;
+  const tier = modelTier ?? "default";
+  const model = getDefaultCronModel(pluginConfig, tier);
+  return { ...rest, model };
+}
 
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
   [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
@@ -183,7 +194,7 @@ const DEFAULT_SELF_CORRECTION = {
   autoRewriteTools: false,
   analyzeViaSpawn: false,
   spawnThreshold: 15,
-  spawnModel: "gemini",
+  spawnModel: "",
 } as const;
 
 /**
@@ -483,10 +494,13 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] } : {};
       if (!Array.isArray(store.jobs)) store.jobs = [];
       const jobsArr = store.jobs as Array<Record<string, unknown>>;
+      const pluginConfig = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID]
+        ? (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config as CronModelConfig | undefined
+        : undefined;
       for (const def of MAINTENANCE_CRON_JOBS) {
         const id = def.pluginJobId as string;
         if (!jobsArr.some((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)))) {
-          jobsArr.push({ ...def });
+          jobsArr.push(resolveCronJob(def, pluginConfig));
         }
       }
       writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
@@ -1012,6 +1026,7 @@ export async function runVerifyForCli(
           if (!Array.isArray(store.jobs)) store.jobs = [];
           const jobs = store.jobs as Array<Record<string, unknown>>;
           let jobsChanged = false;
+          const pluginConfig = getCronModelConfig(ctx.cfg);
           for (const def of MAINTENANCE_CRON_JOBS) {
             const id = def.pluginJobId as string;
             const existing = jobs.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
@@ -1030,7 +1045,7 @@ export async function runVerifyForCli(
                 jobsChanged = true;
               }
             } else {
-              jobs.push({ ...def });
+              jobs.push(resolveCronJob(def, pluginConfig));
               jobsChanged = true;
               applied.push(`Added ${def.name} job to ${cronStorePath}`);
             }
@@ -1342,6 +1357,134 @@ export async function runExtractReinforcementForCli(
   }
 
   return result;
+}
+
+/**
+ * Generate persona proposals from reflection insights (patterns, rules, meta).
+ * Reads identity files, calls LLM to find gaps, creates proposals in DB (fixes #81).
+ */
+export async function runGenerateProposalsForCli(
+  ctx: HandlerContext,
+  opts: { dryRun: boolean; verbose?: boolean },
+  api: { resolvePath: (file: string) => string },
+): Promise<{ created: number }> {
+  const { factsDb, proposalsDb, cfg, openai } = ctx;
+  if (!cfg.personaProposals.enabled || !proposalsDb) {
+    return { created: 0 };
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  const patterns = factsDb.getByCategory("pattern").filter(
+    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  );
+  const rules = factsDb.getByCategory("rule").filter(
+    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  );
+  const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
+  const insights: string[] = [];
+  if (patterns.length) {
+    insights.push("Patterns:\n" + patterns.slice(0, 30).map((f) => `- ${f.text}`).join("\n"));
+  }
+  if (rules.length) {
+    insights.push("Rules:\n" + rules.slice(0, 30).map((f) => `- ${f.text}`).join("\n"));
+  }
+  if (metaPatterns.length) {
+    insights.push("Meta-patterns:\n" + metaPatterns.slice(0, 10).map((f) => `- ${f.text}`).join("\n"));
+  }
+  if (insights.length === 0) {
+    if (opts.verbose) ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
+    return { created: 0 };
+  }
+  const insightsBlock = insights.join("\n\n");
+  const allowedFiles = cfg.personaProposals.allowedFiles;
+  const identityFilesContent: string[] = [];
+  for (const file of allowedFiles) {
+    try {
+      const path = api.resolvePath(file);
+      if (existsSync(path)) {
+        const content = readFileSync(path, "utf-8");
+        identityFilesContent.push(`--- ${file} ---\n${content.slice(0, 8000)}\n`);
+      } else {
+        identityFilesContent.push(`--- ${file} ---\n(file not found)\n`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "runGenerateProposalsForCli:read-file", file });
+      identityFilesContent.push(`--- ${file} ---\n(error reading file)\n`);
+    }
+  }
+  const identityFilesBlock = identityFilesContent.join("\n");
+  const prompt = fillPrompt(loadPrompt("generate-proposals"), {
+    allowed_files: allowedFiles.join(", "),
+    min_confidence: String(cfg.personaProposals.minConfidence),
+    insights: insightsBlock,
+    identity_files: identityFilesBlock,
+  });
+  const model = cfg.reflection?.model ?? "gpt-4o-mini";
+  let rawResponse: string;
+  try {
+    rawResponse = await chatCompleteWithRetry({
+      model,
+      content: prompt,
+      temperature: 0.3,
+      maxTokens: 4000,
+      openai,
+      geminiApiKey: cfg.distill?.apiKey,
+      fallbackModels: cfg.distill?.fallbackModels ?? [],
+      label: "memory-hybrid: generate-proposals",
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "runGenerateProposalsForCli:llm" });
+    return { created: 0 };
+  }
+  let items: Array<{ targetFile: string; title: string; observation: string; suggestedChange: string; confidence: number }>;
+  try {
+    const trimmed = rawResponse.replace(/^[\s\S]*?\[/, "[").replace(/\][\s\S]*$/, "]");
+    items = JSON.parse(trimmed);
+    if (!Array.isArray(items)) items = [];
+  } catch (err) {
+    if (opts.verbose) ctx.logger.warn?.(`memory-hybrid: generate-proposals — LLM output was not valid JSON: ${rawResponse.slice(0, 200)}`);
+    return { created: 0 };
+  }
+  const weekDays = 7;
+  const recentCount = proposalsDb.countRecentProposals(weekDays);
+  const limit = cfg.personaProposals.maxProposalsPerWeek;
+  const minConf = cfg.personaProposals.minConfidence;
+  const evidenceSessions = Array.from({ length: Math.max(1, cfg.personaProposals.minSessionEvidence) }, () => "reflection-pipeline");
+  const expiresAt = cfg.personaProposals.proposalTTLDays > 0
+    ? nowSec + cfg.personaProposals.proposalTTLDays * 24 * 3600
+    : null;
+  let created = 0;
+  for (const item of items) {
+    if (recentCount + created >= limit) break;
+    const targetFile = String(item.targetFile ?? "").trim();
+    if (!allowedFiles.includes(targetFile as any)) continue;
+    const confidence = Number(item.confidence);
+    if (!Number.isFinite(confidence) || confidence < minConf) continue;
+    const title = String(item.title ?? "Update from reflection").slice(0, 256);
+    const observation = String(item.observation ?? "").slice(0, 2000);
+    const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
+    if (!suggestedChange.trim()) continue;
+    if (opts.dryRun) {
+      if (opts.verbose) ctx.logger.info?.(`memory-hybrid: [dry-run] would create proposal: ${title} -> ${targetFile}`);
+      created++;
+      continue;
+    }
+    try {
+      proposalsDb.create({
+        targetFile,
+        title,
+        observation,
+        suggestedChange,
+        confidence,
+        evidenceSessions,
+        expiresAt,
+      });
+      created++;
+      if (opts.verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "runGenerateProposalsForCli:create" });
+    }
+  }
+  return { created };
 }
 
 /**
@@ -2274,7 +2417,7 @@ export async function runSelfCorrectionRunForCli(
       const { tmpdir: osTmp } = await import("node:os");
       const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
       writeFileSync(promptPath, prompt, "utf-8");
-      const spawnModel = scCfg.spawnModel ?? "gemini";
+      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(ctx.cfg), "heavy"));
       const r = spawnSync(
         "openclaw",
         ["sessions", "spawn", "--model", spawnModel, "--message", "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.", "--attach", promptPath],
