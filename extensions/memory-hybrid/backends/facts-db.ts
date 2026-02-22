@@ -1195,6 +1195,11 @@ export class FactsDB {
     }));
   }
 
+  /** Alias for getById for CLI compatibility. */
+  get(id: string): MemoryEntry | null {
+    return this.getById(id);
+  }
+
   /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
   getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
     const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
@@ -1356,6 +1361,53 @@ export class FactsDB {
     const rows = this.liveDb
       .prepare(
         `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}${scopeClause} ORDER BY created_at DESC`,
+      )
+      .all(...params) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
+  /** List recent facts with optional filters (for CLI list command). Order: created_at DESC. */
+  list(
+    limit: number,
+    filters?: {
+      category?: string;
+      entity?: string;
+      key?: string;
+      source?: string;
+      tier?: string;
+    },
+  ): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const parts: string[] = [
+      "(expires_at IS NULL OR expires_at > ?)",
+      "superseded_at IS NULL",
+    ];
+    const params: unknown[] = [nowSec];
+    if (filters?.category != null) {
+      parts.push("category = ?");
+      params.push(filters.category);
+    }
+    if (filters?.entity != null) {
+      parts.push("lower(entity) = lower(?)");
+      params.push(filters.entity);
+    }
+    if (filters?.key != null) {
+      parts.push("lower(key) = lower(?)");
+      params.push(filters.key);
+    }
+    if (filters?.source != null) {
+      parts.push("source = ?");
+      params.push(filters.source);
+    }
+    if (filters?.tier != null) {
+      parts.push("COALESCE(tier, 'warm') = ?");
+      params.push(filters.tier);
+    }
+    const where = parts.join(" AND ");
+    params.push(limit);
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts WHERE ${where} ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?`,
       )
       .all(...params) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToEntry(row));
@@ -1647,6 +1699,16 @@ export class FactsDB {
       stats[row.category || "other"] = row.cnt;
     }
     return stats;
+  }
+
+  /** Distinct memory categories present in non-superseded facts (for CLI stats/categories). */
+  uniqueMemoryCategories(): string[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT DISTINCT category FROM facts WHERE superseded_at IS NULL ORDER BY category`,
+      )
+      .all() as Array<{ category: string }>;
+    return rows.map((r) => r.category || "other");
   }
 
   /** Count of procedures (from procedures table). Returns 0 if table does not exist. */

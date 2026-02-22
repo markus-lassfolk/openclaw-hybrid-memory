@@ -2539,6 +2539,77 @@ const memoryHybridPlugin = {
           return { ...base, outcome } as UninstallCliResult;
         }
 
+        const HYBRID_MEM_HELP_GROUPED = `
+Commands by category:
+
+  Setup & installation
+    install              Apply recommended config and defaults (run after first setup)
+    verify               Verify config and databases; use --fix to apply defaults
+
+  Maintenance (run regularly or use run-all)
+    run-all              Run all maintenance tasks in optimal order (see below)
+    compact              Tier compaction: move facts between hot/warm/cold
+    prune                Remove expired (decayed) facts
+    checkpoint           Checkpoint vector DB to disk
+    backfill-decay       Backfill decay fields (one-time migration)
+    backfill             Seed memory from workspace Markdown/text files
+
+  Stats & query
+    stats                Show memory statistics (--efficiency for tiers/tokens)
+    search <query>       Hybrid search (vector + SQL)
+    lookup <id>          Get fact by ID
+    list                 List recent facts (--limit, --category, --tier, etc.)
+    show <id>            Show fact or proposal by ID
+    categories           List categories present in memory
+
+  Proposals & corrections
+    proposals list       List persona proposals (--status)
+    proposals approve/reject <id>
+    corrections list     List pending corrections from last report
+    corrections approve-all   Apply all TOOLS/AGENTS rules from report
+    review               Show proposals and corrections with actions
+
+  Store & ingestion
+    store <text>         Store a fact (options: --category, --entity, --key, --value)
+    ingest-files         Ingest workspace files (--paths for specific files)
+    distill              Extract facts from session logs (--days, --model)
+    distill-window       Show date range available for distill
+    record-distill       Record last distill run for cron
+    extract-daily        Extract daily summaries from sessions
+    extract-procedures   Extract procedures from sessions (--days)
+    extract-directives   Extract directive rules from sessions
+    extract-reinforcement  Extract reinforcement from praise
+    generate-auto-skills Generate skills from procedures
+
+  Reflection & classification
+    reflect              Analyze recent facts, extract patterns
+    reflect-rules        Extract rules from patterns
+    reflect-meta         Extract meta-patterns
+    classify             Reclassify facts with LLM
+    build-languages      Build language keywords for self-correction
+
+  Dedup & consolidation
+    find-duplicates      Find near-duplicate facts (--threshold)
+    consolidate          Merge duplicates via LLM (--dry-run first)
+
+  Self-correction
+    self-correction-extract  Extract incidents from sessions
+    self-correction-run      Analyze and remediate (TOOLS.md, memory)
+
+  Export & config
+    export               Export to MEMORY.md / memory/ (--output)
+    config-mode <mode>   Set memory mode
+    config-set <key> <value>
+
+  Credentials & scope
+    credentials migrate-to-vault
+    scope list|stats|prune|promote
+
+  Plugin lifecycle
+    upgrade [version]    Upgrade to version or latest
+    uninstall            Remove plugin (--clean-all, --leave-config)
+`;
+
         registerHybridMemCli(mem, {
           factsDb,
           vectorDb,
@@ -2738,6 +2809,46 @@ const memoryHybridPlugin = {
               return items;
             }
 
+            /** Parse "Suggested TOOLS.md rules" and "Proposed (review before applying)" into toolsRules and agentsRules. */
+            function parseReportRulesForApply(content: string): { toolsRules: string[]; agentsRules: string[] } {
+              const toolsRules: string[] = [];
+              const agentsRules: string[] = [];
+              const lines = content.split("\n");
+              let inSuggested = false;
+              let inProposed = false;
+              for (let i = 0; i < lines.length; i++) {
+                const trimmed = lines[i].trim();
+                if (trimmed.startsWith("## Suggested TOOLS.md rules")) {
+                  inSuggested = true;
+                  inProposed = false;
+                  continue;
+                }
+                if (trimmed === "## Proposed (review before applying)") {
+                  inSuggested = false;
+                  inProposed = true;
+                  continue;
+                }
+                if (trimmed.startsWith("## ")) {
+                  inSuggested = false;
+                  inProposed = false;
+                  continue;
+                }
+                if (trimmed.startsWith("- ") && trimmed.length > 2) {
+                  const text = trimmed.slice(2).trim();
+                  if (inSuggested) {
+                    toolsRules.push(text);
+                  } else if (inProposed) {
+                    if (text.startsWith("[AGENTS_RULE]") || text.startsWith("[SKILL_UPDATE]")) {
+                      agentsRules.push(text.replace(/^\[(AGENTS_RULE|SKILL_UPDATE)\]\s*/i, "").trim());
+                    } else {
+                      toolsRules.push(text.replace(/^\[TOOLS_RULE\]\s*/i, "").trim());
+                    }
+                  }
+                }
+              }
+              return { toolsRules, agentsRules };
+            }
+
             function getLatestCorrectionReport(workspace?: string): { path: string; content: string } | null {
               const dir = reportDir(workspace);
               if (!existsSync(dir)) return null;
@@ -2793,14 +2904,26 @@ const memoryHybridPlugin = {
               correctionsApproveAll: async (opts: { workspace?: string }) => {
                 const report = getLatestCorrectionReport(opts.workspace);
                 if (!report) return { applied: 0, error: "No self-correction report found" };
-                const items = parseReportSuggestedTools(report.content);
-                if (items.length === 0) return { applied: 0, error: "No suggested TOOLS rules in report (run self-correction-run first)" };
-                const toolsPath = join(opts.workspace ?? workspaceRoot(), "TOOLS.md");
-                if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
+                const { toolsRules, agentsRules } = parseReportRulesForApply(report.content);
+                const totalRules = toolsRules.length + agentsRules.length;
+                if (totalRules === 0)
+                  return { applied: 0, error: "No suggested TOOLS or AGENTS rules in report (run self-correction-run first)" };
+                const root = opts.workspace ?? workspaceRoot();
                 const scCfg = cfg.selfCorrection ?? { toolsSection: "Self-correction rules" };
                 const section = typeof scCfg === "object" && scCfg && "toolsSection" in scCfg ? (scCfg.toolsSection as string) : "Self-correction rules";
-                const { inserted } = insertRulesUnderSection(toolsPath, section, items);
-                return { applied: inserted };
+                let applied = 0;
+                if (toolsRules.length > 0) {
+                  const toolsPath = join(root, "TOOLS.md");
+                  if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
+                  const { inserted } = insertRulesUnderSection(toolsPath, section, toolsRules);
+                  applied += inserted;
+                }
+                if (agentsRules.length > 0) {
+                  const agentsPath = join(root, "AGENTS.md");
+                  const { inserted } = insertRulesUnderSection(agentsPath, section, agentsRules, "# AGENTS");
+                  applied += inserted;
+                }
+                return { applied };
               },
               showItem: async (id: string) => {
                 const fact = factsDb.getById(id);
@@ -2816,8 +2939,12 @@ const memoryHybridPlugin = {
           tieringEnabled: cfg.memoryTiering.enabled,
         });
 
+        if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
+          (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", HYBRID_MEM_HELP_GROUPED);
+        }
+
       },
-      { commands: ["hybrid-mem", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem extract-directives", "hybrid-mem extract-reinforcement", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem list", "hybrid-mem show", "hybrid-mem proposals list", "hybrid-mem proposals approve", "hybrid-mem proposals reject", "hybrid-mem corrections list", "hybrid-mem corrections approve", "hybrid-mem review", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
+      { commands: ["hybrid-mem", "hybrid-mem run-all", "hybrid-mem install", "hybrid-mem stats", "hybrid-mem compact", "hybrid-mem prune", "hybrid-mem checkpoint", "hybrid-mem backfill-decay", "hybrid-mem backfill", "hybrid-mem ingest-files", "hybrid-mem distill", "hybrid-mem extract-daily", "hybrid-mem extract-procedures", "hybrid-mem generate-auto-skills", "hybrid-mem extract-directives", "hybrid-mem extract-reinforcement", "hybrid-mem search", "hybrid-mem lookup", "hybrid-mem list", "hybrid-mem show", "hybrid-mem proposals list", "hybrid-mem proposals approve", "hybrid-mem proposals reject", "hybrid-mem corrections list", "hybrid-mem corrections approve", "hybrid-mem review", "hybrid-mem store", "hybrid-mem classify", "hybrid-mem build-languages", "hybrid-mem self-correction-extract", "hybrid-mem self-correction-run", "hybrid-mem categories", "hybrid-mem find-duplicates", "hybrid-mem consolidate", "hybrid-mem reflect", "hybrid-mem reflect-rules", "hybrid-mem reflect-meta", "hybrid-mem verify", "hybrid-mem credentials migrate-to-vault", "hybrid-mem distill-window", "hybrid-mem record-distill", "hybrid-mem scope prune-session", "hybrid-mem scope promote", "hybrid-mem uninstall"] },
     );
 
     // ========================================================================
