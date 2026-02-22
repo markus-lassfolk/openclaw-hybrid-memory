@@ -156,7 +156,7 @@ export async function chatCompleteWithRetry(opts: {
 
     try {
       return await withLLMRetry(
-        () => chatComplete({ ...chatOpts, model: currentModel }),
+        () => chatComplete({ ...chatOpts, model: currentModel, maxTokens }),
         { maxRetries: 3, label: attemptLabel },
       );
     } catch (err) {
