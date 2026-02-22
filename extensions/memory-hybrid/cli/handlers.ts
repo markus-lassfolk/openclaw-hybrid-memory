@@ -2004,7 +2004,7 @@ export async function runDistillForCli(
   let stored = 0;
   let skipped = 0;
   for (const fact of allFacts) {
-    const isCred = fact.entity === "Credentials" || (fact.key && /^(api_key|token|password|secret)/i.test(fact.key));
+    const isCred = isCredentialLike(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
     if (isCred && cfg.credentials.enabled && credentialsDb) {
       const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
       if (parsed) {
