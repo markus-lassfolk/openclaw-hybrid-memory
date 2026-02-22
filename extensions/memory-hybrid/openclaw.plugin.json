@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.2.221",
+  "version": "2026.2.222",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",
@@ -604,7 +604,7 @@
           "autoRewriteTools": { "type": "boolean", "description": "When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (default: false)" },
           "analyzeViaSpawn": { "type": "boolean", "description": "When true and incidents > spawnThreshold, run Phase 2 via openclaw sessions spawn (Gemini, large context) (default: false)" },
           "spawnThreshold": { "type": "number", "description": "Use spawn for Phase 2 when incident count exceeds this (default: 15)" },
-          "spawnModel": { "type": "string", "description": "Model for spawn when analyzeViaSpawn is true (default: gemini)" }
+          "spawnModel": { "type": "string", "description": "Model for spawn when analyzeViaSpawn is true. Empty or unset = use provider default from config (Gemini/OpenAI/Claude, same as maintenance cron jobs)" }
         },
         "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
       },

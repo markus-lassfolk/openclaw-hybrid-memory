@@ -11,6 +11,12 @@ export function isGeminiModel(model: string): boolean {
   return m.includes("gemini") || m.startsWith("models/gemini");
 }
 
+/** Exported for tests. Returns true for Claude/Anthropic model names. */
+export function isAnthropicModel(model: string): boolean {
+  const m = model.toLowerCase();
+  return m.startsWith("claude-") || m.includes("anthropic/claude");
+}
+
 function resolveGeminiApiKey(configKey?: string): string | null {
   if (configKey && configKey.trim().length >= 10) {
     if (configKey.startsWith("env:")) {
@@ -33,6 +39,16 @@ export async function chatComplete(opts: {
   const { model, content, temperature = 0.2, maxTokens } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
 
+  if (isAnthropicModel(model)) {
+    throw new Error(
+      `Anthropic/Claude model "${model}" cannot be used via the OpenAI SDK. ` +
+        `Set distill.apiKey (Gemini) or embedding.apiKey (OpenAI) as your LLM provider, ` +
+        `or remove claude.* from plugin config to avoid routing LLM calls to Claude.`,
+    );
+  }
+
+  // This path runs when the requested model is Gemini (chosen by config / getDefaultCronModel etc.).
+  // Retries below are for resilience (429/5xx), not provider preference — we stay model-agnostic.
   if (isGeminiModel(model)) {
     const apiKey = resolveGeminiApiKey(opts.geminiApiKey);
     if (!apiKey) {
@@ -40,19 +56,45 @@ export async function chatComplete(opts: {
         "Gemini API key required for Gemini models. Set plugins.entries[\"openclaw-hybrid-memory\"].config.distill.apiKey, or GOOGLE_API_KEY / GEMINI_API_KEY env var.",
       );
     }
-    const { GoogleGenAI } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey });
-    const modelId = model.startsWith("models/") ? model : `models/${model}`;
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: content,
-      config: {
+    const modelId = model.startsWith("models/") ? model.slice(7) : model;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
+    const body = JSON.stringify({
+      contents: [{ parts: [{ text: content }] }],
+      generationConfig: {
         temperature,
         maxOutputTokens: effectiveMaxTokens,
       },
     });
-    const text = response.text;
-    if (text == null) {
+    const maxAttempts = 3;
+    let lastRes: Response | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body,
+      });
+      lastRes = res;
+      const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
+      if (res.ok) break;
+      if (retryable && attempt < maxAttempts) {
+        const delayMs = attempt * 1000;
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      const errText = await res.text();
+      throw new Error(`Gemini API error ${res.status}: ${errText}`);
+    }
+    type GeminiResponse = { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const data = (await lastRes!.json()) as GeminiResponse;
+    const parts = data.candidates?.[0]?.content?.parts;
+    if (!parts || parts.length === 0) {
+      throw new Error("Gemini returned no text");
+    }
+    const text = parts.map(p => p.text ?? '').join('');
+    if (text.length === 0) {
       throw new Error("Gemini returned no text");
     }
     return text;

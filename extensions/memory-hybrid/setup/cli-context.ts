@@ -24,6 +24,7 @@ import { getMemoryCategories } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
 import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { applyApprovedProposal } from "../cli/proposals.js";
 
 /** Help text shown after hybrid-mem commands list */
 export const HYBRID_MEM_HELP_GROUPED = `
@@ -51,6 +52,7 @@ Commands by category:
 
   Proposals & corrections
     proposals list       List persona proposals (--status)
+    proposals show <id>  Show full proposal (--json, --diff)
     proposals approve/reject <id>
     corrections list     List pending corrections from last report
     corrections approve-all   Apply all TOOLS/AGENTS rules from report
@@ -66,7 +68,8 @@ Commands by category:
     extract-procedures   Extract procedures from sessions (--days)
     extract-directives   Extract directive rules from sessions
     extract-reinforcement  Extract reinforcement from praise
-    generate-auto-skills Generate skills from procedures
+    generate-auto-skills   Generate skills from procedures
+    generate-proposals    Generate persona proposals from reflection (--dry-run, --verbose)
 
   Reflection & classification
     reflect              Analyze recent facts, extract patterns
@@ -112,6 +115,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem extract-daily",
   "hybrid-mem extract-procedures",
   "hybrid-mem generate-auto-skills",
+  "hybrid-mem generate-proposals",
   "hybrid-mem extract-directives",
   "hybrid-mem extract-reinforcement",
   "hybrid-mem search",
@@ -119,6 +123,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem list",
   "hybrid-mem show",
   "hybrid-mem proposals list",
+  "hybrid-mem proposals show",
   "hybrid-mem proposals approve",
   "hybrid-mem proposals reject",
   "hybrid-mem corrections list",
@@ -384,8 +389,8 @@ function buildRichStatsExtras(
   };
 }
 
-function buildListCommands(ctx: HandlerContext): NonNullable<HybridMemCliContext["listCommands"]> {
-  const { factsDb, proposalsDb, cfg } = ctx;
+function buildListCommands(ctx: HandlerContext, api: ClawdbotPluginApi): NonNullable<HybridMemCliContext["listCommands"]> {
+  const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
   const workspaceRoot = () => process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
 
@@ -488,6 +493,14 @@ function buildListCommands(ctx: HandlerContext): NonNullable<HybridMemCliContext
       if (!p) return { ok: false, error: `Proposal ${id} not found` };
       if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
       proposalsDb.updateStatus(id, "approved");
+      const applyResult = await applyApprovedProposal(
+        { proposalsDb, cfg, resolvedSqlitePath, api },
+        id,
+      );
+      if (!applyResult.ok) {
+        proposalsDb.updateStatus(id, "pending");
+        return { ok: false, error: applyResult.error };
+      }
       return { ok: true };
     },
     proposalReject: async (id: string, reason?: string) => {
@@ -592,8 +605,11 @@ export function createHybridMemCliContext(
     runExtractReinforcement: (opts) => handlers.runExtractReinforcementForCli(handlerCtx, opts),
     runExport: services.runExport,
     richStatsExtras: buildRichStatsExtras(handlerCtx),
-    listCommands: buildListCommands(handlerCtx),
+    listCommands: buildListCommands(handlerCtx, api),
     tieringEnabled: handlerCtx.cfg.memoryTiering.enabled,
+    resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
+    resolvePath: (file: string) => api.resolvePath(file),
+    runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
   };
 }
 

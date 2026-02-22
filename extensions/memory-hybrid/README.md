@@ -8,7 +8,7 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Requirements
 
-- **OpenAI API key** — Required. The plugin uses it for embeddings (default model `text-embedding-3-small`); without a valid `embedding.apiKey` in config the plugin does not load. Optional features (auto-classify, summarize, consolidate, **memory classification**) use the same key with a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts (by embedding similarity) before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
+- **OpenAI API key** — Required. The plugin uses it for embeddings (default model `text-embedding-3-small`); without a valid `embedding.apiKey` in config the plugin does not load. Optional features (auto-classify, summarize, consolidate, **memory classification**) use the same key with a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts (by embedding similarity) before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
 - **Build tools** for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
 ## Installation
@@ -49,12 +49,12 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 
 ## Dependencies
 
-- `better-sqlite3` ^11.0.0
+- `better-sqlite3` ^12.0.0
 - `@lancedb/lancedb` ^0.23.0
 - `openai` ^6.16.0
 - `@sinclair/typebox` 0.34.47
 
-Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
+Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3. You may see an `npm warn deprecated prebuild-install` message during install; it comes from better-sqlite3's optional dependency and is harmless until [WiseLibs/better-sqlite3#655](https://github.com/WiseLibs/better-sqlite3/issues/655) is resolved.
 
 ## Credits
 
