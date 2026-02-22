@@ -40,18 +40,29 @@ export async function chatComplete(opts: {
         "Gemini API key required for Gemini models. Set plugins.entries[\"openclaw-hybrid-memory\"].config.distill.apiKey, or GOOGLE_API_KEY / GEMINI_API_KEY env var.",
       );
     }
-    const { GoogleGenAI } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey });
-    const modelId = model.startsWith("models/") ? model : `models/${model}`;
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: content,
-      config: {
-        temperature,
-        maxOutputTokens: effectiveMaxTokens,
+    const modelId = model.startsWith("models/") ? model.slice(7) : model;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
       },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: content }] }],
+        generationConfig: {
+          temperature,
+          maxOutputTokens: effectiveMaxTokens,
+        },
+      }),
     });
-    const text = response.text;
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Gemini API error ${res.status}: ${errText}`);
+    }
+    type GeminiResponse = { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const data = (await res.json()) as GeminiResponse;
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (text == null) {
       throw new Error("Gemini returned no text");
     }
