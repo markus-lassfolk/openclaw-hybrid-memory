@@ -40,6 +40,12 @@ export type MultiAgentConfig = {
   defaultStoreScope: "global" | "agent" | "auto";
   /** When true, throw error if agent detection fails in "agent" or "auto" scope mode (instead of silently falling back to orchestrator). Default: false. */
   strictAgentScoping?: boolean;
+  /**
+   * ⚠️ SECURITY: When true, tools can use caller-provided scope params (userId, agentId, sessionId) to access other users' memories.
+   * This is UNSAFE in multi-tenant deployments but useful in single-user setups for advanced filtering.
+   * Default: false (secure by default — tools only see memories from authenticated context).
+   */
+  trustToolScopeParams?: boolean;
 };
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
@@ -1023,7 +1029,7 @@ export const hybridConfigSchema = {
         : undefined;
 
     const multiAgent: MultiAgentConfig = {
-      orchestratorId: 
+      orchestratorId:
         typeof multiAgentRaw?.orchestratorId === "string" && multiAgentRaw.orchestratorId.trim().length > 0
           ? multiAgentRaw.orchestratorId.trim()
           : "main",
@@ -1033,6 +1039,7 @@ export const hybridConfigSchema = {
         return "global"; // backward compatible default
       })(),
       strictAgentScoping: multiAgentRaw?.strictAgentScoping === true,
+      trustToolScopeParams: multiAgentRaw?.trustToolScopeParams === true, // Default: false (secure by default)
     };
 
     return {

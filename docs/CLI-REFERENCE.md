@@ -194,7 +194,7 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 - [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify
 ---
 
-## List, show, and review (issue #56)
+## List, show, and review
 
 After running the maintenance pipeline (`distill`, `extract-*`, `reflect`, `self-correction-run`), the plugin produces patterns, rules, directives, procedures, persona proposals, and self-correction suggestions. These commands let you browse and act on them without querying SQLite directly.
 

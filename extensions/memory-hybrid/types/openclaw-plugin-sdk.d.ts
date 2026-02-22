@@ -18,7 +18,7 @@ declare module "openclaw/plugin-sdk" {
 
   export type ClawdbotPluginApi = {
     resolvePath: (path: string) => string;
-    logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+    logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void; debug?: (msg: string) => void };
     registerService: (opts: { id: string; start: () => void; stop?: () => void }) => void;
     registerTool: (
       opts: Record<string, unknown>,
@@ -26,6 +26,7 @@ declare module "openclaw/plugin-sdk" {
     ) => void;
     registerCli: (fn: (opts: { program: CliProgram }) => void, options?: { commands?: string[] }) => void;
     on: (event: string, handler: (ev: unknown) => void | Promise<void> | Promise<unknown>) => void;
+    context?: { agentId?: string; sessionId?: string; userId?: string };
     [key: string]: unknown;
   };
 }

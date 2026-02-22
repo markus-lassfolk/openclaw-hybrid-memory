@@ -87,8 +87,8 @@ export async function initErrorReporter(
     sendDefaultPii: false,       // NO PII
     autoSessionTracking: false,  // NO session tracking
     integrations: (defaults) => defaults.filter(i => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name)), // Keep only safe integrations
-    beforeSend(event) {
-      return sanitizeEvent(event);
+    beforeSend(event): SentryType.ErrorEvent | PromiseLike<SentryType.ErrorEvent | null> | null {
+      return sanitizeEvent(event) as SentryType.ErrorEvent | null;
     },
     beforeBreadcrumb(breadcrumb) {
       // Only allow breadcrumbs with category starting with "plugin."
@@ -247,12 +247,17 @@ export function sanitizePath(path: string): string {
  */
 export function capturePluginError(error: Error, context: {
   operation: string;
-  subsystem: string;
+  /** Subsystem (e.g. "cli", "reflection", "credentials"). Default "plugin". */
+  subsystem?: string;
   configShape?: Record<string, string>;
   phase?: string;
   backend?: string;
   retryAttempt?: number;
   memoryCount?: number;
+  /** Severity level (e.g. "info", "warning", "error"). Not sent to Sentry, used for local logging/filtering. */
+  severity?: string;
+  /** Additional context fields for specific operations */
+  [key: string]: unknown;
 }): string | undefined {
   if (!initialized || !Sentry) {
     return undefined;
@@ -274,9 +279,10 @@ export function capturePluginError(error: Error, context: {
     }
   }
 
+  const subsystem = context.subsystem ?? "plugin";
   let eventId: string | undefined;
   Sentry.withScope((scope) => {
-    scope.setTag("subsystem", context.subsystem);
+    scope.setTag("subsystem", subsystem);
     scope.setTag("operation", context.operation);
     if (context.phase) scope.setTag("phase", context.phase);
     if (context.backend) scope.setTag("backend", context.backend);
@@ -285,7 +291,7 @@ export function capturePluginError(error: Error, context: {
     if (context.configShape) {
       scope.setContext("config_shape", context.configShape);
     }
-    eventId = Sentry.captureException(error);
+    eventId = Sentry!.captureException(error);
   });
 
   return eventId;

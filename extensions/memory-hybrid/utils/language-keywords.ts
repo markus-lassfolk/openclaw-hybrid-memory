@@ -7,6 +7,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { capturePluginError } from "../services/error-reporter.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 
@@ -315,7 +316,12 @@ export function loadMergedKeywords(): MergedKeywords {
     try {
       const raw = readFileSync(filePath, "utf8");
       data = JSON.parse(raw) as LanguageKeywordsFile;
-    } catch {
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'load-language-keywords',
+        severity: 'info',
+        subsystem: 'utils'
+      });
       // invalid or missing: use English only
     }
   }
@@ -369,11 +375,23 @@ export async function clearKeywordCache(): Promise<void> {
   try {
     const { clearDirectiveCategoryCache } = await import("../services/directive-extract.js");
     clearDirectiveCategoryCache();
-  } catch {}
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'clear-directive-cache',
+      severity: 'info',
+      subsystem: 'utils'
+    });
+  }
   try {
     const { clearReinforcementRegexCache } = await import("../services/reinforcement-extract.js");
     clearReinforcementRegexCache();
-  } catch {}
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'clear-reinforcement-cache',
+      severity: 'info',
+      subsystem: 'utils'
+    });
+  }
 }
 
 function buildRegexFromKeywords(keywords: string[]): RegExp {

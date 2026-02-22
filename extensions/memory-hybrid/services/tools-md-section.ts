@@ -53,11 +53,13 @@ function getExistingRuleLines(lines: string[], startIndex: number, endIndex: num
  * Insert new rules under the given section. If section exists, append new rules
  * (dedup by normalized content). If section does not exist, append it at end of file.
  * Each rule is written as "- <rule>\n".
+ * @param defaultHeading - Heading used when file is empty (e.g. "# AGENTS" for AGENTS.md). Default "# TOOLS".
  */
 export function insertRulesUnderSection(
   filePath: string,
   sectionTitle: string,
   newRules: string[],
+  defaultHeading = "# TOOLS",
 ): { inserted: number; sectionExisted: boolean } {
   const content = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
   const lines = content.split("\n");
@@ -94,7 +96,7 @@ export function insertRulesUnderSection(
     newContent = before + insertBlock + (after ? "\n" + after : "");
   } else {
     const sectionHeader = "\n\n## " + sectionTitle + "\n\n";
-    newContent = (content.trimEnd() || "# TOOLS") + sectionHeader + bulletLines.join("\n") + "\n";
+    newContent = (content.trimEnd() || defaultHeading) + sectionHeader + bulletLines.join("\n") + "\n";
   }
 
   writeFileSync(filePath, newContent, "utf-8");
