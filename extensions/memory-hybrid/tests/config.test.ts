@@ -790,6 +790,16 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.search?.hydeModel).toBe("gpt-4o-mini");
   });
 
+  it("parses search with hydeEnabled true and no hydeModel (runtime uses llm/default, issue #92)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      search: { hydeEnabled: true },
+    });
+    expect(result.search).toBeDefined();
+    expect(result.search?.hydeEnabled).toBe(true);
+    expect(result.search?.hydeModel).toBeUndefined();
+  });
+
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.multiAgent).toBeDefined();

@@ -648,7 +648,7 @@
         "additionalProperties": false,
         "properties": {
           "hydeEnabled": { "type": "boolean", "description": "Use HyDE query expansion for vector search (default: false)" },
-          "hydeModel": { "type": "string", "description": "Model for HyDE generation (default: gpt-4o-mini)" }
+          "hydeModel": { "type": "string", "description": "Model for HyDE generation; omit to use llm.default or legacy default (issue #92)" }
         },
         "description": "Search tweaks: HyDE query expansion"
       }

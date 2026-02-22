@@ -60,10 +60,12 @@ export function initializeDatabases(
   const factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
   vectorDb.setLogger(api.logger);
-  // Embeddings always go direct to OpenAI (gateway doesn't proxy /v1/embeddings)
-  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
+  // Embeddings always use a direct OpenAI client (gateway does not proxy /v1/embeddings — issue #91)
+  const openaiForEmbeddings = new OpenAI({ apiKey: cfg.embedding.apiKey });
   const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
-  const embeddings = new Embeddings(openai, embeddingModels);
+  const embeddings = new Embeddings(openaiForEmbeddings, embeddingModels);
+  // Chat/LLM client (same key; gateway baseURL may be added here when supported — never for embeddings)
+  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {

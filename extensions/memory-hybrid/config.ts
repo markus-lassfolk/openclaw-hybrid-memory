@@ -190,8 +190,8 @@ export type MemoryTieringConfig = {
 export type SearchConfig = {
   /** Generate hypothetical answer before embedding for vector search (default false) */
   hydeEnabled: boolean;
-  /** Model for HyDE generation (default gpt-4o-mini) */
-  hydeModel: string;
+  /** Model for HyDE generation; when unset uses llm.default / legacy default (issue #92) */
+  hydeModel?: string;
 };
 
 /** Ingest workspace files: index markdown files as facts for search */
@@ -1092,13 +1092,16 @@ export const hybridConfigSchema = {
           }
           : undefined;
 
-    // Parse optional search config (HyDE)
+    // Parse optional search config (HyDE). When hydeModel is unset, runtime uses getDefaultCronModel (issue #92).
     const searchRaw = cfg.search as Record<string, unknown> | undefined;
     const search: SearchConfig | undefined =
       searchRaw && typeof searchRaw === "object"
         ? {
             hydeEnabled: searchRaw.hydeEnabled === true,
-            hydeModel: typeof searchRaw.hydeModel === "string" ? searchRaw.hydeModel : "gpt-4o-mini",
+            hydeModel:
+              typeof searchRaw.hydeModel === "string" && searchRaw.hydeModel.trim().length > 0
+                ? searchRaw.hydeModel.trim()
+                : undefined,
           }
         : undefined;
 
