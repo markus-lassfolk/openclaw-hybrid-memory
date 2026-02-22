@@ -44,7 +44,6 @@ export interface ReflectionOptions {
   model: string;
   verbose?: boolean;
   fallbackModels?: string[];
-  geminiApiKey?: string;
 }
 
 export interface ReflectionResult {
@@ -157,7 +156,6 @@ export async function runReflection(
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 1500,
       openai,
-      geminiApiKey: opts.geminiApiKey,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflection",
     });
@@ -299,7 +297,7 @@ export async function runReflectionRules(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[]; geminiApiKey?: string },
+  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionRulesResult> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -321,7 +319,6 @@ export async function runReflectionRules(
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 800,
       openai,
-      geminiApiKey: opts.geminiApiKey,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-rules",
     });
@@ -453,7 +450,7 @@ export async function runReflectionMeta(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[]; geminiApiKey?: string },
+  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -475,7 +472,6 @@ export async function runReflectionMeta(
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 500,
       openai,
-      geminiApiKey: opts.geminiApiKey,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-meta",
     });

@@ -20,16 +20,18 @@ function hashText(text: string): string {
   return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
-/** OpenAI-based embedding provider. Optional in-memory cache to avoid redundant API calls. */
+/** OpenAI-based embedding provider (uses gateway client when provided). Optional in-memory cache to avoid redundant API calls. */
 export class Embeddings implements EmbeddingProvider {
   private client: OpenAI;
   private cache = new Map<string, number[]>();
 
   constructor(
-    apiKey: string,
+    clientOrApiKey: OpenAI | string,
     private model: string,
   ) {
-    this.client = new OpenAI({ apiKey });
+    this.client = typeof clientOrApiKey === "string"
+      ? new OpenAI({ apiKey: clientOrApiKey })
+      : clientOrApiKey;
   }
 
   async embed(text: string): Promise<number[]> {
@@ -43,13 +45,22 @@ export class Embeddings implements EmbeddingProvider {
     }
 
     const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
-      () => this.client.embeddings.create({
-        model: this.model,
-        input: text,
-      }),
-      { maxRetries: 2 }
-    );
+    let resp;
+    try {
+      resp = await withLLMRetry(
+        () => this.client.embeddings.create({
+          model: this.model,
+          input: text,
+        }),
+        { maxRetries: 2 },
+      );
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "embeddings",
+        operation: "embed",
+      });
+      throw err;
+    }
     const vector = resp.data[0].embedding;
 
     if (this.cache.size >= EMBEDDING_CACHE_MAX) {

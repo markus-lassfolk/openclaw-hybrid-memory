@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, type CronModelConfig } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
@@ -1436,7 +1436,10 @@ export async function runGenerateProposalsForCli(
     insights: insightsBlock,
     identity_files: identityFilesBlock,
   });
-  const model = getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+  const cronCfg = getCronModelConfig(cfg);
+  const pref = getLLMModelPreference(cronCfg, "heavy");
+  const model = pref[0];
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : [];
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -1445,8 +1448,7 @@ export async function runGenerateProposalsForCli(
       temperature: 0.3,
       maxTokens: 4000,
       openai,
-      geminiApiKey: cfg.distill?.apiKey,
-      fallbackModels: cfg.distill?.fallbackModels ?? [],
+      fallbackModels,
       label: "memory-hybrid: generate-proposals",
     });
   } catch (err) {
@@ -2035,14 +2037,16 @@ export async function runIngestFilesForCli(
     sink.log(`Processing batch ${b + 1}/${batches.length}...`);
     const userContent = ingestPrompt + "\n\n" + batches[b];
     try {
+      const ingestPref = getLLMModelPreference(getCronModelConfig(cfg), "default");
+      const ingestModel = model || ingestPref[0];
+      const ingestFallbacks = ingestPref.length > 1 ? ingestPref.slice(1) : cfg.distill?.fallbackModels;
       const content = await chatCompleteWithRetry({
-        model,
+        model: ingestModel,
         content: userContent,
         temperature: 0.2,
-        maxTokens: distillMaxOutputTokens(model),
+        maxTokens: distillMaxOutputTokens(ingestModel),
         openai,
-        geminiApiKey: cfg.distill?.apiKey,
-        fallbackModels: cfg.distill?.fallbackModels,
+        fallbackModels: ingestFallbacks,
         label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
@@ -2146,7 +2150,10 @@ export async function runDistillForCli(
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
   }
-  const model = opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const cronCfgDistill = getCronModelConfig(cfg);
+  const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
+  const model = opts.model ?? cfg.distill?.defaultModel ?? heavyPref[0] ?? "gpt-4o";
+  const distillFallbacks = heavyPref.length > 1 ? heavyPref.slice(1) : cfg.distill?.fallbackModels;
   const batches: string[] = [];
   let currentBatch = "";
   const batchTokenLimit = distillBatchTokenLimit(model);
@@ -2189,8 +2196,7 @@ export async function runDistillForCli(
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
-        geminiApiKey: cfg.distill?.apiKey,
-        fallbackModels: cfg.distill?.fallbackModels,
+        fallbackModels: distillFallbacks,
         label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
@@ -2463,7 +2469,6 @@ export async function runSelfCorrectionRunForCli(
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
-        geminiApiKey: cfg.distill?.apiKey,
       });
     }
     const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -2544,13 +2549,13 @@ export async function runSelfCorrectionRunForCli(
           current_tools: currentTools,
           new_rules: toolsSuggestions.join("\n"),
         });
+        const rewriteModel = opts.model ?? (getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy")[0]) ?? "gpt-4o";
         const rewritten = await chatComplete({
-          model: opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview",
+          model: rewriteModel,
           content: rewritePrompt,
           temperature: 0.2,
           maxTokens: 16000,
           openai,
-          geminiApiKey: cfg.distill?.apiKey,
         });
         const cleaned = rewritten.trim().replace(/^```\w*\n?|```\s*$/g, "").trim();
         if (cleaned.length > 50) {

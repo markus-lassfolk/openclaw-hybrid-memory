@@ -13,7 +13,8 @@ Get the memory-hybrid plugin running in 10 minutes. For full configuration optio
 ## Prerequisites
 
 - **OpenClaw** installed and running.
-- **OpenAI API key** (required for embeddings and optional LLM features).
+- **Embedding access** (required): configure `embedding.apiKey` and `embedding.model` in plugin config so the plugin can call an embedding API (e.g. OpenAI `text-embedding-3-small`). The plugin uses the gateway’s OpenAI-compatible client when available.
+- **Chat/completion** (optional for basic memory): needed for distillation, reflection, auto-classify, etc. Any provider the OpenClaw gateway supports works; optional **`llm`** config sets model preference lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 - **Node.js** with npm.
 
 ---
@@ -61,15 +62,16 @@ openclaw hybrid-mem install
 
 This merges recommended defaults into `~/.openclaw/openclaw.json` — plugin config, memorySearch, compaction prompts, bootstrap limits, and a nightly distillation job. It preserves any existing API key.
 
-Then set your OpenAI API key:
+Then set your **embedding** config (required) and optionally **LLM** preferences:
 
 ```bash
-# Edit ~/.openclaw/openclaw.json and replace YOUR_OPENAI_API_KEY
-# Or set the environment variable:
-export OPENAI_API_KEY="sk-..."
+# Edit ~/.openclaw/openclaw.json:
+# - embedding.apiKey and embedding.model (required for vector search)
+# - llm.default / llm.heavy (optional) for chat model preference lists — see LLM-AND-PROVIDERS.md
+# Or use env: e.g. embedding.apiKey = "env:OPENAI_API_KEY"
 ```
 
-For manual configuration or to customise individual settings, see [CONFIGURATION.md](CONFIGURATION.md).
+For manual configuration and all options (including `llm` and legacy `distill`), see [CONFIGURATION.md](CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 
 ---
 
