@@ -216,7 +216,9 @@ function buildCliContextServices(
     runFindDuplicates: (opts) =>
       runFindDuplicates(factsDb, vectorDb, embeddings, safeEmbed, opts, api.logger),
     runConsolidate: (opts) => {
-      if (!cfg.embedding?.apiKey || cfg.embedding.apiKey.length < 10) {
+      // Skip if API key is required but missing (check provider, not hardcoded length)
+      const requiresKey = cfg.embedding?.provider !== "ollama" && cfg.embedding?.provider !== "local";
+      if (requiresKey && !cfg.embedding?.apiKey) {
         return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
       }
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger);

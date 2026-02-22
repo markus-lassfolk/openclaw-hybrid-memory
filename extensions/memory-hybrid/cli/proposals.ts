@@ -145,6 +145,13 @@ export function registerProposalsCli(program: Command, ctx: ProposalsCliContext)
           return text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
         };
 
+        // Validate content doesn't contain dangerous patterns
+        const DANGEROUS_PATTERNS = /<script|<iframe|javascript:/i;
+        if (DANGEROUS_PATTERNS.test(proposal.suggestedChange)) {
+          console.error(`Proposal ${proposalId} contains potentially dangerous content (script tags, iframes, or javascript: URLs) and cannot be applied.`);
+          process.exit(1);
+        }
+
         // Apply change (simple append strategy)
         // TODO: Future enhancement - use LLM for smart diff application, content validation, merge conflict resolution
         const timestamp = new Date().toISOString();
