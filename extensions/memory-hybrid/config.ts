@@ -402,8 +402,6 @@ function getDefaultCronModelLegacy(
   tier: CronModelTier,
 ): string {
   if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
-  const reflectionModel = pluginConfig.reflection?.model?.trim();
-  if (reflectionModel) return reflectionModel;
   if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
     const defaultModel = pluginConfig.distill.defaultModel?.trim();
     if (defaultModel) return defaultModel;

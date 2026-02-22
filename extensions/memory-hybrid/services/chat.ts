@@ -9,7 +9,7 @@ import { capturePluginError } from "./error-reporter.js";
 /** True when model name suggests long-context (e.g. Gemini, thinking). Used only for token limits. */
 function isLongContextModel(model: string): boolean {
   const m = model.toLowerCase();
-  return m.includes("gemini") || m.includes("thinking") || m.startsWith("models/gemini");
+  return m.includes("gemini") || m.startsWith("models/gemini");
 }
 
 export async function chatComplete(opts: {
