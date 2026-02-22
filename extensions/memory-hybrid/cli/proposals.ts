@@ -9,6 +9,7 @@ import type { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig, IdentityFileType } from "../config.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export interface ProposalsCliContext {
   proposalsDb: ProposalsDB;
@@ -40,6 +41,11 @@ async function auditProposal(
   try {
     await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
   } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'proposals-audit',
+      subsystem: 'proposals',
+      proposalId,
+    });
     const msg = `Audit log write failed: ${err}`;
     if (logger?.warn) {
       logger.warn(`memory-hybrid: ${msg}`);
@@ -160,6 +166,11 @@ export function registerProposalsCli(program: Command, ctx: ProposalsCliContext)
         console.log(`Backup saved: ${backupPath}`);
         console.log(`\nChange:\n${proposal.suggestedChange}`);
       } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: 'apply-proposal',
+          subsystem: 'proposals',
+          proposalId,
+        });
         console.error(`Failed to apply proposal: ${err}`);
         process.exit(1);
       }
