@@ -720,6 +720,7 @@ export async function runVerifyForCli(
   const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
   const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
   const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
+  const weeklyPersonaProposalsRe = /weekly-persona-proposals|persona proposals/i;
   const monthlyConsolidationRe = /monthly-consolidation/i;
 
   // Helper function to map job names to canonical keys
@@ -735,6 +736,8 @@ export async function runVerifyForCli(
       return "self-correction-analysis";
     } else if (weeklyDeepMaintenanceRe.test(name)) {
       return "weekly-deep-maintenance";
+    } else if (weeklyPersonaProposalsRe.test(name)) {
+      return "weekly-persona-proposals";
     } else if (monthlyConsolidationRe.test(name)) {
       return "monthly-consolidation";
     } else if (name) {
