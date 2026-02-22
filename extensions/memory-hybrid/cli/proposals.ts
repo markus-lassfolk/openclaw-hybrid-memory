@@ -99,7 +99,7 @@ function buildAppendBlock(proposalId: string, observation: string, suggestedChan
   return `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${suggestedChange}\n`;
 }
 
-function buildAppliedContent(
+export function buildAppliedContent(
   original: string,
   proposal: { id: string; observation: string; suggestedChange: string },
   timestamp: string,
@@ -114,7 +114,7 @@ function buildAppliedContent(
   };
 }
 
-function buildUnifiedDiff(currentContent: string, proposedContent: string, targetFile: string): string {
+export function buildUnifiedDiff(currentContent: string, proposedContent: string, targetFile: string): string {
   const diffDir = mkdtempSync(join(tmpdir(), "proposal-diff-"));
   const currentPath = join(diffDir, "current.txt");
   const proposedPath = join(diffDir, "proposed.txt");
