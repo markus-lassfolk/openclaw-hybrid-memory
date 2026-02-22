@@ -13,6 +13,7 @@ import { parseSourceDate } from "../utils/dates.js";
 import { registerVerifyCommands, type VerifyContext } from "./verify.js";
 import { registerDistillCommands, type DistillContext } from "./distill.js";
 import { registerManageCommands, type ManageContext } from "./manage.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import type {
   FindDuplicatesResult,
   StoreCliOpts,
@@ -172,14 +173,17 @@ type Chainable = {
 };
 
 export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): void {
-  // Register verify and install commands
   const verifyContext: VerifyContext = {
     runVerify: ctx.runVerify,
     runInstall: ctx.runInstall,
   };
-  registerVerifyCommands(mem, verifyContext);
+  try {
+    registerVerifyCommands(mem, verifyContext);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:verify" });
+    throw err;
+  }
 
-  // Register distillation and extraction commands
   const distillContext: DistillContext = {
     runDistillWindow: ctx.runDistillWindow,
     runRecordDistill: ctx.runRecordDistill,
@@ -190,9 +194,18 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractDirectives: ctx.runExtractDirectives,
     runExtractReinforcement: ctx.runExtractReinforcement,
   };
-  registerDistillCommands(mem, distillContext);
+  try {
+    registerDistillCommands(mem, distillContext);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:distill" });
+    throw err;
+  }
 
-  // Register management commands (stats, search, list, config, etc.)
   const manageContext: ManageContext = ctx;
-  registerManageCommands(mem, manageContext);
+  try {
+    registerManageCommands(mem, manageContext);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:manage" });
+    throw err;
+  }
 }

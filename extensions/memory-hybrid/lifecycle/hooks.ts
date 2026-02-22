@@ -82,6 +82,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         } catch (err: unknown) {
           // Ignore ENOENT (already deleted by another agent), propagate other errors
           if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "lifecycle",
+              operation: "delete-restart-marker",
+            });
             console.warn("Failed to delete restart marker:", err);
           }
         }
@@ -239,6 +243,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 const hydeText = hydeContent.trim();
                 if (hydeText.length > 10) textToEmbed = hydeText;
               } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "hyde-generation",
+                  subsystem: "auto-recall",
+                });
                 api.logger.warn(`memory-hybrid: HyDE generation failed, using raw prompt: ${err}`);
               }
             }
@@ -591,6 +599,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 );
               }
             } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "summarize-when-over-budget",
+                subsystem: "auto-recall",
+              });
               api.logger.warn(`memory-hybrid: summarize-when-over-budget failed: ${err}`);
             }
           }
@@ -612,6 +624,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             prependContext: hotBlock + withProcedures(`${header}${memoryContext}${footer}`),
           };
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "recall",
+            subsystem: "auto-recall",
+          });
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
         }
       });
@@ -629,6 +645,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             hint: p,
           });
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "auth-failure-regex",
+            subsystem: "auto-recall",
+          });
           api.logger.warn?.(`memory-hybrid: invalid regex pattern "${p}": ${err}`);
         }
       }
@@ -756,6 +776,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return { prependContext: hint + "\n\n" };
           }
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "auth-failure-recall",
+            subsystem: "auto-recall",
+          });
           api.logger.warn(`memory-hybrid: auth failure recall failed: ${String(err)}`);
         }
       });
@@ -790,7 +814,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           return {
             prependContext: `\n<credential-hint>\nA credential may have been shared in the previous exchange (${hintText}). Consider asking the user if they want to store it securely with credential_store.\n</credential-hint>\n`,
           };
-        } catch {
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "credential-hint-read",
+            subsystem: "credentials",
+          });
           await unlink(pendingPath).catch(() => {});
         }
       });
@@ -819,6 +847,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
           }
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "compaction",
+            subsystem: "memory-tiering",
+          });
           api.logger.warn(`memory-hybrid: compaction failed: ${err}`);
         }
       });
@@ -888,6 +920,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               vector = await ctx.embeddings.embed(textToStore);
             } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "auto-capture-embedding",
+                subsystem: "auto-capture",
+              });
               api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
 
@@ -947,6 +983,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                           await ctx.vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
                         }
                       } catch (err) {
+                        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                          operation: "auto-capture-vector-update",
+                          subsystem: "auto-capture",
+                        });
                         api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
                       }
 
@@ -961,6 +1001,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   }
                   // ADD: fall through to normal store
                 } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "auto-capture-classification",
+                    subsystem: "auto-capture",
+                  });
                   api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
                   // fall through to normal store on error
                 }
@@ -990,6 +1034,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 await ctx.vectorDb.store({ text: textToStore, vector, importance: CLI_STORE_IMPORTANCE, category, id: storedEntry.id });
               }
             } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "auto-capture-vector-store",
+                subsystem: "auto-capture",
+              });
               api.logger.warn(`memory-hybrid: vector capture failed: ${err}`);
             }
 
@@ -1004,6 +1052,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             );
           }
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "auto-capture",
+            subsystem: "auto-capture",
+          });
           api.logger.warn(`memory-hybrid: capture failed: ${String(err)}`);
         }
       });
@@ -1046,6 +1098,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           );
           api.logger.info(`memory-hybrid: credential patterns detected (${detected.map((d) => d.hint).join(", ")}) — will prompt next turn`);
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "credential-auto-detect",
+            subsystem: "credentials",
+          });
           api.logger.warn(`memory-hybrid: credential auto-detect failed: ${err}`);
         }
       });
@@ -1124,6 +1180,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                       });
                     }
                   } catch (err) {
+                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      operation: "tool-call-credential-vector-store",
+                      subsystem: "credentials",
+                    });
                     api.logger.warn(`memory-hybrid: vector store for credential fact failed: ${err}`);
                   }
                 }
@@ -1134,6 +1194,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             }
           }
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "tool-call-credential-auto-capture",
+            subsystem: "credentials",
+          });
           const errMsg = err instanceof Error ? err.stack || err.message : String(err);
           api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${errMsg}`);
         }

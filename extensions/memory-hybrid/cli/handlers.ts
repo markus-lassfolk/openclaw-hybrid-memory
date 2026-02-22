@@ -112,6 +112,8 @@ export interface HandlerContext {
   resolvedLancePath: string;
   pluginId: string;
   logger: { info?: (m: string) => void; warn?: (m: string) => void };
+  /** Category detection for extract-daily and similar; uses language keywords when set */
+  detectCategory: (text: string) => MemoryCategory;
 }
 
 // Constants
@@ -187,11 +189,11 @@ export async function runStoreForCli(
           }
         } catch (err) {
           log.warn(`memory-hybrid: vector store failed: ${err}`);
-          capturePluginError(err as Error, { operation: "runStoreForCli:vector-store" });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
         }
         return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
       } catch (err) {
-        capturePluginError(err as Error, { operation: "runStoreForCli:credential-store" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-store" });
         return { outcome: "credential_parse_error" };
       }
     }
@@ -213,7 +215,7 @@ export async function runStoreForCli(
       vector = await embeddings.embed(text);
     } catch (err) {
       log.warn(`memory-hybrid: CLI store embedding failed: ${err}`);
-      capturePluginError(err as Error, { operation: "runStoreForCli:embed" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:embed" });
     }
     if (vector) {
       let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
@@ -256,14 +258,14 @@ export async function runStoreForCli(
                 }
               } catch (err) {
                 log.warn(`memory-hybrid: vector store failed: ${err}`);
-                capturePluginError(err as Error, { operation: "runStoreForCli:vector-store-update" });
+                capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-update" });
               }
               return { outcome: "updated", id: newEntry.id, supersededId: classification.targetId, reason: classification.reason ?? "" };
             }
           }
         } catch (err) {
           log.warn(`memory-hybrid: CLI store classification failed: ${err}`);
-          capturePluginError(err as Error, { operation: "runStoreForCli:classify" });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:classify" });
         }
       }
     }
@@ -295,11 +297,11 @@ export async function runStoreForCli(
       }
     } catch (err) {
       log.warn(`memory-hybrid: vector store failed: ${err}`);
-      capturePluginError(err as Error, { operation: "runStoreForCli:vector-store-final" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-final" });
     }
     return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : ""), ...(supersedesId ? { supersededId: supersedesId } : {}) };
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runStoreForCli:store" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:store" });
     throw err;
   }
 }
@@ -387,7 +389,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     try {
       config = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runInstallForCli:read-config" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runInstallForCli:read-config" });
       return { ok: false, error: `Could not read ${configPath}: ${e}` };
     }
   }
@@ -445,12 +447,12 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       }
       writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runInstallForCli:cron-setup" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
       // non-fatal: cron jobs optional on install
     }
     return { ok: true, configPath, dryRun: false, written: true, pluginId: PLUGIN_ID };
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runInstallForCli:write-config" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:write-config" });
     return { ok: false, error: `Could not write config: ${err}` };
   }
 }
@@ -511,7 +513,7 @@ export async function runVerifyForCli(
       fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
     }
     log(`SQLite: FAIL — ${msg}`);
-    capturePluginError(e as Error, { operation: "runVerifyForCli:sqlite-check" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:sqlite-check" });
   }
 
   try {
@@ -528,7 +530,7 @@ export async function runVerifyForCli(
       fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
     }
     log(`LanceDB: FAIL — ${msg}`);
-    capturePluginError(e as Error, { operation: "runVerifyForCli:lancedb-check" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:lancedb-check" });
   }
 
   try {
@@ -539,7 +541,7 @@ export async function runVerifyForCli(
     issues.push(`Embedding API: ${String(e)}`);
     fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
     log(`Embedding API: FAIL — ${String(e)}`);
-    capturePluginError(e as Error, { operation: "runVerifyForCli:embedding-check" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }
 
   const bool = (b: boolean) => String(b);
@@ -632,7 +634,7 @@ export async function runVerifyForCli(
         }
         credentialsOk = false;
         log(`\nCredentials (vault): FAIL — ${String(e)}`);
-        capturePluginError(e as Error, { operation: "runVerifyForCli:credentials-check" });
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:credentials-check" });
       }
     } else {
       log("\nCredentials (vault): enabled (vault not opened in this process)");
@@ -647,7 +649,7 @@ export async function runVerifyForCli(
       log(`\nSession distillation: last run recorded ${line ? `— ${line}` : "(empty file)"}`);
     } catch (e) {
       log("\nSession distillation: last run file present but unreadable");
-      capturePluginError(e as Error, { operation: "runVerifyForCli:read-distill-marker" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-distill-marker" });
     }
   } else {
     log("\nSession distillation: last run not recorded (optional).");
@@ -679,7 +681,7 @@ export async function runVerifyForCli(
         }
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runVerifyForCli:read-cron-store" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-cron-store" });
       // ignore
     }
   }
@@ -703,7 +705,7 @@ export async function runVerifyForCli(
         }
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runVerifyForCli:read-root-config" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-root-config" });
       // ignore
     }
   }
@@ -719,7 +721,7 @@ export async function runVerifyForCli(
         if (weekly) weeklyReflectionDefined = true;
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runVerifyForCli:check-weekly-reflection" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-weekly-reflection" });
       /* ignore */
     }
   }
@@ -734,7 +736,7 @@ export async function runVerifyForCli(
         if (weekly) weeklyReflectionDefined = true;
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runVerifyForCli:check-weekly-reflection-config" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-weekly-reflection-config" });
       /* ignore */
     }
   }
@@ -760,7 +762,7 @@ export async function runVerifyForCli(
         if (jobs.some((j: unknown) => monthlyConsolidationRe.test(String((j as Record<string, unknown>)?.name ?? "")))) monthlyConsolidationDefined = true;
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runVerifyForCli:check-additional-jobs" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-additional-jobs" });
       /* ignore */
     }
   }
@@ -783,7 +785,7 @@ export async function runVerifyForCli(
         if (Object.keys(keyed).some((k) => monthlyConsolidationRe.test(k))) monthlyConsolidationDefined = true;
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runVerifyForCli:check-additional-jobs-config" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-additional-jobs-config" });
       /* ignore */
     }
   }
@@ -840,7 +842,7 @@ export async function runVerifyForCli(
         log(`\nLog file: ${lines.length} relevant lines (no errors in sample)`);
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runVerifyForCli:read-log-file" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-log-file" });
     }
   } else if (opts.logFile) {
     log(`\nLog file not found: ${opts.logFile}`);
@@ -890,7 +892,7 @@ export async function runVerifyForCli(
           }
         }
       } catch (e) {
-        capturePluginError(e as Error, { operation: "runVerifyForCli:rebuild-modules" });
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:rebuild-modules" });
       }
     }
 
@@ -1034,7 +1036,7 @@ export async function runVerifyForCli(
           }
         } catch (e) {
           log("Could not add optional jobs to cron store: " + String(e));
-          capturePluginError(e as Error, { operation: "runVerifyForCli:add-cron-jobs" });
+          capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:add-cron-jobs" });
         }
 
         if (changed) {
@@ -1047,7 +1049,7 @@ export async function runVerifyForCli(
         }
       } catch (e) {
         log("\nCould not apply fixes to config: " + String(e));
-        capturePluginError(e as Error, { operation: "runVerifyForCli:apply-fixes" });
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:apply-fixes" });
         const snippet = {
           embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },
           autoCapture: true,
@@ -1118,7 +1120,7 @@ export function runDistillWindowForCli(
         }
       }
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runDistillWindowForCli" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runDistillWindowForCli" });
       mode = "full";
       const start = new Date(now);
       start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
@@ -1142,7 +1144,7 @@ export function runRecordDistillForCli(ctx: HandlerContext): RecordDistillResult
     writeFileSync(path, ts + "\n", "utf-8");
     return { path, timestamp: ts };
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runRecordDistillForCli" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runRecordDistillForCli" });
     throw err;
   }
 }
@@ -1169,7 +1171,7 @@ async function getSessionFilePathsSince(sessionDir: string, days: number): Promi
         }
       });
   } catch (err) {
-    capturePluginError(err as Error, { operation: "getSessionFilePathsSince" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "getSessionFilePathsSince" });
     return [];
   }
 }
@@ -1202,7 +1204,7 @@ export async function runExtractProceduresForCli(
       { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
     );
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runExtractProceduresForCli" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractProceduresForCli" });
     throw err;
   }
 }
@@ -1227,7 +1229,7 @@ export async function runGenerateAutoSkillsForCli(
       { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
     );
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runGenerateAutoSkillsForCli" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runGenerateAutoSkillsForCli" });
     throw err;
   }
 }
@@ -1278,7 +1280,7 @@ export async function runExtractDirectivesForCli(
         });
       }
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runExtractDirectivesForCli:store" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
       throw err;
     }
   }
@@ -1326,7 +1328,7 @@ export async function runExtractReinforcementForCli(
         }
       }
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runExtractReinforcementForCli" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli" });
       throw err;
     }
   }
@@ -1362,7 +1364,7 @@ export async function runExtractDailyForCli(
     for (const line of lines) {
       const trimmed = line.replace(/^[-*#>\s]+/, "").trim();
       if (trimmed.length < 15 || trimmed.length > 500) continue;
-      const category = detectCategory(trimmed);
+      const category = ctx.detectCategory(trimmed);
       const extracted = extractStructuredFields(trimmed, category);
       if (isCredentialLike(trimmed, extracted.entity, extracted.key, extracted.value)) {
         if (cfg.credentials.enabled && credentialsDb) {
@@ -1397,11 +1399,11 @@ export async function runExtractDailyForCli(
                   }
                 } catch (err) {
                   sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                  capturePluginError(err as Error, { operation: "runExtractDailyForCli:vector-store" });
+                  capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store" });
                 }
                 totalStored++;
               } catch (err) {
-                capturePluginError(err as Error, { operation: "runExtractDailyForCli:credential-store" });
+                capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-store" });
               }
             } else {
               totalExtracted++;
@@ -1440,7 +1442,7 @@ export async function runExtractDailyForCli(
           vecForStore = await embeddings.embed(trimmed);
         } catch (err) {
           sink.warn(`memory-hybrid: extract-daily embedding failed: ${err}`);
-          capturePluginError(err as Error, { operation: "runExtractDailyForCli:embed" });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:embed" });
         }
         if (vecForStore) {
           let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vecForStore, 3);
@@ -1476,7 +1478,7 @@ export async function runExtractDailyForCli(
                     }
                   } catch (err) {
                     sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                    capturePluginError(err as Error, { operation: "runExtractDailyForCli:vector-store-update" });
+                    capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store-update" });
                   }
                   totalStored++;
                   continue;
@@ -1484,7 +1486,7 @@ export async function runExtractDailyForCli(
               }
             } catch (err) {
               sink.warn(`memory-hybrid: extract-daily classification failed: ${err}`);
-              capturePluginError(err as Error, { operation: "runExtractDailyForCli:classify" });
+              capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:classify" });
             }
           }
         }
@@ -1497,7 +1499,7 @@ export async function runExtractDailyForCli(
         }
       } catch (err) {
         sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-        capturePluginError(err as Error, { operation: "runExtractDailyForCli:vector-store-final" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store-final" });
       }
       totalStored++;
     }
@@ -1650,7 +1652,7 @@ export async function runBackfillForCli(
         if (fact) allCandidates.push({ ...fact, source: label });
       }
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runBackfillForCli:read-file", filePath });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runBackfillForCli:read-file", filePath });
     }
   }
   if (opts.dryRun) {
@@ -1703,11 +1705,11 @@ export async function runBackfillForCli(
         }
       } catch (err) {
         sink.warn(`memory-hybrid: backfill vector store failed for "${fact.text.slice(0, 50)}...": ${err}`);
-        capturePluginError(err as Error, { operation: "runBackfillForCli:vector-store" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runBackfillForCli:vector-store" });
       }
       stored++;
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runBackfillForCli:store-fact" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runBackfillForCli:store-fact" });
     }
     processed++;
   }
@@ -1739,12 +1741,12 @@ function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string
           const stat = statSync(fp);
           if (stat.mtimeMs >= cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
         } catch (err) {
-          capturePluginError(err as Error, { operation: "gatherSessionFiles:stat", filePath: fp });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "gatherSessionFiles:stat", filePath: fp });
         }
       }
     }
   } catch (err) {
-    capturePluginError(err as Error, { operation: "gatherSessionFiles" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "gatherSessionFiles" });
   }
   out.sort((a, b) => a.mtime - b.mtime);
   return out;
@@ -1772,7 +1774,7 @@ function extractTextFromSessionJsonl(filePath: string): string {
         }
       }
     } catch (err) {
-      capturePluginError(err as Error, { operation: "extractTextFromSessionJsonl", filePath });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "extractTextFromSessionJsonl", filePath });
     }
   }
   return parts.join("\n\n");
@@ -1830,7 +1832,7 @@ export async function runIngestFilesForCli(
         }
       }
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runIngestFilesForCli:read-file", filePath: fp });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:read-file", filePath: fp });
     }
   }
   if (currentBatch.trim()) batches.push(currentBatch);
@@ -1870,12 +1872,12 @@ export async function runIngestFilesForCli(
             tags: [...tags, "ingest"],
           });
         } catch (err) {
-          capturePluginError(err as Error, { operation: "runIngestFilesForCli:parse-json" });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:parse-json" });
         }
       }
     } catch (err) {
       sink.warn(`memory-hybrid: ingest-files LLM batch ${b + 1} failed: ${err}`);
-      capturePluginError(err as Error, { operation: "runIngestFilesForCli:llm-batch" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:llm-batch" });
     }
   }
 
@@ -1918,7 +1920,7 @@ export async function runIngestFilesForCli(
       stored++;
     } catch (err) {
       sink.warn(`memory-hybrid: ingest-files store failed for "${fact.text.slice(0, 40)}...": ${err}`);
-      capturePluginError(err as Error, { operation: "runIngestFilesForCli:store-fact" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:store-fact" });
     }
   }
   return { stored, skipped, extracted: allFacts.length, files: files.length, dryRun: false };
@@ -1974,7 +1976,7 @@ export async function runDistillForCli(
         }
       }
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runDistillForCli:extract-text", filePath: fp });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:extract-text", filePath: fp });
     }
   }
   if (currentBatch.trim()) batches.push(currentBatch);
@@ -2009,12 +2011,12 @@ export async function runDistillForCli(
           const tags = Array.isArray(obj.tags) ? (obj.tags as string[]).filter((t) => typeof t === "string") : undefined;
           allFacts.push({ category, text, entity: entity ?? undefined, key: key ?? undefined, value, source_date: source_date ?? undefined, tags });
         } catch (err) {
-          capturePluginError(err as Error, { operation: "runDistillForCli:parse-json" });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });
         }
       }
     } catch (err) {
       sink.warn(`memory-hybrid: distill LLM batch ${b + 1} failed: ${err}`);
-      capturePluginError(err as Error, { operation: "runDistillForCli:llm-batch" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
     }
   }
   progress.done();
@@ -2055,12 +2057,12 @@ export async function runDistillForCli(
                 await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
               }
             } catch (err) {
-              capturePluginError(err as Error, { operation: "runDistillForCli:credential-vector-store" });
+              capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-vector-store" });
             }
             stored++;
             if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
           } catch (err) {
-            capturePluginError(err as Error, { operation: "runDistillForCli:credential-store" });
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
           }
         }
         continue;
@@ -2092,7 +2094,7 @@ export async function runDistillForCli(
       if (opts.verbose) sink.log(`  stored: [${fact.category}] ${fact.text.slice(0, 60)}...`);
     } catch (err) {
       sink.warn(`memory-hybrid: distill store failed for "${fact.text.slice(0, 40)}...": ${err}`);
-      capturePluginError(err as Error, { operation: "runDistillForCli:store-fact" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:store-fact" });
     }
   }
   runRecordDistillForCli(ctx);
@@ -2116,7 +2118,7 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
       markDone: true,
     });
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runMigrateToVaultForCli" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runMigrateToVaultForCli" });
     throw err;
   }
 }
@@ -2148,12 +2150,12 @@ export function runSelfCorrectionExtractForCli(
         mkdirSync(dirname(opts.outputPath), { recursive: true });
         writeFileSync(opts.outputPath, JSON.stringify(result.incidents, null, 2), "utf-8");
       } catch (e) {
-        capturePluginError(e as Error, { operation: "runSelfCorrectionExtractForCli:write-output" });
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionExtractForCli:write-output" });
       }
     }
     return result;
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runSelfCorrectionExtractForCli" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionExtractForCli" });
     throw err;
   }
 }
@@ -2201,7 +2203,7 @@ export async function runSelfCorrectionRunForCli(
       const raw = readFileSync(opts.extractPath, "utf-8");
       incidents = JSON.parse(raw) as CorrectionIncident[];
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runSelfCorrectionRunForCli:read-extract" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:read-extract" });
       return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, error: String(e) };
     }
   } else {
@@ -2214,7 +2216,7 @@ export async function runSelfCorrectionRunForCli(
       mkdirSync(reportDir, { recursive: true });
       writeFileSync(reportPath, emptyReport, "utf-8");
     } catch (err) {
-      capturePluginError(err as Error, { operation: "runSelfCorrectionRunForCli:write-empty-report" });
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-empty-report" });
     }
     return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
   }
@@ -2246,7 +2248,7 @@ export async function runSelfCorrectionRunForCli(
       try {
         if (existsSync(promptPath)) rmSync(promptPath, { force: true });
       } catch (err) {
-        capturePluginError(err as Error, { operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
       }
       content = (r.stdout ?? "") + (r.stderr ?? "");
       if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
@@ -2265,7 +2267,7 @@ export async function runSelfCorrectionRunForCli(
       analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
     }
   } catch (e) {
-    capturePluginError(e as Error, { operation: "runSelfCorrectionRunForCli:llm-analysis" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
     return {
       incidentsFound: incidents.length,
       analysed: 0,
@@ -2297,7 +2299,7 @@ export async function runSelfCorrectionRunForCli(
           if (scCfg.semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
         } catch (err) {
           logger.warn?.(`memory-hybrid: self-correction embed/semantic dedup failed: ${err}`);
-          capturePluginError(err as Error, { operation: "runSelfCorrectionRunForCli:embed-dedup" });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:embed-dedup" });
           continue;
         }
       }
@@ -2317,7 +2319,7 @@ export async function runSelfCorrectionRunForCli(
         autoFixed++;
       } catch (err) {
         logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
-        capturePluginError(err as Error, { operation: "runSelfCorrectionRunForCli:memory-store" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:memory-store" });
       }
     } else if (a.remediationType === "TOOLS_RULE") {
       const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
@@ -2353,7 +2355,7 @@ export async function runSelfCorrectionRunForCli(
         }
       } catch (err) {
         logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
-        capturePluginError(err as Error, { operation: "runSelfCorrectionRunForCli:tools-rewrite" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:tools-rewrite" });
       }
     } else if (shouldApplyTools && existsSync(toolsPath)) {
       try {
@@ -2361,7 +2363,7 @@ export async function runSelfCorrectionRunForCli(
         toolsApplied = inserted;
         autoFixed += inserted;
       } catch (err) {
-        capturePluginError(err as Error, { operation: "runSelfCorrectionRunForCli:insert-tools" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
       }
     }
   }
@@ -2389,7 +2391,7 @@ export async function runSelfCorrectionRunForCli(
     writeFileSync(reportPath, reportLines.join("\n"), "utf-8");
   } catch (e) {
     logger.warn?.(`memory-hybrid: could not write report: ${e}`);
-    capturePluginError(e as Error, { operation: "runSelfCorrectionRunForCli:write-report" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
   }
   return {
     incidentsFound: incidents.length,
@@ -2415,7 +2417,7 @@ export async function runUpgradeForCli(
   try {
     rmSync(extDir, { recursive: true, force: true });
   } catch (e) {
-    capturePluginError(e as Error, { operation: "runUpgradeForCli:remove-dir" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:remove-dir" });
     return {
       ok: false,
       error: `Could not remove plugin directory: ${e}. Use standalone installer: npx -y openclaw-hybrid-memory-install ${version}`,
@@ -2442,7 +2444,7 @@ export async function runUpgradeForCli(
       installedVersion = pkg.version ?? installedVersion;
     }
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runUpgradeForCli:read-version" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:read-version" });
   }
   return { ok: true, version: installedVersion, pluginDir: extDir };
 }
@@ -2456,7 +2458,7 @@ function getPluginConfigFromFile(configPath: string): { config: Record<string, u
   try {
     root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
   } catch (e) {
-    capturePluginError(e as Error, { operation: "getPluginConfigFromFile:read" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "getPluginConfigFromFile:read" });
     return { error: `Could not read config: ${e}` };
   }
   if (!root.plugins || typeof root.plugins !== "object") root.plugins = {};
@@ -2540,7 +2542,7 @@ export function runConfigSetHelpForCli(
       }
     }
   } catch (err) {
-    capturePluginError(err as Error, { operation: "runConfigSetHelpForCli:read-hints" });
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runConfigSetHelpForCli:read-hints" });
   }
   if (!desc) desc = "No description for this key.";
   const lines = [`${k} = ${currentStr}`, "", desc];
@@ -2567,7 +2569,7 @@ export function runConfigModeForCli(
     writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
     writeFileSync(getRestartPendingPath(), "", "utf-8");
   } catch (e) {
-    capturePluginError(e as Error, { operation: "runConfigModeForCli:write" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigModeForCli:write" });
     return { ok: false, error: `Could not write config: ${e}` };
   }
   return { ok: true, configPath, message: `Set mode to "${mode}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
@@ -2601,7 +2603,7 @@ export function runConfigSetForCli(
       writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
       writeFileSync(getRestartPendingPath(), "", "utf-8");
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runConfigSetForCli:write-credentials" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-credentials" });
       return { ok: false, error: `Could not write config: ${e}` };
     }
     return { ok: true, configPath, message: `Set credentials.enabled = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
@@ -2614,6 +2616,7 @@ export function runConfigSetForCli(
   try {
     hybridConfigSchema.parse(out.config);
   } catch (schemaErr: unknown) {
+    capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation" });
     return { ok: false, error: `Invalid config value: ${schemaErr}` };
   }
 
@@ -2621,7 +2624,7 @@ export function runConfigSetForCli(
     writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
     writeFileSync(getRestartPendingPath(), "", "utf-8");
   } catch (e) {
-    capturePluginError(e as Error, { operation: "runConfigSetForCli:write" });
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write" });
     return { ok: false, error: `Could not write config: ${e}` };
   }
   return { ok: true, configPath, message: `Set ${key} = ${writtenStr}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
@@ -2656,7 +2659,7 @@ export function runUninstallForCli(
       writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
       outcome = "config_updated";
     } catch (e) {
-      capturePluginError(e as Error, { operation: "runUninstallForCli:update-config" });
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runUninstallForCli:update-config" });
       outcome = "config_error";
       error = String(e);
     }
@@ -2672,7 +2675,7 @@ export function runUninstallForCli(
         rmSync(resolvedSqlitePath, { force: true });
         cleaned.push(resolvedSqlitePath);
       } catch (err) {
-        capturePluginError(err as Error, { operation: "runUninstallForCli:remove-sqlite" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runUninstallForCli:remove-sqlite" });
       }
     }
     if (existsSync(resolvedLancePath)) {
@@ -2680,7 +2683,7 @@ export function runUninstallForCli(
         rmSync(resolvedLancePath, { recursive: true, force: true });
         cleaned.push(resolvedLancePath);
       } catch (err) {
-        capturePluginError(err as Error, { operation: "runUninstallForCli:remove-lance" });
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runUninstallForCli:remove-lance" });
       }
     }
   }

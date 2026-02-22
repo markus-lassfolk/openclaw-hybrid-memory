@@ -247,7 +247,8 @@ export function sanitizePath(path: string): string {
  */
 export function capturePluginError(error: Error, context: {
   operation: string;
-  subsystem: string;
+  /** Subsystem (e.g. "cli", "reflection", "credentials"). Default "plugin". */
+  subsystem?: string;
   configShape?: Record<string, string>;
   phase?: string;
   backend?: string;
@@ -274,9 +275,10 @@ export function capturePluginError(error: Error, context: {
     }
   }
 
+  const subsystem = context.subsystem ?? "plugin";
   let eventId: string | undefined;
   Sentry.withScope((scope) => {
-    scope.setTag("subsystem", context.subsystem);
+    scope.setTag("subsystem", subsystem);
     scope.setTag("operation", context.operation);
     if (context.phase) scope.setTag("phase", context.phase);
     if (context.backend) scope.setTag("backend", context.backend);

@@ -8,6 +8,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -19,8 +20,8 @@ export interface PluginContext {
   resolvedSqlitePath: string;
 }
 
-// Helper function types
-type RunReflectionFn = (
+// Helper function types (exported for register-tools ToolsContext)
+export type RunReflectionFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
   embeddings: Embeddings,
@@ -30,7 +31,7 @@ type RunReflectionFn = (
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }>;
 
-type RunReflectionRulesFn = (
+export type RunReflectionRulesFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
   embeddings: Embeddings,
@@ -39,7 +40,7 @@ type RunReflectionRulesFn = (
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ rulesExtracted: number; rulesStored: number }>;
 
-type RunReflectionMetaFn = (
+export type RunReflectionMetaFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
   embeddings: Embeddings,
@@ -224,29 +225,37 @@ export function registerUtilityTools(
           90,
           Math.max(1, typeof params.window === "number" ? params.window : reflectionCfg.defaultWindow),
         );
-        const result = await runReflection(
-          factsDb,
-          vectorDb,
-          embeddings,
-          openai,
-          { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
-          { window, dryRun: false, model: reflectionCfg.model },
-          api.logger,
-        );
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days).`,
+        try {
+          const result = await runReflection(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openai,
+            { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
+            { window, dryRun: false, model: reflectionCfg.model },
+            api.logger,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days).`,
+              },
+            ],
+            details: {
+              factsAnalyzed: result.factsAnalyzed,
+              patternsExtracted: result.patternsExtracted,
+              patternsStored: result.patternsStored,
+              window: result.window,
             },
-          ],
-          details: {
-            factsAnalyzed: result.factsAnalyzed,
-            patternsExtracted: result.patternsExtracted,
-            patternsStored: result.patternsStored,
-            window: result.window,
-          },
-        };
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "reflection",
+            operation: "memory_reflect",
+          });
+          throw err;
+        }
       },
     },
     { name: "memory_reflect" },
@@ -268,23 +277,31 @@ export function registerUtilityTools(
             details: { error: "reflection_disabled" },
           };
         }
-        const result = await runReflectionRules(
-          factsDb,
-          vectorDb,
-          embeddings,
-          openai,
-          { dryRun: false, model: reflectionCfg.model },
-          api.logger,
-        );
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Rules synthesis: ${result.rulesExtracted} rules extracted, ${result.rulesStored} stored.`,
-            },
-          ],
-          details: { rulesExtracted: result.rulesExtracted, rulesStored: result.rulesStored },
-        };
+        try {
+          const result = await runReflectionRules(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openai,
+            { dryRun: false, model: reflectionCfg.model },
+            api.logger,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Rules synthesis: ${result.rulesExtracted} rules extracted, ${result.rulesStored} stored.`,
+              },
+            ],
+            details: { rulesExtracted: result.rulesExtracted, rulesStored: result.rulesStored },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "reflection",
+            operation: "memory_reflect_rules",
+          });
+          throw err;
+        }
       },
     },
     { name: "memory_reflect_rules" },
@@ -306,23 +323,31 @@ export function registerUtilityTools(
             details: { error: "reflection_disabled" },
           };
         }
-        const result = await runReflectionMeta(
-          factsDb,
-          vectorDb,
-          embeddings,
-          openai,
-          { dryRun: false, model: reflectionCfg.model },
-          api.logger,
-        );
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Meta-pattern synthesis: ${result.metaExtracted} extracted, ${result.metaStored} stored.`,
-            },
-          ],
-          details: { metaExtracted: result.metaExtracted, metaStored: result.metaStored },
-        };
+        try {
+          const result = await runReflectionMeta(
+            factsDb,
+            vectorDb,
+            embeddings,
+            openai,
+            { dryRun: false, model: reflectionCfg.model },
+            api.logger,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Meta-pattern synthesis: ${result.metaExtracted} extracted, ${result.metaStored} stored.`,
+              },
+            ],
+            details: { metaExtracted: result.metaExtracted, metaStored: result.metaStored },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "reflection",
+            operation: "memory_reflect_meta",
+          });
+          throw err;
+        }
       },
     },
     { name: "memory_reflect_meta" },

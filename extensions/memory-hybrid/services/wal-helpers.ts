@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { WriteAheadLog } from "../backends/wal.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export function walWrite(
   wal: WriteAheadLog | null,
@@ -17,6 +18,10 @@ export function walWrite(
     try {
       wal.write({ id, timestamp: Date.now(), operation, data: data as any });
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "wal",
+        operation: "wal-write",
+      });
       logger.warn(`memory-hybrid: WAL write failed: ${err}`);
     }
   }
@@ -32,6 +37,10 @@ export function walRemove(
     try {
       wal.remove(id);
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "wal",
+        operation: "wal-remove",
+      });
       logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
     }
   }

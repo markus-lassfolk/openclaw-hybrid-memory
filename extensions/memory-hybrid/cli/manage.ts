@@ -25,6 +25,7 @@ import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -132,6 +133,10 @@ const withExit = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
         if (isStandaloneCli) process.exit(process.exitCode ?? 0);
       },
       (err: unknown) => {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "cli-command",
+        });
         console.error(err);
         if (isStandaloneCli) process.exit(1);
         else throw err;
@@ -265,7 +270,15 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }
       for (let i = 0; i < steps.length; i++) {
         log(`[${i + 1}/${steps.length}] ${steps[i].name}`);
-        await steps[i].run();
+        try {
+          await steps[i].run();
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: `run-all:${steps[i].name}`,
+          });
+          throw err;
+        }
       }
       log("run-all complete.");
     }));
@@ -274,7 +287,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("compact")
     .description("Run tier compaction: completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT")
     .action(withExit(async () => {
-      const counts = await runCompaction();
+      let counts;
+      try {
+        counts = await runCompaction();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "compact" });
+        throw err;
+      }
       console.log(`Tier compaction: hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
     }));
 
@@ -423,32 +442,37 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       scope?: string;
       scopeTarget?: string;
     }) => {
-      const filters = {
-        category: opts?.category,
-        entity: opts?.entity,
-        key: opts?.key,
-        source: opts?.source,
-        tier: opts?.tier as "hot" | "warm" | "cold" | "structural" | undefined,
-      };
-      const scopeFilter: ScopeFilter | undefined = opts?.scope ? {
-        scope: opts.scope as "global" | "user" | "agent" | "session",
-        scopeTarget: opts.scopeTarget,
-      } : undefined;
+      try {
+        const filters = {
+          category: opts?.category,
+          entity: opts?.entity,
+          key: opts?.key,
+          source: opts?.source,
+          tier: opts?.tier as "hot" | "warm" | "cold" | "structural" | undefined,
+        };
+        const scopeFilter: ScopeFilter | undefined = opts?.scope ? {
+          scope: opts.scope as "global" | "user" | "agent" | "session",
+          scopeTarget: opts.scopeTarget,
+        } : undefined;
 
-      const embedding = await embeddings.embed(query);
-      const vectorResults = await vectorDb.search(embedding, 50);
-      const sqlResults = factsDb.search(query, 50, filters);
-      let combined = merge(vectorResults, sqlResults, 20);
-      if (scopeFilter) {
-        combined = filterByScope(combined, scopeFilter);
-      }
-      if (tieringEnabled && !filters.tier) {
-        combined = combined.filter((r) => r.tier !== "cold");
-      }
+        const embedding = await embeddings.embed(query);
+        const vectorResults = await vectorDb.search(embedding, 50);
+        const sqlResults = factsDb.search(query, 50, filters);
+        let combined = merge(vectorResults, sqlResults, 20);
+        if (scopeFilter) {
+          combined = filterByScope(combined, scopeFilter);
+        }
+        if (tieringEnabled && !filters.tier) {
+          combined = combined.filter((r) => r.tier !== "cold");
+        }
 
-      console.log(`Search results for "${query}": ${combined.length}`);
-      for (const r of combined) {
-        console.log(`  [${r.id}] ${r.text} (score=${r.score.toFixed(3)}, tier=${r.tier}, category=${r.category ?? "none"})`);
+        console.log(`Search results for "${query}": ${combined.length}`);
+        for (const r of combined) {
+          console.log(`  [${r.id}] ${r.text} (score=${r.score.toFixed(3)}, tier=${r.tier}, category=${r.category ?? "none"})`);
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "search" });
+        throw err;
       }
     }));
 
@@ -456,22 +480,32 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("lookup <id>")
     .description("Lookup a fact by ID")
     .action(withExit(async (id: string) => {
-      const fact = factsDb.get(id);
-      if (!fact) {
-        console.log(`Fact not found: ${id}`);
-        return;
+      try {
+        const fact = factsDb.get(id);
+        if (!fact) {
+          console.log(`Fact not found: ${id}`);
+          return;
+        }
+        console.log(JSON.stringify(fact, null, 2));
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "lookup" });
+        throw err;
       }
-      console.log(JSON.stringify(fact, null, 2));
     }));
 
   mem
     .command("categories")
     .description("List all categories in memory (discovered from facts)")
     .action(withExit(async () => {
-      const cats = factsDb.uniqueMemoryCategories();
-      console.log(`Categories in memory (${cats.length}):`);
-      for (const c of cats) {
-        console.log(`  - ${c}`);
+      try {
+        const cats = factsDb.uniqueMemoryCategories();
+        console.log(`Categories in memory (${cats.length}):`);
+        for (const c of cats) {
+          console.log(`  - ${c}`);
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "categories" });
+        throw err;
       }
     }));
 
@@ -492,18 +526,23 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       source?: string;
       tier?: string;
     }) => {
-      const limit = parseInt(opts?.limit ?? "10", 10);
-      const filters = {
-        category: opts?.category,
-        entity: opts?.entity,
-        key: opts?.key,
-        source: opts?.source,
-        tier: opts?.tier as "hot" | "warm" | "cold" | "structural" | undefined,
-      };
-      const facts = factsDb.list(limit, filters);
-      console.log(`Recent facts (limit ${limit}):`);
-      for (const f of facts) {
-        console.log(`  [${f.id}] ${f.text} (tier=${f.tier}, category=${f.category ?? "none"})`);
+      try {
+        const limit = parseInt(opts?.limit ?? "10", 10);
+        const filters = {
+          category: opts?.category,
+          entity: opts?.entity,
+          key: opts?.key,
+          source: opts?.source,
+          tier: opts?.tier as "hot" | "warm" | "cold" | "structural" | undefined,
+        };
+        const facts = factsDb.list(limit, filters);
+        console.log(`Recent facts (limit ${limit}):`);
+        for (const f of facts) {
+          console.log(`  [${f.id}] ${f.text} (tier=${f.tier}, category=${f.category ?? "none"})`);
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "list" });
+        throw err;
       }
     }));
 
@@ -675,7 +714,9 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       scope?: "global" | "user" | "agent" | "session";
       scopeTarget?: string;
     }) => {
-      const res = await runStore({
+      let res;
+      try {
+        res = await runStore({
         text,
         category: opts?.category,
         entity: opts?.entity,
@@ -687,6 +728,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         scope: opts?.scope,
         scopeTarget: opts?.scopeTarget,
       });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "store" });
+        throw err;
+      }
       if (res.outcome === "duplicate") {
         console.log("Duplicate fact (skipped).");
       } else if (res.outcome === "credential") {
@@ -708,7 +753,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("config-mode <mode>")
     .description("Set memory mode (quick-only, passive, active). Writes memory/.config if needed.")
     .action(withExit(async (mode: string) => {
-      const res = await runConfigMode(mode);
+      let res;
+      try {
+        res = await runConfigMode(mode);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "config-mode" });
+        throw err;
+      }
       if (res.ok) {
         console.log(res.message);
       } else {
@@ -721,7 +772,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("config-set <key> <value>")
     .description("Set a config key in memory/.config. For help on a key: hybrid-mem help config-set <key>")
     .action(withExit(async (key: string, value: string) => {
-      const res = await runConfigSet(key, value);
+      let res;
+      try {
+        res = await runConfigSet(key, value);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "config-set" });
+        throw err;
+      }
       if (res.ok) {
         console.log(res.message);
       } else {
@@ -734,7 +791,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("help config-set <key>")
     .description("Show help for a config key")
     .action(withExit(async (key: string) => {
-      const res = await runConfigSetHelp(key);
+      let res;
+      try {
+        res = await runConfigSetHelp(key);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "config-set-help" });
+        throw err;
+      }
       if (res.ok) {
         console.log(res.message);
       } else {
@@ -750,10 +813,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--workspace <w>", "Workspace path (default: cwd)")
     .option("--limit <n>", "Max facts to store (default: no limit)")
     .action(withExit(async (opts?: { dryRun?: boolean; workspace?: string; limit?: string }) => {
-      const res = await runBackfill(
-        { dryRun: !!opts?.dryRun, workspace: opts?.workspace, limit: opts?.limit ? parseInt(opts.limit, 10) : undefined },
-        { log: console.log, warn: console.warn },
-      );
+      let res;
+      try {
+        res = await runBackfill(
+          { dryRun: !!opts?.dryRun, workspace: opts?.workspace, limit: opts?.limit ? parseInt(opts.limit, 10) : undefined },
+          { log: console.log, warn: console.warn },
+        );
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "backfill" });
+        throw err;
+      }
       console.log(`Backfill complete: ${res.stored} stored, ${res.skipped} skipped, ${res.candidates} candidates, ${res.files} files ${opts?.dryRun ? "(dry-run)" : ""}`);
     }));
 
@@ -764,10 +833,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--workspace <w>", "Workspace path (default: cwd)")
     .option("--paths <p...>", "Specific file paths (relative to workspace)")
     .action(withExit(async (opts?: { dryRun?: boolean; workspace?: string; paths?: string[] }) => {
-      const res = await runIngestFiles(
-        { dryRun: !!opts?.dryRun, workspace: opts?.workspace, paths: opts?.paths },
-        { log: console.log, warn: console.warn },
-      );
+      let res;
+      try {
+        res = await runIngestFiles(
+          { dryRun: !!opts?.dryRun, workspace: opts?.workspace, paths: opts?.paths },
+          { log: console.log, warn: console.warn },
+        );
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "ingest-files" });
+        throw err;
+      }
       console.log(`Ingest complete: ${res.stored} stored, ${res.skipped} skipped, ${res.extracted} extracted, ${res.files} files ${opts?.dryRun ? "(dry-run)" : ""}`);
     }));
 
@@ -786,13 +861,19 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       sources?: string[];
       mode?: "replace" | "additive";
     }) => {
-      const res = await runExport({
-        outputPath: opts.output,
-        excludeCredentials: opts.excludeCredentials,
-        includeCredentials: opts.includeCredentials,
-        sources: opts.sources,
-        mode: opts.mode ?? "replace",
-      });
+      let res;
+      try {
+        res = await runExport({
+          outputPath: opts.output,
+          excludeCredentials: opts.excludeCredentials,
+          includeCredentials: opts.includeCredentials,
+          sources: opts.sources,
+          mode: opts.mode ?? "replace",
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "export" });
+        throw err;
+      }
       console.log(`Exported ${res.factsExported} facts, ${res.proceduresExported} procedures to ${res.outputPath} (${res.filesWritten} files written).`);
     }));
 
@@ -806,7 +887,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const threshold = parseFloat(opts?.threshold ?? "0.85");
       const includeStructured = !!opts?.includeStructured;
       const limit = parseInt(opts?.limit ?? "100", 10);
-      const res = await runFindDuplicates({ threshold, includeStructured, limit });
+      let res;
+      try {
+        res = await runFindDuplicates({ threshold, includeStructured, limit });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "find-duplicates" });
+        throw err;
+      }
       console.log(`Found ${res.pairs.length} duplicate pairs (threshold=${threshold}, candidates=${res.candidatesCount}, skippedStructured=${res.skippedStructured})`);
       for (const p of res.pairs) {
         console.log(`  [${p.idA}] <-> [${p.idB}] (score=${p.score.toFixed(3)})`);
@@ -829,7 +916,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const dryRun = !!opts?.dryRun;
       const limit = parseInt(opts?.limit ?? "10", 10);
       const model = opts?.model ?? ctx.autoClassifyConfig.model;
-      const res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model });
+      let res;
+      try {
+        res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "consolidate" });
+        throw err;
+      }
       console.log(`Consolidation complete: ${res.clustersFound} clusters found, ${res.merged} merged, ${res.deleted} deleted ${dryRun ? "(dry-run)" : ""}`);
     }));
 
@@ -843,7 +936,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const window = opts?.window ? parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? reflectionConfig.model;
-      const res = await runReflection({ window, dryRun, model });
+      let res;
+      try {
+        res = await runReflection({ window, dryRun, model });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "reflect" });
+        throw err;
+      }
       console.log(`Reflection complete: analyzed ${res.factsAnalyzed} facts, extracted ${res.patternsExtracted} patterns, stored ${res.patternsStored} ${dryRun ? "(dry-run)" : ""}`);
     }));
 
@@ -855,7 +954,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(withExit(async (opts?: { dryRun?: boolean; model?: string }) => {
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? reflectionConfig.model;
-      const res = await runReflectionRules({ dryRun, model });
+      let res;
+      try {
+        res = await runReflectionRules({ dryRun, model });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "reflect-rules" });
+        throw err;
+      }
       console.log(`Reflection (rules) complete: extracted ${res.rulesExtracted} rules, stored ${res.rulesStored} ${dryRun ? "(dry-run)" : ""}`);
     }));
 
@@ -867,7 +972,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(withExit(async (opts?: { dryRun?: boolean; model?: string }) => {
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? reflectionConfig.model;
-      const res = await runReflectionMeta({ dryRun, model });
+      let res;
+      try {
+        res = await runReflectionMeta({ dryRun, model });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "reflect-meta" });
+        throw err;
+      }
       console.log(`Reflection (meta) complete: extracted ${res.metaExtracted} meta-patterns, stored ${res.metaStored} ${dryRun ? "(dry-run)" : ""}`);
     }));
 
@@ -881,7 +992,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const dryRun = !!opts?.dryRun;
       const limit = parseInt(opts?.limit ?? "100", 10);
       const model = opts?.model;
-      const res = await runClassify({ dryRun, limit, model });
+      let res;
+      try {
+        res = await runClassify({ dryRun, limit, model });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "classify" });
+        throw err;
+      }
       console.log(`Classify complete: reclassified ${res.reclassified}/${res.total} facts ${dryRun ? "(dry-run)" : ""}`);
       if (res.breakdown) {
         console.log("Breakdown by category:");
@@ -899,7 +1016,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(withExit(async (opts?: { model?: string; dryRun?: boolean }) => {
       const model = opts?.model ?? ctx.autoClassifyConfig.model;
       const dryRun = !!opts?.dryRun;
-      const res = await runBuildLanguageKeywords({ model, dryRun });
+      let res;
+      try {
+        res = await runBuildLanguageKeywords({ model, dryRun });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "build-languages" });
+        throw err;
+      }
       if (res.ok) {
         console.log(`Built language keywords: top languages=[${res.topLanguages.join(", ")}], added=${res.languagesAdded}, path=${res.path} ${dryRun ? "(dry-run)" : ""}`);
       } else {
@@ -916,7 +1039,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(withExit(async (opts?: { days?: string; output?: string }) => {
       const days = opts?.days ? parseInt(opts.days, 10) : 7;
       const outputPath = opts?.output;
-      const res = await runSelfCorrectionExtract({ days, outputPath });
+      let res;
+      try {
+        res = await runSelfCorrectionExtract({ days, outputPath });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "self-correction-extract" });
+        throw err;
+      }
       console.log(`Self-correction extract complete: ${res.incidents.length} incidents found, ${res.sessionsScanned} sessions scanned.`);
     }));
 
@@ -943,7 +1072,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const model = opts?.model ?? ctx.autoClassifyConfig.model;
       const approve = !!opts?.approve;
       const noApplyTools = !!opts?.noApplyTools;
-      const res = await runSelfCorrectionRun({ extractPath, workspace, dryRun, model, approve, noApplyTools });
+      let res;
+      try {
+        res = await runSelfCorrectionRun({ extractPath, workspace, dryRun, model, approve, noApplyTools });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "self-correction-run" });
+        throw err;
+      }
       if (res.error) {
         console.error(`Error: ${res.error}`);
         process.exitCode = 1;
@@ -975,7 +1110,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("migrate-to-vault")
     .description("Migrate credentials from plaintext to vaulted storage (one-time)")
     .action(withExit(async () => {
-      const res = await runMigrateToVault();
+      let res;
+      try {
+        res = await runMigrateToVault();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "migrate-to-vault" });
+        throw err;
+      }
       if (!res) {
         console.log("No credentials to migrate (or migration already done).");
         return;
@@ -1040,10 +1181,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--clean-all", "Remove all plugin data (SQLite, LanceDB, reports, config)")
     .option("--leave-config", "Keep OpenClaw config entry (just clean plugin files)")
     .action(withExit(async (opts?: { cleanAll?: boolean; leaveConfig?: boolean }) => {
-      const res = await runUninstall({
-        cleanAll: !!opts?.cleanAll,
-        leaveConfig: !!opts?.leaveConfig,
-      });
+      let res;
+      try {
+        res = await runUninstall({
+          cleanAll: !!opts?.cleanAll,
+          leaveConfig: !!opts?.leaveConfig,
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "uninstall" });
+        throw err;
+      }
       if (res.outcome === "config_updated") {
         console.log(`Uninstalled ${res.pluginId}: config updated, cleaned ${res.cleaned.length} files.`);
       } else if (res.outcome === "config_not_found") {

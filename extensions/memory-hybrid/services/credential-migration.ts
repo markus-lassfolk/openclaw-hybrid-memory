@@ -11,7 +11,7 @@ import type { Embeddings } from "./embeddings.js";
 import type { MemoryCategory } from "../types/memory.js";
 import { tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "./auto-capture.js";
 import { extractTags } from "./auto-capture.js";
-import { BATCH_STORE_IMPORTANCE } from "../config.js";
+import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrated";
@@ -125,6 +125,11 @@ export async function migrateCredentialsToVault(
     try {
       writeFileSync(migrationFlagPath, "1", "utf8");
     } catch (e) {
+      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+        subsystem: "credentials",
+        operation: "migrate-write-flag",
+        phase: "initialization",
+      });
       errors.push(`write migration flag: ${String(e)}`);
     }
   }
