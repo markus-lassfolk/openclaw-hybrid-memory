@@ -42,26 +42,37 @@ export async function chatComplete(opts: {
     }
     const modelId = model.startsWith("models/") ? model.slice(7) : model;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
+    const body = JSON.stringify({
+      contents: [{ parts: [{ text: content }] }],
+      generationConfig: {
+        temperature,
+        maxOutputTokens: effectiveMaxTokens,
       },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: content }] }],
-        generationConfig: {
-          temperature,
-          maxOutputTokens: effectiveMaxTokens,
-        },
-      }),
     });
-    if (!res.ok) {
+    const maxAttempts = 3;
+    let lastRes: Response | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body,
+      });
+      lastRes = res;
+      const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
+      if (res.ok) break;
+      if (retryable && attempt < maxAttempts) {
+        const delayMs = attempt * 1000;
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
       const errText = await res.text();
       throw new Error(`Gemini API error ${res.status}: ${errText}`);
     }
     type GeminiResponse = { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    const data = (await res.json()) as GeminiResponse;
+    const data = (await lastRes!.json()) as GeminiResponse;
     const parts = data.candidates?.[0]?.content?.parts;
     if (!parts || parts.length === 0) {
       throw new Error("Gemini returned no text");

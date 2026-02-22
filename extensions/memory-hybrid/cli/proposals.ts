@@ -159,7 +159,8 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
         if (applyResult.ok) {
           console.log(`Applied to ${applyResult.targetFile}. Backup: ${applyResult.backupPath}`);
         } else {
-          console.error(`Apply failed: ${applyResult.error}. You can run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`);
+          ctx.proposalsDb.updateStatus(proposalId, "pending");
+          console.error(`Apply failed: ${applyResult.error}. Proposal reverted to pending. Run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`);
         }
       }
     });
