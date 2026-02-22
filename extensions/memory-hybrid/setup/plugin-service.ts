@@ -329,7 +329,6 @@ export function createPluginService(ctx: PluginServiceContext) {
         void (async () => {
           try {
             const { spawn } = await import("node:child_process");
-            const { promisify } = await import("node:util");
 
             // Helper to run CLI commands asynchronously (non-blocking)
             const runCli = async (args: string[]): Promise<boolean> => {

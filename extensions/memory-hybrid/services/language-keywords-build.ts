@@ -95,7 +95,7 @@ ${block}`;
       .map((x) => x.toLowerCase().slice(0, 3))
       .filter((x) => x.length >= 2);
   } catch (err) {
-    capturePluginError(err as Error, {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'parse-language-codes',
       severity: 'info',
       subsystem: 'language-keywords'
@@ -279,7 +279,7 @@ export async function generateIntentBasedLanguages(
 
     return { translations, triggerStructures, extraction };
   } catch (err) {
-    capturePluginError(err as Error, {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'parse-intent-response',
       severity: 'info',
       subsystem: 'language-keywords'
@@ -339,7 +339,7 @@ Each value must be an array of translated strings in the same order as the Engli
     }
     return result;
   } catch (err) {
-    capturePluginError(err as Error, {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'parse-translation-response',
       severity: 'info',
       subsystem: 'language-keywords'

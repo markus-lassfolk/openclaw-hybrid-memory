@@ -64,7 +64,7 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
     } catch (err) {
-      capturePluginError(err as Error, {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: 'read-session-file',
         severity: 'info',
         subsystem: 'self-correction-extract'
@@ -85,7 +85,7 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
         const text = extractMessageText(msg.content);
         messages.push({ role, text });
       } catch (err) {
-        capturePluginError(err as Error, {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: 'parse-session-line',
           severity: 'info',
           subsystem: 'self-correction-extract'

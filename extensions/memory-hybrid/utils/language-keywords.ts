@@ -317,7 +317,7 @@ export function loadMergedKeywords(): MergedKeywords {
       const raw = readFileSync(filePath, "utf8");
       data = JSON.parse(raw) as LanguageKeywordsFile;
     } catch (err) {
-      capturePluginError(err as Error, {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: 'load-language-keywords',
         severity: 'info',
         subsystem: 'utils'
@@ -376,7 +376,7 @@ export async function clearKeywordCache(): Promise<void> {
     const { clearDirectiveCategoryCache } = await import("../services/directive-extract.js");
     clearDirectiveCategoryCache();
   } catch (err) {
-    capturePluginError(err as Error, {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'clear-directive-cache',
       severity: 'info',
       subsystem: 'utils'
@@ -386,7 +386,7 @@ export async function clearKeywordCache(): Promise<void> {
     const { clearReinforcementRegexCache } = await import("../services/reinforcement-extract.js");
     clearReinforcementRegexCache();
   } catch (err) {
-    capturePluginError(err as Error, {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'clear-reinforcement-cache',
       severity: 'info',
       subsystem: 'utils'
