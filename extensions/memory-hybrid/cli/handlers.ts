@@ -88,7 +88,7 @@ const MAINTENANCE_CRON_JOBS = [
 
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
   [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
@@ -178,7 +178,7 @@ export async function runStoreForCli(
   if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
     const parsed = tryParseCredentialForVault(text, entity, key, value);
     if (parsed) {
-      let storedInVault = false;
+      // Step 1: Write to vault
       try {
         credentialsDb.store({
           service: parsed.service,
@@ -187,9 +187,15 @@ export async function runStoreForCli(
           url: parsed.url,
           notes: parsed.notes,
         });
-        storedInVault = true;
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-vault-store" });
+        return { outcome: "credential_vault_error" };
+      }
+
+      // Step 2: Write pointer to factsDb
+      try {
         const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-        const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+        const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
         const pointerEntry = factsDb.store({
           text: pointerText,
           category: "technical" as MemoryCategory,
@@ -211,15 +217,15 @@ export async function runStoreForCli(
           capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
         }
       } catch (err) {
-        if (storedInVault) {
-          try {
-            credentialsDb.delete(parsed.service, parsed.type as any);
-          } catch (cleanupErr) {
-            log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
-          }
+        // Compensating delete: vault write succeeded but pointer write failed
+        try {
+          credentialsDb.delete(parsed.service, parsed.type as any);
+        } catch (cleanupErr) {
+          log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+          capturePluginError(cleanupErr as Error, { subsystem: "cli", operation: "runStoreForCli:credential-compensating-delete" });
         }
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-store" });
-        throw err;
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-db-store" });
+        return { outcome: "credential_db_error" };
       }
       return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
     }
@@ -726,7 +732,7 @@ export async function runVerifyForCli(
       const store = JSON.parse(raw) as Record<string, unknown>;
       const jobs = store.jobs;
       if (Array.isArray(jobs)) {
-        const weekly = jobs.find((j: unknown) => /weekly-reflection|memory reflection|pattern synthesis/.test(String((j as Record<string, unknown>)?.name ?? ""))) as Record<string, unknown> | undefined;
+        const weekly = jobs.find((j: unknown) => /weekly-reflection|memory reflection|pattern synthesis/i.test(String((j as Record<string, unknown>)?.name ?? ""))) as Record<string, unknown> | undefined;
         if (weekly) weeklyReflectionDefined = true;
       }
     } catch (e) {
@@ -1330,7 +1336,7 @@ export async function runExtractDailyForCli(
                   importance: BATCH_STORE_IMPORTANCE,
                   entity: "Credentials",
                   key: parsed.service,
-                  value: VAULT_POINTER_PREFIX + parsed.service,
+                  value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
                   source: `daily-scan:${dateStr}`,
                   sourceDate: sourceDateSec,
                   tags: ["auth", ...extractTags(pointerText, "Credentials")],
@@ -1351,6 +1357,7 @@ export async function runExtractDailyForCli(
                     credentialsDb.delete(parsed.service, parsed.type as any);
                   } catch (cleanupErr) {
                     sink.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+                    capturePluginError(cleanupErr as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-compensating-delete" });
                   }
                 }
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-store" });
@@ -2007,7 +2014,7 @@ export async function runDistillForCli(
               importance: BATCH_STORE_IMPORTANCE,
               entity: "Credentials",
               key: parsed.service,
-              value: VAULT_POINTER_PREFIX + parsed.service,
+              value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
               source: "distillation",
               sourceDate: sourceDateSec(fact.source_date),
             });
@@ -2027,6 +2034,7 @@ export async function runDistillForCli(
                 credentialsDb.delete(parsed.service, parsed.type as any);
               } catch (cleanupErr) {
                 if (opts.verbose) sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+                capturePluginError(cleanupErr as Error, { subsystem: "cli", operation: "runDistillForCli:credential-compensating-delete" });
               }
             }
             capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
