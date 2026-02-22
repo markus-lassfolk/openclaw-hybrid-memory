@@ -177,39 +177,39 @@ export async function runStoreForCli(
 
   if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
     const parsed = tryParseCredentialForVault(text, entity, key, value);
-  if (parsed) {
-    credentialsDb.store({
-      service: parsed.service,
-      type: parsed.type,
-      value: parsed.secretValue,
-      url: parsed.url,
-      notes: parsed.notes,
-    });
-    const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-    const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
-    const pointerEntry = factsDb.store({
-      text: pointerText,
-      category: "technical" as MemoryCategory,
-      importance: CLI_STORE_IMPORTANCE,
-      entity: "Credentials",
-      key: parsed.service,
-      value: pointerValue,
-      source: "cli",
-      sourceDate,
-      tags: ["auth", ...extractTags(pointerText, "Credentials")],
-    });
-    try {
-      const vector = await embeddings.embed(pointerText);
-      if (!(await vectorDb.hasDuplicate(vector))) {
-        await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+    if (parsed) {
+      credentialsDb.store({
+        service: parsed.service,
+        type: parsed.type,
+        value: parsed.secretValue,
+        url: parsed.url,
+        notes: parsed.notes,
+      });
+      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+      const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+      const pointerEntry = factsDb.store({
+        text: pointerText,
+        category: "technical" as MemoryCategory,
+        importance: CLI_STORE_IMPORTANCE,
+        entity: "Credentials",
+        key: parsed.service,
+        value: pointerValue,
+        source: "cli",
+        sourceDate,
+        tags: ["auth", ...extractTags(pointerText, "Credentials")],
+      });
+      try {
+        const vector = await embeddings.embed(pointerText);
+        if (!(await vectorDb.hasDuplicate(vector))) {
+          await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+        }
+      } catch (err) {
+        log.warn(`memory-hybrid: vector store failed: ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
       }
-    } catch (err) {
-      log.warn(`memory-hybrid: vector store failed: ${err}`);
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
+      return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
     }
-    return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
-  }
-  return { outcome: "credential_parse_error" };
+    return { outcome: "credential_parse_error" };
   }
 
   const tags = opts.tags
@@ -1121,7 +1121,7 @@ export async function runExtractProceduresForCli(
     filePaths = getSessionFilePathsSince(sessionDir, opts.days);
   }
   try {
-    return extractProceduresFromSessions(
+    return await extractProceduresFromSessions(
       factsDb,
       {
         sessionDir: filePaths ? undefined : sessionDir,
@@ -2032,7 +2032,12 @@ export async function runDistillForCli(
       capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:store-fact" });
     }
   }
-  runRecordDistillForCli(ctx);
+  try {
+    runRecordDistillForCli(ctx);
+  } catch (err) {
+    sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
+  }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
 }
 
@@ -2044,7 +2049,7 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
   if (!credentialsDb) return null;
   const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
   try {
-    return migrateCredentialsToVault({
+    return await migrateCredentialsToVault({
       factsDb,
       vectorDb,
       embeddings,
