@@ -25,7 +25,7 @@ export interface HooksContext {
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
-  currentAgentId: string | null;
+  currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingCleared: boolean;
   resolvedSqlitePath: string;
@@ -57,7 +57,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       cfg: ctx.cfg,
       credentialsDb: ctx.credentialsDb,
       wal: ctx.wal,
-      currentAgentId: ctx.currentAgentId,
+      currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingCleared: ctx.restartPendingCleared,
       resolvedSqlitePath: ctx.resolvedSqlitePath,

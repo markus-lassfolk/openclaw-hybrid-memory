@@ -13,7 +13,7 @@ import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
-import { extractTags } from "./auto-capture.js";
+import { extractTags, SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export interface ConsolidateOptions {
@@ -75,7 +75,8 @@ export function isStructuredForConsolidation(
   const k = (key ?? "").toLowerCase();
   const e = (entity ?? "").toLowerCase();
   if (["email", "phone", "api_key", "ip", "uuid", "password"].some((x) => k.includes(x) || e.includes(x))) return true;
-  // Note: SENSITIVE_PATTERNS check removed here - import it if needed
+  // Check for sensitive patterns to prevent credential leakage in consolidation
+  if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(text))) return true;
   return false;
 }
 

@@ -5,7 +5,8 @@
 
 import type { FactsDB } from "../backends/facts.js";
 import type { VectorDB } from "../backends/vector.js";
-import type { Embeddings, safeEmbed } from "./embeddings.js";
+import type { Embeddings } from "./embeddings.js";
+import { safeEmbed } from "./embeddings.js";
 import { isStructuredForConsolidation } from "./consolidation.js";
 
 export interface FindDuplicatesOptions {
@@ -43,34 +44,45 @@ export async function runFindDuplicates(
 
   logger.info(`memory-hybrid: find-duplicates — embedding ${ids.length} facts...`);
   const vectors: number[][] = [];
+  const validIds: string[] = [];
+  let skippedEmbeddings = 0;
   for (let i = 0; i < ids.length; i += 20) {
     const batch = ids.slice(i, i + 20);
     for (const id of batch) {
       const f = idToFact.get(id)!;
       const vec = await safeEmbedFn(embeddings, f.text, (msg) => logger.warn(msg));
-      vectors.push(vec ?? []);
+      if (!vec || vec.length === 0) {
+        logger.warn(`memory-hybrid: find-duplicates — skipping fact ${id} due to embedding failure`);
+        skippedEmbeddings++;
+        continue; // Skip this fact entirely - don't add to vectors array
+      }
+      vectors.push(vec);
+      validIds.push(id);
     }
     if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
   }
 
-  const idToIndex = new Map(ids.map((id, idx) => [id, idx]));
+  if (skippedEmbeddings > 0) {
+    logger.info(`memory-hybrid: find-duplicates — skipped ${skippedEmbeddings} facts due to embedding failures`);
+  }
+
+  const idToIndex = new Map(validIds.map((id, idx) => [id, idx]));
   const pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }> = [];
-  const searchLimit = Math.min(100, ids.length);
+  const searchLimit = Math.min(100, validIds.length);
 
   // Use LanceDB vector search (indexed) instead of O(n²) pairwise loop
-  for (let i = 0; i < ids.length; i++) {
+  for (let i = 0; i < validIds.length; i++) {
     const vi = vectors[i];
-    if (vi.length === 0) continue;
     const results = await vectorDb.search(vi, searchLimit, opts.threshold);
     for (const r of results) {
       const j = idToIndex.get(r.entry.id);
       if (j !== undefined && j > i) {
         pairs.push({
-          idA: ids[i],
-          idB: ids[j],
+          idA: validIds[i],
+          idB: validIds[j],
           score: r.score,
-          textA: idToFact.get(ids[i])!.text,
-          textB: idToFact.get(ids[j])!.text,
+          textA: idToFact.get(validIds[i])!.text,
+          textB: idToFact.get(validIds[j])!.text,
         });
       }
     }
