@@ -378,7 +378,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       const tgtVal = target[key];
       if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
         deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
-      } else if (tgtVal === undefined && !Array.isArray(srcVal)) {
+      } else if (tgtVal === undefined) {
         (target as Record<string, unknown>)[key] = srcVal;
       }
     }
@@ -1259,6 +1259,7 @@ export async function runExtractDirectivesForCli(
   if (!opts.dryRun) {
     try {
       for (const incident of result.incidents) {
+        if (factsDb.hasDuplicate(incident.extractedRule)) continue;
         const category = incident.categories.includes("preference") ? "preference" :
                         incident.categories.includes("absolute_rule") ? "rule" :
                         incident.categories.includes("conditional_rule") ? "rule" :
@@ -1370,6 +1371,7 @@ export async function runExtractDailyForCli(
         if (cfg.credentials.enabled && credentialsDb) {
           const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value);
           if (parsed) {
+            totalExtracted++;
             if (!opts.dryRun) {
               try {
                 credentialsDb.store({
@@ -1405,8 +1407,6 @@ export async function runExtractDailyForCli(
               } catch (err) {
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-store" });
               }
-            } else {
-              totalExtracted++;
             }
             continue;
           }
