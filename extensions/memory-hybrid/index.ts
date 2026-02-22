@@ -601,12 +601,12 @@ const memoryHybridPlugin = {
             const cronStorePath = join(cronDir, "jobs.json");
             const prefix = "hybrid-mem:";
             const installJobs = [
-              { pluginJobId: prefix + "nightly-distill", name: "nightly-memory-sweep", schedule: "0 2 * * *", channel: "system", message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-              { pluginJobId: prefix + "weekly-reflection", name: "weekly-reflection", schedule: "0 3 * * 0", channel: "system", message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-              { pluginJobId: prefix + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: "0 4 * * 0", channel: "system", message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-              { pluginJobId: prefix + "self-correction-analysis", name: "self-correction-analysis", schedule: "30 2 * * *", channel: "system", message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
-              { pluginJobId: prefix + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: "0 4 * * 6", channel: "system", message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
-              { pluginJobId: prefix + "monthly-consolidation", name: "monthly-consolidation", schedule: "0 5 1 * *", channel: "system", message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+              { pluginJobId: prefix + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+              { pluginJobId: prefix + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
             ] as Array<Record<string, unknown>>;
             const legacyMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
               [prefix + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
@@ -627,16 +627,6 @@ const memoryHybridPlugin = {
               }
             }
             writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
-            let rootConfig = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-            if (!Array.isArray(rootConfig.jobs)) rootConfig.jobs = [];
-            const rootJobsArr = rootConfig.jobs as Array<Record<string, unknown>>;
-            for (const def of installJobs) {
-              const id = def.pluginJobId as string;
-              if (!rootJobsArr.some((j) => j && (j.pluginJobId === id || legacyMatch[id]?.(j)))) {
-                rootJobsArr.push({ ...def });
-              }
-            }
-            writeFileSync(configPath, JSON.stringify(rootConfig, null, 2), "utf-8");
           } catch {
             // non-fatal: cron jobs optional on install
           }
@@ -925,7 +915,7 @@ const memoryHybridPlugin = {
               }
             } catch { /* ignore */ }
           }
-          log("\nOptional / suggested jobs (cron store or openclaw.json):");
+          log("\nOptional / suggested jobs (cron store at ~/.openclaw/cron/jobs.json):");
           if (nightlySweepDefined) {
             log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "true" : "false"}`);
           } else {
@@ -1052,7 +1042,7 @@ const memoryHybridPlugin = {
                 const nightlyJob = {
                   pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill",
                   name: "nightly-memory-sweep",
-                  schedule: "0 2 * * *",
+                  schedule: { kind: "cron", expr: "0 2 * * *" },
                   channel: "system",
                   message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.",
                   isolated: true,
@@ -1062,7 +1052,7 @@ const memoryHybridPlugin = {
                 const weeklyJob = {
                   pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection",
                   name: "weekly-reflection",
-                  schedule: "0 3 * * 0",
+                  schedule: { kind: "cron", expr: "0 3 * * 0" },
                   channel: "system",
                   message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.",
                   isolated: true,
@@ -1072,7 +1062,7 @@ const memoryHybridPlugin = {
                 const weeklyExtractProceduresJob = {
                   pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures",
                   name: "weekly-extract-procedures",
-                  schedule: "0 4 * * 0",
+                  schedule: { kind: "cron", expr: "0 4 * * 0" },
                   channel: "system",
                   message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.",
                   isolated: true,
@@ -1082,7 +1072,7 @@ const memoryHybridPlugin = {
                 const selfCorrectionJob = {
                   pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis",
                   name: "self-correction-analysis",
-                  schedule: "30 2 * * *",
+                  schedule: { kind: "cron", expr: "30 2 * * *" },
                   channel: "system",
                   message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.",
                   isolated: true,
@@ -1092,7 +1082,7 @@ const memoryHybridPlugin = {
                 const weeklyDeepMaintenanceJob = {
                   pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance",
                   name: "weekly-deep-maintenance",
-                  schedule: "0 4 * * 6",
+                  schedule: { kind: "cron", expr: "0 4 * * 6" },
                   channel: "system",
                   message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.",
                   isolated: true,
@@ -1102,7 +1092,7 @@ const memoryHybridPlugin = {
                 const monthlyConsolidationJob = {
                   pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation",
                   name: "monthly-consolidation",
-                  schedule: "0 5 1 * *",
+                  schedule: { kind: "cron", expr: "0 5 1 * *" },
                   channel: "system",
                   message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.",
                   isolated: true,
@@ -1131,6 +1121,10 @@ const memoryHybridPlugin = {
                     const id = def.pluginJobId as string;
                     const existing = jobs.find((j) => j && (j.pluginJobId === id || legacyNameMatch[id]?.(j)));
                     if (existing) {
+                      if (typeof existing.schedule === "string") {
+                        existing.schedule = { kind: "cron", expr: existing.schedule };
+                        jobsChanged = true;
+                      }
                       if (opts.fix && existing.enabled === false) {
                         existing.enabled = true;
                         jobsChanged = true;
@@ -1151,42 +1145,6 @@ const memoryHybridPlugin = {
                   }
                 } catch (e) {
                   log("Could not add optional jobs to cron store: " + String(e));
-                }
-                // Also add missing jobs to openclaw.json so schedulers that read from there see them
-                try {
-                  let rootJobs = fixConfig.jobs;
-                  if (!Array.isArray(rootJobs)) rootJobs = [];
-                  fixConfig.jobs = rootJobs;
-                  const arr = rootJobs as Array<Record<string, unknown>>;
-                  const legacyNameMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
-                    [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name).toLowerCase().includes("nightly-memory-sweep"),
-                    [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
-                    [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
-                    [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
-                    [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-                    [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
-                  };
-                  for (const def of definedJobs) {
-                    const id = def.pluginJobId as string;
-                    const existing = arr.find((j) => j && (j.pluginJobId === id || legacyNameMatch[id]?.(j)));
-                    if (existing) {
-                      if (opts.fix && existing.enabled === false) {
-                        existing.enabled = true;
-                        changed = true;
-                        applied.push(`Re-enabled job ${def.name} (${id}) in ${defaultConfigPath}`);
-                      }
-                      if (!existing.pluginJobId) {
-                        existing.pluginJobId = id;
-                        changed = true;
-                      }
-                    } else {
-                      arr.push({ ...def });
-                      changed = true;
-                      applied.push("Added " + (def.name as string) + " job to " + defaultConfigPath);
-                    }
-                  }
-                } catch (e) {
-                  log("Could not add optional jobs to openclaw.json: " + String(e));
                 }
                 if (changed) {
                   writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
