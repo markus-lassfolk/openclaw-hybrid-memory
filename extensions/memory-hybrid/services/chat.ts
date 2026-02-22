@@ -128,12 +128,10 @@ export async function chatCompleteWithRetry(opts: {
     const currentModel = modelsToTry[i];
     const isFallback = i > 0;
     const attemptLabel = isFallback ? `${label} (fallback: ${currentModel})` : label;
-    // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
-    const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
 
     try {
       return await withLLMRetry(
-        () => chatComplete({ ...chatOpts, model: currentModel, maxTokens: effectiveMaxTokens }),
+        () => chatComplete({ ...chatOpts, model: currentModel, maxTokens }),
         { maxRetries: 3, label: attemptLabel },
       );
     } catch (err) {
