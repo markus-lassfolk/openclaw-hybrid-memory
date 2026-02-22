@@ -58,27 +58,16 @@ export async function chatComplete(opts: {
     return text;
   }
 
-  // Retry logic for transient errors (rate limits, 5xx)
-  const maxRetries = 2;
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const resp = await opts.openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content }],
-        temperature,
-        max_tokens: effectiveMaxTokens,
-      });
-      return resp.choices[0]?.message?.content?.trim() ?? "";
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (attempt < maxRetries) {
-        const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
-  }
-  throw lastError;
+  const resp = await withLLMRetry(
+    () => opts.openai.chat.completions.create({
+      model,
+      messages: [{ role: "user", content }],
+      temperature,
+      max_tokens: effectiveMaxTokens,
+    }),
+    { maxRetries: 2 }
+  );
+  return resp.choices[0]?.message?.content?.trim() ?? "";
 }
 
 export function distillBatchTokenLimit(model: string): number {
