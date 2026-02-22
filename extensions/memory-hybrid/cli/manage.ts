@@ -159,8 +159,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("run-all")
     .description("Run all maintenance tasks in optimal order (prune, compact, distill, extract-procedures, reflection, self-correction). Use --dry-run to list steps only.")
     .option("--dry-run", "List steps that would run without executing")
-    .action(withExit(async (opts?: { dryRun?: boolean }) => {
+    .option("--verbose", "Show detailed output for each step")
+    .action(withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }) => {
       const dryRun = !!opts?.dryRun;
+      const verbose = !!opts?.verbose;
       const log = (s: string) => console.log(s);
       const sink = { log, warn: (s: string) => console.warn(s) };
       const steps: { name: string; run: () => Promise<void> }[] = [
@@ -209,21 +211,21 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         {
           name: "reflect",
           run: async () => {
-            const r = await runReflection({ window: reflectionConfig.defaultWindow, dryRun: false, model: reflectionConfig.model });
+            const r = await runReflection({ window: reflectionConfig.defaultWindow, dryRun: false, model: reflectionConfig.model, verbose });
             log(`Reflect: ${r.patternsStored} patterns stored.`);
           },
         },
         {
           name: "reflect-rules",
           run: async () => {
-            const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model });
+            const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model, verbose });
             log(`Reflect-rules: ${r.rulesStored} rules stored.`);
           },
         },
         {
           name: "reflect-meta",
           run: async () => {
-            const r = await runReflectionMeta({ dryRun: false, model: reflectionConfig.model });
+            const r = await runReflectionMeta({ dryRun: false, model: reflectionConfig.model, verbose });
             log(`Reflect-meta: ${r.metaStored} meta-patterns stored.`);
           },
         },
