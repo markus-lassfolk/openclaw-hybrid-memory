@@ -1396,12 +1396,9 @@ export async function runGenerateProposalsForCli(
     (f) => (f.category === "pattern" || f.category === "rule") && !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
   if (!scopeFilter && allRelevant.length > 0) {
-    const scopeKeys = new Set(allRelevant.map((f) => `${f.scope ?? "global"}:${f.scopeTarget ?? ""}`).filter(Boolean));
-    if (scopeKeys.size > 1) {
-      ctx.logger.warn?.(
-        "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; reflection data from multiple agents/users is included. Set autoRecall.scopeFilter (e.g. agentId/userId) to avoid cross-agent proposal contamination.",
-      );
-    }
+    ctx.logger.warn?.(
+      "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.",
+    );
   }
   const patterns = allRelevant.filter((f) => f.category === "pattern");
   const rules = allRelevant.filter((f) => f.category === "rule");

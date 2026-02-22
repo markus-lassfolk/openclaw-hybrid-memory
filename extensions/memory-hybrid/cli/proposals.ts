@@ -306,7 +306,12 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
     });
 }
 
-export type ApplyProposalContext = Pick<ProposalsCliContext, "proposalsDb" | "cfg" | "resolvedSqlitePath" | "api">;
+export type ApplyProposalContext = {
+  proposalsDb: ProposalsDB;
+  cfg: { personaProposals: { allowedFiles: string[] } };
+  resolvedSqlitePath: string;
+  api?: { logger?: { warn?: (msg: string) => void } };
+};
 
 /**
  * Apply an approved proposal to its target file and mark as applied.
