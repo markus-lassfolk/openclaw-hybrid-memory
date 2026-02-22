@@ -85,7 +85,12 @@ export function generateAutoSkills(
     let recipe: unknown;
     try {
       recipe = JSON.parse(proc.recipeJson);
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'parse-recipe',
+        severity: 'info',
+        subsystem: 'procedures'
+      });
       recipe = [];
     }
     const steps = Array.isArray(recipe) ? recipe : [];

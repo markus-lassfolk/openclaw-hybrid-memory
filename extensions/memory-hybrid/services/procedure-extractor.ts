@@ -52,7 +52,12 @@ function looksLikeFailure(content: unknown): boolean {
       } else {
         s = str;
       }
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'stringify-result',
+        severity: 'info',
+        subsystem: 'procedures'
+      });
       // If stringification fails (circular refs, etc.), assume not a failure
       return false;
     }
@@ -83,7 +88,12 @@ export function parseSessionJsonl(
     let obj: unknown;
     try {
       obj = JSON.parse(line);
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'parse-session-line',
+        severity: 'info',
+        subsystem: 'procedures'
+      });
       continue;
     }
     if (!obj || typeof obj !== "object") continue;

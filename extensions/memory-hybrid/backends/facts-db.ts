@@ -14,6 +14,7 @@ import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
@@ -1121,7 +1122,12 @@ export class FactsDB {
               if (results.length >= limit) break;
             }
           }
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'fts-query',
+            severity: 'info',
+            subsystem: 'facts'
+          });
           // FTS query can fail on unusual input; ignore
         }
       }
@@ -1171,7 +1177,12 @@ export class FactsDB {
         try {
           const parsed = JSON.parse(raw);
           return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'json-parse-quotes',
+            severity: 'info',
+            subsystem: 'facts'
+          });
           return null;
         }
       })(),
@@ -1513,7 +1524,12 @@ export class FactsDB {
       try {
         const parsed = JSON.parse(existingJson);
         if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'json-parse-quotes',
+          severity: 'info',
+          subsystem: 'facts'
+        });
         // Corrupted JSON — start fresh
       }
     }
@@ -1641,7 +1657,12 @@ export class FactsDB {
     if (!row) return null;
     try {
       return { id: row.id, ...JSON.parse(row.text) };
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'json-parse-checkpoint',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return null;
     }
   }
@@ -1717,7 +1738,12 @@ export class FactsDB {
     try {
       const row = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM procedures`).get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-procedures',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1729,7 +1755,12 @@ export class FactsDB {
         .prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE last_validated IS NOT NULL`)
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-procedures-validated',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1741,7 +1772,12 @@ export class FactsDB {
         .prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE promoted_to_skill = 1`)
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-procedures-promoted',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1753,7 +1789,12 @@ export class FactsDB {
         .prepare(`SELECT COUNT(*) as cnt FROM memory_links`)
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-links',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1777,7 +1818,12 @@ export class FactsDB {
         )
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-meta-patterns',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1924,7 +1970,12 @@ export class FactsDB {
         try {
           const parsed = JSON.parse(raw);
           return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'json-parse-quotes',
+            severity: 'info',
+            subsystem: 'facts'
+          });
           return null;
         }
       })(),
@@ -2016,7 +2067,12 @@ export class FactsDB {
         .prepare(`SELECT * FROM procedures ORDER BY updated_at DESC, created_at DESC LIMIT ?`)
         .all(limit) as Array<Record<string, unknown>>;
       return rows.map((r) => this.procedureRowToEntry(r));
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'list-procedures',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -2044,7 +2100,12 @@ export class FactsDB {
         )
         .all(safeQuery, limit) as Array<Record<string, unknown>>;
       return rows.map((r) => this.procedureRowToEntry(r));
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'fts-query',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -2102,7 +2163,12 @@ export class FactsDB {
       });
 
       return scored.slice(0, limit).map((r) => this.procedureRowToEntry(r));
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'fts-query',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -2217,7 +2283,12 @@ export class FactsDB {
       });
 
       return scored.slice(0, limit);
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'fts-query',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -2358,6 +2429,15 @@ export class FactsDB {
   }
 
   close(): void {
-    try { this.db.close(); } catch { /* already closed */ }
+    try {
+      this.db.close();
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'db-close',
+        severity: 'info',
+        subsystem: 'facts'
+      });
+      /* already closed */
+    }
   }
 }

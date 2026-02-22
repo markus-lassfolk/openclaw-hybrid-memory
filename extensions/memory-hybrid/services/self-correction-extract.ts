@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type CorrectionIncident = {
   userMessage: string;
@@ -62,7 +63,12 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
     let lines: string[];
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'read-session-file',
+        severity: 'info',
+        subsystem: 'self-correction-extract'
+      });
       continue;
     }
 
@@ -78,7 +84,12 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
         if (!role) continue;
         const text = extractMessageText(msg.content);
         messages.push({ role, text });
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'parse-session-line',
+          severity: 'info',
+          subsystem: 'self-correction-extract'
+        });
         // skip malformed lines
       }
     }

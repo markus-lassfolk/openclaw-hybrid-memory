@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { getDirectiveCategoryRegexes } from "../utils/language-keywords.js";
 import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { capturePluginError } from "./error-reporter.js";
 
 /** 10 directive categories (can overlap — a message may have multiple types). */
 export const DIRECTIVE_CATEGORIES = [
@@ -210,7 +211,12 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
     let lines: string[];
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'read-session-file',
+        severity: 'info',
+        subsystem: 'directive-extract'
+      });
       continue;
     }
 
@@ -226,7 +232,12 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
         if (!role) continue;
         const text = extractMessageText(msg.content);
         messages.push({ role, text });
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'parse-session-line',
+          severity: 'info',
+          subsystem: 'directive-extract'
+        });
         // skip malformed lines
       }
     }

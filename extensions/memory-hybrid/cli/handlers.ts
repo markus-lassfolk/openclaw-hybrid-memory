@@ -1097,7 +1097,12 @@ function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
       .filter((p) => {
         try {
           return statSync(p).mtimeMs >= cutoff;
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'stat-check',
+            severity: 'info',
+            subsystem: 'cli'
+          });
           return false;
         }
       });
@@ -1450,7 +1455,16 @@ function gatherBackfillFiles(workspaceRoot: string): Array<{ path: string; label
       const full = join(dir, e.name);
       const relPath = join(rel, e.name);
       if (e.isDirectory()) {
-        try { walk(full, relPath); } catch { /* ignore */ }
+        try {
+          walk(full, relPath);
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'walk-directory',
+            severity: 'info',
+            subsystem: 'cli'
+          });
+          /* ignore */
+        }
       } else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
     }
   }

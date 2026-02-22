@@ -73,7 +73,13 @@ export async function migrateCredentialsToVault(
       factsDb.delete(entry.id);
       try {
         await vectorDb.delete(entry.id);
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && !err.message.includes('not found')) {
+          capturePluginError(err, {
+            operation: 'migrate-vector-delete',
+            subsystem: 'credentials'
+          });
+        }
         // LanceDB row might not exist
       }
       const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;

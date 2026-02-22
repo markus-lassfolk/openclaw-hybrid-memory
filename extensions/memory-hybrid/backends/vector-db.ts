@@ -6,6 +6,7 @@ import * as lancedb from "@lancedb/lancedb";
 import { randomUUID } from "node:crypto";
 import type { MemoryCategory, DecayClass } from "../config.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 const LANCE_TABLE = "memories";
 
@@ -37,6 +38,10 @@ export class VectorDB {
     if (this.table) return;
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.doInitialize().catch((err) => {
+      capturePluginError(err as Error, {
+        operation: 'vector-db-init',
+        subsystem: 'vector'
+      });
       this.initPromise = null;
       throw err;
     });
@@ -87,6 +92,10 @@ export class VectorDB {
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
       return id;
     } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'vector-store',
+        subsystem: 'vector'
+      });
       this.logWarn(`memory-hybrid: LanceDB store failed: ${err}`);
       throw err;
     }
@@ -128,6 +137,11 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'vector-search',
+        severity: 'info',
+        subsystem: 'vector'
+      });
       this.logWarn(`memory-hybrid: LanceDB search failed: ${err}`);
       return [];
     }
@@ -141,6 +155,11 @@ export class VectorDB {
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'vector-duplicate-check',
+        severity: 'info',
+        subsystem: 'vector'
+      });
       this.logWarn(`memory-hybrid: LanceDB hasDuplicate failed: ${err}`);
       return false;
     }
@@ -158,6 +177,10 @@ export class VectorDB {
       await this.getTable().delete(`id = '${id.toLowerCase()}'`);
       return true;
     } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'vector-delete',
+        subsystem: 'vector'
+      });
       this.logWarn(`memory-hybrid: LanceDB delete failed: ${err}`);
       throw err;
     }
@@ -168,6 +191,11 @@ export class VectorDB {
       await this.ensureInitialized();
       return await this.getTable().countRows();
     } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'vector-count',
+        severity: 'info',
+        subsystem: 'vector'
+      });
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
       return 0;
     }

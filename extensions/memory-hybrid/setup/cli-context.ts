@@ -313,7 +313,12 @@ function buildRichStatsExtras(
           try {
             const line = readFileSync(path, "utf-8").split("\n")[0]?.trim() ?? "";
             if (line) out[key] = line;
-          } catch {
+          } catch (err) {
+            capturePluginError(err as Error, {
+              operation: 'read-goal-file',
+              severity: 'info',
+              subsystem: 'cli'
+            });
             /* ignore */
           }
         }
@@ -332,7 +337,12 @@ function buildRichStatsExtras(
                 try {
                   const st = statSync(p);
                   resolve(st.isDirectory() ? 0 : st.size);
-                } catch {
+                } catch (err) {
+                  capturePluginError(err as Error, {
+                    operation: 'stat-check',
+                    severity: 'info',
+                    subsystem: 'cli'
+                  });
                   resolve(0);
                 }
                 return;
@@ -341,18 +351,33 @@ function buildRichStatsExtras(
               resolve(match ? parseInt(match[1], 10) * 1024 : 0);
             });
           });
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'dir-size',
+            severity: 'info',
+            subsystem: 'cli'
+          });
           return 0;
         }
       }
       try {
         if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'stat-check',
+          severity: 'info',
+          subsystem: 'cli'
+        });
         /* ignore */
       }
       try {
         if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'dir-size',
+          severity: 'info',
+          subsystem: 'cli'
+        });
         /* ignore */
       }
       return { sqliteBytes, lanceBytes };
@@ -435,7 +460,12 @@ function buildListCommands(ctx: HandlerContext): NonNullable<HybridMemCliContext
     try {
       const content = readFileSync(path, "utf-8");
       return { path, content };
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'read-report-file',
+        severity: 'info',
+        subsystem: 'cli'
+      });
       return null;
     }
   }

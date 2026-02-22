@@ -7,6 +7,7 @@
  */
 
 import type { ScopeFilter } from "../types/memory.js";
+import { addOperationBreadcrumb } from "../services/error-reporter.js";
 
 export function buildToolScopeFilter(
   params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
@@ -19,7 +20,15 @@ export function buildToolScopeFilter(
   const trustParams = config.multiAgent.trustToolScopeParams === true;
   if ((userId || agentId || sessionId) && trustParams) {
     return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
-  } else if (currentAgent && currentAgent !== config.multiAgent.orchestratorId) {
+  } else if ((userId || agentId || sessionId) && !trustParams) {
+    // Debug: Log when explicit scope params are ignored for security
+    addOperationBreadcrumb("scope-params-ignored", {
+      reason: "trustToolScopeParams=false",
+      ignoredParams: { userId: !!userId, agentId: !!agentId, sessionId: !!sessionId }
+    });
+  }
+
+  if (currentAgent && currentAgent !== config.multiAgent.orchestratorId) {
     return {
       userId: config.autoRecall.scopeFilter?.userId ?? null,
       agentId: currentAgent,
