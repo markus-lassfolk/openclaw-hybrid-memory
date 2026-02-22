@@ -23,7 +23,7 @@ import {
   REFLECTION_META_MAX_CHARS,
 } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
-import { withLLMRetry } from "./chat.js";
+import { withLLMRetry, LLMRetryError } from "./chat.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -166,11 +166,12 @@ export async function runReflection(
     }
   } catch (err) {
     logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
+    const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'reflection-llm',
       subsystem: 'openai',
       windowDays,
-      retryAttempt: 3, // Failed after all retries
+      retryAttempt,
     });
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
