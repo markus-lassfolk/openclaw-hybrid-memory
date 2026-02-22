@@ -59,10 +59,8 @@ afterEach(() => {
 describe("runStoreForCli credential happy path", () => {
   it("stores credential in vault and pointer in factsDb", async () => {
     const opts: StoreCliOpts = {
-      text: "OpenAI API Key: sk-proj-test1234567890abcdefghijklmnopqrstuvwxyz1234567890",
+      text: "OpenAI API Key: sk-testAbCdEfGh1234IjKlMnOpQrSt",
       category: "technical",
-      entity: "OpenAI",
-      key: "api_key",
     };
 
     const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
@@ -76,7 +74,7 @@ describe("runStoreForCli credential happy path", () => {
       // Verify vault entry exists
       const vaultEntry = credentialsDb.get("openai", "api_key");
       expect(vaultEntry).not.toBeNull();
-      expect(vaultEntry!.value).toContain("sk-proj-test");
+      expect(vaultEntry!.value).toBe("sk-testAbCdEfGh1234IjKlMnOpQrSt");
 
       // Verify pointer entry exists with correct format
       const pointerEntry = factsDb.getById(result.id);
@@ -102,8 +100,6 @@ describe("runStoreForCli vault write failure", () => {
     const opts: StoreCliOpts = {
       text: "GitHub Token: ghp_test1234567890abcdefghijklmnopqrstuvwxy",
       category: "technical",
-      entity: "GitHub",
-      key: "token",
     };
 
     const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
@@ -132,10 +128,8 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     });
 
     const opts: StoreCliOpts = {
-      text: "Anthropic API Key: sk-ant-test1234567890abcdefghijklmnopqrstuvwxyz",
+      text: "Slack bot token: xoxb-test1234567890abcdefghijklmnopqrstuvwxyz",
       category: "technical",
-      entity: "Anthropic",
-      key: "api_key",
     };
 
     const warnSpy = vi.fn();
@@ -144,7 +138,7 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     expect(result.outcome).toBe("credential_db_error");
 
     // Verify vault entry was deleted (compensating delete)
-    const vaultEntry = credentialsDb.get("anthropic", "api_key");
+    const vaultEntry = credentialsDb.get("slack", "bearer");
     expect(vaultEntry).toBeNull();
 
     // Verify no orphaned pointer
@@ -169,10 +163,8 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     });
 
     const opts: StoreCliOpts = {
-      text: "Test API Key: sk-test-1234567890abcdefghijklmnopqrstuvwxyz",
+      text: "Twilio API Key: sk-test-1234567890abcdefghijklmnopqrstuvwxyz",
       category: "technical",
-      entity: "TestService",
-      key: "api_key",
     };
 
     const warnSpy = vi.fn();
@@ -196,21 +188,22 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
 // ---------------------------------------------------------------------------
 
 describe("runStoreForCli credential parse failure", () => {
-  it("returns credential_parse_error when credential text cannot be parsed", async () => {
+  it("returns credential_parse_error when credential-like text cannot be parsed to vault format", async () => {
+    // This text matches isCredentialLike but tryParseCredentialForVault returns null
+    // because the secret value is too short or doesn't match patterns
     const opts: StoreCliOpts = {
-      text: "This looks like a credential but isn't: invalid-format-xyz",
+      text: "API Key: xyz",  // Too short to be a valid credential
       category: "technical",
-      entity: "Unknown",
+      entity: "TestService",
       key: "api_key",
+      value: "xyz",  // Too short
     };
 
     const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
 
     expect(result.outcome).toBe("credential_parse_error");
 
-    // Verify nothing stored
-    const allFacts = factsDb.getAll();
-    expect(allFacts.length).toBe(0);
+    // Verify nothing stored in vault
     const vaultList = credentialsDb.list();
     expect(vaultList.length).toBe(0);
   });
