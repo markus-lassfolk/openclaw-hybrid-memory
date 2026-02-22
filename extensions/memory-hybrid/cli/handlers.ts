@@ -78,12 +78,20 @@ import {
 // Shared cron job definitions used by install and verify --fix
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const MAINTENANCE_CRON_JOBS = [
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+  // Nightly: distill + prune + extract-daily (runs every night at 02:00)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run these commands in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\nCheck if distill is enabled (config distill.enabled !== false) before step 2. Exit 0 if disabled. Report counts.", isolated: true, model: "gemini", enabled: true },
+  // Weekly reflection: patterns + rules + meta (Sundays 03:00)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly memory reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck if reflection is enabled (config reflection.enabled !== false). Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+  // Weekly extraction: procedures + directives + reinforcement (Sundays 04:00)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "gemini", enabled: true },
+  // Nightly self-correction (02:30)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
+  // Weekly deep maintenance: compact + scope promote (Saturdays 04:00)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, model: "sonnet", enabled: true },
+  // Monthly consolidation (1st of month 05:00)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs before each step.", isolated: true, model: "sonnet", enabled: true },
+  // Weekly persona proposals (Sundays 10:00)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Generate persona proposals from recent reflection insights:\n1. Search memory for recent patterns, rules, and meta-patterns from the last 7 days\n2. Read SOUL.md, USER.md, and IDENTITY.md\n3. For insights not yet captured in identity files, create persona proposals\n4. If there are pending proposals, notify the user via their preferred channel", isolated: true, model: "sonnet", enabled: true },
 ] as Array<Record<string, unknown>>;
 
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
@@ -92,6 +100,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) => /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
 };
 
@@ -861,6 +870,7 @@ export async function runVerifyForCli(
     { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
     { key: "weekly-deep-maintenance", description: "deep maintenance", docsPath: null },
     { key: "monthly-consolidation", description: "monthly consolidation", docsPath: null },
+    { key: "weekly-persona-proposals", description: "persona proposals", docsPath: null },
   ];
 
   for (const { key, description, docsPath } of jobsToDisplay) {
