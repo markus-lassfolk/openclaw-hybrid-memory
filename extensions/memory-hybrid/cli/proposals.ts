@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Command } from "commander";
+import type { Chainable } from "./shared.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig, IdentityFileType } from "../config.js";
@@ -59,7 +59,7 @@ async function auditProposal(
  * Register CLI commands for persona proposal management
  * NOTE: These are human-only commands and NOT exposed as agent-callable tools
  */
-export function registerProposalsCli(program: Command, ctx: ProposalsCliContext): void {
+export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContext): void {
   const proposals = program.command("proposals").description("Manage persona proposals (human-only commands)");
 
   proposals

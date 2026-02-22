@@ -2428,6 +2428,85 @@ export class FactsDB {
     return rows.map((r) => this.procedureRowToEntry(r));
   }
 
+  /** Alias for pruneExpired() for backward compatibility */
+  prune(): number {
+    return this.pruneExpired();
+  }
+
+  /** Alias for backfillDecayClasses() for backward compatibility */
+  backfillDecay(): Record<string, number> {
+    return this.backfillDecayClasses();
+  }
+
+  /** Get reflection statistics - stub for future implementation */
+  statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
+    return { reflectionPatternsCount: 0, reflectionRulesCount: 0 };
+  }
+
+  /** Get self-correction incidents count - stub for future implementation */
+  selfCorrectionIncidentsCount(): number {
+    return 0;
+  }
+
+  /** Get language keywords count - stub for future implementation */
+  languageKeywordsCount(): number {
+    return 0;
+  }
+
+  /** Get statistics by source */
+  statsBySource(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(`SELECT source, COUNT(*) as count FROM facts GROUP BY source`)
+      .all() as Array<{ source: string; count: number }>;
+    return Object.fromEntries(rows.map((r) => [r.source, r.count]));
+  }
+
+  /** Alias for estimateStoredTokens() for backward compatibility */
+  estimateTokens(): number {
+    return this.estimateStoredTokens();
+  }
+
+  /** Get unique scopes in the database */
+  uniqueScopes(): Array<{ scope: string; scopeTarget: string | null }> {
+    const rows = this.liveDb
+      .prepare(`SELECT DISTINCT scope, scope_target as scopeTarget FROM facts WHERE scope IS NOT NULL`)
+      .all() as Array<{ scope: string; scopeTarget: string | null }>;
+    return rows;
+  }
+
+  /** Get statistics by scope */
+  scopeStats(): Array<{ scope: string; scopeTarget: string | null; count: number }> {
+    const rows = this.liveDb
+      .prepare(`SELECT scope, scope_target as scopeTarget, COUNT(*) as count FROM facts WHERE scope IS NOT NULL GROUP BY scope, scope_target`)
+      .all() as Array<{ scope: string; scopeTarget: string | null; count: number }>;
+    return rows;
+  }
+
+  /** Prune facts matching scope filter */
+  pruneScopedFacts(scopeFilter: ScopeFilter): number {
+    const conditions: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (scopeFilter.userId !== undefined) {
+      conditions.push(`(scope = 'user' AND scope_target = ?)`);
+      params.push(scopeFilter.userId);
+    }
+    if (scopeFilter.agentId !== undefined) {
+      conditions.push(`(scope = 'agent' AND scope_target = ?)`);
+      params.push(scopeFilter.agentId);
+    }
+    if (scopeFilter.sessionId !== undefined) {
+      conditions.push(`(scope = 'session' AND scope_target = ?)`);
+      params.push(scopeFilter.sessionId);
+    }
+
+    if (conditions.length === 0) return 0;
+
+    const query = `DELETE FROM facts WHERE ${conditions.join(' OR ')}`;
+    const result = this.liveDb.prepare(query).run(...params);
+    return result.changes;
+  }
+
   close(): void {
     try {
       this.db.close();

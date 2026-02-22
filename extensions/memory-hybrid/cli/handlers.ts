@@ -1906,10 +1906,6 @@ export async function runDistillForCli(
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
-  // Feature-gating: exit 0 if distill is disabled
-  if (cfg.distill?.enabled === false) {
-    return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
-  }
   const sessionFiles = gatherSessionFiles({
     all: opts.all,
     days: opts.days ?? (opts.all ? 90 : 3),

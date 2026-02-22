@@ -201,6 +201,13 @@ export class VectorDB {
     }
   }
 
+  /** Optional checkpoint method for LanceDB optimization */
+  async checkpoint?(): Promise<void> {
+    // LanceDB doesn't have an explicit checkpoint API
+    // This is a no-op for compatibility
+    return Promise.resolve();
+  }
+
   close(): void {
     this.closed = true;
     this.table = null;

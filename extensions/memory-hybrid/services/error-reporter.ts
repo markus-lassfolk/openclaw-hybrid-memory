@@ -87,8 +87,8 @@ export async function initErrorReporter(
     sendDefaultPii: false,       // NO PII
     autoSessionTracking: false,  // NO session tracking
     integrations: (defaults) => defaults.filter(i => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name)), // Keep only safe integrations
-    beforeSend(event) {
-      return sanitizeEvent(event);
+    beforeSend(event): SentryType.ErrorEvent | PromiseLike<SentryType.ErrorEvent | null> | null {
+      return sanitizeEvent(event) as SentryType.ErrorEvent | null;
     },
     beforeBreadcrumb(breadcrumb) {
       // Only allow breadcrumbs with category starting with "plugin."
@@ -291,7 +291,7 @@ export function capturePluginError(error: Error, context: {
     if (context.configShape) {
       scope.setContext("config_shape", context.configShape);
     }
-    eventId = Sentry.captureException(error);
+    eventId = Sentry!.captureException(error);
   });
 
   return eventId;
