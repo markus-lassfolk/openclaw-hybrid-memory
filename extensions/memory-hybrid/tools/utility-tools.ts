@@ -228,7 +228,7 @@ export function registerUtilityTools(
         );
         const cronCfg = getCronModelConfig(cfg);
         const pref = getLLMModelPreference(cronCfg, "default");
-        const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels;
+        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
         try {
           const result = await runReflection(
             factsDb,
@@ -283,7 +283,7 @@ export function registerUtilityTools(
         }
         const cronCfg = getCronModelConfig(cfg);
         const pref = getLLMModelPreference(cronCfg, "default");
-        const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels;
+        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
         try {
           const result = await runReflectionRules(
             factsDb,
@@ -332,7 +332,7 @@ export function registerUtilityTools(
         }
         const cronCfg = getCronModelConfig(cfg);
         const pref = getLLMModelPreference(cronCfg, "default");
-        const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels;
+        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
         try {
           const result = await runReflectionMeta(
             factsDb,

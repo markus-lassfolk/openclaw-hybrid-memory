@@ -384,7 +384,7 @@ All chat/completion calls (distillation, reflection, classify, consolidate, prop
 | `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
-| `fallbackModel` | Optional. When `fallbackToDefault` is true, use this model as last try; omit to use built-in default per tier. |
+| `fallbackModel` | Optional. When `fallbackToDefault` is true and this key is set, use this model as the last try; if omitted, no extra fallback beyond the tier list is applied. |
 
 When `llm` is set, maintenance jobs and CLI commands use these lists. When `llm` is **not** set, the plugin uses **legacy** provider-based selection (see below).
 
