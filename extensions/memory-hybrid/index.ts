@@ -220,7 +220,9 @@ let lastProgressiveIndexIds: string[] = [];
 // Config option `multiAgent.strictAgentScoping` can be enabled to throw an error
 // if agent detection fails in "agent" or "auto" scope modes, rather than silently
 // falling back to orchestrator.
-let currentAgentId: string | null = null;
+// Note: Using a mutable ref object { value } so that lifecycle hooks can update the value
+// and tools will see the updated value (fixes pass-by-value bug from refactor).
+const currentAgentIdRef: { value: string | null } = { value: null };
 
 
 const PLUGIN_ID = "openclaw-hybrid-memory";
@@ -289,7 +291,7 @@ const memoryHybridPlugin = {
       credentialsDb,
       proposalsDb,
       lastProgressiveIndexIds,
-      currentAgentId,
+      currentAgentIdRef,
       resolvedSqlitePath,
       timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
       buildToolScopeFilter,
@@ -341,7 +343,7 @@ const memoryHybridPlugin = {
       cfg,
       credentialsDb,
       wal,
-      currentAgentId,
+      currentAgentIdRef,
       lastProgressiveIndexIds,
       restartPendingCleared,
       resolvedSqlitePath,

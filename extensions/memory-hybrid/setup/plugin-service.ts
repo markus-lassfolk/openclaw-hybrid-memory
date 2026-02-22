@@ -79,6 +79,14 @@ export function createPluginService(ctx: PluginServiceContext) {
         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
       );
 
+      // ========================================================================
+      // Startup Task Sequencing (to avoid race conditions):
+      // 1. Error reporter init (async)
+      // 2. Prune expired facts (synchronous)
+      // 3. WAL recovery (synchronous)
+      // 4. Start periodic timers (async background tasks with delays)
+      // ========================================================================
+
       // Initialize error reporter if configured
       if (cfg.errorReporting) {
         try {
@@ -315,27 +323,46 @@ export function createPluginService(ctx: PluginServiceContext) {
         );
         void (async () => {
           try {
-            const { spawnSync } = await import("node:child_process");
-            const runCli = (args: string[]) => {
-              const r = spawnSync("openclaw", ["hybrid-mem", ...args], {
-                encoding: "utf-8",
-                timeout: 120_000,
-                cwd: homedir(),
+            const { spawn } = await import("node:child_process");
+            const { promisify } = await import("node:util");
+
+            // Helper to run CLI commands asynchronously (non-blocking)
+            const runCli = async (args: string[]): Promise<boolean> => {
+              return new Promise((resolve) => {
+                const child = spawn("openclaw", ["hybrid-mem", ...args], {
+                  cwd: homedir(),
+                  stdio: ["ignore", "pipe", "pipe"],
+                  timeout: 120_000,
+                });
+
+                let stderr = "";
+                child.stderr?.on("data", (chunk) => {
+                  stderr += chunk.toString();
+                });
+
+                child.on("close", (code) => {
+                  if (code !== 0 && stderr) {
+                    api.logger.warn?.(`memory-hybrid: post-upgrade ${args[0]} failed: ${stderr.slice(0, 200)}`);
+                  }
+                  resolve(code === 0);
+                });
+
+                child.on("error", (err) => {
+                  api.logger.warn?.(`memory-hybrid: post-upgrade ${args[0]} error: ${err.message}`);
+                  resolve(false);
+                });
               });
-              if (r.status !== 0 && r.stderr) {
-                api.logger.warn?.(`memory-hybrid: post-upgrade ${args[0]} failed: ${(r.stderr as string).slice(0, 200)}`);
-              }
-              return r.status === 0;
             };
+
             const langPath = getLanguageKeywordsFilePath();
-            if (langPath && !existsSync(langPath)) runCli(["build-languages"]);
-            runCli(["self-correction-run"]);
+            if (langPath && !existsSync(langPath)) await runCli(["build-languages"]);
+            await runCli(["self-correction-run"]);
             if (cfg.reflection.enabled) {
-              runCli(["reflect", "--window", String(cfg.reflection.defaultWindow)]);
-              runCli(["reflect-rules"]);
+              await runCli(["reflect", "--window", String(cfg.reflection.defaultWindow)]);
+              await runCli(["reflect-rules"]);
             }
-            runCli(["extract-procedures"]);
-            runCli(["generate-auto-skills"]);
+            await runCli(["extract-procedures"]);
+            await runCli(["generate-auto-skills"]);
             writeFileSync(versionFile, versionInfo.pluginVersion, "utf-8");
             api.logger.info("memory-hybrid: post-upgrade pipeline done.");
           } catch (e) {

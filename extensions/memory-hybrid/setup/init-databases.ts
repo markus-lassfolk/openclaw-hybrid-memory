@@ -100,7 +100,10 @@ export function initializeDatabases(
     }
   }
 
-  // Prerequisite checks (async, non-blocking): verify keys and model access so user gets clear errors
+  // Prerequisite checks (async, don't block plugin start): verify keys and model access
+  // Note: These checks run in background. If they fail, the plugin will continue running
+  // but memory operations requiring embeddings will fail at runtime. Users should run
+  // 'openclaw hybrid-mem verify' if they see errors.
   void (async () => {
     try {
       await embeddings.embed("verify");
@@ -113,7 +116,8 @@ export function initializeDatabases(
         backend: "openai",
       });
       api.logger.error(
-        `memory-hybrid: Embedding API check failed — ${String(e)}. ` +
+        `memory-hybrid: ⚠️  EMBEDDING API CHECK FAILED — ${String(e)}. ` +
+          "Plugin will continue but semantic search will not work. " +
           "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.",
       );
     }
@@ -133,7 +137,8 @@ export function initializeDatabases(
           backend: "sqlite",
         });
         api.logger.error(
-          `memory-hybrid: Credentials vault check failed — ${String(e)}. ` +
+          `memory-hybrid: ⚠️  CREDENTIALS VAULT CHECK FAILED — ${String(e)}. ` +
+            "Plugin will continue but credential storage will not work. " +
             "Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.",
         );
       }

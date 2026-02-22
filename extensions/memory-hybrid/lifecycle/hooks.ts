@@ -40,7 +40,7 @@ export interface LifecycleContext {
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
-  currentAgentId: string | null;
+  currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingCleared: boolean;
   resolvedSqlitePath: string;
@@ -64,7 +64,8 @@ function getRestartPendingPath(): string {
 
 export function createLifecycleHooks(ctx: LifecycleContext) {
   // Mutable refs that need to be updated across hooks
-  let currentAgentId = ctx.currentAgentId;
+  // Note: currentAgentIdRef is already a mutable ref object from index.ts
+  const currentAgentIdRef = ctx.currentAgentIdRef;
   let lastProgressiveIndexIds = ctx.lastProgressiveIndexIds;
   let restartPendingCleared = ctx.restartPendingCleared;
 
@@ -96,16 +97,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       // Try multiple sources: event payload, api.context, or keep current
       const detectedAgentId = e.agentId || e.session?.agentId || api.context?.agentId;
       if (detectedAgentId) {
-        currentAgentId = detectedAgentId;
-        // Update context reference
-        ctx.currentAgentId = currentAgentId;
+        currentAgentIdRef.value = detectedAgentId;
         // Log successful detection at debug level to reduce log noise
         api.logger.debug?.(`memory-hybrid: Detected agentId: ${detectedAgentId}`);
       } else {
         // Issue #9: Log when agent detection fails - fall back to orchestrator or keep current
         api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload or api.context, falling back to orchestrator");
-        currentAgentId = currentAgentId || ctx.cfg.multiAgent.orchestratorId;
-        ctx.currentAgentId = currentAgentId;
+        currentAgentIdRef.value = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
         if (ctx.cfg.multiAgent.defaultStoreScope === "agent" || ctx.cfg.multiAgent.defaultStoreScope === "auto") {
           api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${ctx.cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
         }
@@ -132,11 +130,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           // Build scope filter dynamically from detected agentId
           // Merge agent-detected scope with configured scopeFilter for multi-tenant support
           let scopeFilter: ScopeFilter | undefined;
-          if (currentAgentId && currentAgentId !== ctx.cfg.multiAgent.orchestratorId) {
+          if (currentAgentIdRef.value && currentAgentIdRef.value !== ctx.cfg.multiAgent.orchestratorId) {
             // Specialist agent — merge with configured scopeFilter to preserve userId
             scopeFilter = {
               userId: ctx.cfg.autoRecall.scopeFilter?.userId ?? null,
-              agentId: currentAgentId,
+              agentId: currentAgentIdRef.value,
               sessionId: ctx.cfg.autoRecall.scopeFilter?.sessionId ?? null,
             };
           } else if (
@@ -705,7 +703,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           // Search for credential facts
           // Apply scope filter (global + current agent)
-          const detectedAgentId = currentAgentId || ctx.cfg.multiAgent.orchestratorId;
+          const detectedAgentId = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
           const scopeFilter: ScopeFilter | undefined = detectedAgentId && detectedAgentId !== ctx.cfg.multiAgent.orchestratorId
             ? { userId: ctx.cfg.autoRecall.scopeFilter?.userId ?? null, agentId: detectedAgentId, sessionId: ctx.cfg.autoRecall.scopeFilter?.sessionId ?? null }
             : undefined;

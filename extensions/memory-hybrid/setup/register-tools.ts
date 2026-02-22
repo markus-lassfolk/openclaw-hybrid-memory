@@ -38,7 +38,7 @@ export interface ToolsContext {
   credentialsDb: CredentialsDB | null;
   proposalsDb: ProposalsDB | null;
   lastProgressiveIndexIds: string[];
-  currentAgentId: string | null;
+  currentAgentIdRef: { value: string | null };
   resolvedSqlitePath: string;
   timers: {
     proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -82,7 +82,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     credentialsDb,
     proposalsDb,
     lastProgressiveIndexIds,
-    currentAgentId,
+    currentAgentIdRef,
     resolvedSqlitePath,
     timers,
     buildToolScopeFilter,
@@ -96,7 +96,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentId },
+    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),

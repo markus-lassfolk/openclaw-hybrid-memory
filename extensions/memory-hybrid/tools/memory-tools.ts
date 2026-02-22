@@ -47,7 +47,7 @@ export interface PluginContext {
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   lastProgressiveIndexIds: string[];
-  currentAgentId: string | null;
+  currentAgentIdRef: { value: string | null };
 }
 
 /**
@@ -78,7 +78,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentId } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef } = ctx;
 
   api.registerTool(
     {
@@ -193,7 +193,7 @@ export function registerMemoryTools(
         // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
         // Accepting arbitrary scope filters allows users to access other users' private memories.
         // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
-        const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentId, cfg);
+        const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
 
         // Fetch by id (fact id or 1-based index from last progressive index)
         if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -469,7 +469,7 @@ export function registerMemoryTools(
             }
 
           // Build scope filter (same logic as memory_recall)
-          const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentId, cfg);
+          const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
 
           const procedures = factsDb.searchProcedures(q, limit, cfg.distill?.reinforcementProcedureBoost ?? 0.1, scopeFilter);
           const negatives = factsDb.getNegativeProceduresMatching(q, 3, scopeFilter);
@@ -838,11 +838,11 @@ export function registerMemoryTools(
           scopeTarget = scope === "global" ? null : (paramScopeTarget?.trim() ?? null);
         } else {
           // Auto-determine scope based on multiAgent config
-          const agentId = currentAgentId || cfg.multiAgent.orchestratorId;
+          const agentId = currentAgentIdRef.value || cfg.multiAgent.orchestratorId;
           const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
 
           // Strict agent scoping: throw if agent detection failed in agent/auto mode
-          if (cfg.multiAgent.strictAgentScoping && !currentAgentId &&
+          if (cfg.multiAgent.strictAgentScoping && !currentAgentIdRef.value &&
               (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")) {
             throw new Error(
               `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. ` +
@@ -871,16 +871,26 @@ export function registerMemoryTools(
           }
         }
 
+        // Final validation: if scope requires a target but none is available, fall back to global
+        // (unless strictAgentScoping already threw above)
         if (scope !== "global" && !scopeTarget) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId).`,
-              },
-            ],
-            details: { error: "scope_target_required" },
-          };
+          if (paramScope) {
+            // User explicitly requested non-global scope but didn't provide target
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId). Provide scopeTarget parameter or use scope="global".`,
+                },
+              ],
+              details: { error: "scope_target_required" },
+            };
+          } else {
+            // Auto-determined scope ended up without target (shouldn't happen with current logic,
+            // but handle gracefully by falling back to global)
+            scope = "global";
+            scopeTarget = null;
+          }
         }
         const nowSec = Math.floor(Date.now() / 1000);
         const entry = factsDb.store({
