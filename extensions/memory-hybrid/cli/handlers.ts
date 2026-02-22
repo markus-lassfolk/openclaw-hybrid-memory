@@ -706,10 +706,68 @@ export async function runVerifyForCli(
 
   // Job name regex patterns for matching
   const cronStorePath = join(openclawDir, "cron", "jobs.json");
+  const nightlyMemorySweepRe = /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
+  const weeklyReflectionRe = /weekly-reflection|memory reflection|pattern synthesis/i;
   const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
   const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
   const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
   const monthlyConsolidationRe = /monthly-consolidation/i;
+
+  // Helper function to map job names to canonical keys
+  function getCanonicalJobKey(name: string, msg?: string): string | null {
+    const nameLower = name.toLowerCase();
+    if (nightlyMemorySweepRe.test(nameLower) || (msg && /nightly memory distillation|memory distillation pipeline/i.test(msg))) {
+      return "nightly-memory-sweep";
+    } else if (weeklyReflectionRe.test(name)) {
+      return "weekly-reflection";
+    } else if (extractProceduresRe.test(name)) {
+      return "weekly-extract-procedures";
+    } else if (selfCorrectionRe.test(name)) {
+      return "self-correction-analysis";
+    } else if (weeklyDeepMaintenanceRe.test(name)) {
+      return "weekly-deep-maintenance";
+    } else if (monthlyConsolidationRe.test(name)) {
+      return "monthly-consolidation";
+    } else if (name) {
+      return name;
+    }
+    return null;
+  }
+
+  // Helper function to format job status display
+  function formatJobStatus(job: JobInfo, label: string, indent: string, log: (msg: string) => void): void {
+    const statusIcon = job.enabled ? "✅" : "⏸️ ";
+    const statusText = job.enabled ? "enabled " : "disabled";
+
+    let statusDetails = "";
+    if (job.state) {
+      const parts: string[] = [];
+
+      if (job.state.lastRunAtMs) {
+        const lastStatus = job.state.lastStatus || "ok";
+        const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
+        parts.push(lastRun);
+      } else {
+        parts.push("last: never");
+      }
+
+      if (job.state.nextRunAtMs) {
+        parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
+      }
+
+      if (parts.length > 0) {
+        statusDetails = "  " + parts.join("  ");
+      }
+    }
+
+    log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}${statusDetails}`);
+
+    // Show error details on next line if present
+    if (job.state?.lastError && job.state.lastStatus === "error") {
+      const errorPreview = job.state.lastError.slice(0, 100);
+      log(`${indent}   └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
+    }
+  }
 
   // Enhanced job status display
   log("\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):");
@@ -746,21 +804,9 @@ export async function runVerifyForCli(
           const msg = String((payload?.message ?? job.message) || "");
 
           // Map job names to our known jobs (check both name and payload message)
-          if (/nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name.toLowerCase()) ||
-              /nightly memory distillation|memory distillation pipeline/i.test(msg)) {
-            allJobs.set("nightly-memory-sweep", { name, enabled, state });
-          } else if (/weekly-reflection|memory reflection|pattern synthesis/i.test(name)) {
-            allJobs.set("weekly-reflection", { name, enabled, state });
-          } else if (extractProceduresRe.test(name)) {
-            allJobs.set("weekly-extract-procedures", { name, enabled, state });
-          } else if (selfCorrectionRe.test(name)) {
-            allJobs.set("self-correction-analysis", { name, enabled, state });
-          } else if (weeklyDeepMaintenanceRe.test(name)) {
-            allJobs.set("weekly-deep-maintenance", { name, enabled, state });
-          } else if (monthlyConsolidationRe.test(name)) {
-            allJobs.set("monthly-consolidation", { name, enabled, state });
-          } else if (name) {
-            allJobs.set(name, { name, enabled, state });
+          const canonicalKey = getCanonicalJobKey(name, msg);
+          if (canonicalKey) {
+            allJobs.set(canonicalKey, { name, enabled, state });
           }
         }
       }
@@ -784,20 +830,9 @@ export async function runVerifyForCli(
           const enabled = job.enabled !== false;
 
           // Only add if not already found in cron store
-          if (name === "nightly-memory-sweep" && !allJobs.has("nightly-memory-sweep")) {
-            allJobs.set("nightly-memory-sweep", { name, enabled });
-          } else if (name === "weekly-reflection" && !allJobs.has("weekly-reflection")) {
-            allJobs.set("weekly-reflection", { name, enabled });
-          } else if (extractProceduresRe.test(name) && !allJobs.has("weekly-extract-procedures")) {
-            allJobs.set("weekly-extract-procedures", { name, enabled });
-          } else if (selfCorrectionRe.test(name) && !allJobs.has("self-correction-analysis")) {
-            allJobs.set("self-correction-analysis", { name, enabled });
-          } else if (weeklyDeepMaintenanceRe.test(name) && !allJobs.has("weekly-deep-maintenance")) {
-            allJobs.set("weekly-deep-maintenance", { name, enabled });
-          } else if (monthlyConsolidationRe.test(name) && !allJobs.has("monthly-consolidation")) {
-            allJobs.set("monthly-consolidation", { name, enabled });
-          } else if (name && !allJobs.has(name)) {
-            allJobs.set(name, { name, enabled });
+          const canonicalKey = getCanonicalJobKey(name);
+          if (canonicalKey && !allJobs.has(canonicalKey)) {
+            allJobs.set(canonicalKey, { name, enabled });
           }
         }
       } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
@@ -808,20 +843,9 @@ export async function runVerifyForCli(
           const enabled = job.enabled !== false;
 
           // Only add if not already found in cron store
-          if (key === "nightly-memory-sweep" && !allJobs.has("nightly-memory-sweep")) {
-            allJobs.set("nightly-memory-sweep", { name: key, enabled });
-          } else if (key === "weekly-reflection" && !allJobs.has("weekly-reflection")) {
-            allJobs.set("weekly-reflection", { name: key, enabled });
-          } else if (extractProceduresRe.test(key) && !allJobs.has("weekly-extract-procedures")) {
-            allJobs.set("weekly-extract-procedures", { name: key, enabled });
-          } else if (selfCorrectionRe.test(key) && !allJobs.has("self-correction-analysis")) {
-            allJobs.set("self-correction-analysis", { name: key, enabled });
-          } else if (weeklyDeepMaintenanceRe.test(key) && !allJobs.has("weekly-deep-maintenance")) {
-            allJobs.set("weekly-deep-maintenance", { name: key, enabled });
-          } else if (monthlyConsolidationRe.test(key) && !allJobs.has("monthly-consolidation")) {
-            allJobs.set("monthly-consolidation", { name: key, enabled });
-          } else if (key && !allJobs.has(key)) {
-            allJobs.set(key, { name: key, enabled });
+          const canonicalKey = getCanonicalJobKey(key);
+          if (canonicalKey && !allJobs.has(canonicalKey)) {
+            allJobs.set(canonicalKey, { name: key, enabled });
           }
         }
       }
@@ -853,37 +877,7 @@ export async function runVerifyForCli(
       continue;
     }
 
-    const statusIcon = job.enabled ? "✅" : "⏸️ ";
-    const statusText = job.enabled ? "enabled " : "disabled";
-
-    let statusDetails = "";
-    if (job.state) {
-      const parts: string[] = [];
-
-      if (job.state.lastRunAtMs) {
-        const lastStatus = job.state.lastStatus || "ok";
-        const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
-        parts.push(lastRun);
-      } else {
-        parts.push("last: never");
-      }
-
-      if (job.state.nextRunAtMs) {
-        parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
-      }
-
-      if (parts.length > 0) {
-        statusDetails = "  " + parts.join("  ");
-      }
-    }
-
-    log(`  ${statusIcon} ${key.padEnd(30)} ${statusText}${statusDetails}`);
-
-    // Show error details on next line if present
-    if (job.state?.lastError && job.state.lastStatus === "error") {
-      const errorPreview = job.state.lastError.slice(0, 100);
-      log(`     └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
-    }
+    formatJobStatus(job, key, "  ", log);
   }
 
   // Display any unknown/custom jobs not in the hardcoded list
@@ -893,37 +887,7 @@ export async function runVerifyForCli(
   if (unknownJobs.length > 0) {
     log("\n  Other custom jobs:");
     for (const [key, job] of unknownJobs) {
-      const statusIcon = job.enabled ? "✅" : "⏸️ ";
-      const statusText = job.enabled ? "enabled " : "disabled";
-
-      let statusDetails = "";
-      if (job.state) {
-        const parts: string[] = [];
-
-        if (job.state.lastRunAtMs) {
-          const lastStatus = job.state.lastStatus || "ok";
-          const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
-          parts.push(lastRun);
-        } else {
-          parts.push("last: never");
-        }
-
-        if (job.state.nextRunAtMs) {
-          parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
-        }
-
-        if (parts.length > 0) {
-          statusDetails = "  " + parts.join("  ");
-        }
-      }
-
-      log(`    ${statusIcon} ${job.name.padEnd(30)} ${statusText}${statusDetails}`);
-
-      // Show error details on next line if present
-      if (job.state?.lastError && job.state.lastStatus === "error") {
-        const errorPreview = job.state.lastError.slice(0, 100);
-        log(`       └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
-      }
+      formatJobStatus(job, job.name, "    ", log);
     }
   }
 
