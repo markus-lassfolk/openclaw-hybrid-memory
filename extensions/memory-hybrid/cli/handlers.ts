@@ -178,34 +178,48 @@ export async function runStoreForCli(
   if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
     const parsed = tryParseCredentialForVault(text, entity, key, value);
     if (parsed) {
-      credentialsDb.store({
-        service: parsed.service,
-        type: parsed.type,
-        value: parsed.secretValue,
-        url: parsed.url,
-        notes: parsed.notes,
-      });
-      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-      const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
-      const pointerEntry = factsDb.store({
-        text: pointerText,
-        category: "technical" as MemoryCategory,
-        importance: CLI_STORE_IMPORTANCE,
-        entity: "Credentials",
-        key: parsed.service,
-        value: pointerValue,
-        source: "cli",
-        sourceDate,
-        tags: ["auth", ...extractTags(pointerText, "Credentials")],
-      });
+      let storedInVault = false;
       try {
-        const vector = await embeddings.embed(pointerText);
-        if (!(await vectorDb.hasDuplicate(vector))) {
-          await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+        credentialsDb.store({
+          service: parsed.service,
+          type: parsed.type as any,
+          value: parsed.secretValue,
+          url: parsed.url,
+          notes: parsed.notes,
+        });
+        storedInVault = true;
+        const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+        const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+        const pointerEntry = factsDb.store({
+          text: pointerText,
+          category: "technical" as MemoryCategory,
+          importance: CLI_STORE_IMPORTANCE,
+          entity: "Credentials",
+          key: parsed.service,
+          value: pointerValue,
+          source: "cli",
+          sourceDate,
+          tags: ["auth", ...extractTags(pointerText, "Credentials")],
+        });
+        try {
+          const vector = await embeddings.embed(pointerText);
+          if (!(await vectorDb.hasDuplicate(vector))) {
+            await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+          }
+        } catch (err) {
+          log.warn(`memory-hybrid: vector store failed: ${err}`);
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
         }
       } catch (err) {
-        log.warn(`memory-hybrid: vector store failed: ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
+        if (storedInVault) {
+          try {
+            credentialsDb.delete(parsed.service, parsed.type as any);
+          } catch (cleanupErr) {
+            log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+          }
+        }
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-store" });
+        throw err;
       }
       return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
     }
@@ -1298,14 +1312,16 @@ export async function runExtractDailyForCli(
           if (parsed) {
             totalExtracted++;
             if (!opts.dryRun) {
+              let storedInVault = false;
               try {
                 credentialsDb.store({
                   service: parsed.service,
-                  type: parsed.type,
+                  type: parsed.type as any,
                   value: parsed.secretValue,
                   url: parsed.url,
                   notes: parsed.notes,
                 });
+                storedInVault = true;
                 const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
                 const pointerEntry = factsDb.store({
@@ -1330,6 +1346,13 @@ export async function runExtractDailyForCli(
                 }
                 totalStored++;
               } catch (err) {
+                if (storedInVault) {
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (cleanupErr) {
+                    sink.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+                  }
+                }
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-store" });
               }
             }
@@ -1973,8 +1996,10 @@ export async function runDistillForCli(
       const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
       if (parsed) {
         if (!opts.dryRun) {
+          let storedInVault = false;
           try {
-            credentialsDb.store({ service: parsed.service, type: parsed.type, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
+            credentialsDb.store({ service: parsed.service, type: parsed.type as any, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
+            storedInVault = true;
             const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
             const entry = factsDb.store({
               text: pointerText,
@@ -1997,6 +2022,13 @@ export async function runDistillForCli(
             stored++;
             if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
           } catch (err) {
+            if (storedInVault) {
+              try {
+                credentialsDb.delete(parsed.service, parsed.type as any);
+              } catch (cleanupErr) {
+                if (opts.verbose) sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+              }
+            }
             capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
           }
         }
