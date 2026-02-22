@@ -115,6 +115,56 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
 };
 
+/**
+ * Ensure maintenance cron jobs exist in ~/.openclaw/cron/jobs.json. Add any missing jobs; optionally normalize existing (schedule, pluginJobId).
+ * Never re-enables jobs the user has disabled unless reEnableDisabled is true (callers should pass false to honor disabled jobs).
+ */
+function ensureMaintenanceCronJobs(
+  openclawDir: string,
+  pluginConfig: CronModelConfig | undefined,
+  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean } = {},
+): { added: string[]; normalized: string[] } {
+  const { normalizeExisting = false, reEnableDisabled = false } = options;
+  const added: string[] = [];
+  const normalized: string[] = [];
+  const cronDir = join(openclawDir, "cron");
+  const cronStorePath = join(cronDir, "jobs.json");
+  mkdirSync(cronDir, { recursive: true });
+  let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] }) : {};
+  if (!Array.isArray(store.jobs)) store.jobs = [];
+  const jobsArr = store.jobs as Array<Record<string, unknown>>;
+  let jobsChanged = false;
+  for (const def of MAINTENANCE_CRON_JOBS) {
+    const id = def.pluginJobId as string;
+    const name = def.name as string;
+    const existing = jobsArr.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
+    if (!existing) {
+      jobsArr.push(resolveCronJob(def, pluginConfig));
+      jobsChanged = true;
+      added.push(name);
+    } else {
+      if (normalizeExisting) {
+        if (typeof existing.schedule === "string") {
+          existing.schedule = { kind: "cron", expr: existing.schedule };
+          jobsChanged = true;
+          normalized.push(name);
+        }
+        if (!existing.pluginJobId) {
+          existing.pluginJobId = id;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+      }
+      if (reEnableDisabled && existing.enabled === false) {
+        existing.enabled = true;
+        jobsChanged = true;
+      }
+    }
+  }
+  if (jobsChanged) writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
+  return { added, normalized };
+}
+
 // Helper function for progress reporting
 function createProgressReporter(
   sink: { log: (msg: string) => void },
@@ -486,24 +536,11 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     mkdirSync(openclawDir, { recursive: true });
     mkdirSync(join(openclawDir, "memory"), { recursive: true });
     writeFileSync(configPath, after, "utf-8");
-    // Create maintenance cron jobs on fresh install (same definitions as verify --fix, no re-enable)
     try {
-      const cronDir = join(openclawDir, "cron");
-      const cronStorePath = join(cronDir, "jobs.json");
-      mkdirSync(cronDir, { recursive: true });
-      let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] } : {};
-      if (!Array.isArray(store.jobs)) store.jobs = [];
-      const jobsArr = store.jobs as Array<Record<string, unknown>>;
       const pluginConfig = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID]
         ? (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config as CronModelConfig | undefined
         : undefined;
-      for (const def of MAINTENANCE_CRON_JOBS) {
-        const id = def.pluginJobId as string;
-        if (!jobsArr.some((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)))) {
-          jobsArr.push(resolveCronJob(def, pluginConfig));
-        }
-      }
-      writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
+      ensureMaintenanceCronJobs(openclawDir, pluginConfig, { normalizeExisting: false, reEnableDisabled: false });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
       // non-fatal: cron jobs optional on install
@@ -1018,41 +1055,12 @@ export async function runVerifyForCli(
         const cronStorePath = join(cronDir, "jobs.json");
 
         try {
-          mkdirSync(cronDir, { recursive: true });
-          let store: { jobs?: unknown[] } = {};
-          if (existsSync(cronStorePath)) {
-            store = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
-          }
-          if (!Array.isArray(store.jobs)) store.jobs = [];
-          const jobs = store.jobs as Array<Record<string, unknown>>;
-          let jobsChanged = false;
-          const pluginConfig = getCronModelConfig(ctx.cfg);
-          for (const def of MAINTENANCE_CRON_JOBS) {
-            const id = def.pluginJobId as string;
-            const existing = jobs.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
-            if (existing) {
-              if (typeof existing.schedule === "string") {
-                existing.schedule = { kind: "cron", expr: existing.schedule };
-                jobsChanged = true;
-              }
-              if (opts.fix && existing.enabled === false) {
-                existing.enabled = true;
-                jobsChanged = true;
-                applied.push(`Re-enabled job ${def.name} (${id})`);
-              }
-              if (!existing.pluginJobId) {
-                existing.pluginJobId = id;
-                jobsChanged = true;
-              }
-            } else {
-              jobs.push(resolveCronJob(def, pluginConfig));
-              jobsChanged = true;
-              applied.push(`Added ${def.name} job to ${cronStorePath}`);
-            }
-          }
-          if (jobsChanged) {
-            writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
-          }
+          const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(ctx.cfg), {
+            normalizeExisting: true,
+            reEnableDisabled: false,
+          });
+          added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
+          normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
         } catch (e) {
           log("Could not add optional jobs to cron store: " + String(e));
           capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:add-cron-jobs" });
@@ -2624,6 +2632,21 @@ export async function runUpgradeForCli(
     }
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:read-version" });
+  }
+  // Ensure maintenance cron jobs exist (add missing, normalize existing; never re-enable disabled)
+  try {
+    const openclawDir = join(homedir(), ".openclaw");
+    const pluginConfig = getCronModelConfig(ctx.cfg);
+    const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
+      normalizeExisting: true,
+      reEnableDisabled: false,
+    });
+    if (added.length > 0 || normalized.length > 0) {
+      ctx.logger?.info?.(`memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`);
+    }
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:ensure-cron-jobs" });
+    // non-fatal: user can run verify --fix later
   }
   return { ok: true, version: installedVersion, pluginDir: extDir };
 }
