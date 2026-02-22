@@ -393,11 +393,11 @@ export function createPluginService(ctx: PluginServiceContext) {
         clearTimeout(timers.postUpgradeTimeout.value);
         timers.postUpgradeTimeout.value = null;
       }
+      api.logger.info("memory-hybrid: stopping...");
       factsDb.close();
       vectorDb.close();
       if (credentialsDb) { credentialsDb.close(); }
       if (proposalsDb) { proposalsDb.close(); }
-      api.logger.info("memory-hybrid: stopped");
     },
   };
 }

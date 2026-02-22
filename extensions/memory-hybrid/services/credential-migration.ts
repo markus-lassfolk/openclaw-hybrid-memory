@@ -48,7 +48,7 @@ export async function migrateCredentialsToVault(
   const toMigrate = results.filter(
     (r) =>
       !r.entry.text.includes("stored in secure vault") &&
-      (r.entry.value == null || !String(r.entry.value).startsWith(VAULT_POINTER_PREFIX)),
+      (r.entry.value == null || (typeof r.entry.value === "string" && !r.entry.value.startsWith(VAULT_POINTER_PREFIX))),
   );
 
   for (const { entry } of toMigrate) {
