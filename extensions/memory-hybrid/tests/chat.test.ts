@@ -137,6 +137,284 @@ describe("chatComplete", () => {
     ).rejects.toThrow(/Gemini API key required/);
   });
 
+  it("calls Gemini REST API with correct format", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "Hello from Gemini" }],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    const result = await chatComplete({
+      model: "gemini-2.0-flash",
+      content: "test message",
+      openai: mockOpenai,
+    });
+
+    expect(result).toBe("Hello from Gemini");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "test-api-key-long-enough-to-pass-validation",
+        },
+        body: expect.stringContaining("test message"),
+      })
+    );
+  });
+
+  it("handles Gemini model name with 'models/' prefix", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "Response" }],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    await chatComplete({
+      model: "models/gemini-2.0-flash",
+      content: "test",
+      openai: mockOpenai,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+      expect.any(Object)
+    );
+  });
+
+  it("concatenates multiple text parts from Gemini response", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: "Part 1 " },
+                { text: "Part 2 " },
+                { text: "Part 3" },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    const result = await chatComplete({
+      model: "gemini-2.0-flash",
+      content: "test",
+      openai: mockOpenai,
+    });
+
+    expect(result).toBe("Part 1 Part 2 Part 3");
+  });
+
+  it("handles empty text parts in Gemini response", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: "Hello" },
+                { text: "" },
+                { text: " World" },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    const result = await chatComplete({
+      model: "gemini-2.0-flash",
+      content: "test",
+      openai: mockOpenai,
+    });
+
+    expect(result).toBe("Hello World");
+  });
+
+  it("throws when Gemini returns no parts", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    await expect(
+      chatComplete({
+        model: "gemini-2.0-flash",
+        content: "test",
+        openai: mockOpenai,
+      })
+    ).rejects.toThrow("Gemini returned no text");
+  });
+
+  it("throws when Gemini returns no candidates", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    await expect(
+      chatComplete({
+        model: "gemini-2.0-flash",
+        content: "test",
+        openai: mockOpenai,
+      })
+    ).rejects.toThrow("Gemini returned no text");
+  });
+
+  it("throws when Gemini returns only empty text", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "" }, { text: "" }],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    await expect(
+      chatComplete({
+        model: "gemini-2.0-flash",
+        content: "test",
+        openai: mockOpenai,
+      })
+    ).rejects.toThrow("Gemini returned no text");
+  });
+
+  it("throws with error message when Gemini API returns error status", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => "Invalid request",
+    });
+    global.fetch = mockFetch;
+
+    await expect(
+      chatComplete({
+        model: "gemini-2.0-flash",
+        content: "test",
+        openai: mockOpenai,
+      })
+    ).rejects.toThrow("Gemini API error 400: Invalid request");
+  });
+
+  it("uses correct temperature and maxTokens for Gemini", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "Response" }],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    await chatComplete({
+      model: "gemini-2.0-flash",
+      content: "test",
+      temperature: 0.5,
+      maxTokens: 4096,
+      openai: mockOpenai,
+    });
+
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    
+    expect(body.generationConfig.temperature).toBe(0.5);
+    expect(body.generationConfig.maxOutputTokens).toBe(4096);
+  });
+
+  it("uses default maxTokens (65536) for Gemini when not specified", async () => {
+    process.env.GOOGLE_API_KEY = "test-api-key-long-enough-to-pass-validation";
+    
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "Response" }],
+            },
+          },
+        ],
+      }),
+    });
+    global.fetch = mockFetch;
+
+    await chatComplete({
+      model: "gemini-2.0-flash",
+      content: "test",
+      openai: mockOpenai,
+    });
+
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    
+    expect(body.generationConfig.maxOutputTokens).toBe(65536);
+  });
+
 });
 
 describe("withLLMRetry", () => {
