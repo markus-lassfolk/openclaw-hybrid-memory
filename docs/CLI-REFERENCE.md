@@ -46,7 +46,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
-| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar (e.g. `Distilling sessions: 45% [=====>...] 12/27`). `--model M` picks the LLM (e.g. `gemini-2.0-flash` for Gemini; config `distill.defaultModel` used when omitted). Gemini uses larger batches (500k tokens). Oversized sessions chunked with 10% overlap. |
+| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
 | `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
 | `export --output <path> [--include-credentials] [--source X,Y,Z] [--mode replace\|additive]` | Export memory to vanilla OpenClaw–compatible `MEMORY.md` + `memory/` directory layout. Plain markdown, one file per fact. Default: exclude credentials, replace mode. Filter by fact source (e.g. conversation, distillation, cli, ingest, reflection). |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
@@ -155,7 +155,7 @@ This adds:
 
 `openclaw hybrid-mem verify` checks config, DBs, and embedding API. Feature toggles are shown as **true** / **false** to match `openclaw.json`. It checks:
 
-- Config (embedding API key and model)
+- Config (embedding required; optional llm model preference)
 - SQLite and LanceDB accessibility
 - Embedding API reachability
 - Credentials vault (if enabled)

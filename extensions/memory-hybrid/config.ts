@@ -260,6 +260,8 @@ export type HybridMemoryConfig = {
     provider: "openai";
     model: string;
     apiKey: string;
+    /** Optional ordered preference list (gateway fallback). First model defines vector dimension; all must have same dimension. */
+    models?: string[];
   };
   lanceDbPath: string;
   sqlitePath: string;
@@ -285,11 +287,13 @@ export type HybridMemoryConfig = {
   procedures: ProceduresConfig;
   /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
-  /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
+  /** Optional: LLM preference lists for gateway-routed chat (issue #87). When set, all LLM calls use openai client + this list. */
+  llm?: LLMConfig;
+  /** Optional: Gemini for distill (1M context). apiKey/defaultModel deprecated in favor of llm + gateway. */
   distill?: {
     apiKey?: string;
     defaultModel?: string;
-    /** Fallback models to try if primary model fails after retries (optional). */
+    /** Fallback models to try if primary model fails after retries (optional). Deprecated: use llm.default/heavy. */
     fallbackModels?: string[];
     /** Enable directive extraction from sessions (default: true). */
     extractDirectives?: boolean;
@@ -369,6 +373,18 @@ export function isValidCategory(cat: string): boolean {
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 export type CronModelTier = "default" | "heavy";
 
+/** LLM model preference: ordered lists per tier, routed through OpenClaw gateway. */
+export type LLMConfig = {
+  /** Ordered preference for default-tier LLM calls (first available wins). */
+  default: string[];
+  /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
+  heavy: string[];
+  /** When true, if all preferred models fail, try the fallback model. */
+  fallbackToDefault?: boolean;
+  /** When fallbackToDefault is true, this model is tried last. Set to your gateway default (e.g. from openclaw.yaml) for provider-agnostic fallback; omit to not add an extra fallback beyond the list. */
+  fallbackModel?: string;
+};
+
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
 export type CronModelConfig = {
   embedding?: { apiKey?: string };
@@ -376,14 +392,12 @@ export type CronModelConfig = {
   reflection?: { model?: string };
   /** Optional: when present, use for cron LLM (e.g. Claude). */
   claude?: { apiKey?: string; defaultModel?: string };
+  /** Optional: gateway-routed LLM preference lists (issue #87). When set, overrides provider-based resolution. */
+  llm?: LLMConfig;
 };
 
-/**
- * Resolve which LLM model to use for a maintenance cron job based on user config.
- * Prefer provider the user has configured: Gemini (distill) > OpenAI (embedding/reflection) > fallback.
- * No hardcoded aliases: uses config defaults or sensible per-provider defaults.
- */
-export function getDefaultCronModel(
+/** Legacy single-model resolution (for backward compat when no llm config). Used only inside getLLMModelPreference when llm lists are empty. */
+function getDefaultCronModelLegacy(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
@@ -393,32 +407,53 @@ export function getDefaultCronModel(
     if (defaultModel) return defaultModel;
     return tier === "heavy" ? "gemini-2.0-flash-thinking-exp-01-21" : "gemini-2.0-flash";
   }
+  if (pluginConfig.claude?.apiKey && pluginConfig.claude.apiKey.length >= 10) {
+    const defaultModel = pluginConfig.claude.defaultModel?.trim();
+    if (defaultModel) return defaultModel;
+    return tier === "heavy" ? "claude-opus-4-20250514" : "claude-sonnet-4-20250514";
+  }
   if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
-    const reflectionModel = pluginConfig.reflection?.model?.trim();
-    if (reflectionModel) return reflectionModel;
     return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
   }
   return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
 }
 
 /**
- * Resolve which stable model alias to use in cron jobs.
- * Use provider aliases for Gemini so job definitions remain stable across model updates.
+ * Return ordered list of models to try for an LLM call (gateway fallback chain).
+ * Uses llm.default / llm.heavy when configured; otherwise legacy single-model resolution.
  */
-export function getCronModelAlias(
+export function getLLMModelPreference(
+  pluginConfig: CronModelConfig | undefined,
+  tier: CronModelTier,
+): string[] {
+  const list = tier === "heavy" ? pluginConfig?.llm?.heavy : pluginConfig?.llm?.default;
+  if (Array.isArray(list) && list.length > 0) {
+    const trimmed = list.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);
+    if (trimmed.length > 0) {
+      if (pluginConfig?.llm?.fallbackToDefault) {
+        const fallback = pluginConfig.llm.fallbackModel?.trim();
+        if (fallback && !trimmed.includes(fallback)) {
+          return [...trimmed, fallback];
+        }
+        return trimmed;
+      }
+      return trimmed;
+    }
+  }
+  return [getDefaultCronModelLegacy(pluginConfig, tier)];
+}
+
+/**
+ * Resolve which LLM model to use for a maintenance cron job based on user config.
+ * When llm.default/heavy are set, returns the first model in the preference list (gateway-routed).
+ * Otherwise legacy: prefer provider the user has configured (Gemini > Claude > OpenAI) > fallback.
+ */
+export function getDefaultCronModel(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
-  if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
-  if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
-    return tier === "heavy" ? "gemini-heavy" : "gemini";
-  }
-  if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
-    const reflectionModel = pluginConfig.reflection?.model?.trim();
-    if (reflectionModel) return reflectionModel;
-    return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
-  }
-  return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  const preferred = getLLMModelPreference(pluginConfig, tier);
+  return preferred[0] ?? (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
 }
 
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
@@ -428,6 +463,7 @@ export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
     distill: cfg.distill,
     reflection: cfg.reflection,
     claude: (cfg as Record<string, unknown>).claude as CronModelConfig["claude"],
+    llm: cfg.llm,
   };
 }
 
@@ -634,8 +670,30 @@ export const hybridConfigSchema = {
       throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
 
-    const model =
-      typeof embedding.model === "string" ? embedding.model : DEFAULT_MODEL;
+    const singleModel = typeof embedding.model === "string" ? embedding.model : DEFAULT_MODEL;
+    const modelsRaw = Array.isArray(embedding.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
+    let embeddingModels: string[] | undefined;
+    if (modelsRaw.length > 0) {
+      const valid: string[] = [];
+      for (const m of modelsRaw) {
+        try {
+          vectorDimsForModel(m);
+          valid.push(m);
+        } catch {
+          console.warn(`memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+        }
+      }
+      if (valid.length > 0) {
+        const firstDim = vectorDimsForModel(valid[0]);
+        if (valid.every((m) => vectorDimsForModel(m) === firstDim)) {
+          embeddingModels = valid;
+        } else {
+          const dims = valid.map((m) => `${m}=${vectorDimsForModel(m)}`).join(", ");
+          console.warn(`memory-hybrid: embedding.models — models have mismatched vector dimensions (${dims}); all will be ignored. Models in a list must share the same output dimension.`);
+        }
+      }
+    }
+    const model = embeddingModels?.[0] ?? singleModel;
     vectorDimsForModel(model);
 
     // Parse custom categories
@@ -1112,11 +1170,26 @@ export const hybridConfigSchema = {
       trustToolScopeParams: multiAgentRaw?.trustToolScopeParams === true, // Default: false (secure by default)
     };
 
+    // Parse optional llm config (gateway-routed model preference, issue #87)
+    const llmRaw = cfg.llm as Record<string, unknown> | undefined;
+    const defaultList = llmRaw && Array.isArray(llmRaw.default) ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
+    const heavyList = llmRaw && Array.isArray(llmRaw.heavy) ? (llmRaw.heavy as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
+    const llm: LLMConfig | undefined =
+      defaultList.length > 0 || heavyList.length > 0
+        ? {
+            default: defaultList,
+            heavy: heavyList,
+            fallbackToDefault: llmRaw?.fallbackToDefault === true,
+            fallbackModel: typeof llmRaw?.fallbackModel === "string" && (llmRaw.fallbackModel as string).trim().length > 0 ? (llmRaw.fallbackModel as string).trim() : undefined,
+          }
+        : undefined;
+
     return {
       embedding: {
         provider: "openai",
         model,
         apiKey: resolveEnvVars(embedding.apiKey),
+        models: embeddingModels,
       },
       lanceDbPath:
         typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,
@@ -1135,6 +1208,7 @@ export const hybridConfigSchema = {
       reflection,
       procedures,
       memoryTiering,
+      llm,
       distill,
       languageKeywords,
       ingest,

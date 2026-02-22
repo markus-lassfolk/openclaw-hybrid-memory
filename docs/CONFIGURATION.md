@@ -49,6 +49,8 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-h
 
 **API key:** Inline the key if non-interactive shells don't load your env. Editing the config file directly is more reliable than using `config.patch`.
 
+**Embedding model preference:** Optional `embedding.models` is an ordered list of embedding model names (e.g. `["text-embedding-3-small"]`). The plugin tries the first; on failure (rate limit, provider down) it tries the next. All entries must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`). The first model in the list defines the dimension used for LanceDB. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-configuration).
+
 Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb` and `~/.openclaw/memory/facts.db`).
 
 ---
@@ -352,9 +354,45 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
 
 ---
 
-## Session distillation (Gemini)
+## LLM routing and model preference
 
-Session distillation uses an LLM to extract durable facts from conversation logs. Configure **Gemini** (recommended for its 1M+ context) or stick with OpenAI via `--model`:
+All chat/completion calls (distillation, reflection, classify, consolidate, proposals, self-correction, ingest, HyDE, build-languages) go through the **OpenClaw gateway** (OpenAI-compatible API). You can use any provider the gateway supports. Optional **`llm`** config defines ordered model lists per tier and fallback behaviour.
+
+**Recommended:** set `llm` so the plugin tries your preferred models in order and falls back if one fails (e.g. no key, rate limit, outage). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for prerequisites and how each feature uses LLMs.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "llm": {
+            "default": ["gemini-2.0-flash", "claude-sonnet-4", "gpt-4o-mini"],
+            "heavy": ["gemini-2.0-flash-thinking", "claude-opus-4", "gpt-4o"],
+            "fallbackToDefault": true,
+            "fallbackModel": "gpt-4o-mini"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Description |
+|-----|-------------|
+| `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages). First working model wins. |
+| `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). |
+| `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
+| `fallbackModel` | Optional. When `fallbackToDefault` is true and this key is set, use this model as the last try (only added if not already in the `default`/`heavy` list); if omitted, no extra fallback beyond the tier list is applied. |
+
+When `llm` is set, maintenance jobs and CLI commands use these lists. When `llm` is **not** set, the plugin uses **legacy** provider-based selection (see below).
+
+---
+
+## Session distillation (legacy: `distill`)
+
+Session distillation uses an LLM to extract durable facts from conversation logs. Prefer configuring models via **`llm`** (above); the **`distill`** block is optional and deprecated in favour of gateway + `llm`.
 
 ```json
 {
@@ -375,26 +413,24 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `apiKey` | (none) | Raw Google API key, or `env:VAR_NAME` to read from env |
-| `defaultModel` | `gpt-4o-mini` | Model used when `openclaw hybrid-mem distill` is run without `--model` |
+| `apiKey` | (none) | Legacy: raw Google API key or `env:VAR_NAME`. When using OpenClaw gateway routing, the plugin does not need a Google/Gemini API key here; the gateway handles provider keys. Prefer gateway + `llm.heavy`. |
+| `defaultModel` | — | Model used when `openclaw hybrid-mem distill` is run without `--model` and `llm` is not set. |
 
-**API key resolution:** If `apiKey` is unset, the plugin uses `GOOGLE_API_KEY` or `GEMINI_API_KEY` env vars.
-
-**Batch size:** Gemini models use larger batches (500k tokens); OpenAI defaults to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.
+**Batch size:** Long-context models (e.g. Gemini, names containing `thinking`) use larger batches (500k tokens); others default to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.
 
 ---
 
-## Default model selection (maintenance and self-correction)
+## Default model selection (when `llm` is not set)
 
-Maintenance cron jobs (e.g. nightly distillation, weekly reflection, extract-procedures, self-correction) and **self-correction spawn** (when `selfCorrection.analyzeViaSpawn` is true and `selfCorrection.spawnModel` is empty) do **not** hardcode a single model. The plugin chooses the model from your configured provider:
+When **`llm`** is **not** configured, maintenance cron jobs and self-correction spawn use **legacy** provider-based selection:
 
-| Priority | Condition | Model used |
-|----------|-----------|------------|
-| 1 | **Gemini** configured (`distill.apiKey` set) | `distill.defaultModel` or `gemini-2.0-flash` |
-| 2 | **Claude** configured (`claude.apiKey` set) | `claude.defaultModel` or a default Claude model |
-| 3 | **OpenAI** (embedding key set) | `reflection.model` or `gpt-4o-mini` / `gpt-4o` for heavier jobs |
+| Priority | Condition | Model used (default tier) | Model used (heavy tier) |
+|----------|-----------|----------------------------|--------------------------|
+| 1 | **Gemini** configured (`distill.apiKey` set) | `distill.defaultModel` or `gemini-2.0-flash` | same or heavy default |
+| 2 | **Claude** configured (`claude.apiKey` set) | `claude.defaultModel` or Claude Sonnet | Claude Opus |
+| 3 | **OpenAI** (embedding key set) | `reflection.model` or `gpt-4o-mini` | `gpt-4o` |
 
-So if you use Gemini for distillation, maintenance jobs and spawn use your Gemini model; if you use only OpenAI, they use your reflection/embedding model. When you run **`openclaw hybrid-mem verify --fix`**, the plugin writes each optional job with a concrete `model` value resolved from this logic (existing jobs are not overwritten). **Self-correction:** Leave `selfCorrection.spawnModel` empty (or omit it) to use the same provider-based default; set it to a model string to override.
+When you run **`openclaw hybrid-mem verify --fix`**, the plugin writes each optional job with a concrete `model` value resolved from this logic (existing jobs are not overwritten). **Self-correction:** Leave `selfCorrection.spawnModel` empty to use the same default; set it to a model string to override.
 
 ---
 

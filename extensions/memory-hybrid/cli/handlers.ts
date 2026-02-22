@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelAlias, getCronModelConfig, type CronModelConfig } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
@@ -69,6 +69,7 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { capProposalConfidence } from "./proposals.js";
 import {
   CLI_STORE_IMPORTANCE,
   BATCH_STORE_IMPORTANCE,
@@ -77,8 +78,8 @@ import {
 } from "../utils/constants.js";
 
 // Shared cron job definitions used by install and verify --fix.
-// Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config (getCronModelAlias).
-// modelTier: "default" = standard LLM, "heavy" = larger context; resolved to stable aliases when available.
+// Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
+// modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
@@ -102,7 +103,6 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
 function resolveCronJob(def: Record<string, unknown> & { modelTier?: "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
   const { modelTier, ...rest } = def;
   const tier = modelTier ?? "default";
-  // Use getDefaultCronModel (returns actual API model names) not getCronModelAlias (returns aliases like "gemini", "sonnet" which are not valid model names).
   const model = getDefaultCronModel(pluginConfig, tier);
   return { ...rest, model };
 }
@@ -1391,12 +1391,17 @@ export async function runGenerateProposalsForCli(
     return { created: 0 };
   }
   const nowSec = Math.floor(Date.now() / 1000);
-  const patterns = factsDb.getByCategory("pattern").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  const scopeFilter = cfg.autoRecall?.scopeFilter ?? undefined;
+  const allRelevant = factsDb.getAll({ scopeFilter }).filter(
+    (f) => (f.category === "pattern" || f.category === "rule") && !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  const rules = factsDb.getByCategory("rule").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
-  );
+  if (!scopeFilter && allRelevant.length > 0) {
+    ctx.logger.warn?.(
+      "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.",
+    );
+  }
+  const patterns = allRelevant.filter((f) => f.category === "pattern");
+  const rules = allRelevant.filter((f) => f.category === "rule");
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
   const insights: string[] = [];
   if (patterns.length) {
@@ -1436,7 +1441,10 @@ export async function runGenerateProposalsForCli(
     insights: insightsBlock,
     identity_files: identityFilesBlock,
   });
-  const model = getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+  const cronCfg = getCronModelConfig(cfg);
+  const pref = getLLMModelPreference(cronCfg, "heavy");
+  const model = pref[0];
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? []));
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -1445,8 +1453,7 @@ export async function runGenerateProposalsForCli(
       temperature: 0.3,
       maxTokens: 4000,
       openai,
-      geminiApiKey: cfg.distill?.apiKey,
-      fallbackModels: cfg.distill?.fallbackModels ?? [],
+      fallbackModels,
       label: "memory-hybrid: generate-proposals",
     });
   } catch (err) {
@@ -1481,8 +1488,13 @@ export async function runGenerateProposalsForCli(
     if (!allowedFiles.includes(targetFile as any)) continue;
     const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
     const snapshot = getFileSnapshot(join(workspace, targetFile));
-    const confidence = Number(item.confidence);
-    if (!Number.isFinite(confidence) || confidence < minConf) continue;
+    let confidence = Number(item.confidence);
+    if (!Number.isFinite(confidence)) continue;
+    confidence = capProposalConfidence(confidence, targetFile, String(item.suggestedChange ?? ""));
+    if (confidence < minConf) {
+      ctx.logger.info?.(`memory-hybrid: proposal dropped — confidence ${confidence < Number(item.confidence) ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})` : `below minConf ${minConf}`}: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`);
+      continue;
+    }
     const title = String(item.title ?? "Update from reflection").slice(0, 256);
     const observation = String(item.observation ?? "").slice(0, 2000);
     const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
@@ -1998,7 +2010,10 @@ export async function runIngestFilesForCli(
     return { stored: 0, skipped: 0, extracted: 0, files: 0, dryRun: opts.dryRun };
   }
 
-  const model = cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const cronCfgIngest = getCronModelConfig(cfg);
+  const ingestPref = getLLMModelPreference(cronCfgIngest, "default");
+  const model = ingestPref[0] ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const ingestFallbacks = ingestPref.length > 1 ? ingestPref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   const ingestPrompt = loadPrompt("ingest-files");
   const batches: string[] = [];
   let currentBatch = "";
@@ -2036,13 +2051,12 @@ export async function runIngestFilesForCli(
     const userContent = ingestPrompt + "\n\n" + batches[b];
     try {
       const content = await chatCompleteWithRetry({
-        model,
+        model: model,
         content: userContent,
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
-        geminiApiKey: cfg.distill?.apiKey,
-        fallbackModels: cfg.distill?.fallbackModels,
+        fallbackModels: ingestFallbacks,
         label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
@@ -2146,7 +2160,10 @@ export async function runDistillForCli(
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
   }
-  const model = opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const cronCfgDistill = getCronModelConfig(cfg);
+  const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
+  const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? "gpt-4o";
+  const distillFallbacks = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   const batches: string[] = [];
   let currentBatch = "";
   const batchTokenLimit = distillBatchTokenLimit(model);
@@ -2189,8 +2206,7 @@ export async function runDistillForCli(
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
-        geminiApiKey: cfg.distill?.apiKey,
-        fallbackModels: cfg.distill?.fallbackModels,
+        fallbackModels: distillFallbacks,
         label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
@@ -2427,7 +2443,9 @@ export async function runSelfCorrectionRunForCli(
   const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
     incidents_json: JSON.stringify(incidents),
   });
-  const model = opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const heavyPref = getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy");
+  const model = opts.model ?? heavyPref[0] ?? "gpt-4o";
+  const scFallbackModels = opts.model ? [] : (heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])));
   let analysed: Array<{
     category: string;
     severity: string;
@@ -2457,13 +2475,14 @@ export async function runSelfCorrectionRunForCli(
       content = (r.stdout ?? "") + (r.stderr ?? "");
       if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
     } else {
-      content = await chatComplete({
+      content = await chatCompleteWithRetry({
         model,
         content: prompt,
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
-        geminiApiKey: cfg.distill?.apiKey,
+        fallbackModels: scFallbackModels,
+        label: "memory-hybrid: self-correction analyze",
       });
     }
     const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -2544,13 +2563,14 @@ export async function runSelfCorrectionRunForCli(
           current_tools: currentTools,
           new_rules: toolsSuggestions.join("\n"),
         });
-        const rewritten = await chatComplete({
-          model: opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview",
+        const rewritten = await chatCompleteWithRetry({
+          model,
           content: rewritePrompt,
           temperature: 0.2,
           maxTokens: 16000,
           openai,
-          geminiApiKey: cfg.distill?.apiKey,
+          fallbackModels: scFallbackModels,
+          label: "memory-hybrid: self-correction rewrite-tools",
         });
         const cleaned = rewritten.trim().replace(/^```\w*\n?|```\s*$/g, "").trim();
         if (cleaned.length > 50) {
