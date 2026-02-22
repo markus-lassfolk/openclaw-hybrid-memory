@@ -69,7 +69,7 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { parseSuggestedChange } from "./proposals.js";
+import { capProposalConfidence } from "./proposals.js";
 import {
   CLI_STORE_IMPORTANCE,
   BATCH_STORE_IMPORTANCE,
@@ -1493,12 +1493,7 @@ export async function runGenerateProposalsForCli(
     const snapshot = getFileSnapshot(join(workspace, targetFile));
     let confidence = Number(item.confidence);
     if (!Number.isFinite(confidence)) continue;
-    const parsed = parseSuggestedChange(String(item.suggestedChange ?? ""));
-    if (parsed.changeType === "replace" && targetFile === "SOUL.md") {
-      confidence = Math.min(confidence, 0.5);
-    } else if (parsed.changeType === "replace") {
-      confidence = Math.min(confidence, 0.6);
-    }
+    confidence = capProposalConfidence(confidence, targetFile, String(item.suggestedChange ?? ""));
     if (confidence < minConf) {
       ctx.logger.info?.(`memory-hybrid: proposal dropped — confidence ${confidence < Number(item.confidence) ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})` : `below minConf ${minConf}`}: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`);
       continue;
