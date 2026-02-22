@@ -1226,7 +1226,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
       console.log("openclaw-hybrid-memory");
       console.log(`  Installed:  ${installed}`);
-      console.log(`  GitHub:     ${githubVersion ?? "unavailable"}${updateHint(githubVersion)}`);
+      console.log(`  GitHub:     ${githubVersion ?? "unavailable"}${githubVersion != null && compare(installed, githubVersion) > 0 ? " (installed is newer)" : updateHint(githubVersion)}`);
       console.log(`  npm:        ${npmVersion ?? "unavailable"}${npmVersion != null && compare(installed, npmVersion) > 0 ? " (installed is newer)" : updateHint(npmVersion)}`);
     }));
 
