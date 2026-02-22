@@ -578,12 +578,36 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.llm!.fallbackModel).toBe("gpt-4o-mini");
   });
 
-  it("omits llm when default or heavy is empty", () => {
-    const result = hybridConfigSchema.parse({
+  it("allows single-tier llm (only default or only heavy)", () => {
+    const withHeavyOnly = hybridConfigSchema.parse({
       ...validBase,
       llm: { default: [], heavy: ["gpt-4o"] },
     });
-    expect(result.llm).toBeUndefined();
+    expect(withHeavyOnly.llm).toBeDefined();
+    expect(withHeavyOnly.llm!.default).toEqual([]);
+    expect(withHeavyOnly.llm!.heavy).toEqual(["gpt-4o"]);
+    const withDefaultOnly = hybridConfigSchema.parse({
+      ...validBase,
+      llm: { default: ["gpt-4o-mini"], heavy: [] },
+    });
+    expect(withDefaultOnly.llm).toBeDefined();
+    expect(withDefaultOnly.llm!.default).toEqual(["gpt-4o-mini"]);
+    expect(withDefaultOnly.llm!.heavy).toEqual([]);
+  });
+
+  it("getLLMModelPreference does not append fallback when fallbackModel is unset", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        default: ["gemini-2.0-flash"],
+        heavy: ["gpt-4o"],
+        fallbackToDefault: true,
+        fallbackModel: undefined,
+      },
+    });
+    const cronCfg = getCronModelConfig(cfg);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
   });
 
   it("getLLMModelPreference returns list and fallback when llm configured", () => {
@@ -597,7 +621,7 @@ describe("hybridConfigSchema.parse", () => {
       },
     });
     const cronCfg = getCronModelConfig(cfg);
-    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash", "gpt-4o-mini", "gpt-4o-mini"]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash", "gpt-4o-mini"]);
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o", "gpt-4o-mini"]);
     expect(getDefaultCronModel(cronCfg, "default")).toBe("gemini-2.0-flash");
     expect(getDefaultCronModel(cronCfg, "heavy")).toBe("gpt-4o");

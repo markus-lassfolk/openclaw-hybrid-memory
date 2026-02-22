@@ -25,7 +25,6 @@ import {
   type RunReflectionRulesFn,
   type RunReflectionMetaFn,
 } from "../tools/utility-tools.js";
-import { registerProposalsCli } from "../cli/proposals.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export interface ToolsContext {
@@ -141,15 +140,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
       }
     }, 24 * 60 * 60_000); // daily
 
-    // Register CLI commands for human-only review/apply operations
-    api.registerCli(({ program }) => {
-      registerProposalsCli(program, {
-        proposalsDb: proposalsDb!,
-        cfg,
-        resolvedSqlitePath,
-        api,
-      });
-    });
+    // Proposals CLI (list/show/approve/reject) is registered under hybrid-mem in manage.ts only
   }
 
   // Utility tools (reflection, consolidation, export)

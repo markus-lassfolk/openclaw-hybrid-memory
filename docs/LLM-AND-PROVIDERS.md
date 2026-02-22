@@ -11,7 +11,7 @@ The hybrid-memory plugin uses **two kinds of model access**:
 1. **Embeddings** — to turn text into vectors for semantic search (auto-recall, dedup, ingest).
 2. **Chat/completion** — for distillation, reflection, classification, proposals, self-correction, HyDE, and other LLM-backed features.
 
-All LLM calls are routed through the **OpenClaw gateway** (OpenAI-compatible API). You can use any provider the gateway supports: OpenAI, Google Gemini, Anthropic Claude, Groq, OpenRouter, local Ollama, etc. No provider-specific API keys are required in the plugin; the gateway handles keys and routing.
+All LLM calls are routed through the **OpenClaw gateway** (OpenAI-compatible API). You can use any provider the gateway supports: OpenAI, Google Gemini, Anthropic Claude, Groq, OpenRouter, local Ollama, etc. **The plugin does not read or require GOOGLE_API_KEY, GEMINI_API_KEY, or other provider keys**; the gateway handles keys and routing. Configure provider keys in OpenClaw/gateway config if needed.
 
 ---
 
@@ -84,9 +84,9 @@ Use the **`llm`** block to give the plugin an ordered list of models per tier. T
 | `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages, etc.). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). |
 | `fallbackToDefault` | If `true`, after trying all models in the list, try one more fallback model (see below). |
-| `fallbackModel` | Optional. When `fallbackToDefault` is true, this model is used as the final try. If omitted, the plugin uses a built-in default (e.g. `gpt-4o-mini` for default tier, `gpt-4o` for heavy). |
+| `fallbackModel` | Optional. When `fallbackToDefault` is true, this model is tried last. Set to your **gateway default model** (e.g. from openclaw.yaml) for a provider-agnostic final fallback; omit to not add any extra fallback beyond the list. |
 
-**Fallback behaviour:** For each LLM call the plugin (1) tries each model in the list in order, (2) on failure (no key, 401, 403, 5xx, etc.) tries the next, (3) if `fallbackToDefault` is true and all list models failed, tries `fallbackModel` or the tier default, (4) only then fails the request.
+**Fallback behaviour:** For each LLM call the plugin (1) tries each model in the list in order, (2) on failure (no key, 401, 403, 5xx, etc.) tries the next, (3) if `fallbackToDefault` is true and `fallbackModel` is set and not already in the list, tries it last, (4) only then fails the request.
 
 When **`llm`** is set, maintenance jobs and CLI commands (distill, reflect, classify, etc.) use these lists. When **`llm`** is not set, the plugin falls back to **legacy** behaviour (see below).
 

@@ -77,8 +77,8 @@ import {
 } from "../utils/constants.js";
 
 // Shared cron job definitions used by install and verify --fix.
-// Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config (getCronModelAlias).
-// modelTier: "default" = standard LLM, "heavy" = larger context; resolved to stable aliases when available.
+// Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
+// modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
@@ -102,7 +102,6 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
 function resolveCronJob(def: Record<string, unknown> & { modelTier?: "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
   const { modelTier, ...rest } = def;
   const tier = modelTier ?? "default";
-  // Use getDefaultCronModel (returns actual API model names) not getCronModelAlias (returns aliases like "gemini", "sonnet" which are not valid model names).
   const model = getDefaultCronModel(pluginConfig, tier);
   return { ...rest, model };
 }
@@ -1439,7 +1438,7 @@ export async function runGenerateProposalsForCli(
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, "heavy");
   const model = pref[0];
-  const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels;
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.distill?.fallbackModels ?? []);
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
