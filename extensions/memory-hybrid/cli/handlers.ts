@@ -345,8 +345,6 @@ export async function runStoreForCli(
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");
   const configPath = join(openclawDir, "openclaw.json");
-  mkdirSync(openclawDir, { recursive: true });
-  mkdirSync(join(openclawDir, "memory"), { recursive: true });
 
   const fullDefaults = {
     memory: { backend: "builtin" as const, citations: "auto" as const },
@@ -446,6 +444,8 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   }
 
   try {
+    mkdirSync(openclawDir, { recursive: true });
+    mkdirSync(join(openclawDir, "memory"), { recursive: true });
     writeFileSync(configPath, after, "utf-8");
     // Create maintenance cron jobs on fresh install (same definitions as verify --fix, no re-enable)
     try {
