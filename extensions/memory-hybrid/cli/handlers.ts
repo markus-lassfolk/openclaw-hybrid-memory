@@ -565,6 +565,12 @@ export async function runVerifyForCli(
   const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath } = ctx;
   const log = sink.log;
   const err = sink.error ?? sink.log;
+  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const OK = noEmoji ? "[OK]" : "✅";
+  const FAIL = noEmoji ? "[FAIL]" : "❌";
+  const PAUSE = noEmoji ? "[paused]" : "⏸️ ";
+  const ON = noEmoji ? "[on]" : "✅ on";
+  const OFF = noEmoji ? "[off]" : "❌ off";
   const issues: string[] = [];
   const fixes: string[] = [];
   let configOk = true;
@@ -589,8 +595,8 @@ export async function runVerifyForCli(
   }
   const openclawDir = join(homedir(), ".openclaw");
   const defaultConfigPath = join(openclawDir, "openclaw.json");
-  if (configOk) log("✅ Config: embedding.apiKey and model present");
-  else log("❌ Config: issues found");
+  if (configOk) log(`${OK} Config: embedding.apiKey and model present`);
+  else log(`${FAIL} Config: issues found`);
 
   const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const isBindingsError = (msg: string) =>
@@ -601,7 +607,7 @@ export async function runVerifyForCli(
   try {
     const n = factsDb.count();
     sqliteOk = true;
-    log(`✅ SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
+    log(`${OK} SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
   } catch (e) {
     const msg = String(e);
     issues.push(`SQLite: ${msg}`);
@@ -611,14 +617,14 @@ export async function runVerifyForCli(
     } else {
       fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
     }
-    log(`❌ SQLite: FAIL — ${msg}`);
+    log(`${FAIL} SQLite: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:sqlite-check" });
   }
 
   try {
     const n = await vectorDb.count();
     lanceOk = true;
-    log(`✅ LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
+    log(`${OK} LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
   } catch (e) {
     const msg = String(e);
     issues.push(`LanceDB: ${msg}`);
@@ -628,22 +634,22 @@ export async function runVerifyForCli(
     } else {
       fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
     }
-    log(`❌ LanceDB: FAIL — ${msg}`);
+    log(`${FAIL} LanceDB: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:lancedb-check" });
   }
 
   try {
     await embeddings.embed("verify test");
     embeddingOk = true;
-    log("✅ Embedding API: OK");
+    log(`${OK} Embedding API: OK`);
   } catch (e) {
     issues.push(`Embedding API: ${String(e)}`);
     fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
-    log(`❌ Embedding API: FAIL — ${String(e)}`);
+    log(`${FAIL} Embedding API: FAIL — ${String(e)}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }
 
-  const bool = (b: boolean) => b ? "✅ on" : "❌ off";
+  const bool = (b: boolean) => b ? ON : OFF;
   const restartPending = existsSync(getRestartPendingPath());
   const modeLabel = cfg.mode
     ? cfg.mode === "custom"
@@ -801,7 +807,7 @@ export async function runVerifyForCli(
 
   // Helper function to format job status display
   function formatJobStatus(job: JobInfo, label: string, indent: string, log: (msg: string) => void): void {
-    const statusIcon = job.enabled ? "✅" : "⏸️ ";
+    const statusIcon = job.enabled ? OK : PAUSE;
     const statusText = job.enabled ? "enabled " : "disabled";
 
     let statusDetails = "";
@@ -933,7 +939,7 @@ export async function runVerifyForCli(
     const job = allJobs.get(key);
 
     if (!job) {
-      log(`  ❌ ${key.padEnd(30)} missing`);
+      log(`  ${FAIL} ${key.padEnd(30)} missing`);
       const fixMsg = docsPath
         ? `Optional: Set up ${description} via jobs. See ${docsPath}. Run 'openclaw hybrid-mem verify --fix' to add.`
         : `Optional: Set up ${description} via jobs. Run 'openclaw hybrid-mem verify --fix' to add.`;

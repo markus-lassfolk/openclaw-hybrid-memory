@@ -19,7 +19,9 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
-    .action(withExit(async (opts: { fix?: boolean; logFile?: string }) => {
+    .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
+    .action(withExit(async (opts: { fix?: boolean; logFile?: string; noEmoji?: boolean }) => {
+      if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
       try {
         await runVerify(
           { fix: !!opts.fix, logFile: opts.logFile },
