@@ -92,7 +92,7 @@ describe("chatComplete", () => {
   });
 
   it("routes gemini-2.0-flash through gateway (openai.chat.completions.create)", async () => {
-    mockOpenai.chat.completions.create.mockResolvedValue({
+    vi.mocked(mockOpenai.chat.completions.create).mockResolvedValue({
       choices: [{ message: { content: "Hello from gateway" } }],
     } as any);
     const result = await chatComplete({

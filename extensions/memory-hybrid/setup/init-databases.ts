@@ -60,7 +60,10 @@ export function initializeDatabases(
   const factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
   vectorDb.setLogger(api.logger);
-  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
+  const gatewayBaseUrl = typeof (api as Record<string, unknown>).gatewayBaseUrl === "string"
+    ? (api as Record<string, unknown>).gatewayBaseUrl as string
+    : undefined;
+  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey, ...(gatewayBaseUrl ? { baseURL: gatewayBaseUrl } : {}) });
   const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
   const embeddings = new Embeddings(openai, embeddingModels);
 

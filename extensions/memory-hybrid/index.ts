@@ -122,7 +122,6 @@ import {
 } from "./services/reflection.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "./services/credential-migration.js";
-import { registerProposalsCli, type ProposalsCliContext } from "./cli/proposals.js";
 import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
 import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.js";
 import { registerTools } from "./setup/register-tools.js";

@@ -230,7 +230,7 @@ function buildCliContextServices(
     runReflection: (opts) => {
       const cronCfg = getCronModelConfig(cfg);
       const pref = getLLMModelPreference(cronCfg, "default");
-      const fallbackModels = opts.fallbackModels ?? (pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels);
+      const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.distill?.fallbackModels ?? []);
       return runReflection(factsDb, vectorDb, embeddings, openai, {
         defaultWindow: cfg.reflection.defaultWindow,
         minObservations: cfg.reflection.minObservations,
@@ -240,13 +240,13 @@ function buildCliContextServices(
     runReflectionRules: (opts) => {
       const cronCfg = getCronModelConfig(cfg);
       const pref = getLLMModelPreference(cronCfg, "default");
-      const fallbackModels = opts.fallbackModels ?? (pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels);
+      const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.distill?.fallbackModels ?? []);
       return runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? pref[0], fallbackModels }, logSink);
     },
     runReflectionMeta: (opts) => {
       const cronCfg = getCronModelConfig(cfg);
       const pref = getLLMModelPreference(cronCfg, "default");
-      const fallbackModels = opts.fallbackModels ?? (pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels);
+      const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.distill?.fallbackModels ?? []);
       return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? pref[0], fallbackModels }, logSink);
     },
     runClassify: (opts) =>
