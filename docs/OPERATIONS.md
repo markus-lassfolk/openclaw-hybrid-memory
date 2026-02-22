@@ -42,7 +42,9 @@ After adding jobs, the gateway will pick them up on next start (or according to 
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.
 
-**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config:
+**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config. When you run **`openclaw hybrid-mem verify --fix`**, missing jobs are added with a **model chosen from your config** (Gemini → distill, Claude → claude, else OpenAI → reflection). See [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-maintenance-and-self-correction).
+
+Example structure (actual `model` value is filled from your provider at install/verify time):
 
 ```json
 {
@@ -51,9 +53,9 @@ Extracts durable facts from old conversation logs. Recommended if you want to ca
       "name": "nightly-memory-sweep",
       "schedule": "0 2 * * *",
       "channel": "system",
-      "message": "Run nightly session distillation: last 3 days, Gemini model, isolated session.",
+      "message": "Run nightly session distillation: last 3 days, isolated session.",
       "isolated": true,
-      "model": "gemini"
+      "model": "gemini-2.0-flash"
     }
   ]
 }
@@ -68,13 +70,7 @@ This runs at 2 AM daily as an isolated sub-agent. It processes session logs from
 0 2 * * * cd ~/.openclaw && openclaw hybrid-mem distill >> /var/log/openclaw-distill.log 2>&1
 ```
 
-**After each distillation run**, always execute:
-
-```bash
-openclaw hybrid-mem record-distill
-```
-
-This writes a timestamp so the next run uses the correct incremental window and `verify` shows the last run.
+Distill automatically records the run timestamp so the next job uses the correct incremental window and `verify` shows the last run.
 
 **Distillation window commands:**
 
@@ -100,17 +96,17 @@ Synthesizes behavioral patterns from recent facts. The `openclaw hybrid-mem inst
   "channel": "system",
   "message": "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.",
   "isolated": true,
-  "model": "gemini"
+  "model": "gpt-4o-mini"
 }
 ```
 
-Runs at 3 AM Sundays. Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
+Runs at 3 AM Sundays. The `model` value is resolved from your config (see [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-maintenance-and-self-correction)). Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
 
 ### What the two jobs cover (and what they don’t)
 
 | What | Covered by | Notes |
 |------|------------|--------|
-| **Session distillation** (facts from old conversation logs) | **nightly-memory-sweep** | Run `openclaw hybrid-mem record-distill` after each run (or have the job message ask the agent to do it). With `distill.extractDirectives` / `distill.extractReinforcement` the same run can extract directives and reinforcement. |
+| **Session distillation** (facts from old conversation logs) | **nightly-memory-sweep** | Distill automatically records the run timestamp after completion. With `distill.extractDirectives` / `distill.extractReinforcement` the same run can extract directives and reinforcement. |
 | **Reflection** (pattern synthesis from facts) | **weekly-reflection** | Uses `memory_reflect`; requires `reflection.enabled: true`. |
 | **Prune expired facts** | Gateway (every 60 min) | No cron job needed. |
 | **Auto-classify** ("other" → categories) | Gateway (every 24 h if enabled) | No cron job needed. |

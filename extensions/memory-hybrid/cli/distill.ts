@@ -17,12 +17,13 @@ import { withExit, type Chainable } from "./shared.js";
 export type DistillContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
-  runExtractDaily: (opts: { days: number; dryRun: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
+  runExtractDaily: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
   runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean }) => Promise<ExtractProceduresResult>;
-  runGenerateAutoSkills: (opts: { dryRun: boolean }) => Promise<GenerateAutoSkillsResult>;
+  runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number; stored?: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
 export function registerDistillCommands(mem: Chainable, ctx: DistillContext): void {
@@ -35,6 +36,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     runDistill,
     runExtractDirectives,
     runExtractReinforcement,
+    runGenerateProposals,
   } = ctx;
 
   mem
@@ -77,7 +79,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
 
   mem
     .command("distill-window")
-    .description("Print the session distillation window (full or incremental). Use at start of a distillation job to decide what to process; end the job with record-distill.")
+    .description("Print the session distillation window (full or incremental). Use at start of a distillation job to decide what to process.")
     .option("--json", "Output machine-readable JSON only (mode, startDate, endDate, mtimeDays)")
     .action(withExit(async (opts: { json?: boolean }) => {
       const result = await runDistillWindow({ json: !!opts.json });
@@ -89,7 +91,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       console.log(`  startDate: ${result.startDate}`);
       console.log(`  endDate: ${result.endDate}`);
       console.log(`  mtimeDays: ${result.mtimeDays} (use find ... -mtime -${result.mtimeDays} for session files)`);
-      console.log("Process sessions from that window; then run: openclaw hybrid-mem record-distill");
+      console.log("Process sessions from that window; distill will record the run automatically.");
     }));
 
   mem
@@ -106,10 +108,11 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .description("Extract structured facts from daily memory files")
     .option("--days <n>", "How many days back to scan", "7")
     .option("--dry-run", "Show extractions without storing")
-    .action(withExit(async (opts: { days: string; dryRun?: boolean }) => {
+    .option("--verbose", "Log each extracted fact as it is stored")
+    .action(withExit(async (opts: { days: string; dryRun?: boolean; verbose?: boolean }) => {
       const daysBack = parseInt(opts.days);
       const result = await runExtractDaily(
-        { days: daysBack, dryRun: !!opts.dryRun },
+        { days: daysBack, dryRun: !!opts.dryRun, verbose: !!opts.verbose },
         { log: (s) => console.log(s), warn: (s) => console.warn(s) },
       );
       if (result.dryRun) {
@@ -149,13 +152,32 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .command("generate-auto-skills")
     .description("Generate SKILL.md + recipe.json in skills/auto/ for procedures validated enough times")
     .option("--dry-run", "Show what would be generated without writing")
-    .action(withExit(async (opts: { dryRun?: boolean }) => {
-      const result = await runGenerateAutoSkills({ dryRun: !!opts.dryRun });
+    .option("--verbose", "Log each generated skill path")
+    .action(withExit(async (opts: { dryRun?: boolean; verbose?: boolean }) => {
+      const result = await runGenerateAutoSkills({ dryRun: !!opts.dryRun, verbose: !!opts.verbose });
       if (result.dryRun) {
         console.log(`\n[dry-run] Would generate ${result.generated} auto-skills`);
       } else {
         console.log(`\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`);
         for (const p of result.paths) console.log(`  ${p}`);
+      }
+    }));
+
+  mem
+    .command("generate-proposals")
+    .description("Generate persona proposals from reflection insights (patterns, rules, meta). Use after reflect-meta.")
+    .option("--dry-run", "Show what would be proposed without creating")
+    .option("--verbose", "Log each proposal created")
+    .action(withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }) => {
+      if (!runGenerateProposals) {
+        console.log("Generate-proposals not available (personaProposals disabled).");
+        return;
+      }
+      const result = await runGenerateProposals({ dryRun: !!opts?.dryRun, verbose: !!opts?.verbose });
+      if (opts?.dryRun) {
+        console.log(`\n[dry-run] Would create ${result.created} proposal(s).`);
+      } else {
+        console.log(`\nCreated ${result.created} proposal(s).`);
       }
     }));
 

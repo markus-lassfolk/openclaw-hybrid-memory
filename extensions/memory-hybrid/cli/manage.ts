@@ -3,6 +3,8 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type {
   FindDuplicatesResult,
   StoreCliOpts,
@@ -27,6 +29,7 @@ import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withExit, type Chainable } from "./shared.js";
+import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -74,7 +77,7 @@ export type ManageContext = {
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
-  runDistill?: (opts: { dryRun: boolean; days?: number }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; skipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean }>;
+  runDistill?: (opts: { dryRun: boolean; days?: number; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; skipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean }>;
   runRecordDistill?: () => Promise<unknown>;
   runExtractProcedures?: (opts: { days?: number; dryRun: boolean }) => Promise<unknown>;
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
@@ -114,6 +117,13 @@ export type ManageContext = {
     showItem: (id: string) => Promise<{ type: "fact" | "proposal"; data: unknown } | null>;
   };
   tieringEnabled: boolean;
+  resolvedSqlitePath?: string;
+  resolvePath?: (file: string) => string;
+  runExtractDaily?: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
+  runExtractDirectives?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
+  runExtractReinforcement?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
+  runGenerateAutoSkills?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -147,17 +157,25 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runSelfCorrectionRun,
     runCompaction,
     runDistill,
-    runRecordDistill,
     runExtractProcedures,
     runBuildLanguageKeywords,
     runExport,
     listCommands,
     tieringEnabled,
+    resolvedSqlitePath,
+    runExtractDaily,
+    runExtractDirectives,
+    runExtractReinforcement,
+    runGenerateAutoSkills,
+    runGenerateProposals,
+    resolvePath,
   } = ctx;
+
+  const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
 
   mem
     .command("run-all")
-    .description("Run all maintenance tasks in optimal order (prune, compact, distill, extract-procedures, reflection, self-correction). Use --dry-run to list steps only.")
+    .description("Run all maintenance tasks in optimal order (prune, compact, distill, extract-*, reflection, generate-proposals, self-correction, build-languages). Use --dry-run to list steps only.")
     .option("--dry-run", "List steps that would run without executing")
     .option("--verbose", "Show detailed output for each step")
     .action(withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }) => {
@@ -165,12 +183,27 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const verbose = !!opts?.verbose;
       const log = (s: string) => console.log(s);
       const sink = { log, warn: (s: string) => console.warn(s) };
+      const memoryDir = resolvedSqlitePath ? dirname(resolvedSqlitePath) : null;
+      const backfillDonePath = memoryDir ? join(memoryDir, BACKFILL_DECAY_MARKER) : null;
+
       const steps: { name: string; run: () => Promise<void> }[] = [
         {
           name: "backfill-decay",
           run: async () => {
+            if (backfillDonePath && existsSync(backfillDonePath)) {
+              if (verbose) log("Backfill-decay already done; skipping.");
+              return;
+            }
             const n = factsDb.backfillDecay();
-            log(`Backfilled decay for ${n} facts.`);
+            const total = Object.values(n).reduce((a, b) => a + b, 0);
+            log(`Backfilled decay for ${total} facts.`);
+            if (backfillDonePath) {
+              try {
+                writeFileSync(backfillDonePath, new Date().toISOString() + "\n");
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "run-all:backfill-decay-marker" });
+              }
+            }
           },
         },
         {
@@ -191,13 +224,38 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           ? [{
               name: "distill (3 days)",
               run: async () => {
-                const r = await runDistill({ dryRun: false, days: 3 }, sink);
+                const r = await runDistill({ dryRun: false, days: 3, verbose }, sink);
                 log(`Distill: ${r.stored} stored from ${r.sessionsScanned} sessions.`);
               },
             }]
           : []),
-        ...(runRecordDistill
-          ? [{ name: "record-distill", run: () => runRecordDistill!().then(() => log("Recorded distill.")) }]
+        ...(runExtractDaily
+          ? [{
+              name: "extract-daily (7 days)",
+              run: async () => {
+                const r = await runExtractDaily({ days: 7, dryRun: false, verbose }, sink);
+                const stored = r.totalStored ?? r.stored ?? 0;
+                log(`Extract-daily: ${stored} stored.`);
+              },
+            }]
+          : []),
+        ...(runExtractDirectives
+          ? [{
+              name: "extract-directives (7 days)",
+              run: async () => {
+                const r = await runExtractDirectives({ days: 7, verbose, dryRun: false });
+                log(`Extract-directives: ${r.sessionsScanned} sessions scanned.`);
+              },
+            }]
+          : []),
+        ...(runExtractReinforcement
+          ? [{
+              name: "extract-reinforcement (7 days)",
+              run: async () => {
+                const r = await runExtractReinforcement({ days: 7, verbose, dryRun: false });
+                log(`Extract-reinforcement: ${r.sessionsScanned} sessions scanned.`);
+              },
+            }]
           : []),
         ...(runExtractProcedures
           ? [{
@@ -205,6 +263,15 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
               run: async () => {
                 await runExtractProcedures({ days: 7, dryRun: false });
                 log("Extract procedures done.");
+              },
+            }]
+          : []),
+        ...(runGenerateAutoSkills
+          ? [{
+              name: "generate-auto-skills",
+              run: async () => {
+                const r = await runGenerateAutoSkills({ dryRun: false, verbose });
+                log(`Generate-auto-skills: ${r.generated} generated.`);
               },
             }]
           : []),
@@ -229,11 +296,41 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             log(`Reflect-meta: ${r.metaStored} meta-patterns stored.`);
           },
         },
+        ...(runGenerateProposals
+          ? [{
+              name: "generate-proposals",
+              run: async () => {
+                const r = await runGenerateProposals({ dryRun: false, verbose });
+                log(`Generate-proposals: ${r.created} created.`);
+              },
+            }]
+          : []),
         {
           name: "self-correction-run",
           run: async () => {
             await runSelfCorrectionRun({ dryRun: false });
             log("Self-correction run done.");
+          },
+        },
+        {
+          name: "build-languages",
+          run: async () => {
+            const langPath = getLanguageKeywordsFilePath();
+            if (langPath && existsSync(langPath)) {
+              try {
+                const ageMs = Date.now() - statSync(langPath).mtimeMs;
+                const ageDays = ageMs / (24 * 60 * 60 * 1000);
+                if (ageDays < 7) {
+                  if (verbose) log(`Build-languages: skipped (updated ${ageDays.toFixed(1)} days ago).`);
+                  return;
+                }
+              } catch (err) {
+                if (verbose) log(`Build-languages: could not read mtime (${err}); running anyway.`);
+              }
+            }
+            const r = await runBuildLanguageKeywords({ dryRun: false });
+            if (r.ok) log(`Build-languages: ${r.languagesAdded} languages added.`);
+            else if (verbose) log(`Build-languages: ${r.error}`);
           },
         },
       ];
@@ -536,7 +633,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
   mem
     .command("show <id>")
-    .description("Show full detail for a fact or proposal (by ID)")
+    .description("Show full detail for a fact by ID. For proposals use: hybrid-mem proposals show <id> (supports --diff, --json)")
     .action(withExit(async (id: string) => {
       if (!listCommands?.showItem) {
         const fact = factsDb.get(id);
@@ -552,21 +649,32 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`Item not found: ${id}`);
         return;
       }
+      if (item.type === "proposal") {
+        console.log(`Proposal ${id}. Use: openclaw hybrid-mem proposals show ${id} (--diff, --json)`);
+        return;
+      }
       console.log(`Type: ${item.type}`);
       console.log(JSON.stringify(item.data, null, 2));
     }));
 
   const proposals = mem.command("proposals").description("Manage persona-driven proposals");
+  const proposalStatusValues = ["pending", "approved", "rejected", "applied"] as const;
   proposals
     .command("list")
     .description("List pending proposals")
-    .option("--status <s>", "Filter by status (pending/approved/rejected)")
+    .option("--status <s>", `Filter by status: ${proposalStatusValues.join(", ")}`)
     .action(withExit(async (opts?: { status?: string }) => {
       if (!listCommands?.listProposals) {
         console.log("Proposals feature not available (personaProposals disabled or no workspace).");
         return;
       }
-      const items = await listCommands.listProposals({ status: opts?.status });
+      const status = opts?.status;
+      if (status != null && status !== "" && !proposalStatusValues.includes(status as typeof proposalStatusValues[number])) {
+        console.error(`error: --status requires one of: ${proposalStatusValues.join(", ")}`);
+        process.exitCode = 1;
+        return;
+      }
+      const items = await listCommands.listProposals({ status: status || undefined });
       console.log(`Proposals (${items.length}):`);
       for (const p of items) {
         console.log(`  [${p.id}] ${p.title} (target=${p.targetFile}, status=${p.status}, confidence=${p.confidence.toFixed(2)})`);
@@ -1154,6 +1262,82 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
       const deleted = factsDb.pruneScopedFacts(scopeFilter);
       console.log(`Pruned ${deleted} facts from scope ${opts.scope}${opts.scopeTarget ? ` (target=${opts.scopeTarget})` : ""}.`);
+    }));
+
+  mem
+    .command("version")
+    .description("Show installed version and latest available on GitHub and npm")
+    .option("--json", "Machine-readable JSON output")
+    .action(withExit(async (opts?: { json?: boolean }) => {
+      const installed = ctx.versionInfo.pluginVersion;
+      const timeoutMs = 3000;
+      const fetchWithTimeout = async (url: string): Promise<Response> => {
+        const c = new AbortController();
+        const t = setTimeout(() => c.abort(), timeoutMs);
+        try {
+          const res = await fetch(url, { signal: c.signal });
+          clearTimeout(t);
+          return res;
+        } catch (err) {
+          clearTimeout(t);
+          if (err instanceof Error && err.name === "AbortError") throw new Error("Request timed out");
+          throw err;
+        }
+      };
+
+      let githubVersion: string | null = null;
+      let npmVersion: string | null = null;
+      try {
+        const ghRes = await fetchWithTimeout("https://api.github.com/repos/markus-lassfolk/openclaw-hybrid-memory/releases/latest");
+        if (ghRes.ok) {
+          const data = (await ghRes.json()) as { tag_name?: string };
+          const tag = data.tag_name;
+          githubVersion = typeof tag === "string" ? tag.replace(/^v/, "") : null;
+        }
+      } catch {
+        githubVersion = null;
+      }
+      try {
+        const npmRes = await fetchWithTimeout("https://registry.npmjs.org/openclaw-hybrid-memory/latest");
+        if (npmRes.ok) {
+          const data = (await npmRes.json()) as { version?: string };
+          npmVersion = typeof data.version === "string" ? data.version : null;
+        }
+      } catch {
+        npmVersion = null;
+      }
+
+      const compare = (a: string, b: string): number => {
+        const parseNum = (s: string): number => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; };
+        const pa = a.replace(/[-+].*/,"").split(".").map(parseNum);
+        const pb = b.replace(/[-+].*/,"").split(".").map(parseNum);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+          const va = pa[i] ?? 0;
+          const vb = pb[i] ?? 0;
+          if (va !== vb) return va < vb ? -1 : 1;
+        }
+        return 0;
+      };
+      const updateHint = (latest: string | null) => {
+        if (latest == null) return "";
+        return compare(installed, latest) < 0 ? " ⬆ update available" : " (up to date)";
+      };
+
+      if (opts?.json) {
+        console.log(JSON.stringify({
+          name: "openclaw-hybrid-memory",
+          installed,
+          github: githubVersion ?? "unavailable",
+          npm: npmVersion ?? "unavailable",
+          updateAvailable: (githubVersion != null && compare(installed, githubVersion) < 0) || (npmVersion != null && compare(installed, npmVersion) < 0),
+        }, null, 2));
+        return;
+      }
+
+      console.log("openclaw-hybrid-memory");
+      console.log(`  Installed:  ${installed}`);
+      console.log(`  GitHub:     ${githubVersion ?? "unavailable"}${githubVersion != null && compare(installed, githubVersion) > 0 ? " (installed is newer)" : updateHint(githubVersion)}`);
+      console.log(`  npm:        ${npmVersion ?? "unavailable"}${npmVersion != null && compare(installed, npmVersion) > 0 ? " (installed is newer)" : updateHint(npmVersion)}`);
     }));
 
   mem

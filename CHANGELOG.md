@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.2.222] - 2026-02-22
+
+Dependencies and tooling: better-sqlite3 ^12, direct Gemini REST API (drops @google/genai), `hybrid-mem version` command, cron/maintenance and Gemini fixes (fixes #72, #73, #80).
+
+### Added
+
+- **CLI `version` command:** `openclaw hybrid-mem version` shows installed version and latest on GitHub/npm with update hint (#80).
+- **Dynamic cron and spawn from config:** Cron job definitions and spawn model configurable; docs and CLI updated.
+- **Cron on install/upgrade:** Install and upgrade ensure cron jobs are present; disabled jobs honored.
+- **MAINTENANCE_CRON_JOBS:** Nightly includes prune and extract-daily; weekly includes extract-directives, reinforcement, generate-auto-skills, persona-proposals; deep-maintenance simplified.
+
+### Fixed
+
+- **better-sqlite3:** Upgraded to ^12; README note for ^12 and prebuild-install (#72).
+- **Gemini:** Removed @google/genai; direct Gemini REST API (#73). Multi-part response truncation and version display fixed.
+- **Cron:** Canonical key mapping for weekly-persona-proposals job.
+- **Model tier selection:** Provider-aware selection, async audit, duplicate commands, diff display.
+- **PR 85:** Rollback proposal on apply fail, dedupe show, Gemini retry; Copilot/BugBot/Codex review feedback.
+- **Misc:** Git commit non-fatal; JSON bracket extraction.
+
+### Changed
+
+- **Docs:** Gemini path per-request, retries for resilience. Comprehensive tests for new functionality.
+- **Version bump** — Release 2026.02.22 revision (npm `2026.2.222`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.2.221] - 2026-02-22
 
 Patch release: tool_use/tool_result sanitizer for Claude API, reflect --verbose, verify UX, LLM retry/fallback, Sentry false-positive fix (PR #78, closes #74–#77, #79).
@@ -331,7 +358,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.221...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.222...HEAD
+[2026.2.222]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.222
 [2026.2.221]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.221
 [2026.2.220]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.220
 [2026.2.210]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.210
