@@ -142,7 +142,7 @@ export async function chatCompleteWithRetry(opts: {
   label?: string;
 }): Promise<string> {
   const { fallbackModels = [], label: rawLabel, maxTokens, ...chatOpts } = opts;
-  const label = rawLabel ?? "LLM";
+  const label = rawLabel ?? "LLM call";
   const modelsToTry = [opts.model, ...fallbackModels];
 
   let lastError: Error | undefined;

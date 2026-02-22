@@ -740,26 +740,22 @@ export async function runVerifyForCli(
     const statusText = job.enabled ? "enabled " : "disabled";
 
     let statusDetails = "";
-    if (job.state) {
-      const parts: string[] = [];
+    const parts: string[] = [];
 
-      if (job.state.lastRunAtMs) {
-        const lastStatus = job.state.lastStatus ?? "unknown";
-        const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
-        parts.push(lastRun);
-      } else {
-        parts.push("last: never");
-      }
-
-      if (job.state.nextRunAtMs) {
-        parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
-      }
-
-      if (parts.length > 0) {
-        statusDetails = "  " + parts.join("  ");
-      }
+    if (job.state?.lastRunAtMs) {
+      const lastStatus = job.state.lastStatus ?? "unknown";
+      const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
+      parts.push(lastRun);
     } else {
-      statusDetails = "  last: never";
+      parts.push("last: never");
+    }
+
+    if (job.state?.nextRunAtMs) {
+      parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
+    }
+
+    if (parts.length > 0) {
+      statusDetails = "  " + parts.join("  ");
     }
 
     log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}${statusDetails}`);
