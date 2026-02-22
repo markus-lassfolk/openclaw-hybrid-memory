@@ -642,60 +642,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   const proposals = mem.command("proposals").description("Manage persona-driven proposals");
   const proposalStatusValues = ["pending", "approved", "rejected", "applied"] as const;
   proposals
-    .command("show <id>")
-    .description("Show full proposal content (observation, suggested change). Use --json or --diff.")
-    .option("--json", "Machine-readable output")
-    .option("--diff", "Show unified diff against current target file")
-    .action(withExit(async (id: string, opts?: { json?: boolean; diff?: boolean }) => {
-      if (!listCommands?.showItem) {
-        console.error("Proposals feature not available.");
-        process.exitCode = 1;
-        return;
-      }
-      const item = await listCommands.showItem(id);
-      if (!item || item.type !== "proposal") {
-        console.error(`Proposal ${id} not found`);
-        process.exitCode = 1;
-        return;
-      }
-      const p = item.data as { id: string; targetFile: string; status: string; confidence: number; createdAt: number; expiresAt: number | null; observation: string; suggestedChange: string; evidenceSessions: string[] };
-      if (opts?.json) {
-        console.log(JSON.stringify(p, null, 2));
-        return;
-      }
-      const created = new Date(p.createdAt * 1000).toISOString();
-      const evidenceCount = Array.isArray(p.evidenceSessions) ? p.evidenceSessions.length : 0;
-      const expiresIn = p.expiresAt ? Math.max(0, Math.floor((p.expiresAt - Math.floor(Date.now() / 1000)) / 86400)) : null;
-      console.log(`Proposal: ${p.id}`);
-      console.log(`Status: ${p.status}`);
-      console.log(`Target: ${p.targetFile}`);
-      console.log(`Confidence: ${p.confidence.toFixed(2)}`);
-      console.log(`Created: ${created}${expiresIn != null ? ` (expires in ${expiresIn}d)` : ""}`);
-      console.log(`Evidence: ${evidenceCount} sessions`);
-      console.log("");
-      console.log("── Observation ──");
-      console.log(p.observation);
-      console.log("");
-      console.log("── Suggested Change ──");
-      console.log(p.suggestedChange);
-      if (opts?.diff && resolvePath) {
-        const targetPath = resolvePath(p.targetFile);
-        if (existsSync(targetPath)) {
-          const current = readFileSync(targetPath, "utf-8");
-          const lines = p.suggestedChange.split(/\n/);
-          console.log("");
-          console.log("── Preview (diff) ──");
-          console.log(`--- ${p.targetFile} (current)`);
-          console.log(`+++ ${p.targetFile} (with suggestion)`);
-          for (const line of lines) console.log(`+ ${line}`);
-        } else {
-          console.log("");
-          console.log("── Preview (diff) ──");
-          for (const line of p.suggestedChange.split(/\n/)) console.log(`+ ${line}`);
-        }
-      }
-    }));
-  proposals
     .command("list")
     .description("List pending proposals")
     .option("--status <s>", `Filter by status: ${proposalStatusValues.join(", ")}`)
