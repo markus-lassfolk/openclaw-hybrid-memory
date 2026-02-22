@@ -122,7 +122,7 @@ function relativeTime(ms: number): string {
   const abs = Math.abs(diff);
   const future = diff > 0;
 
-  if (abs < 60000) return "just now";
+  if (abs < 60000) return future ? "in <1m" : "just now";
   if (abs < 3600000) {
     const m = Math.round(abs / 60000);
     return future ? `in ${m}m` : `${m}m ago`;
@@ -581,7 +581,7 @@ export async function runVerifyForCli(
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }
 
-  const bool = (b: boolean) => String(b);
+  const bool = (b: boolean) => b ? "✅ on" : "❌ off";
   const restartPending = existsSync(getRestartPendingPath());
   const modeLabel = cfg.mode
     ? cfg.mode === "custom"
@@ -638,18 +638,25 @@ export async function runVerifyForCli(
   log(`  autoRecall.entityLookup: ${bool(cfg.autoRecall.entityLookup.enabled)}`);
   log(`  autoRecall.authFailure (reactive recall): ${bool(cfg.autoRecall.authFailure.enabled)}`);
 
+  log("\n───── Advanced Features ─────");
   if (cfg.search) {
     log(`  search.hydeEnabled: ${bool(cfg.search.hydeEnabled)}`);
   }
+  if (cfg.errorReporting) {
+    log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
+  }
+
+  log("\n───── Ingestion & Distillation ─────");
   if (cfg.ingest) {
-    log(`  ingest (paths configured): true`);
+    log(`  ingest (paths configured): ${bool(true)}`);
+  } else {
+    log(`  ingest: ${bool(false)}`);
   }
   if (cfg.distill) {
     log(`  distill.extractDirectives: ${bool(cfg.distill.extractDirectives !== false)}`);
     log(`  distill.extractReinforcement: ${bool(cfg.distill.extractReinforcement !== false)}`);
-  }
-  if (cfg.errorReporting) {
-    log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
+  } else {
+    log(`  distill: ${bool(false)}`);
   }
 
   let credentialsOk = true;
@@ -865,6 +872,47 @@ export async function runVerifyForCli(
     if (job.state?.lastError && job.state.lastStatus === "error") {
       const errorPreview = job.state.lastError.slice(0, 100);
       log(`     └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
+    }
+  }
+
+  // Display any unknown/custom jobs not in the hardcoded list
+  const knownKeys = new Set(jobsToDisplay.map((j) => j.key));
+  const unknownJobs = Array.from(allJobs.entries()).filter(([key]) => !knownKeys.has(key));
+
+  if (unknownJobs.length > 0) {
+    log("\n  Other custom jobs:");
+    for (const [key, job] of unknownJobs) {
+      const statusIcon = job.enabled ? "✅" : "⏸️ ";
+      const statusText = job.enabled ? "enabled " : "disabled";
+
+      let statusDetails = "";
+      if (job.state) {
+        const parts: string[] = [];
+
+        if (job.state.lastRunAtMs) {
+          const lastStatus = job.state.lastStatus || "ok";
+          const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
+          parts.push(lastRun);
+        } else {
+          parts.push("last: never");
+        }
+
+        if (job.state.nextRunAtMs) {
+          parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
+        }
+
+        if (parts.length > 0) {
+          statusDetails = "  " + parts.join("  ");
+        }
+      }
+
+      log(`    ${statusIcon} ${job.name.padEnd(30)} ${statusText}${statusDetails}`);
+
+      // Show error details on next line if present
+      if (job.state?.lastError && job.state.lastStatus === "error") {
+        const errorPreview = job.state.lastError.slice(0, 100);
+        log(`       └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
+      }
     }
   }
 
