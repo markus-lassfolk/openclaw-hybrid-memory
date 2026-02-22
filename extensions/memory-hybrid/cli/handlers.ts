@@ -1457,6 +1457,8 @@ export async function runGenerateProposalsForCli(
       label: "memory-hybrid: generate-proposals",
     });
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(fallbackModels)}): ${errMsg}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "runGenerateProposalsForCli:llm" });
     return { created: 0 };
   }
@@ -2443,7 +2445,7 @@ export async function runSelfCorrectionRunForCli(
   const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
     incidents_json: JSON.stringify(incidents),
   });
-  const heavyPref = getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy");
+  const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
   const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
   const scFallbackModels = opts.model ? [] : (heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])));
   let analysed: Array<{
