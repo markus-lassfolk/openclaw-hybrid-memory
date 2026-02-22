@@ -176,7 +176,7 @@ export async function runReflection(
   const existingPatternFacts = factsDb.getByCategory("pattern").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  let existingVectors: number[][] = [];
+  let existingVectors: (number[] | null)[] = [];
   if (existingPatternFacts.length > 0) {
     for (let i = 0; i < existingPatternFacts.length; i += 20) {
       const batch = existingPatternFacts.slice(i, i + 20);
@@ -190,7 +190,7 @@ export async function runReflection(
             subsystem: 'embeddings',
             factId: f.id,
           });
-          existingVectors.push([]);
+          existingVectors.push(null);
         }
       }
       if (i + 20 < existingPatternFacts.length) await new Promise((r) => setTimeout(r, 200));
@@ -203,7 +203,7 @@ export async function runReflection(
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
     for (const ev of existingVectors) {
-      if (ev.length === 0) continue;
+      if (ev === null || ev.length === 0) continue;
       if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
@@ -317,7 +317,7 @@ export async function runReflectionRules(
   const existingRuleFacts = factsDb.getByCategory("rule").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  let existingVectors: number[][] = [];
+  let existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingRuleFacts.length; i += 20) {
     const batch = existingRuleFacts.slice(i, i + 20);
     for (const f of batch) {
@@ -329,7 +329,7 @@ export async function runReflectionRules(
           subsystem: 'embeddings',
           factId: f.id,
         });
-        existingVectors.push([]);
+        existingVectors.push(null);
       }
     }
     if (i + 20 < existingRuleFacts.length) await new Promise((r) => setTimeout(r, 200));
@@ -340,7 +340,7 @@ export async function runReflectionRules(
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
     for (const ev of existingVectors) {
-      if (ev.length === 0) continue;
+      if (ev === null || ev.length === 0) continue;
       if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
@@ -440,7 +440,7 @@ export async function runReflectionMeta(
   const existingMetaFacts = factsDb.getByCategory("pattern").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && (f.tags?.includes("meta") === true),
   );
-  let existingVectors: number[][] = [];
+  let existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingMetaFacts.length; i += 20) {
     const batch = existingMetaFacts.slice(i, i + 20);
     for (const f of batch) {
@@ -452,7 +452,7 @@ export async function runReflectionMeta(
           subsystem: 'embeddings',
           factId: f.id,
         });
-        existingVectors.push([]);
+        existingVectors.push(null);
       }
     }
     if (i + 20 < existingMetaFacts.length) await new Promise((r) => setTimeout(r, 200));
@@ -463,7 +463,7 @@ export async function runReflectionMeta(
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
     for (const ev of existingVectors) {
-      if (ev.length === 0) continue;
+      if (ev === null || ev.length === 0) continue;
       if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
