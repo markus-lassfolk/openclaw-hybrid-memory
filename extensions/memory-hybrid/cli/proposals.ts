@@ -337,7 +337,12 @@ export async function applyApprovedProposal(
     writeFileSync(targetPath, applied.content);
     const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
     if (!commitResult.ok) {
-      console.warn?.(`memory-hybrid: Git commit failed (non-fatal): ${commitResult.error}`);
+      // Rollback the file write to avoid leaving the file modified but uncommitted (inconsistent state).
+      writeFileSync(targetPath, original);
+      return {
+        ok: false,
+        error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
+      };
     }
     ctx.proposalsDb.markApplied(proposalId);
     await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
