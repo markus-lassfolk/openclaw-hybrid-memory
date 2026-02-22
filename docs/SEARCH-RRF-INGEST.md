@@ -125,7 +125,7 @@ HyDE generates a short “hypothetical answer” to the user query before embedd
 | Key | Default | Description |
 |-----|---------|-------------|
 | `hydeEnabled` | `false` | Enable HyDE for vector search |
-| `hydeModel` | `gpt-4o-mini` | Model used to generate the hypothetical answer |
+| `hydeModel` | (unset) | Model for HyDE; when omitted, uses `llm.default` or legacy default (issue #92) |
 
 ### Where it applies
 

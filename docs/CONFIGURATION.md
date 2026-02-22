@@ -520,7 +520,7 @@ Opt-in HyDE generates a hypothetical answer before embedding for vector search. 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `hydeEnabled` | `false` | Generate hypothetical answer before embedding |
-| `hydeModel` | `gpt-4o-mini` | Model for HyDE generation |
+| `hydeModel` | (unset) | Model for HyDE generation; when omitted, uses first model from `llm.default` or legacy default (issue #92) |
 
 ---
 
