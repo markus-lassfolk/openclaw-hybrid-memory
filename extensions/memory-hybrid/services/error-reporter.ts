@@ -109,11 +109,13 @@ export async function initErrorReporter(
     },
   });
 
-  const botUuid = config.botId || hostname();
-  const botName = config.botName ? config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "") : "unknown";
-  Sentry.setUser({ id: botUuid, username: botName });
-  Sentry.setTag("bot_id", botUuid);
-  Sentry.setTag("bot_name", botName);
+  if (config.botId) {
+    Sentry.setTag("bot_id", config.botId);
+  }
+  if (config.botName) {
+    const sanitizedBotName = config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "");
+    Sentry.setTag("bot_name", sanitizedBotName);
+  }
 
   initialized = true;
   const dsnHost = resolvedDsn.split('@')[1] || '***';
