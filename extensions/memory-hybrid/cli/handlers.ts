@@ -493,7 +493,7 @@ export async function runVerifyForCli(
   if (configOk) log("Config: embedding.apiKey and model present");
   else log("Config: issues found");
 
-  const extDir = dirname(fileURLToPath(import.meta.url));
+  const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const isBindingsError = (msg: string) =>
     /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(msg);
   let sqliteBindingsFailed = false;
@@ -2411,7 +2411,7 @@ export async function runUpgradeForCli(
   ctx: HandlerContext,
   requestedVersion?: string,
 ): Promise<UpgradeCliResult> {
-  const extDir = dirname(fileURLToPath(import.meta.url));
+  const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const { spawnSync } = await import("node:child_process");
   const version = requestedVersion?.trim() || "latest";
   try {
@@ -2530,7 +2530,7 @@ export function runConfigSetHelpForCli(
   const currentStr = current === undefined ? "(not set)" : typeof current === "string" ? current : JSON.stringify(current);
   let desc = "";
   try {
-    const extDir = dirname(fileURLToPath(import.meta.url));
+    const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
     const pluginPath = join(extDir, "openclaw.plugin.json");
     if (existsSync(pluginPath)) {
       const plugin = JSON.parse(readFileSync(pluginPath, "utf-8")) as { uiHints?: Record<string, { help?: string; label?: string }> };

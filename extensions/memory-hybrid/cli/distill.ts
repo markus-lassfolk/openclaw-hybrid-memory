@@ -12,6 +12,7 @@ import type {
   DistillCliResult,
   DistillCliSink,
 } from "./types.js";
+import { withExit, type Chainable } from "./shared.js";
 
 export type DistillContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
@@ -23,29 +24,6 @@ export type DistillContext = {
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
 };
-
-type Chainable = {
-  command(name: string): Chainable;
-  description(desc: string): Chainable;
-  action(fn: (...args: any[]) => void | Promise<void>): Chainable;
-  option(flags: string, desc?: string, defaultValue?: string): Chainable;
-};
-
-/** Wrap async action to exit on completion (only for standalone CLI). */
-const withExit = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
-  (...args: A) => {
-    const isStandaloneCli = process.argv.some((arg) => arg.includes("openclaw") || arg.includes("hybrid-mem"));
-    Promise.resolve(fn(...args)).then(
-      () => {
-        if (isStandaloneCli) process.exit(process.exitCode ?? 0);
-      },
-      (err: unknown) => {
-        console.error(err);
-        if (isStandaloneCli) process.exit(1);
-        else throw err;
-      },
-    );
-  };
 
 export function registerDistillCommands(mem: Chainable, ctx: DistillContext): void {
   const {

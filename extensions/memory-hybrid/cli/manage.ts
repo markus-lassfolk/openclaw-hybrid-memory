@@ -26,6 +26,7 @@ import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { withExit, type Chainable } from "./shared.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -114,35 +115,6 @@ export type ManageContext = {
   };
   tieringEnabled: boolean;
 };
-
-type Chainable = {
-  command(name: string): Chainable;
-  description(desc: string): Chainable;
-  action(fn: (...args: any[]) => void | Promise<void>): Chainable;
-  option(flags: string, desc?: string, defaultValue?: string): Chainable;
-  requiredOption(flags: string, desc?: string, defaultValue?: string): Chainable;
-  argument(name: string, desc?: string): Chainable;
-  alias?(name: string): Chainable;
-};
-
-const withExit = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
-  (...args: A) => {
-    const isStandaloneCli = process.argv.some((arg) => arg.includes("openclaw") || arg.includes("hybrid-mem"));
-    Promise.resolve(fn(...args)).then(
-      () => {
-        if (isStandaloneCli) process.exit(process.exitCode ?? 0);
-      },
-      (err: unknown) => {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "cli",
-          operation: "cli-command",
-        });
-        console.error(err);
-        if (isStandaloneCli) process.exit(1);
-        else throw err;
-      },
-    );
-  };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
   const {
@@ -751,7 +723,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
   mem
     .command("config-mode <mode>")
-    .description("Set memory mode (quick-only, passive, active). Writes memory/.config if needed.")
+    .description("Set memory mode (essential, normal, expert, full). Writes memory/.config if needed.")
     .action(withExit(async (mode: string) => {
       let res;
       try {
