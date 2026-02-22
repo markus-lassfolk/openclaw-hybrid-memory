@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
+import { getDefaultCronModel, getCronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
@@ -234,7 +235,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             let textToEmbed = e.prompt;
             if (ctx.cfg.search?.hydeEnabled) {
               try {
-                const hydeModel = ctx.cfg.search.hydeModel ?? "gpt-4o-mini";
+                const hydeModel = ctx.cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default");
                 const hydeContent = await chatComplete({
                   model: hydeModel,
                   content: `Write a short factual statement (1-2 sentences) that answers: ${e.prompt}\n\nOutput only the statement, no preamble.`,
@@ -947,7 +948,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 try {
                   const classification = await classifyMemoryOperation(
                     textToStore, extracted.entity, extracted.key, similarFacts,
-                    ctx.openai, ctx.cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
+                    ctx.openai, ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default"), api.logger,
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {

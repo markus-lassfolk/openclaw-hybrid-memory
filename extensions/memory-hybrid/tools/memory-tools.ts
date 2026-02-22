@@ -31,6 +31,8 @@ import {
   type MemoryCategory,
   type DecayClass,
   type HybridMemoryConfig,
+  getDefaultCronModel,
+  getCronModelConfig,
 } from "../config.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
@@ -304,7 +306,7 @@ export function registerMemoryTools(
             let textToEmbed = query;
             if (cfg.search?.hydeEnabled) {
               try {
-                const hydeModel = cfg.search.hydeModel ?? "gpt-4o-mini";
+                const hydeModel = cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default");
                 const hydeContent = await chatComplete({
                   model: hydeModel,
                   content: `Write a short factual statement (1-2 sentences) that answers: ${query}\n\nOutput only the statement, no preamble.`,
@@ -776,7 +778,7 @@ export function registerMemoryTools(
           }
           if (similarFacts.length > 0) {
             const classification = await classifyMemoryOperation(
-              textToStore, entity, key, similarFacts, openai, cfg.store.classifyModel ?? "gpt-4o-mini", api.logger,
+              textToStore, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), api.logger,
             );
 
             if (classification.action === "NOOP") {
