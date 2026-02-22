@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.2.220] - 2026-02-22
+
+Refactor release: split monolithic `index.ts` into focused modules, plus security hardening (PR70 review), credential and CLI bug fixes, and improved error handling.
+
+### Added
+
+- **Security (PR70 review):** `trustToolScopeParams` config flag to prevent scope injection via tool parameters; health status tracking for init verification; credential validation and atomic migration flag; credential type in vault pointers; WAL circuit breaker; proposal validation.
+- **CLI:** Error reporting and catch blocks for config, verify, install, and status paths; CLI reference and new commands documentation.
+- **Refactor:** Plugin entry split into setup modules (database init, plugin service, lifecycle hooks, tool registration), dedicated `tools/` and `setup/` directories, extracted services (reflection, consolidation, find-duplicates, vector-search, credential-migration), and separate proposals CLI module.
+
+### Fixed
+
+- **Critical:** `currentAgentId` pass-by-value bug fixed so agent scoping is correct in lifecycle hooks.
+- **Credentials:** Detection and `--days 0` parsing; BugBot credential store (split try-catch, pointer format, tests); rollback for credential DB writes on fact pointer failure; error handling and loop propagation; standardize vault pointers; duplicate scope declaration (ParseError).
+- **Distill/ingest:** `distill --model` respects config; unified `.deleted` session file filter; orphaned facts bug in `runIngestFilesForCli` and `runDistillForCli`.
+- **Self-correction:** Defaults and shared constants deduplication; directive store count; `--no-apply-tools` flag (Commander.js property and autoRewriteTools path).
+- **CLI/lifecycle:** Weekly-reflection legacy job matcher (case-insensitive); async error handling and indentation in handlers; JSONL parse error flooding and missing schema validation; deepMerge array defaults, credential count tracking, directive deduplication; logger-after-close and String(null) check; agent detection in lifecycle hooks.
+- **Consolidation/reflection:** Cosine similarity in consolidation; null handling in reflection.
+
+### Changed
+
+- **Version bump** — Release 2026.02.22 (npm `2026.2.220`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.2.201] - 2026-02-20
 
 Bug-fix release: credentials encryption key handling and config mode reporting for verify.
@@ -285,7 +310,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.210...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.220...HEAD
+[2026.2.220]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.220
 [2026.2.210]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.210
 [2026.2.201]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.201
 [2026.2.200]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.200
