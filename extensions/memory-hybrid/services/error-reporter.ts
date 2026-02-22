@@ -39,12 +39,14 @@ let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
 
 /**
- * Initialize error reporter with STRICT privacy settings
+ * Initialize error reporter with STRICT privacy settings.
+ * Optionally pass runtimeBotId from OpenClaw plugin context (e.g. api.context?.agentId) to use as bot UUID when config.botId is not set.
  */
 export async function initErrorReporter(
-  config: ErrorReporterConfig, 
+  config: ErrorReporterConfig,
   pluginVersion: string,
-  loggerInstance?: any
+  loggerInstance?: any,
+  runtimeBotId?: string,
 ): Promise<void> {
   if (loggerInstance) {
     logger = loggerInstance;
@@ -109,13 +111,12 @@ export async function initErrorReporter(
     },
   });
 
-  if (config.botId) {
-    Sentry.setTag("bot_id", config.botId);
-  }
-  if (config.botName) {
-    const sanitizedBotName = config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "");
-    Sentry.setTag("bot_name", sanitizedBotName);
-  }
+  // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId), then hostname
+  const botUuid = config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined) || hostname();
+  const botName = config.botName ? config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "") : "unknown";
+  Sentry.setUser({ id: botUuid, username: botName });
+  Sentry.setTag("bot_id", botUuid);
+  Sentry.setTag("bot_name", botName);
 
   initialized = true;
   const dsnHost = resolvedDsn.split('@')[1] || '***';
@@ -184,7 +185,14 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
       type: b.type,
       // Strip message and data to prevent leaking user content
     })),
-    // NO: user, request, contexts.device, extra
+    // Preserve user context (id, username) so GlitchTip "Users Affected" and grouping work
+    user: event.user && typeof event.user === "object"
+      ? {
+          id: typeof event.user.id === "string" ? scrubString(event.user.id).slice(0, 64) : undefined,
+          username: typeof event.user.username === "string" ? scrubString(event.user.username).slice(0, 64) : undefined,
+        }
+      : undefined,
+    // NO: request, contexts.device, extra
   };
 
   return safe;

@@ -251,8 +251,27 @@ describe("Error Reporter", () => {
       expect(sanitized?.contexts?.config_shape?.apiKey).toBe("[REDACTED]");
       expect(sanitized?.contexts?.runtime).toEqual({ name: "node", version: "v20.10.0" });
       expect(sanitized?.contexts?.os).toEqual({ name: "linux" }); // Only name, no version
-      expect(sanitized?.user).toBeUndefined();
+      // User context preserved so GlitchTip "Users Affected" and grouping work (id/username only)
+      expect(sanitized?.user).toEqual({ id: "secret", username: undefined });
       expect(sanitized?.request).toBeUndefined();
+    });
+
+    it("should preserve and scrub user id and username in sanitizeEvent", async () => {
+      const { sanitizeEvent } = await import("../services/error-reporter.js");
+
+      const mockEvent: any = {
+        event_id: "e1",
+        level: "error",
+        user: {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          username: "Maeve",
+        },
+      };
+
+      const sanitized = sanitizeEvent(mockEvent);
+
+      expect(sanitized?.user?.id).toBe("550e8400-e29b-41d4-a716-446655440000");
+      expect(sanitized?.user?.username).toBe("Maeve");
     });
   });
 
