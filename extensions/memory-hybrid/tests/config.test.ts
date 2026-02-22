@@ -462,6 +462,57 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.errorReporting?.mode).toBe("community");
   });
 
+  it("parses errorReporting.botId when valid UUID", () => {
+    const botId = "550e8400-e29b-41d4-a716-446655440000";
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: true,
+        botId,
+      },
+    });
+    expect(result.errorReporting?.botId).toBe(botId);
+  });
+
+  it("ignores errorReporting.botId when not a valid UUID", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: true,
+        botId: "not-a-uuid",
+      },
+    });
+    expect(result.errorReporting?.botId).toBeUndefined();
+  });
+
+  it("parses errorReporting.botName (friendly name)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: true,
+        botName: "Maeve",
+      },
+    });
+    expect(result.errorReporting?.botName).toBe("Maeve");
+  });
+
+  it("truncates errorReporting.botName to 64 chars", () => {
+    const longName = "a".repeat(100);
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: true,
+        botName: longName,
+      },
+    });
+    expect(result.errorReporting?.botName).toHaveLength(64);
+    expect(result.errorReporting?.botName).toBe("a".repeat(64));
+  });
+
   it("parses custom categories", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
