@@ -58,14 +58,14 @@ export type ManageContext = {
     limit: number;
     model: string;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
-  runReflection: (opts: { window: number; dryRun: boolean; model: string }) => Promise<{
+  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: { dryRun: boolean; model: string }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
-  runReflectionMeta: (opts: { dryRun: boolean; model: string }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
+  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ metaExtracted: number; metaStored: number }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
@@ -918,13 +918,15 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--window <n>", "Days to look back (default from config)", reflectionConfig.defaultWindow.toString())
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .action(withExit(async (opts?: { window?: string; dryRun?: boolean; model?: string }) => {
+    .option("--verbose", "Log each pattern as it is extracted")
+    .action(withExit(async (opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean }) => {
       const window = opts?.window ? parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? reflectionConfig.model;
+      const verbose = !!opts?.verbose;
       let res;
       try {
-        res = await runReflection({ window, dryRun, model });
+        res = await runReflection({ window, dryRun, model, verbose });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "reflect" });
         throw err;
@@ -937,12 +939,14 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .description("Run reflection (rules): extract high-level rules from patterns")
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .action(withExit(async (opts?: { dryRun?: boolean; model?: string }) => {
+    .option("--verbose", "Log each rule as it is extracted")
+    .action(withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }) => {
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? reflectionConfig.model;
+      const verbose = !!opts?.verbose;
       let res;
       try {
-        res = await runReflectionRules({ dryRun, model });
+        res = await runReflectionRules({ dryRun, model, verbose });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "reflect-rules" });
         throw err;
@@ -955,12 +959,14 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .description("Run reflection (meta-patterns): extract meta-patterns from existing patterns")
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .action(withExit(async (opts?: { dryRun?: boolean; model?: string }) => {
+    .option("--verbose", "Log each meta-pattern as it is extracted")
+    .action(withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }) => {
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? reflectionConfig.model;
+      const verbose = !!opts?.verbose;
       let res;
       try {
-        res = await runReflectionMeta({ dryRun, model });
+        res = await runReflectionMeta({ dryRun, model, verbose });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "reflect-meta" });
         throw err;

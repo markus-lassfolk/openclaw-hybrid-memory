@@ -47,7 +47,7 @@ import type {
   VerifyCliSink,
 } from "./register.js";
 import type { SelfCorrectionRunResult } from "./types.js";
-import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
+import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, chatCompleteWithRetry } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
@@ -114,6 +114,25 @@ function createProgressReporter(
       sink.log(`${label}: Done (${total}/${total})`);
     },
   };
+}
+
+// Helper function for relative time display
+function relativeTime(ms: number): string {
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const future = diff > 0;
+
+  if (abs < 60000) return future ? "in <1m" : "just now";
+  if (abs < 3600000) {
+    const m = Math.floor(abs / 60000);
+    return future ? `in ${m}m` : `${m}m ago`;
+  }
+  if (abs < 86400000) {
+    const h = Math.floor(abs / 3600000);
+    return future ? `in ${h}h` : `${h}h ago`;
+  }
+  const d = Math.floor(abs / 86400000);
+  return future ? `in ${d}d` : `${d}d ago`;
 }
 
 /**
@@ -492,6 +511,8 @@ export async function runVerifyForCli(
   let embeddingOk = false;
   const loadBlocking: string[] = [];
 
+  log("\n───── Infrastructure ─────");
+
   if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
     issues.push("embedding.apiKey is missing, placeholder, or too short");
     loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
@@ -506,8 +527,8 @@ export async function runVerifyForCli(
   }
   const openclawDir = join(homedir(), ".openclaw");
   const defaultConfigPath = join(openclawDir, "openclaw.json");
-  if (configOk) log("Config: embedding.apiKey and model present");
-  else log("Config: issues found");
+  if (configOk) log("✅ Config: embedding.apiKey and model present");
+  else log("❌ Config: issues found");
 
   const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const isBindingsError = (msg: string) =>
@@ -518,7 +539,7 @@ export async function runVerifyForCli(
   try {
     const n = factsDb.count();
     sqliteOk = true;
-    log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
+    log(`✅ SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
   } catch (e) {
     const msg = String(e);
     issues.push(`SQLite: ${msg}`);
@@ -528,14 +549,14 @@ export async function runVerifyForCli(
     } else {
       fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
     }
-    log(`SQLite: FAIL — ${msg}`);
+    log(`❌ SQLite: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:sqlite-check" });
   }
 
   try {
     const n = await vectorDb.count();
     lanceOk = true;
-    log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
+    log(`✅ LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
   } catch (e) {
     const msg = String(e);
     issues.push(`LanceDB: ${msg}`);
@@ -545,30 +566,32 @@ export async function runVerifyForCli(
     } else {
       fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
     }
-    log(`LanceDB: FAIL — ${msg}`);
+    log(`❌ LanceDB: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:lancedb-check" });
   }
 
   try {
     await embeddings.embed("verify test");
     embeddingOk = true;
-    log("Embedding API: OK");
+    log("✅ Embedding API: OK");
   } catch (e) {
     issues.push(`Embedding API: ${String(e)}`);
     fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
-    log(`Embedding API: FAIL — ${String(e)}`);
+    log(`❌ Embedding API: FAIL — ${String(e)}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }
 
-  const bool = (b: boolean) => String(b);
+  const bool = (b: boolean) => b ? "✅ on" : "❌ off";
   const restartPending = existsSync(getRestartPendingPath());
   const modeLabel = cfg.mode
     ? cfg.mode === "custom"
       ? "Mode: Custom"
       : `Mode: ${cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)} (preset)`
     : "Mode: Custom";
-  log(`\n${modeLabel}${restartPending ? " — restart pending" : ""}`);
-  log("\nFeatures (all on/off toggles, values match config true/false):");
+  log(`\n───── Memory Mode ─────`);
+  log(`${modeLabel}${restartPending ? " — restart pending" : ""}`);
+
+  log("\n───── Core Features ─────");
   log(`  autoCapture: ${bool(cfg.autoCapture)}`);
   log(`  autoRecall: ${bool(cfg.autoRecall.enabled)}`);
   log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "false"}`);
@@ -615,18 +638,25 @@ export async function runVerifyForCli(
   log(`  autoRecall.entityLookup: ${bool(cfg.autoRecall.entityLookup.enabled)}`);
   log(`  autoRecall.authFailure (reactive recall): ${bool(cfg.autoRecall.authFailure.enabled)}`);
 
+  log("\n───── Advanced Features ─────");
   if (cfg.search) {
     log(`  search.hydeEnabled: ${bool(cfg.search.hydeEnabled)}`);
   }
+  if (cfg.errorReporting) {
+    log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
+  }
+
+  log("\n───── Ingestion & Distillation ─────");
   if (cfg.ingest) {
-    log(`  ingest (paths configured): true`);
+    log(`  ingest (paths configured): ${bool(true)}`);
+  } else {
+    log(`  ingest: ${bool(false)}`);
   }
   if (cfg.distill) {
     log(`  distill.extractDirectives: ${bool(cfg.distill.extractDirectives !== false)}`);
     log(`  distill.extractReinforcement: ${bool(cfg.distill.extractReinforcement !== false)}`);
-  }
-  if (cfg.errorReporting) {
-    log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
+  } else {
+    log(`  distill: ${bool(false)}`);
   }
 
   let credentialsOk = true;
@@ -674,174 +704,189 @@ export async function runVerifyForCli(
     log("  If you don't use it, ignore this.");
   }
 
-  // Check for cron jobs
-  let nightlySweepDefined = false;
-  let nightlySweepEnabled = true;
+  // Job name regex patterns for matching
   const cronStorePath = join(openclawDir, "cron", "jobs.json");
-  if (existsSync(cronStorePath)) {
-    try {
-      const raw = readFileSync(cronStorePath, "utf-8");
-      const store = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = store.jobs;
-      if (Array.isArray(jobs)) {
-        const nightly = jobs.find((j: unknown) => {
-          if (typeof j !== "object" || j === null) return false;
-          const name = String((j as Record<string, unknown>).name ?? "").toLowerCase();
-          const pl = (j as Record<string, unknown>).payload as Record<string, unknown> | undefined;
-          const msg = String(pl?.message ?? (j as Record<string, unknown>).message ?? "").toLowerCase();
-          return /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name) || /nightly memory distillation|memory distillation pipeline/.test(msg);
-        }) as Record<string, unknown> | undefined;
-        if (nightly) {
-          nightlySweepDefined = true;
-          nightlySweepEnabled = nightly.enabled !== false;
-        }
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-cron-store" });
-      // ignore
-    }
-  }
-
-  if (!nightlySweepDefined && existsSync(defaultConfigPath)) {
-    try {
-      const raw = readFileSync(defaultConfigPath, "utf-8");
-      const root = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = root.jobs;
-      if (Array.isArray(jobs)) {
-        const nightly = jobs.find((j: unknown) => typeof j === "object" && j !== null && (j as Record<string, unknown>).name === "nightly-memory-sweep") as Record<string, unknown> | undefined;
-        if (nightly) {
-          nightlySweepDefined = true;
-          nightlySweepEnabled = nightly.enabled !== false;
-        }
-      } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
-        const nightly = (jobs as Record<string, unknown>)["nightly-memory-sweep"];
-        if (nightly && typeof nightly === "object") {
-          nightlySweepDefined = true;
-          nightlySweepEnabled = (nightly as Record<string, unknown>).enabled !== false;
-        }
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-root-config" });
-      // ignore
-    }
-  }
-
-  let weeklyReflectionDefined = false;
-  if (existsSync(cronStorePath)) {
-    try {
-      const raw = readFileSync(cronStorePath, "utf-8");
-      const store = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = store.jobs;
-      if (Array.isArray(jobs)) {
-        const weekly = jobs.find((j: unknown) => /weekly-reflection|memory reflection|pattern synthesis/i.test(String((j as Record<string, unknown>)?.name ?? ""))) as Record<string, unknown> | undefined;
-        if (weekly) weeklyReflectionDefined = true;
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-weekly-reflection" });
-      /* ignore */
-    }
-  }
-
-  if (!weeklyReflectionDefined && existsSync(defaultConfigPath)) {
-    try {
-      const raw = readFileSync(defaultConfigPath, "utf-8");
-      const root = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = root.jobs;
-      if (Array.isArray(jobs)) {
-        const weekly = jobs.find((j: unknown) => (j as Record<string, unknown>)?.name === "weekly-reflection");
-        if (weekly) weeklyReflectionDefined = true;
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-weekly-reflection-config" });
-      /* ignore */
-    }
-  }
-
-  let extractProceduresDefined = false;
-  let selfCorrectionDefined = false;
-  let weeklyDeepMaintenanceDefined = false;
-  let monthlyConsolidationDefined = false;
+  const nightlyMemorySweepRe = /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
+  const weeklyReflectionRe = /weekly-reflection|memory reflection|pattern synthesis/i;
   const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
   const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
   const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
   const monthlyConsolidationRe = /monthly-consolidation/i;
 
+  // Helper function to map job names to canonical keys
+  function getCanonicalJobKey(name: string, msg?: string): string | null {
+    const nameLower = name.toLowerCase();
+    if (nightlyMemorySweepRe.test(nameLower) || (msg && /nightly memory distillation|memory distillation pipeline/i.test(msg))) {
+      return "nightly-memory-sweep";
+    } else if (weeklyReflectionRe.test(name)) {
+      return "weekly-reflection";
+    } else if (extractProceduresRe.test(name)) {
+      return "weekly-extract-procedures";
+    } else if (selfCorrectionRe.test(name)) {
+      return "self-correction-analysis";
+    } else if (weeklyDeepMaintenanceRe.test(name)) {
+      return "weekly-deep-maintenance";
+    } else if (monthlyConsolidationRe.test(name)) {
+      return "monthly-consolidation";
+    } else if (name) {
+      return name;
+    }
+    return null;
+  }
+
+  // Helper function to format job status display
+  function formatJobStatus(job: JobInfo, label: string, indent: string, log: (msg: string) => void): void {
+    const statusIcon = job.enabled ? "✅" : "⏸️ ";
+    const statusText = job.enabled ? "enabled " : "disabled";
+
+    let statusDetails = "";
+    const parts: string[] = [];
+
+    if (job.state?.lastRunAtMs) {
+      const lastStatus = job.state.lastStatus ?? "unknown";
+      const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
+      parts.push(lastRun);
+    } else {
+      parts.push("last: never");
+    }
+
+    if (job.state?.nextRunAtMs) {
+      parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
+    }
+
+    if (parts.length > 0) {
+      statusDetails = "  " + parts.join("  ");
+    }
+
+    log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}${statusDetails}`);
+
+    // Show error details on next line if present
+    if (job.state?.lastError && job.state.lastStatus === "error") {
+      const errorPreview = job.state.lastError.slice(0, 100);
+      log(`${indent}   └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
+    }
+  }
+
+  // Enhanced job status display
+  log("\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):");
+
+  // Read all jobs with state information
+  interface JobInfo {
+    name: string;
+    enabled: boolean;
+    state?: {
+      nextRunAtMs?: number;
+      lastRunAtMs?: number;
+      lastStatus?: string;
+      lastError?: string;
+    };
+  }
+
+  const allJobs = new Map<string, JobInfo>();
+
   if (existsSync(cronStorePath)) {
     try {
       const raw = readFileSync(cronStorePath, "utf-8");
       const store = JSON.parse(raw) as Record<string, unknown>;
       const jobs = store.jobs;
       if (Array.isArray(jobs)) {
-        if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
-        if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
-        if (jobs.some((j: unknown) => weeklyDeepMaintenanceRe.test(String((j as Record<string, unknown>)?.name ?? "")))) weeklyDeepMaintenanceDefined = true;
-        if (jobs.some((j: unknown) => monthlyConsolidationRe.test(String((j as Record<string, unknown>)?.name ?? "")))) monthlyConsolidationDefined = true;
+        for (const j of jobs) {
+          if (typeof j !== "object" || j === null) continue;
+          const job = j as Record<string, unknown>;
+          const name = String(job.name ?? "");
+          const enabled = job.enabled !== false;
+          const state = job.state as { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string } | undefined;
+
+          // Extract payload message for fallback matching
+          const payload = job.payload as Record<string, unknown> | undefined;
+          const msg = String((payload?.message ?? job.message) || "");
+
+          // Map job names to our known jobs (check both name and payload message)
+          const canonicalKey = getCanonicalJobKey(name, msg);
+          if (canonicalKey) {
+            allJobs.set(canonicalKey, { name, enabled, state });
+          }
+        }
       }
     } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-additional-jobs" });
-      /* ignore */
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-job-state" });
+      // Continue with incomplete data
     }
   }
 
+  // Also check default config for jobs not found in cron store
   if (existsSync(defaultConfigPath)) {
     try {
       const raw = readFileSync(defaultConfigPath, "utf-8");
       const root = JSON.parse(raw) as Record<string, unknown>;
       const jobs = root.jobs;
       if (Array.isArray(jobs)) {
-        if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
-        if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
-        if (jobs.some((j: unknown) => weeklyDeepMaintenanceRe.test(String((j as Record<string, unknown>)?.name ?? "")))) weeklyDeepMaintenanceDefined = true;
-        if (jobs.some((j: unknown) => monthlyConsolidationRe.test(String((j as Record<string, unknown>)?.name ?? "")))) monthlyConsolidationDefined = true;
+        for (const j of jobs) {
+          if (typeof j !== "object" || j === null) continue;
+          const job = j as Record<string, unknown>;
+          const name = String(job.name ?? "");
+          const enabled = job.enabled !== false;
+
+          // Only add if not already found in cron store
+          const canonicalKey = getCanonicalJobKey(name);
+          if (canonicalKey && !allJobs.has(canonicalKey)) {
+            allJobs.set(canonicalKey, { name, enabled });
+          }
+        }
       } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
         const keyed = jobs as Record<string, unknown>;
-        if (Object.keys(keyed).some((k) => extractProceduresRe.test(k))) extractProceduresDefined = true;
-        if (Object.keys(keyed).some((k) => selfCorrectionRe.test(k))) selfCorrectionDefined = true;
-        if (Object.keys(keyed).some((k) => weeklyDeepMaintenanceRe.test(k))) weeklyDeepMaintenanceDefined = true;
-        if (Object.keys(keyed).some((k) => monthlyConsolidationRe.test(k))) monthlyConsolidationDefined = true;
+        for (const [key, value] of Object.entries(keyed)) {
+          if (typeof value !== "object" || value === null) continue;
+          const job = value as Record<string, unknown>;
+          const enabled = job.enabled !== false;
+
+          // Only add if not already found in cron store
+          const canonicalKey = getCanonicalJobKey(key);
+          if (canonicalKey && !allJobs.has(canonicalKey)) {
+            allJobs.set(canonicalKey, { name: key, enabled });
+          }
+        }
       }
     } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-additional-jobs-config" });
-      /* ignore */
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-default-config-jobs" });
+      // Continue with incomplete data
     }
   }
 
-  log("\nOptional / suggested jobs (cron store at ~/.openclaw/cron/jobs.json):");
-  if (nightlySweepDefined) {
-    log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "true" : "false"}`);
-  } else {
-    log("  nightly-memory-sweep (session distillation): not defined");
-    fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
+  // Display each job with its status
+  const jobsToDisplay = [
+    { key: "nightly-memory-sweep", description: "session distillation", docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup" },
+    { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
+    { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
+    { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
+    { key: "weekly-deep-maintenance", description: "deep maintenance", docsPath: null },
+    { key: "monthly-consolidation", description: "monthly consolidation", docsPath: null },
+  ];
+
+  for (const { key, description, docsPath } of jobsToDisplay) {
+    const job = allJobs.get(key);
+
+    if (!job) {
+      log(`  ❌ ${key.padEnd(30)} missing`);
+      const fixMsg = docsPath
+        ? `Optional: Set up ${description} via jobs. See ${docsPath}. Run 'openclaw hybrid-mem verify --fix' to add.`
+        : `Optional: Set up ${description} via jobs. Run 'openclaw hybrid-mem verify --fix' to add.`;
+      fixes.push(fixMsg);
+      continue;
+    }
+
+    formatJobStatus(job, key, "  ", log);
   }
-  if (weeklyReflectionDefined) {
-    log("  weekly-reflection (pattern synthesis): defined");
-  } else {
-    log("  weekly-reflection (pattern synthesis): not defined");
-    fixes.push("Optional: Set up weekly reflection via jobs. See docs/REFLECTION.md § Scheduled Job. Run 'openclaw hybrid-mem verify --fix' to add.");
-  }
-  if (extractProceduresDefined) {
-    log("  weekly-extract-procedures (procedural memory): defined");
-  } else {
-    log("  weekly-extract-procedures (procedural memory): not defined");
-    fixes.push("Optional: Set up procedural memory extraction via jobs. See docs/PROCEDURAL-MEMORY.md. Run 'openclaw hybrid-mem verify --fix' to add.");
-  }
-  if (selfCorrectionDefined) {
-    log("  self-correction-analysis: defined");
-  } else {
-    log("  self-correction-analysis: not defined");
-    fixes.push("Optional: Set up self-correction analysis via jobs. See docs/SELF-CORRECTION-PIPELINE.md. Run 'openclaw hybrid-mem verify --fix' to add.");
-  }
-  if (weeklyDeepMaintenanceDefined) {
-    log("  weekly-deep-maintenance: defined");
-  } else {
-    log("  weekly-deep-maintenance: not defined");
-    fixes.push("Optional: Set up weekly deep maintenance via jobs. Run 'openclaw hybrid-mem verify --fix' to add.");
-  }
-  if (monthlyConsolidationDefined) {
-    log("  monthly-consolidation: defined");
-  } else {
-    log("  monthly-consolidation: not defined");
-    fixes.push("Optional: Set up monthly consolidation via jobs. Run 'openclaw hybrid-mem verify --fix' to add.");
+
+  // Display any unknown/custom jobs not in the hardcoded list
+  const knownKeys = new Set(jobsToDisplay.map((j) => j.key));
+  const unknownJobs = Array.from(allJobs.entries()).filter(([key]) => !knownKeys.has(key));
+
+  if (unknownJobs.length > 0) {
+    log("\n  Other custom jobs:");
+    for (const [key, job] of unknownJobs) {
+      formatJobStatus(job, job.name, "    ", log);
+    }
   }
 
   log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
@@ -871,7 +916,7 @@ export async function runVerifyForCli(
       process.exitCode = 2; // Scripting: 2 = restart pending (gateway restart recommended)
     }
     log("Note: If you see 'plugins.allow is empty' above, it is from OpenClaw. Optional: set plugins.allow to [\"openclaw-hybrid-memory\"] in openclaw.json for an explicit allow-list.");
-    if (!nightlySweepDefined) {
+    if (!allJobs.has("nightly-memory-sweep")) {
       log("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.");
     }
   } else {
@@ -1808,13 +1853,15 @@ export async function runIngestFilesForCli(
     sink.log(`Processing batch ${b + 1}/${batches.length}...`);
     const userContent = ingestPrompt + "\n\n" + batches[b];
     try {
-      const content = await chatComplete({
+      const content = await chatCompleteWithRetry({
         model,
         content: userContent,
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
         geminiApiKey: cfg.distill?.apiKey,
+        fallbackModels: cfg.distill?.fallbackModels,
+        label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
       for (const line of lines) {
@@ -1954,13 +2001,15 @@ export async function runDistillForCli(
     progress.update(b + 1);
     const userContent = distillPrompt + "\n\n" + batches[b];
     try {
-      const content = await chatComplete({
+      const content = await chatCompleteWithRetry({
         model,
         content: userContent,
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
         geminiApiKey: cfg.distill?.apiKey,
+        fallbackModels: cfg.distill?.fallbackModels,
+        label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
       for (const line of lines) {

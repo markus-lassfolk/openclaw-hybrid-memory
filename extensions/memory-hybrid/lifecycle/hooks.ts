@@ -582,17 +582,21 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               })
               .join("\n");
             try {
-              const resp = await ctx.openai.chat.completions.create({
-                model: summarizeModel,
-                messages: [
-                  {
-                    role: "user",
-                    content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
-                  },
-                ],
-                temperature: 0,
-                max_tokens: 200,
-              });
+              const { withLLMRetry } = await import("../services/chat.js");
+              const resp = await withLLMRetry(
+                () => ctx.openai.chat.completions.create({
+                  model: summarizeModel,
+                  messages: [
+                    {
+                      role: "user",
+                      content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
+                    },
+                  ],
+                  temperature: 0,
+                  max_tokens: 200,
+                }),
+                { maxRetries: 2 }
+              );
               const summary = (resp.choices[0]?.message?.content ?? "").trim();
               if (summary) {
                 memoryContext = summary;
@@ -796,13 +800,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("before_agent_start", async () => {
         try {
           await access(pendingPath);
-        } catch (err) {
-          capturePluginError(err as Error, {
-            operation: 'access-pending-file',
-            severity: 'info',
-            subsystem: 'lifecycle'
-          });
-          return;
+        } catch {
+          return; // File doesn't exist — no pending credentials, normal case
         }
         try {
           const raw = await readFile(pendingPath, "utf-8");

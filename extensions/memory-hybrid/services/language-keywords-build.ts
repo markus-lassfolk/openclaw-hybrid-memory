@@ -79,12 +79,16 @@ Do not include any other text. If you see only one or two languages, return 1 or
 Samples:
 ${block}`;
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
-      max_tokens: 100,
-    });
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: 100,
+      }),
+      { maxRetries: 2 }
+    );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const match = content.match(/\[[\s\S]*?\]/);
     if (!match) return [];
@@ -236,12 +240,16 @@ export async function generateIntentBasedLanguages(
   const prompt = buildIntentPrompt(toTranslate, englishPayload);
 
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 6000,
-    });
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_tokens: 6000,
+      }),
+      { maxRetries: 2 }
+    );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -316,12 +324,16 @@ Each key must be one of: triggers, categoryDecision, categoryPreference, categor
 Each value must be an array of translated strings in the same order as the English list. Translate correctionSignals as natural phrases users say when correcting an AI (e.g. "that was wrong", "try again", "you misunderstood") in the target language.`;
 
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 4000,
-    });
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_tokens: 4000,
+      }),
+      { maxRetries: 2 }
+    );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return {};

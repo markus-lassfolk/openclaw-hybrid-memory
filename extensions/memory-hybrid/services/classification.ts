@@ -82,12 +82,16 @@ export async function classifyMemoryOperation(
   });
 
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
-      max_tokens: 100,
-    });
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: 100,
+      }),
+      { maxRetries: 2 }
+    );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     return parseClassificationResponse(content, existingFacts);
   } catch (err) {

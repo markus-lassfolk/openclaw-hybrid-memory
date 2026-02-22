@@ -42,10 +42,14 @@ export class Embeddings implements EmbeddingProvider {
       return cached;
     }
 
-    const resp = await this.client.embeddings.create({
-      model: this.model,
-      input: text,
-    });
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => this.client.embeddings.create({
+        model: this.model,
+        input: text,
+      }),
+      { maxRetries: 2 }
+    );
     const vector = resp.data[0].embedding;
 
     if (this.cache.size >= EMBEDDING_CACHE_MAX) {
