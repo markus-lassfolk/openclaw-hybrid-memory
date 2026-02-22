@@ -64,8 +64,10 @@ export function initializeDatabases(
   const openaiForEmbeddings = new OpenAI({ apiKey: cfg.embedding.apiKey });
   const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
   const embeddings = new Embeddings(openaiForEmbeddings, embeddingModels);
-  // Chat/LLM client (same key; gateway baseURL may be added here when supported — never for embeddings)
-  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
+  // Chat/LLM client uses gateway when available (embeddings never do)
+  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayBaseUrl = gatewayPort ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey ?? "unused", ...(gatewayBaseUrl ? { baseURL: gatewayBaseUrl } : {}) });
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {
