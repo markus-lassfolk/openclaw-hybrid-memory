@@ -416,10 +416,10 @@ export function getCronModelAlias(
 ): string {
   if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
   if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
-    return "gemini";
+    return tier === "heavy" ? "gemini-heavy" : "gemini";
   }
   if (pluginConfig.claude?.apiKey && pluginConfig.claude.apiKey.length >= 10) {
-    return "sonnet";
+    return tier === "heavy" ? "sonnet-heavy" : "sonnet";
   }
   if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
     const reflectionModel = pluginConfig.reflection?.model?.trim();
