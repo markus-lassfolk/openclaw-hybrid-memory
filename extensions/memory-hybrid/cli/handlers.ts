@@ -69,6 +69,7 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { parseSuggestedChange } from "./proposals.js";
 import {
   CLI_STORE_IMPORTANCE,
   BATCH_STORE_IMPORTANCE,
@@ -1390,12 +1391,12 @@ export async function runGenerateProposalsForCli(
     return { created: 0 };
   }
   const nowSec = Math.floor(Date.now() / 1000);
-  const patterns = factsDb.getByCategory("pattern").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+  const scopeFilter = cfg.autoRecall?.scopeFilter ?? undefined;
+  const allRelevant = factsDb.getAll({ scopeFilter }).filter(
+    (f) => (f.category === "pattern" || f.category === "rule") && !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  const rules = factsDb.getByCategory("rule").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
-  );
+  const patterns = allRelevant.filter((f) => f.category === "pattern");
+  const rules = allRelevant.filter((f) => f.category === "rule");
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
   const insights: string[] = [];
   if (patterns.length) {
@@ -1482,8 +1483,15 @@ export async function runGenerateProposalsForCli(
     if (!allowedFiles.includes(targetFile as any)) continue;
     const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
     const snapshot = getFileSnapshot(join(workspace, targetFile));
-    const confidence = Number(item.confidence);
+    let confidence = Number(item.confidence);
     if (!Number.isFinite(confidence) || confidence < minConf) continue;
+    const parsed = parseSuggestedChange(String(item.suggestedChange ?? ""));
+    if (parsed.changeType === "replace" && targetFile === "SOUL.md") {
+      confidence = Math.min(confidence, 0.5);
+    } else if (parsed.changeType === "replace") {
+      confidence = Math.min(confidence, 0.6);
+    }
+    if (confidence < minConf) continue;
     const title = String(item.title ?? "Update from reflection").slice(0, 256);
     const observation = String(item.observation ?? "").slice(0, 2000);
     const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);

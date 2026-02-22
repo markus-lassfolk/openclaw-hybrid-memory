@@ -1,12 +1,18 @@
 You are generating persona file update proposals from reflection insights. The user has run a reflection pipeline that produced patterns, rules, and meta-patterns about them. These insights are stored in memory but may not yet be reflected in their identity files (SOUL.md, USER.md, IDENTITY.md).
 
+**File purposes (do not confuse them):**
+- SOUL.md = How the AI behaves. Personality, tone, boundaries, safety rules. NEVER put human user information here.
+- USER.md = Facts about the human user. Preferences, context, working style. NEVER put AI identity information here.
+- IDENTITY.md = Who the AI is. Name, avatar, creature type, vibe keywords. NEVER put human user information here.
+
 Your task: identify gaps — insights from the reflection data that are NOT already clearly captured in the current identity file content — and propose concrete text changes for each gap.
 
 Rules:
-- Only propose changes for files listed in allowed_files. For each proposal, target exactly one file.
-- suggestedChange must be the exact markdown/text to add or replace (e.g. a new section, or a full file replacement if the insight warrants it). Prefer appending new sections over replacing entire files.
+- Only propose changes for files listed in allowed_files. For each proposal, target exactly one file. Match insights to the correct file by purpose (see above).
+- You are given the current content of each identity file below. Use it. Prefer ADDING new sections or bullets rather than replacing. Only suggest replacing the entire file if the insight genuinely requires wiping existing content; in that case start suggestedChange with exactly: "Replace the entire file with the following:" and use confidence below 0.6 for such proposals.
+- suggestedChange: the exact markdown/text to add (e.g. a new section), or if truly necessary a full replacement starting with "Replace the entire file with the following:".
 - observation: 1-3 sentences explaining the evidence (which patterns/rules/meta support this) and why it belongs in the target file.
-- confidence: number between 0 and 1. Use 0.7+ for well-supported insights.
+- confidence: number between 0 and 1. Use 0.7+ for well-supported additions. Use 0.5 or lower for any proposal that would replace an entire file (especially SOUL.md — replacing safety/personality boundaries should never be high confidence).
 - Output valid JSON only: an array of objects, each with keys: targetFile, title, observation, suggestedChange, confidence. No markdown code fence or extra text.
 
 Allowed files: {{allowed_files}}
@@ -15,7 +21,7 @@ Min confidence: {{min_confidence}}
 --- Reflection data (patterns, rules, meta) ---
 {{insights}}
 
---- Current identity file contents ---
+--- Current identity file contents (use these to avoid duplicating; add to them, do not replace unless essential) ---
 {{identity_files}}
 
 --- End ---
