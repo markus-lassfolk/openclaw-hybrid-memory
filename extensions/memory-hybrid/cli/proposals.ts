@@ -5,13 +5,19 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import type { Chainable } from "./shared.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig, IdentityFileType } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+
+/** Resolve a proposal target file (e.g. SOUL.md) against the workspace directory. */
+function resolveProposalTarget(targetFile: string): string {
+  const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  return join(workspace, targetFile);
+}
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 
 export interface ProposalsCliContext {
@@ -177,7 +183,7 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
         console.error(`Proposal ${proposalId} not found`);
         process.exit(1);
       }
-      const targetPath = ctx.api.resolvePath(proposal.targetFile);
+      const targetPath = resolveProposalTarget(proposal.targetFile);
       const includeDiff = !!opts?.diff || !!opts?.json;
       let diffText: string | null = null;
       if (includeDiff && existsSync(targetPath)) {
@@ -304,7 +310,7 @@ export async function applyApprovedProposal(
   if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
     return { ok: false, error: `Invalid target file path: ${proposal.targetFile}. Path traversal detected.` };
   }
-  const targetPath = ctx.api.resolvePath(proposal.targetFile);
+  const targetPath = resolveProposalTarget(proposal.targetFile);
   if (!existsSync(targetPath)) {
     return { ok: false, error: `Target file ${proposal.targetFile} not found at ${targetPath}` };
   }
