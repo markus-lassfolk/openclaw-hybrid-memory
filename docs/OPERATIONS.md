@@ -42,7 +42,9 @@ After adding jobs, the gateway will pick them up on next start (or according to 
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.
 
-**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config:
+**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config. When you run **`openclaw hybrid-mem verify --fix`**, missing jobs are added with a **model chosen from your config** (Gemini → distill, Claude → claude, else OpenAI → reflection). See [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-maintenance-and-self-correction).
+
+Example structure (actual `model` value is filled from your provider at install/verify time):
 
 ```json
 {
@@ -51,9 +53,9 @@ Extracts durable facts from old conversation logs. Recommended if you want to ca
       "name": "nightly-memory-sweep",
       "schedule": "0 2 * * *",
       "channel": "system",
-      "message": "Run nightly session distillation: last 3 days, Gemini model, isolated session.",
+      "message": "Run nightly session distillation: last 3 days, isolated session.",
       "isolated": true,
-      "model": "gemini"
+      "model": "gemini-2.0-flash"
     }
   ]
 }
@@ -100,11 +102,11 @@ Synthesizes behavioral patterns from recent facts. The `openclaw hybrid-mem inst
   "channel": "system",
   "message": "Run memory reflection: analyze facts from the last 14 days, extract behavioral patterns, store as pattern-category facts. Use memory_reflect tool.",
   "isolated": true,
-  "model": "gemini"
+  "model": "gpt-4o-mini"
 }
 ```
 
-Runs at 3 AM Sundays. Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
+Runs at 3 AM Sundays. The `model` value is resolved from your config (see [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-maintenance-and-self-correction)). Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
 
 ### What the two jobs cover (and what they don’t)
 

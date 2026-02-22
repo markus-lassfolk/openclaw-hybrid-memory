@@ -55,12 +55,73 @@ async function auditProposal(
   }
 }
 
+const PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applied"] as const;
+
+function formatExpires(proposal: { expiresAt: number | null; createdAt: number }): string {
+  if (!proposal.expiresAt) return "never";
+  const now = Math.floor(Date.now() / 1000);
+  const days = Math.max(0, Math.floor((proposal.expiresAt - now) / 86400));
+  return `${days}d`;
+}
+
 /**
  * Register CLI commands for persona proposal management
  * NOTE: These are human-only commands and NOT exposed as agent-callable tools
  */
 export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContext): void {
   const proposals = program.command("proposals").description("Manage persona proposals (human-only commands)");
+
+  proposals
+    .command("show <proposalId>")
+    .description("Show full proposal content (observation, suggested change, optional diff)")
+    .option("--json", "Machine-readable output")
+    .option("--diff", "Show unified diff against current target file")
+    .action((proposalId: string, opts?: { json?: boolean; diff?: boolean }) => {
+      const proposal = ctx.proposalsDb.get(proposalId);
+      if (!proposal) {
+        console.error(`Proposal ${proposalId} not found`);
+        process.exit(1);
+      }
+      if (opts?.json) {
+        console.log(JSON.stringify(proposal, null, 2));
+        return;
+      }
+      const created = new Date(proposal.createdAt * 1000).toISOString();
+      const evidenceCount = Array.isArray(proposal.evidenceSessions) ? proposal.evidenceSessions.length : 0;
+      console.log(`Proposal: ${proposal.id}`);
+      console.log(`Status: ${proposal.status}`);
+      console.log(`Target: ${proposal.targetFile}`);
+      console.log(`Confidence: ${proposal.confidence.toFixed(2)}`);
+      console.log(`Created: ${created} (expires in ${formatExpires(proposal)})`);
+      console.log(`Evidence: ${evidenceCount} sessions`);
+      console.log("");
+      console.log("── Observation ──");
+      console.log(proposal.observation);
+      console.log("");
+      console.log("── Suggested Change ──");
+      console.log(proposal.suggestedChange);
+      if (opts?.diff) {
+        const targetPath = ctx.api.resolvePath(proposal.targetFile);
+        if (existsSync(targetPath)) {
+          const current = readFileSync(targetPath, "utf-8");
+          const lines = proposal.suggestedChange.split(/\n/);
+          console.log("");
+          console.log("── Preview (diff) ──");
+          console.log(`--- ${proposal.targetFile} (current)`);
+          console.log(`+++ ${proposal.targetFile} (with suggestion)`);
+          for (const line of lines) {
+            console.log(`+ ${line}`);
+          }
+        } else {
+          console.log("");
+          console.log("── Preview (diff) ──");
+          console.log("(target file not found; showing suggested content as addition)");
+          for (const line of proposal.suggestedChange.split(/\n/)) {
+            console.log(`+ ${line}`);
+          }
+        }
+      }
+    });
 
   proposals
     .command("review <proposalId> <action>")
@@ -94,7 +155,12 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
 
       console.log(`Proposal ${proposalId} ${action}d.`);
       if (action === "approve") {
-        console.log(`\nUse 'openclaw proposals apply ${proposalId}' to apply the change.`);
+        const applyResult = applyApprovedProposal(ctx, proposalId);
+        if (applyResult.ok) {
+          console.log(`Applied to ${applyResult.targetFile}. Backup: ${applyResult.backupPath}`);
+        } else {
+          console.error(`Apply failed: ${applyResult.error}. You can run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`);
+        }
       }
     });
 
@@ -102,84 +168,80 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
     .command("apply <proposalId>")
     .description("Apply an approved persona proposal to its target identity file")
     .action(async (proposalId: string) => {
-      const proposal = ctx.proposalsDb.get(proposalId);
-      if (!proposal) {
-        console.error(`Proposal ${proposalId} not found`);
+      const result = applyApprovedProposal(ctx, proposalId);
+      if (!result.ok) {
+        console.error(result.error);
         process.exit(1);
       }
-
-      if (proposal.status !== "approved") {
-        console.error(`Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`);
-        process.exit(1);
-      }
-
-      // Re-validate targetFile against current allowedFiles config (defense against config changes or DB tampering)
-      if (!ctx.cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
-        console.error(`Target file ${proposal.targetFile} is no longer in allowedFiles. Cannot apply.`);
-        console.error(`Current allowedFiles: ${ctx.cfg.personaProposals.allowedFiles.join(", ")}`);
-        process.exit(1);
-      }
-
-      // Additional path traversal defense (even though schema validates at creation)
-      if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
-        console.error(`Invalid target file path: ${proposal.targetFile}. Path traversal detected.`);
-        process.exit(1);
-      }
-
-      // Resolve target file path
-      const targetPath = ctx.api.resolvePath(proposal.targetFile);
-
-      if (!existsSync(targetPath)) {
-        console.error(`Target file ${proposal.targetFile} not found at ${targetPath}`);
-        process.exit(1);
-      }
-
-      // Create backup
-      const backupPath = `${targetPath}.backup-${Date.now()}`;
-      try {
-        const original = readFileSync(targetPath, "utf-8");
-        writeFileSync(backupPath, original);
-
-        // Escape HTML comment sequences to prevent breakout
-        const escapeHtmlComment = (text: string): string => {
-          return text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
-        };
-
-        // Validate content doesn't contain dangerous patterns
-        const DANGEROUS_PATTERNS = /<script|<iframe|javascript:/i;
-        if (DANGEROUS_PATTERNS.test(proposal.suggestedChange)) {
-          console.error(`Proposal ${proposalId} contains potentially dangerous content (script tags, iframes, or javascript: URLs) and cannot be applied.`);
-          process.exit(1);
-        }
-
-        // Apply change (simple append strategy)
-        // TODO: Future enhancement - use LLM for smart diff application, content validation, merge conflict resolution
-        const timestamp = new Date().toISOString();
-        const safeObservation = escapeHtmlComment(proposal.observation);
-        const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
-        writeFileSync(targetPath, original + changeBlock);
-
-        // Mark as applied only after successful file write
-        ctx.proposalsDb.markApplied(proposalId);
-
-        await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
-          targetFile: proposal.targetFile,
-          targetPath,
-          backupPath,
-          timestamp,
-        }, { error: console.error });
-
-        console.log(`Proposal ${proposalId} applied to ${proposal.targetFile}`);
-        console.log(`Backup saved: ${backupPath}`);
-        console.log(`\nChange:\n${proposal.suggestedChange}`);
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'apply-proposal',
-          subsystem: 'proposals',
-          proposalId,
-        });
-        console.error(`Failed to apply proposal: ${err}`);
-        process.exit(1);
-      }
+      console.log(`Proposal ${proposalId} applied to ${result.targetFile}`);
+      if (result.backupPath) console.log(`Backup saved: ${result.backupPath}`);
+      console.log(`\nChange:\n${result.suggestedChange}`);
     });
+}
+
+export type ApplyProposalContext = Pick<ProposalsCliContext, "proposalsDb" | "cfg" | "resolvedSqlitePath" | "api">;
+
+/**
+ * Apply an approved proposal to its target file and mark as applied.
+ * Used by CLI "apply" and after "approve" so approval auto-applies (fixes #82).
+ */
+export function applyApprovedProposal(
+  ctx: ApplyProposalContext,
+  proposalId: string,
+): { ok: true; targetFile: string; backupPath: string; suggestedChange: string } | { ok: false; error: string } {
+  const proposal = ctx.proposalsDb.get(proposalId);
+  if (!proposal) {
+    return { ok: false, error: `Proposal ${proposalId} not found` };
+  }
+  if (proposal.status !== "approved") {
+    return { ok: false, error: `Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.` };
+  }
+  if (!ctx.cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
+    return {
+      ok: false,
+      error: `Target file ${proposal.targetFile} is no longer in allowedFiles. Current: ${ctx.cfg.personaProposals.allowedFiles.join(", ")}`,
+    };
+  }
+  if (proposal.targetFile.includes("..") || proposal.targetFile.includes("/") || proposal.targetFile.includes("\\")) {
+    return { ok: false, error: `Invalid target file path: ${proposal.targetFile}. Path traversal detected.` };
+  }
+  const targetPath = ctx.api.resolvePath(proposal.targetFile);
+  if (!existsSync(targetPath)) {
+    return { ok: false, error: `Target file ${proposal.targetFile} not found at ${targetPath}` };
+  }
+  const DANGEROUS_PATTERNS = /<script|<iframe|javascript:/i;
+  if (DANGEROUS_PATTERNS.test(proposal.suggestedChange)) {
+    return { ok: false, error: `Proposal ${proposalId} contains potentially dangerous content and cannot be applied.` };
+  }
+  try {
+    const original = readFileSync(targetPath, "utf-8");
+    const backupPath = `${targetPath}.backup-${Date.now()}`;
+    writeFileSync(backupPath, original);
+    const escapeHtmlComment = (text: string): string =>
+      text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
+    const timestamp = new Date().toISOString();
+    const safeObservation = escapeHtmlComment(proposal.observation);
+    const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
+    writeFileSync(targetPath, original + changeBlock);
+    ctx.proposalsDb.markApplied(proposalId);
+    auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
+      targetFile: proposal.targetFile,
+      targetPath,
+      backupPath,
+      timestamp,
+    }, { error: console.error });
+    return {
+      ok: true,
+      targetFile: proposal.targetFile,
+      backupPath,
+      suggestedChange: proposal.suggestedChange,
+    };
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "apply-proposal",
+      subsystem: "proposals",
+      proposalId,
+    });
+    return { ok: false, error: `Failed to apply proposal: ${err}` };
+  }
 }

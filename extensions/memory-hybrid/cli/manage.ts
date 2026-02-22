@@ -3,6 +3,8 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type {
   FindDuplicatesResult,
   StoreCliOpts,
@@ -74,7 +76,7 @@ export type ManageContext = {
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
-  runDistill?: (opts: { dryRun: boolean; days?: number }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; skipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean }>;
+  runDistill?: (opts: { dryRun: boolean; days?: number; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; skipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean }>;
   runRecordDistill?: () => Promise<unknown>;
   runExtractProcedures?: (opts: { days?: number; dryRun: boolean }) => Promise<unknown>;
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
@@ -114,6 +116,13 @@ export type ManageContext = {
     showItem: (id: string) => Promise<{ type: "fact" | "proposal"; data: unknown } | null>;
   };
   tieringEnabled: boolean;
+  resolvedSqlitePath?: string;
+  resolvePath?: (file: string) => string;
+  runExtractDaily?: (opts: { days: number; dryRun: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
+  runExtractDirectives?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
+  runExtractReinforcement?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
+  runGenerateAutoSkills?: (opts: { dryRun: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -147,17 +156,25 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runSelfCorrectionRun,
     runCompaction,
     runDistill,
-    runRecordDistill,
     runExtractProcedures,
     runBuildLanguageKeywords,
     runExport,
     listCommands,
     tieringEnabled,
+    resolvedSqlitePath,
+    runExtractDaily,
+    runExtractDirectives,
+    runExtractReinforcement,
+    runGenerateAutoSkills,
+    runGenerateProposals,
+    resolvePath,
   } = ctx;
+
+  const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
 
   mem
     .command("run-all")
-    .description("Run all maintenance tasks in optimal order (prune, compact, distill, extract-procedures, reflection, self-correction). Use --dry-run to list steps only.")
+    .description("Run all maintenance tasks in optimal order (prune, compact, distill, extract-*, reflection, generate-proposals, self-correction, build-languages). Use --dry-run to list steps only.")
     .option("--dry-run", "List steps that would run without executing")
     .option("--verbose", "Show detailed output for each step")
     .action(withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }) => {
@@ -165,12 +182,27 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const verbose = !!opts?.verbose;
       const log = (s: string) => console.log(s);
       const sink = { log, warn: (s: string) => console.warn(s) };
+      const memoryDir = resolvedSqlitePath ? dirname(resolvedSqlitePath) : null;
+      const backfillDonePath = memoryDir ? join(memoryDir, BACKFILL_DECAY_MARKER) : null;
+
       const steps: { name: string; run: () => Promise<void> }[] = [
         {
           name: "backfill-decay",
           run: async () => {
+            if (backfillDonePath && existsSync(backfillDonePath)) {
+              if (verbose) log("Backfill-decay already done; skipping.");
+              return;
+            }
             const n = factsDb.backfillDecay();
-            log(`Backfilled decay for ${n} facts.`);
+            const total = Object.values(n).reduce((a, b) => a + b, 0);
+            log(`Backfilled decay for ${total} facts.`);
+            if (backfillDonePath) {
+              try {
+                writeFileSync(backfillDonePath, new Date().toISOString() + "\n");
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "run-all:backfill-decay-marker" });
+              }
+            }
           },
         },
         {
@@ -191,13 +223,38 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           ? [{
               name: "distill (3 days)",
               run: async () => {
-                const r = await runDistill({ dryRun: false, days: 3 }, sink);
+                const r = await runDistill({ dryRun: false, days: 3, verbose }, sink);
                 log(`Distill: ${r.stored} stored from ${r.sessionsScanned} sessions.`);
               },
             }]
           : []),
-        ...(runRecordDistill
-          ? [{ name: "record-distill", run: () => runRecordDistill!().then(() => log("Recorded distill.")) }]
+        ...(runExtractDaily
+          ? [{
+              name: "extract-daily (7 days)",
+              run: async () => {
+                const r = await runExtractDaily({ days: 7, dryRun: false }, sink);
+                const stored = r.totalStored ?? r.stored ?? 0;
+                log(`Extract-daily: ${stored} stored.`);
+              },
+            }]
+          : []),
+        ...(runExtractDirectives
+          ? [{
+              name: "extract-directives (7 days)",
+              run: async () => {
+                const r = await runExtractDirectives({ days: 7, verbose, dryRun: false });
+                log(`Extract-directives: ${r.sessionsScanned} sessions scanned.`);
+              },
+            }]
+          : []),
+        ...(runExtractReinforcement
+          ? [{
+              name: "extract-reinforcement (7 days)",
+              run: async () => {
+                const r = await runExtractReinforcement({ days: 7, verbose, dryRun: false });
+                log(`Extract-reinforcement: ${r.sessionsScanned} sessions scanned.`);
+              },
+            }]
           : []),
         ...(runExtractProcedures
           ? [{
@@ -205,6 +262,15 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
               run: async () => {
                 await runExtractProcedures({ days: 7, dryRun: false });
                 log("Extract procedures done.");
+              },
+            }]
+          : []),
+        ...(runGenerateAutoSkills
+          ? [{
+              name: "generate-auto-skills",
+              run: async () => {
+                const r = await runGenerateAutoSkills({ dryRun: false });
+                log(`Generate-auto-skills: ${r.generated} generated.`);
               },
             }]
           : []),
@@ -229,11 +295,28 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             log(`Reflect-meta: ${r.metaStored} meta-patterns stored.`);
           },
         },
+        ...(runGenerateProposals
+          ? [{
+              name: "generate-proposals",
+              run: async () => {
+                const r = await runGenerateProposals({ dryRun: false, verbose });
+                log(`Generate-proposals: ${r.created} created.`);
+              },
+            }]
+          : []),
         {
           name: "self-correction-run",
           run: async () => {
             await runSelfCorrectionRun({ dryRun: false });
             log("Self-correction run done.");
+          },
+        },
+        {
+          name: "build-languages",
+          run: async () => {
+            const r = await runBuildLanguageKeywords({ dryRun: false });
+            if (r.ok) log(`Build-languages: ${r.languagesAdded} languages added.`);
+            else if (verbose) log(`Build-languages: ${r.error}`);
           },
         },
       ];
@@ -557,16 +640,77 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     }));
 
   const proposals = mem.command("proposals").description("Manage persona-driven proposals");
+  const proposalStatusValues = ["pending", "approved", "rejected", "applied"] as const;
+  proposals
+    .command("show <id>")
+    .description("Show full proposal content (observation, suggested change). Use --json or --diff.")
+    .option("--json", "Machine-readable output")
+    .option("--diff", "Show unified diff against current target file")
+    .action(withExit(async (id: string, opts?: { json?: boolean; diff?: boolean }) => {
+      if (!listCommands?.showItem) {
+        console.error("Proposals feature not available.");
+        process.exitCode = 1;
+        return;
+      }
+      const item = await listCommands.showItem(id);
+      if (!item || item.type !== "proposal") {
+        console.error(`Proposal ${id} not found`);
+        process.exitCode = 1;
+        return;
+      }
+      const p = item.data as { id: string; targetFile: string; status: string; confidence: number; createdAt: number; expiresAt: number | null; observation: string; suggestedChange: string; evidenceSessions: string[] };
+      if (opts?.json) {
+        console.log(JSON.stringify(p, null, 2));
+        return;
+      }
+      const created = new Date(p.createdAt * 1000).toISOString();
+      const evidenceCount = Array.isArray(p.evidenceSessions) ? p.evidenceSessions.length : 0;
+      const expiresIn = p.expiresAt ? Math.max(0, Math.floor((p.expiresAt - Math.floor(Date.now() / 1000)) / 86400)) : null;
+      console.log(`Proposal: ${p.id}`);
+      console.log(`Status: ${p.status}`);
+      console.log(`Target: ${p.targetFile}`);
+      console.log(`Confidence: ${p.confidence.toFixed(2)}`);
+      console.log(`Created: ${created}${expiresIn != null ? ` (expires in ${expiresIn}d)` : ""}`);
+      console.log(`Evidence: ${evidenceCount} sessions`);
+      console.log("");
+      console.log("── Observation ──");
+      console.log(p.observation);
+      console.log("");
+      console.log("── Suggested Change ──");
+      console.log(p.suggestedChange);
+      if (opts?.diff && resolvePath) {
+        const targetPath = resolvePath(p.targetFile);
+        if (existsSync(targetPath)) {
+          const current = readFileSync(targetPath, "utf-8");
+          const lines = p.suggestedChange.split(/\n/);
+          console.log("");
+          console.log("── Preview (diff) ──");
+          console.log(`--- ${p.targetFile} (current)`);
+          console.log(`+++ ${p.targetFile} (with suggestion)`);
+          for (const line of lines) console.log(`+ ${line}`);
+        } else {
+          console.log("");
+          console.log("── Preview (diff) ──");
+          for (const line of p.suggestedChange.split(/\n/)) console.log(`+ ${line}`);
+        }
+      }
+    }));
   proposals
     .command("list")
     .description("List pending proposals")
-    .option("--status <s>", "Filter by status (pending/approved/rejected)")
+    .option("--status <s>", `Filter by status: ${proposalStatusValues.join(", ")}`)
     .action(withExit(async (opts?: { status?: string }) => {
       if (!listCommands?.listProposals) {
         console.log("Proposals feature not available (personaProposals disabled or no workspace).");
         return;
       }
-      const items = await listCommands.listProposals({ status: opts?.status });
+      const status = opts?.status;
+      if (status != null && status !== "" && !proposalStatusValues.includes(status as typeof proposalStatusValues[number])) {
+        console.error(`error: --status requires one of: ${proposalStatusValues.join(", ")}`);
+        process.exitCode = 1;
+        return;
+      }
+      const items = await listCommands.listProposals({ status: status || undefined });
       console.log(`Proposals (${items.length}):`);
       for (const p of items) {
         console.log(`  [${p.id}] ${p.title} (target=${p.targetFile}, status=${p.status}, confidence=${p.confidence.toFixed(2)})`);

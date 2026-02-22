@@ -23,6 +23,7 @@ export type DistillContext = {
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number; stored?: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
 export function registerDistillCommands(mem: Chainable, ctx: DistillContext): void {
@@ -35,6 +36,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     runDistill,
     runExtractDirectives,
     runExtractReinforcement,
+    runGenerateProposals,
   } = ctx;
 
   mem
@@ -156,6 +158,24 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       } else {
         console.log(`\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`);
         for (const p of result.paths) console.log(`  ${p}`);
+      }
+    }));
+
+  mem
+    .command("generate-proposals")
+    .description("Generate persona proposals from reflection insights (patterns, rules, meta). Use after reflect-meta.")
+    .option("--dry-run", "Show what would be proposed without creating")
+    .option("--verbose", "Log each proposal created")
+    .action(withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }) => {
+      if (!runGenerateProposals) {
+        console.log("Generate-proposals not available (personaProposals disabled).");
+        return;
+      }
+      const result = await runGenerateProposals({ dryRun: !!opts?.dryRun, verbose: !!opts?.verbose });
+      if (opts?.dryRun) {
+        console.log(`\n[dry-run] Would create ${result.created} proposal(s).`);
+      } else {
+        console.log(`\nCreated ${result.created} proposal(s).`);
       }
     }));
 

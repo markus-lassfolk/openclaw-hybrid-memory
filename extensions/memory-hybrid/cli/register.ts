@@ -136,6 +136,7 @@ export type HybridMemCliContext = {
   }) => Promise<SelfCorrectionRunResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
@@ -159,6 +160,9 @@ export type HybridMemCliContext = {
     showItem: (id: string) => Promise<{ type: "fact" | "proposal"; data: unknown } | null>;
   };
   tieringEnabled: boolean;
+  resolvedSqlitePath?: string;
+  resolvePath?: (file: string) => string;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
 /** Chainable command type (Commander-style). */
@@ -193,6 +197,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runDistill: ctx.runDistill,
     runExtractDirectives: ctx.runExtractDirectives,
     runExtractReinforcement: ctx.runExtractReinforcement,
+    runGenerateProposals: ctx.runGenerateProposals,
   };
   try {
     registerDistillCommands(mem, distillContext);

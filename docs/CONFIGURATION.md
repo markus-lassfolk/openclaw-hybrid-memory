@@ -384,6 +384,20 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 ---
 
+## Default model selection (maintenance and self-correction)
+
+Maintenance cron jobs (e.g. nightly distillation, weekly reflection, extract-procedures, self-correction) and **self-correction spawn** (when `selfCorrection.analyzeViaSpawn` is true and `selfCorrection.spawnModel` is empty) do **not** hardcode a single model. The plugin chooses the model from your configured provider:
+
+| Priority | Condition | Model used |
+|----------|-----------|------------|
+| 1 | **Gemini** configured (`distill.apiKey` set) | `distill.defaultModel` or `gemini-2.0-flash` |
+| 2 | **Claude** configured (`claude.apiKey` set) | `claude.defaultModel` or a default Claude model |
+| 3 | **OpenAI** (embedding key set) | `reflection.model` or `gpt-4o-mini` / `gpt-4o` for heavier jobs |
+
+So if you use Gemini for distillation, maintenance jobs and spawn use your Gemini model; if you use only OpenAI, they use your reflection/embedding model. When you run **`openclaw hybrid-mem verify --fix`**, the plugin writes each optional job with a concrete `model` value resolved from this logic (existing jobs are not overwritten). **Self-correction:** Leave `selfCorrection.spawnModel` empty (or omit it) to use the same provider-based default; set it to a model string to override.
+
+---
+
 ## Multi-language keywords
 
 The plugin supports multiple languages for **trigger detection** (should we capture?), **category detection**, and **decay classification**. English is built-in; other languages are added via a generated file `.language-keywords.json` (next to `facts.db`). You can let the plugin build it automatically or run `openclaw hybrid-mem build-languages` manually.
