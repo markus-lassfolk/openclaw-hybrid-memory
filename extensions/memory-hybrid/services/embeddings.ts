@@ -70,15 +70,15 @@ export class Embeddings implements EmbeddingProvider {
         continue;
       }
     }
-    if (lastErr) {
-      capturePluginError(lastErr, {
-        subsystem: "embeddings",
-        operation: "embed",
-        phase: "fallback-exhausted",
-      });
-      throw lastErr;
-    }
-    throw new Error("Embeddings: no model available");
+    // lastErr is always defined here: constructor enforces models.length >= 1, so
+    // the loop always runs at least once; either it returns early (success) or
+    // sets lastErr on every iteration before reaching this point.
+    capturePluginError(lastErr!, {
+      subsystem: "embeddings",
+      operation: "embed",
+      phase: "fallback-exhausted",
+    });
+    throw lastErr!;
   }
 }
 

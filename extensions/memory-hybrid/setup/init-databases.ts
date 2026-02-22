@@ -68,7 +68,7 @@ export function initializeDatabases(
     api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT "${gatewayPortRaw}" is not a valid port number (1-65535); gateway base URL not used`);
   }
   const gatewayBaseUrl = gatewayPort !== undefined ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
-  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey ?? "unused", ...(gatewayBaseUrl ? { baseURL: gatewayBaseUrl } : {}) });
+  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey, ...(gatewayBaseUrl ? { baseURL: gatewayBaseUrl } : {}) });
   const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
   const embeddings = new Embeddings(openai, embeddingModels);
 

@@ -2,7 +2,7 @@
  * CLI commands for managing persona proposals (human-only operations)
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -159,7 +159,12 @@ export function buildUnifiedDiff(currentContent: string, proposedContent: string
 
 /** Returns true if the given path (or its directory) is inside a git repository. */
 function isGitRepo(dirOrFilePath: string): boolean {
-  const dir = dirOrFilePath.endsWith("/") ? dirOrFilePath.slice(0, -1) : dirname(dirOrFilePath);
+  let dir: string;
+  try {
+    dir = statSync(dirOrFilePath).isDirectory() ? dirOrFilePath : dirname(dirOrFilePath);
+  } catch {
+    dir = dirname(dirOrFilePath);
+  }
   const result = spawnSync("git", ["rev-parse", "--git-dir"], { cwd: dir, encoding: "utf-8" });
   return result.status === 0 && !!result.stdout?.trim();
 }
@@ -371,9 +376,16 @@ export async function applyApprovedProposal(
     if (isGitRepo(targetPath)) {
       const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
       if (!commitResult.ok) {
+        // Roll back the file write to avoid leaving the workspace in an inconsistent state
+        // (file modified on disk but not committed to git).
+        writeFileSync(targetPath, original);
         ctx.api?.logger?.warn?.(
-          `memory-hybrid: Git commit failed after applying proposal ${proposalId}; file was written successfully. ${commitResult.error}`,
+          `memory-hybrid: Git commit failed after applying proposal ${proposalId}; file write rolled back. ${commitResult.error}`,
         );
+        return {
+          ok: false,
+          error: `Git commit failed for proposal ${proposalId}; file write was rolled back. ${commitResult.error}`,
+        };
       }
     }
     ctx.proposalsDb.markApplied(proposalId);
