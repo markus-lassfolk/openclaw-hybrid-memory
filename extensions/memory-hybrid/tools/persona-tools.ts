@@ -8,6 +8,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { stringEnum } from "openclaw/plugin-sdk";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { PROPOSAL_STATUSES, type HybridMemoryConfig } from "../config.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
@@ -231,6 +232,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           : null;
 
         // Create proposal
+        const snapshot = getFileSnapshot(api.resolvePath(targetFile));
         const proposal = proposalsDb!.create({
           targetFile,
           title,
@@ -239,6 +241,8 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           confidence,
           evidenceSessions,
           expiresAt,
+          targetMtimeMs: snapshot?.mtimeMs ?? null,
+          targetHash: snapshot?.hash ?? null,
         });
 
         await auditProposal("created", proposal.id, {

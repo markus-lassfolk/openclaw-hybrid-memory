@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, type CronModelConfig } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelAlias, getCronModelConfig, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
@@ -68,6 +68,7 @@ import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
+import { getFileSnapshot } from "../utils/file-snapshot.js";
 import {
   CLI_STORE_IMPORTANCE,
   BATCH_STORE_IMPORTANCE,
@@ -101,7 +102,7 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
 function resolveCronJob(def: Record<string, unknown> & { modelTier?: "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
   const { modelTier, ...rest } = def;
   const tier = modelTier ?? "default";
-  const model = getDefaultCronModel(pluginConfig, tier);
+  const model = getCronModelAlias(pluginConfig, tier);
   return { ...rest, model };
 }
 
@@ -1465,6 +1466,7 @@ export async function runGenerateProposalsForCli(
     if (recentCount + created >= limit) break;
     const targetFile = String(item.targetFile ?? "").trim();
     if (!allowedFiles.includes(targetFile as any)) continue;
+    const snapshot = getFileSnapshot(api.resolvePath(targetFile));
     const confidence = Number(item.confidence);
     if (!Number.isFinite(confidence) || confidence < minConf) continue;
     const title = String(item.title ?? "Update from reflection").slice(0, 256);
@@ -1485,6 +1487,8 @@ export async function runGenerateProposalsForCli(
         confidence,
         evidenceSessions,
         expiresAt,
+        targetMtimeMs: snapshot?.mtimeMs ?? null,
+        targetHash: snapshot?.hash ?? null,
       });
       created++;
       if (opts.verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
