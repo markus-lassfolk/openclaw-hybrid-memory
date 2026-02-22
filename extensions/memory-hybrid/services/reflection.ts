@@ -157,7 +157,7 @@ export async function runReflection(
         temperature: REFLECTION_TEMPERATURE,
         max_tokens: 1500,
       }),
-      { label: "memory-hybrid: reflection" },
+      { maxRetries: 2, label: "memory-hybrid: reflection" },
     );
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
     tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
@@ -326,7 +326,7 @@ export async function runReflectionRules(
         temperature: REFLECTION_TEMPERATURE,
         max_tokens: 800,
       }),
-      { label: "memory-hybrid: reflect-rules" },
+      { maxRetries: 2, label: "memory-hybrid: reflect-rules" },
     );
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
     tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
@@ -485,7 +485,7 @@ export async function runReflectionMeta(
         temperature: REFLECTION_TEMPERATURE,
         max_tokens: 500,
       }),
-      { label: "memory-hybrid: reflect-meta" },
+      { maxRetries: 2, label: "memory-hybrid: reflect-meta" },
     );
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
     tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;

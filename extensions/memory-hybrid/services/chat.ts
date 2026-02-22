@@ -58,15 +58,12 @@ export async function chatComplete(opts: {
     return text;
   }
 
-  const resp = await withLLMRetry(
-    () => opts.openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content }],
-      temperature,
-      max_tokens: effectiveMaxTokens,
-    }),
-    { maxRetries: 2 }
-  );
+  const resp = await opts.openai.chat.completions.create({
+    model,
+    messages: [{ role: "user", content }],
+    temperature,
+    max_tokens: effectiveMaxTokens,
+  });
   return resp.choices[0]?.message?.content?.trim() ?? "";
 }
 
@@ -159,7 +156,7 @@ export async function chatCompleteWithRetry(opts: {
     try {
       return await withLLMRetry(
         () => chatComplete({ ...chatOpts, model: currentModel }),
-        { label: attemptLabel },
+        { maxRetries: 2, label: attemptLabel },
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
