@@ -1,6 +1,9 @@
 /**
  * Helper to build scope filter for tool handlers (memory_recall, memory_recall_procedures).
  * Handles explicit parameters, agent-scoped filtering, and orchestrator fallback.
+ *
+ * ⚠️ SECURITY: By default, tool scope params (userId, agentId, sessionId) are IGNORED to prevent
+ * cross-user memory access in multi-tenant setups. Set multiAgent.trustToolScopeParams=true to enable.
  */
 
 import type { ScopeFilter } from "../types/memory.js";
@@ -8,10 +11,13 @@ import type { ScopeFilter } from "../types/memory.js";
 export function buildToolScopeFilter(
   params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
   currentAgent: string | null,
-  config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } }
+  config: { multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean }; autoRecall: { scopeFilter?: ScopeFilter } }
 ): ScopeFilter | undefined {
   const { userId, agentId, sessionId } = params;
-  if (userId || agentId || sessionId) {
+
+  // Security: Only trust tool params if explicitly enabled in config
+  const trustParams = config.multiAgent.trustToolScopeParams === true;
+  if ((userId || agentId || sessionId) && trustParams) {
     return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
   } else if (currentAgent && currentAgent !== config.multiAgent.orchestratorId) {
     return {
