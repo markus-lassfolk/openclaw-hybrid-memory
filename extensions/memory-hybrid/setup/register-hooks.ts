@@ -16,6 +16,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
 export interface HooksContext {
   factsDb: FactsDB;
@@ -86,6 +87,17 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:attach" });
     throw err;
   }
+
+  // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
+  // Mutates event.historyMessages in place so OpenClaw core uses the sanitized array.
+  api.on("llm_input", (event: { historyMessages?: unknown[] }) => {
+    if (!event?.historyMessages || !Array.isArray(event.historyMessages)) return;
+    const sanitized = sanitizeMessagesForClaude(event.historyMessages);
+    if (sanitized !== event.historyMessages) {
+      event.historyMessages.length = 0;
+      for (const m of sanitized) event.historyMessages.push(m);
+    }
+  });
 
   // Update context refs from hooks (they may have been mutated)
   // Note: This is a workaround for the fact that the hooks need to update these values
