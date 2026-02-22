@@ -103,7 +103,7 @@ export type ManageContext = {
     getProposalsPending: () => number;
     getWalPending: () => number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
-    getStorageSizes: () => { sqliteBytes?: number; lanceBytes?: number };
+    getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
   };
   listCommands?: {
     listProposals: (opts: { status?: string }) => Promise<Array<{ id: string; title: string; targetFile: string; status: string; confidence: number; createdAt: number }>>;
@@ -312,7 +312,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const proposalsPending = extras.getProposalsPending();
         const walPending = extras.getWalPending();
         const timestamps = extras.getLastRunTimestamps();
-        const sizes = extras.getStorageSizes();
+        const sizes = await extras.getStorageSizes();
 
         const { reflectionPatternsCount, reflectionRulesCount } = factsDb.statsReflection();
         const selfCorrectionCount = factsDb.selfCorrectionIncidentsCount();
@@ -420,32 +420,41 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       scopeTarget?: string;
     }) => {
       try {
-        const filters = {
-          category: opts?.category,
-          entity: opts?.entity,
-          key: opts?.key,
-          source: opts?.source,
-          tier: opts?.tier as "hot" | "warm" | "cold" | "structural" | undefined,
-        };
-        const scopeFilter: ScopeFilter | undefined = opts?.scope ? {
-          scope: opts.scope as "global" | "user" | "agent" | "session",
-          scopeTarget: opts.scopeTarget,
-        } : undefined;
+        // Build scope filter from CLI options
+        const scopeFilter: ScopeFilter | undefined = opts?.scope ? (() => {
+          const filter: ScopeFilter = {};
+          if (opts.scope === 'user') filter.userId = opts.scopeTarget || null;
+          else if (opts.scope === 'agent') filter.agentId = opts.scopeTarget || null;
+          else if (opts.scope === 'session') filter.sessionId = opts.scopeTarget || null;
+          return filter;
+        })() : undefined;
 
         const embedding = await embeddings.embed(query);
         const vectorResults = await vectorDb.search(embedding, 50);
-        const sqlResults = factsDb.search(query, 50, filters);
-        let combined = merge(vectorResults, sqlResults, 20);
+        const sqlResults = factsDb.search(query, 50, {
+          scopeFilter,
+          tierFilter: opts?.tier === 'cold' ? 'all' : 'warm',
+        });
+
+        // Filter vector results by scope
+        let filteredVectorResults = vectorResults;
         if (scopeFilter) {
-          combined = filterByScope(combined, scopeFilter);
+          filteredVectorResults = filterByScope(
+            vectorResults,
+            (id, opts) => factsDb.getById(id, opts),
+            scopeFilter
+          );
         }
-        if (tieringEnabled && !filters.tier) {
-          combined = combined.filter((r) => r.tier !== "cold");
+
+        let combined = merge(filteredVectorResults, sqlResults, 20, factsDb);
+
+        if (tieringEnabled && opts?.tier !== 'cold') {
+          combined = combined.filter((r) => r.entry.tier !== "cold");
         }
 
         console.log(`Search results for "${query}": ${combined.length}`);
         for (const r of combined) {
-          console.log(`  [${r.id}] ${r.text} (score=${r.score.toFixed(3)}, tier=${r.tier}, category=${r.category ?? "none"})`);
+          console.log(`  [${r.entry.id}] ${r.entry.text} (score=${r.score.toFixed(3)}, tier=${r.entry.tier}, category=${r.entry.category ?? "none"})`);
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "search" });
@@ -823,7 +832,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       console.log(`Ingest complete: ${res.stored} stored, ${res.skipped} skipped, ${res.extracted} extracted, ${res.files} files ${opts?.dryRun ? "(dry-run)" : ""}`);
     }));
 
-  mem
+  mem!
     .command("export")
     .description("Export memory to MEMORY.md + memory/ directory (vanilla OpenClaw format). Use --output to specify path.")
     .requiredOption("--output <path>", "Output directory path")
@@ -1124,16 +1133,17 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  ${s}: ${count}`);
       }
     }));
-  scope
+  scope!
     .command("prune")
     .description("Prune all facts in a specific scope (WARNING: destructive)")
     .requiredOption("--scope <s>", "Scope to prune (global/user/agent/session)")
     .option("--scope-target <st>", "Scope target (userId/agentId/sessionId). Required when scope is user/agent/session.")
     .action(withExit(async (opts: { scope: string; scopeTarget?: string }) => {
-      const scopeFilter: ScopeFilter = {
-        scope: opts.scope as "global" | "user" | "agent" | "session",
-        scopeTarget: opts.scopeTarget,
-      };
+      const scopeFilter: ScopeFilter = {};
+      if (opts.scope === 'user') scopeFilter.userId = opts.scopeTarget || null;
+      else if (opts.scope === 'agent') scopeFilter.agentId = opts.scopeTarget || null;
+      else if (opts.scope === 'session') scopeFilter.sessionId = opts.scopeTarget || null;
+
       const deleted = factsDb.pruneScopedFacts(scopeFilter);
       console.log(`Pruned ${deleted} facts from scope ${opts.scope}${opts.scopeTarget ? ` (target=${opts.scopeTarget})` : ""}.`);
     }));

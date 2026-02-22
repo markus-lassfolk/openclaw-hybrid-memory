@@ -130,8 +130,8 @@ export class CredentialsDB {
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] === CRED_KDF_PLAINTEXT) {
       // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
-      // @ts-expect-error - Override readonly property to match DB state
-      this.encrypted = false;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this as any).encrypted = false;
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);

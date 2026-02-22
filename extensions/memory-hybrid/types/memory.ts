@@ -4,6 +4,9 @@
 
 import type { MemoryCategory, DecayClass } from "../config.js";
 
+// Re-export types that are commonly needed
+export type { MemoryCategory, DecayClass };
+
 /** Memory tier for dynamic tiering (hot = always loaded, warm = semantic search, cold = archived). */
 export type MemoryTier = "hot" | "warm" | "cold";
 

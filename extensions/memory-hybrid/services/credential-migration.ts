@@ -10,7 +10,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { Embeddings } from "./embeddings.js";
 import type { MemoryCategory } from "../types/memory.js";
 import { tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "./auto-capture.js";
-import { extractTags } from "./auto-capture.js";
+import { extractTags } from "../utils/tags.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
 

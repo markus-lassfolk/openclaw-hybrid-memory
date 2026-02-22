@@ -22,10 +22,7 @@ export function buildToolScopeFilter(
     return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
   } else if ((userId || agentId || sessionId) && !trustParams) {
     // Debug: Log when explicit scope params are ignored for security
-    addOperationBreadcrumb("scope-params-ignored", {
-      reason: "trustToolScopeParams=false",
-      ignoredParams: { userId: !!userId, agentId: !!agentId, sessionId: !!sessionId }
-    });
+    addOperationBreadcrumb("scope-filter", "params-ignored-security");
   }
 
   if (currentAgent && currentAgent !== config.multiAgent.orchestratorId) {

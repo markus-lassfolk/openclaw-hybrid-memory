@@ -18,7 +18,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { chatComplete } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
@@ -229,7 +229,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             scopeFilter,
             reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
           });
-          let lanceResults: Array<{ entry: MemoryEntry; score: number; backend: "lancedb" }> = [];
+          let lanceResults: SearchResult[] = [];
           try {
             let textToEmbed = e.prompt;
             if (ctx.cfg.search?.hydeEnabled) {
