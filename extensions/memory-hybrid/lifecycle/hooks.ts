@@ -30,6 +30,7 @@ import { VAULT_POINTER_PREFIX, detectCredentialPatterns } from "../services/auto
 import { classifyMemoryOperation } from "../services/classification.js";
 import { detectAuthFailure, buildCredentialQuery, formatCredentialHint, DEFAULT_AUTH_FAILURE_PATTERNS, type AuthFailurePattern } from "../services/auth-failure-detect.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
+import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -257,6 +258,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               return r;
             });
           } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: 'auto-recall-vector-search',
+              subsystem: 'vector',
+              phase: 'runtime',
+              backend: 'lancedb',
+            });
             api.logger.warn(
               `memory-hybrid: vector recall failed: ${err}`,
             );
