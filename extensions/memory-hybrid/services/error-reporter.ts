@@ -254,6 +254,10 @@ export function capturePluginError(error: Error, context: {
   backend?: string;
   retryAttempt?: number;
   memoryCount?: number;
+  /** Severity level (e.g. "info", "warning", "error"). Not sent to Sentry, used for local logging/filtering. */
+  severity?: string;
+  /** Additional context fields for specific operations */
+  [key: string]: unknown;
 }): string | undefined {
   if (!initialized || !Sentry) {
     return undefined;

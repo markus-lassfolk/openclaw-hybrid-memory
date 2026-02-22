@@ -44,7 +44,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--all", "Process all sessions (last 90 days)")
     .option("--days <n>", "Process sessions from last N days (default: 3)", "3")
     .option("--since <date>", "Process sessions since date (YYYY-MM-DD)")
-    .option("--model <model>", "LLM for extraction (recommended: gemini-3-pro-preview for 1M context). Default: config.distill.defaultModel or gemini-3-pro-preview", "gemini-3-pro-preview")
+    .option("--model <model>", "LLM for extraction (recommended: gemini-3-pro-preview for 1M context). Default: config.distill.defaultModel or gemini-3-pro-preview")
     .option("--verbose", "Log each fact as it is stored")
     .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
     .option("--max-session-tokens <n>", "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)", "0")

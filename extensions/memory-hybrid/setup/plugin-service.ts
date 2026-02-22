@@ -8,7 +8,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
-import type { OpenAI } from "openai";
+import type OpenAI from "openai";
 import {
   initErrorReporter,
   isErrorReporterActive,

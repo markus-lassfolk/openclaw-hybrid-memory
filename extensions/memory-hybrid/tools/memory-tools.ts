@@ -399,7 +399,7 @@ export function registerMemoryTools(
           text: r.entry.text,
           category: r.entry.category,
           entity: r.entry.entity,
-          importance: r.importance,
+          importance: r.entry.importance,
           score: r.score,
           backend: r.backend,
           tags: r.entry.tags?.length ? r.entry.tags : undefined,

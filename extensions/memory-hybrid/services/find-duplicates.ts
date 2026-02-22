@@ -3,8 +3,8 @@
  * Does not modify store. By default skips identifier-like facts; use includeStructured to include.
  */
 
-import type { FactsDB } from "../backends/facts.js";
-import type { VectorDB } from "../backends/vector.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "./embeddings.js";
 import { safeEmbed } from "./embeddings.js";
 import { isStructuredForConsolidation } from "./consolidation.js";
