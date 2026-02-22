@@ -58,6 +58,9 @@
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme",
   "bugs": {
     "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues"

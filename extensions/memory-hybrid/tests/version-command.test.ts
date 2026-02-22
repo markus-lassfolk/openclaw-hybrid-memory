@@ -325,7 +325,7 @@ describe("version command utilities", () => {
     });
 
     it("returns null for non-string tag_name", () => {
-      const data = { tag_name: 123 };
+      const data = { tag_name: 123 } as unknown as { tag_name?: string };
       const tag = data.tag_name;
       const version = typeof tag === "string" ? tag.replace(/^v/, "") : null;
       

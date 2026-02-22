@@ -77,13 +77,13 @@ import {
 } from "../utils/constants.js";
 
 // Shared cron job definitions used by install and verify --fix.
-// Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config (getDefaultCronModel).
-// modelTier: "default" = standard LLM, "heavy" = larger context; resolved to concrete model from OpenAI/Gemini/Claude config.
+// Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config (getCronModelAlias).
+// modelTier: "default" = standard LLM, "heavy" = larger context; resolved to stable aliases when available.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\nCheck distill.enabled before step 2. Exit 0 if disabled. Report counts.", isolated: true, modelTier: "default", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
   // Daily 02:30 | self-correction-analysis | self-correction-run
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
@@ -93,7 +93,7 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user via their preferred channel. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true },
 ];
@@ -1245,9 +1245,11 @@ export async function runExtractProceduresForCli(
  */
 export async function runGenerateAutoSkillsForCli(
   ctx: HandlerContext,
-  opts: { dryRun: boolean },
+  opts: { dryRun: boolean; verbose?: boolean },
 ): Promise<GenerateAutoSkillsResult> {
   const { factsDb, cfg, logger } = ctx;
+  const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
+  const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
   try {
     return generateAutoSkills(
       factsDb,
@@ -1257,7 +1259,7 @@ export async function runGenerateAutoSkillsForCli(
         skillTTLDays: cfg.procedures.skillTTLDays,
         dryRun: opts.dryRun,
       },
-      { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
+      { info, warn },
     );
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runGenerateAutoSkillsForCli" });
@@ -1504,7 +1506,7 @@ export async function runGenerateProposalsForCli(
  */
 export async function runExtractDailyForCli(
   ctx: HandlerContext,
-  opts: { days: number; dryRun: boolean },
+  opts: { days: number; dryRun: boolean; verbose?: boolean },
   sink: ExtractDailySink,
 ): Promise<ExtractDailyResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
