@@ -98,6 +98,21 @@ export function parseSuggestedChange(suggestedChange: string): { changeType: Pro
   return { changeType: "append", content: suggestedChange };
 }
 
+/**
+ * Apply confidence cap for replace-type proposals (issue #89).
+ * SOUL.md replace is capped at 0.5; other file replace at 0.6; append unchanged.
+ */
+export function capProposalConfidence(confidence: number, targetFile: string, suggestedChange: string): number {
+  const parsed = parseSuggestedChange(suggestedChange);
+  if (parsed.changeType === "replace" && targetFile === "SOUL.md") {
+    return Math.min(confidence, 0.5);
+  }
+  if (parsed.changeType === "replace") {
+    return Math.min(confidence, 0.6);
+  }
+  return confidence;
+}
+
 function buildAppendBlock(proposalId: string, observation: string, suggestedChange: string, timestamp: string): string {
   const escapeHtmlComment = (text: string): string =>
     text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
