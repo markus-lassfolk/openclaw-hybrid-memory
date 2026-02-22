@@ -83,7 +83,8 @@ function parseSuggestedChange(suggestedChange: string): { changeType: ProposalCh
   const replaceMatch = REPLACE_PREFIXES.find((re) => re.test(firstLine));
   if (replaceMatch) {
     const remainderMatch = firstLine.match(/^\s*replace(?:\s+the)?\s+(?:entire|whole)?\s*file\b\s*:?\s*(.*)$/i);
-    const remainder = remainderMatch?.[1] ? remainderMatch[1] : "";
+    const remainderRaw = remainderMatch?.[1] ? remainderMatch[1].trim() : "";
+    const remainder = remainderRaw && !/^[.:]$/.test(remainderRaw) ? remainderRaw : "";
     let content = [remainder, ...lines.slice(1)].join("\n");
     content = content.replace(/^\s*(with|with the following|with the following content)\s*:\s*\n?/i, "");
     return { changeType: "replace", content };

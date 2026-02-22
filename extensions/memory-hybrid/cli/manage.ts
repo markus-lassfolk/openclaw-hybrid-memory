@@ -3,7 +3,7 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
   FindDuplicatesResult,
@@ -29,6 +29,7 @@ import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withExit, type Chainable } from "./shared.js";
+import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -118,10 +119,10 @@ export type ManageContext = {
   tieringEnabled: boolean;
   resolvedSqlitePath?: string;
   resolvePath?: (file: string) => string;
-  runExtractDaily?: (opts: { days: number; dryRun: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
+  runExtractDaily?: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
   runExtractDirectives?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
   runExtractReinforcement?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
-  runGenerateAutoSkills?: (opts: { dryRun: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
+  runGenerateAutoSkills?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
@@ -232,7 +233,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           ? [{
               name: "extract-daily (7 days)",
               run: async () => {
-                const r = await runExtractDaily({ days: 7, dryRun: false }, sink);
+                const r = await runExtractDaily({ days: 7, dryRun: false, verbose }, sink);
                 const stored = r.totalStored ?? r.stored ?? 0;
                 log(`Extract-daily: ${stored} stored.`);
               },
@@ -269,7 +270,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           ? [{
               name: "generate-auto-skills",
               run: async () => {
-                const r = await runGenerateAutoSkills({ dryRun: false });
+                const r = await runGenerateAutoSkills({ dryRun: false, verbose });
                 log(`Generate-auto-skills: ${r.generated} generated.`);
               },
             }]
@@ -314,6 +315,19 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         {
           name: "build-languages",
           run: async () => {
+            const langPath = getLanguageKeywordsFilePath();
+            if (langPath && existsSync(langPath)) {
+              try {
+                const ageMs = Date.now() - statSync(langPath).mtimeMs;
+                const ageDays = ageMs / (24 * 60 * 60 * 1000);
+                if (ageDays < 7) {
+                  if (verbose) log(`Build-languages: skipped (updated ${ageDays.toFixed(1)} days ago).`);
+                  return;
+                }
+              } catch (err) {
+                if (verbose) log(`Build-languages: could not read mtime (${err}); running anyway.`);
+              }
+            }
             const r = await runBuildLanguageKeywords({ dryRun: false });
             if (r.ok) log(`Build-languages: ${r.languagesAdded} languages added.`);
             else if (verbose) log(`Build-languages: ${r.error}`);
@@ -1264,9 +1278,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           const res = await fetch(url, { signal: c.signal });
           clearTimeout(t);
           return res;
-        } catch {
+        } catch (err) {
           clearTimeout(t);
-          throw new Error("timeout or network error");
+          if (err instanceof Error && err.name === "AbortError") throw new Error("Request timed out");
+          throw err;
         }
       };
 
@@ -1293,8 +1308,9 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }
 
       const compare = (a: string, b: string): number => {
-        const pa = a.split(".").map(Number);
-        const pb = b.split(".").map(Number);
+        const parseNum = (s: string): number => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; };
+        const pa = a.replace(/[-+].*/,"").split(".").map(parseNum);
+        const pb = b.replace(/[-+].*/,"").split(".").map(parseNum);
         for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
           const va = pa[i] ?? 0;
           const vb = pb[i] ?? 0;

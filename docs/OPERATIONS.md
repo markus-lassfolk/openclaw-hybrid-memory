@@ -70,13 +70,7 @@ This runs at 2 AM daily as an isolated sub-agent. It processes session logs from
 0 2 * * * cd ~/.openclaw && openclaw hybrid-mem distill >> /var/log/openclaw-distill.log 2>&1
 ```
 
-**After each distillation run**, always execute:
-
-```bash
-openclaw hybrid-mem record-distill
-```
-
-This writes a timestamp so the next run uses the correct incremental window and `verify` shows the last run.
+Distill automatically records the run timestamp so the next job uses the correct incremental window and `verify` shows the last run.
 
 **Distillation window commands:**
 
@@ -112,7 +106,7 @@ Runs at 3 AM Sundays. The `model` value is resolved from your config (see [CONFI
 
 | What | Covered by | Notes |
 |------|------------|--------|
-| **Session distillation** (facts from old conversation logs) | **nightly-memory-sweep** | Run `openclaw hybrid-mem record-distill` after each run (or have the job message ask the agent to do it). With `distill.extractDirectives` / `distill.extractReinforcement` the same run can extract directives and reinforcement. |
+| **Session distillation** (facts from old conversation logs) | **nightly-memory-sweep** | Distill automatically records the run timestamp after completion. With `distill.extractDirectives` / `distill.extractReinforcement` the same run can extract directives and reinforcement. |
 | **Reflection** (pattern synthesis from facts) | **weekly-reflection** | Uses `memory_reflect`; requires `reflection.enabled: true`. |
 | **Prune expired facts** | Gateway (every 60 min) | No cron job needed. |
 | **Auto-classify** ("other" → categories) | Gateway (every 24 h if enabled) | No cron job needed. |

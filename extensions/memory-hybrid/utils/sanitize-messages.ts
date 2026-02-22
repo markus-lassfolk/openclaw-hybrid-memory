@@ -16,7 +16,7 @@
 
 export type MessageLike = {
   role: string;
-  content?: string | Array<{ type?: string; id?: string; tool_use_id?: string; content?: unknown }>;
+  content?: string | Array<{ type?: string; id?: string; tool_use_id?: string; content?: unknown; text?: string; name?: string; input?: unknown }>;
 };
 
 const PLACEHOLDER_CONTENT = "[Output omitted or truncated.]";
