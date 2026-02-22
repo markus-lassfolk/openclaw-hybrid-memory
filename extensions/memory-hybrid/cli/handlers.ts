@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelAlias, getCronModelConfig, type CronModelConfig } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
