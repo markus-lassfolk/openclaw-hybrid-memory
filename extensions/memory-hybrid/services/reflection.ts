@@ -172,6 +172,13 @@ export async function runReflection(
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
+  if (opts.verbose) {
+    logger.info(`memory-hybrid: reflection — extracted ${uniqueNewPatterns.length} patterns:`);
+    for (const pattern of uniqueNewPatterns) {
+      logger.info(`  PATTERN: ${pattern}`);
+    }
+  }
+
   // Existing patterns (non-superseded, still valid) for dedupe
   const nowSec = Math.floor(Date.now() / 1000);
   const existingPatternFacts = factsDb.getByCategory("pattern").filter(
@@ -275,7 +282,7 @@ export async function runReflectionRules(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string },
+  opts: { dryRun: boolean; model: string; verbose?: boolean },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionRulesResult> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -324,6 +331,13 @@ export async function runReflectionRules(
   if (uniqueRules.length === 0) {
     logger.info("memory-hybrid: reflect-rules — 0 rules extracted from LLM");
     return { rulesExtracted: rules.length, rulesStored: 0 };
+  }
+
+  if (opts.verbose) {
+    logger.info(`memory-hybrid: reflect-rules — extracted ${uniqueRules.length} rules:`);
+    for (const rule of uniqueRules) {
+      logger.info(`  RULE: ${rule}`);
+    }
   }
   const existingRuleFacts = factsDb.getByCategory("rule").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
@@ -408,7 +422,7 @@ export async function runReflectionMeta(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string },
+  opts: { dryRun: boolean; model: string; verbose?: boolean },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -457,6 +471,13 @@ export async function runReflectionMeta(
   if (uniqueMetas.length === 0) {
     logger.info("memory-hybrid: reflect-meta — 0 meta-patterns extracted from LLM");
     return { metaExtracted: metas.length, metaStored: 0 };
+  }
+
+  if (opts.verbose) {
+    logger.info(`memory-hybrid: reflect-meta — extracted ${uniqueMetas.length} meta-patterns:`);
+    for (const meta of uniqueMetas) {
+      logger.info(`  META: ${meta}`);
+    }
   }
   const existingMetaFacts = factsDb.getByCategory("pattern").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && (f.tags?.includes("meta") === true),
