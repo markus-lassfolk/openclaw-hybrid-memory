@@ -5,6 +5,7 @@
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
 import type {
   FindDuplicatesResult,
   StoreCliOpts,
@@ -711,6 +712,58 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       } else {
         console.error(`Error rejecting proposal ${id}: ${res.error}`);
         process.exitCode = 1;
+      }
+    }));
+
+  proposals
+    .command("show <proposalId>")
+    .description("Show full proposal content (observation, suggested change, optional diff)")
+    .option("--json", "Machine-readable output")
+    .option("--diff", "Show unified diff against current target file")
+    .action(withExit(async (proposalId: string, opts?: { json?: boolean; diff?: boolean }) => {
+      if (!listCommands?.showItem) {
+        console.log("Proposals feature not available.");
+        return;
+      }
+      const item = await listCommands.showItem(proposalId);
+      if (!item || item.type !== "proposal") {
+        console.error(`Proposal ${proposalId} not found`);
+        process.exitCode = 1;
+        return;
+      }
+      const proposal = item.data as { id: string; status: string; targetFile: string; confidence: number; observation: string; suggestedChange: string; createdAt: number; evidenceSessions?: string[] };
+      const targetPath = resolvePath ? resolvePath(proposal.targetFile) : proposal.targetFile;
+      const includeDiff = !!opts?.diff || !!opts?.json;
+      let diffText: string | null = null;
+      if (includeDiff) {
+        try {
+          const current = existsSync(targetPath) ? readFileSync(targetPath, "utf-8") : "";
+          const proposed = buildAppliedContent(current, proposal, new Date().toISOString()).content;
+          diffText = buildUnifiedDiff(current, proposed, proposal.targetFile);
+        } catch { diffText = null; }
+      }
+      if (opts?.json) {
+        console.log(JSON.stringify({ ...proposal, diff: diffText }, null, 2));
+        return;
+      }
+      const created = new Date(proposal.createdAt * 1000).toISOString();
+      const evidenceCount = Array.isArray(proposal.evidenceSessions) ? proposal.evidenceSessions.length : 0;
+      console.log(`Proposal: ${proposal.id}`);
+      console.log(`Status: ${proposal.status}`);
+      console.log(`Target: ${proposal.targetFile}`);
+      console.log(`Confidence: ${proposal.confidence.toFixed(2)}`);
+      console.log(`Created: ${created}`);
+      console.log(`Evidence: ${evidenceCount} sessions`);
+      console.log("");
+      console.log("── Observation ──");
+      console.log(proposal.observation);
+      console.log("");
+      console.log("── Suggested Change ──");
+      console.log(proposal.suggestedChange);
+      if (opts?.diff && diffText) {
+        console.log("");
+        console.log("── Preview (diff) ──");
+        console.log(diffText);
       }
     }));
 
