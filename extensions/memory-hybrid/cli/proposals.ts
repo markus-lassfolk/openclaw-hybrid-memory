@@ -337,8 +337,7 @@ export async function applyApprovedProposal(
     writeFileSync(targetPath, applied.content);
     const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
     if (!commitResult.ok) {
-      writeFileSync(targetPath, original);
-      return { ok: false, error: commitResult.error };
+      console.warn?.(`memory-hybrid: Git commit failed (non-fatal): ${commitResult.error}`);
     }
     ctx.proposalsDb.markApplied(proposalId);
     await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {

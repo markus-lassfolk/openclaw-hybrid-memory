@@ -1448,7 +1448,11 @@ export async function runGenerateProposalsForCli(
   }
   let items: Array<{ targetFile: string; title: string; observation: string; suggestedChange: string; confidence: number }>;
   try {
-    const trimmed = rawResponse.replace(/^[\s\S]*?\[/, "[").replace(/\][\s\S]*$/, "]");
+    const firstBracket = rawResponse.indexOf("[");
+    const lastBracket = rawResponse.lastIndexOf("]");
+    const trimmed = firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
+      ? rawResponse.substring(firstBracket, lastBracket + 1)
+      : rawResponse;
     items = JSON.parse(trimmed);
     if (!Array.isArray(items)) items = [];
   } catch (err) {
