@@ -349,7 +349,7 @@ export async function runStoreForCli(
       if (similarFacts.length > 0) {
         try {
           const classification = await classifyMemoryOperation(
-            text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), log,
+            text, entity, key, similarFacts, openai, cfg.store.classifyModel, log,
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
@@ -1650,7 +1650,7 @@ export async function runExtractDailyForCli(
             try {
               const classification = await classifyMemoryOperation(
                 trimmed, extracted.entity, extracted.key, similarFacts,
-                openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), sink,
+                openai, cfg.store.classifyModel, sink,
               );
               if (classification.action === "NOOP") continue;
               if (classification.action === "DELETE" && classification.targetId) {

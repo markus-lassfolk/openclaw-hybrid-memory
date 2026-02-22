@@ -101,8 +101,8 @@ export type StoreConfig = {
   fuzzyDedupe: boolean;
   /** Classify incoming fact against existing similar facts (ADD/UPDATE/DELETE/NOOP) before storing (default: false) */
   classifyBeforeWrite?: boolean;
-  /** Model for classification (default: gpt-4o-mini) */
-  classifyModel?: string;
+  /** Model for classification (default: gpt-4o-mini; always set by config parse) */
+  classifyModel: string;
 };
 
 /** Write-Ahead Log (WAL) configuration for crash resilience */

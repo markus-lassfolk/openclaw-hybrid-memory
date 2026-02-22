@@ -778,7 +778,7 @@ export function registerMemoryTools(
           }
           if (similarFacts.length > 0) {
             const classification = await classifyMemoryOperation(
-              textToStore, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), api.logger,
+              textToStore, entity, key, similarFacts, openai, cfg.store.classifyModel, api.logger,
             );
 
             if (classification.action === "NOOP") {
