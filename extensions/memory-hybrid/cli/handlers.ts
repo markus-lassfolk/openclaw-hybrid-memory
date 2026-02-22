@@ -1700,8 +1700,8 @@ function extractTextFromSessionJsonl(filePath: string): string {
           parts.push(block.text.trim());
         }
       }
-    } catch (err) {
-      capturePluginError(err as Error, { subsystem: "cli", operation: "extractTextFromSessionJsonl", filePath });
+    } catch {
+      // skip malformed lines
     }
   }
   return parts.join("\n\n");
@@ -2526,6 +2526,13 @@ export function runConfigSetForCli(
       (out.config.credentials as Record<string, unknown>).enabled = boolVal;
     }
     const written = (out.config.credentials as Record<string, unknown>).enabled;
+    // Validate config against schema before writing
+    try {
+      hybridConfigSchema.parse(out.config);
+    } catch (schemaErr: unknown) {
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-credentials" });
+      return { ok: false, error: `Invalid config value: ${schemaErr}` };
+    }
     try {
       writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
       writeFileSync(getRestartPendingPath(), "", "utf-8");
