@@ -379,9 +379,9 @@ export type LLMConfig = {
   default: string[];
   /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
   heavy: string[];
-  /** When true, if all preferred models fail, try the fallback model (or gateway default). */
+  /** When true, if all preferred models fail, try the fallback model. */
   fallbackToDefault?: boolean;
-  /** Single model to try when fallbackToDefault is true and all preferred models failed. Omit to use tier default (gpt-4o-mini / gpt-4o). */
+  /** When fallbackToDefault is true, this model is tried last. Set to your gateway default (e.g. from openclaw.yaml) for provider-agnostic fallback; omit to not add an extra fallback beyond the list. */
   fallbackModel?: string;
 };
 
@@ -433,8 +433,8 @@ export function getLLMModelPreference(
     const trimmed = list.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);
     if (trimmed.length > 0) {
       if (pluginConfig?.llm?.fallbackToDefault) {
-        const fallback = pluginConfig.llm.fallbackModel?.trim() || (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
-        if (!trimmed.includes(fallback)) {
+        const fallback = pluginConfig.llm.fallbackModel?.trim();
+        if (fallback && !trimmed.includes(fallback)) {
           return [...trimmed, fallback];
         }
         return trimmed;
@@ -1174,7 +1174,7 @@ export const hybridConfigSchema = {
     const defaultList = llmRaw && Array.isArray(llmRaw.default) ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
     const heavyList = llmRaw && Array.isArray(llmRaw.heavy) ? (llmRaw.heavy as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
     const llm: LLMConfig | undefined =
-      defaultList.length > 0 && heavyList.length > 0
+      defaultList.length > 0 || heavyList.length > 0
         ? {
             default: defaultList,
             heavy: heavyList,
