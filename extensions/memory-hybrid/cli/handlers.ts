@@ -1429,7 +1429,7 @@ export async function runGenerateProposalsForCli(
     insights: insightsBlock,
     identity_files: identityFilesBlock,
   });
-  const model = cfg.reflection?.model ?? "gpt-4o-mini";
+  const model = getDefaultCronModel(getCronModelConfig(cfg), "heavy");
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
