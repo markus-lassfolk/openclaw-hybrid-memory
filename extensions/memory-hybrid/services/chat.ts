@@ -141,7 +141,8 @@ export async function chatCompleteWithRetry(opts: {
   fallbackModels?: string[];
   label?: string;
 }): Promise<string> {
-  const { fallbackModels = [], label, maxTokens, ...chatOpts } = opts;
+  const { fallbackModels = [], label: rawLabel, maxTokens, ...chatOpts } = opts;
+  const label = rawLabel ?? "LLM";
   const modelsToTry = [opts.model, ...fallbackModels];
 
   let lastError: Error | undefined;
@@ -155,8 +156,8 @@ export async function chatCompleteWithRetry(opts: {
 
     try {
       return await withLLMRetry(
-        () => chatComplete({ ...chatOpts, model: currentModel }),
-        { maxRetries: 2, label: attemptLabel },
+        () => chatComplete({ ...chatOpts, model: currentModel, maxTokens }),
+        { maxRetries: 3, label: attemptLabel },
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));

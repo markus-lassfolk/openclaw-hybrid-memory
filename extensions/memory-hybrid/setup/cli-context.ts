@@ -227,11 +227,11 @@ function buildCliContextServices(
         defaultWindow: cfg.reflection.defaultWindow,
         minObservations: cfg.reflection.minObservations,
         enabled: cfg.reflection.enabled,
-      }, opts, api.logger),
+      }, { ...opts, fallbackModels: cfg.distill?.fallbackModels }, logSink),
     runReflectionRules: (opts) =>
-      runReflectionRules(factsDb, vectorDb, embeddings, openai, opts, api.logger),
+      runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, fallbackModels: cfg.distill?.fallbackModels }, logSink),
     runReflectionMeta: (opts) =>
-      runReflectionMeta(factsDb, vectorDb, embeddings, openai, opts, api.logger),
+      runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, fallbackModels: cfg.distill?.fallbackModels }, logSink),
     runClassify: (opts) =>
       runClassifyForCli(factsDb, openai, cfg.autoClassify, opts, discoveredPath, logSink, undefined),
     runCompaction: () =>
