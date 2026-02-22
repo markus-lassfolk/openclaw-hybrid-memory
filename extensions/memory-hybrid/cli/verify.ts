@@ -4,35 +4,12 @@
 
 import type { InstallCliResult, VerifyCliSink } from "./types.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { withExit, type Chainable } from "./shared.js";
 
 export type VerifyContext = {
   runVerify: (opts: { fix: boolean; logFile?: string }, sink: VerifyCliSink) => Promise<void>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
 };
-
-type Chainable = {
-  command(name: string): Chainable;
-  description(desc: string): Chainable;
-  action(fn: (...args: any[]) => void | Promise<void>): Chainable;
-  option(flags: string, desc?: string, defaultValue?: string): Chainable;
-  requiredOption(flags: string, desc?: string, defaultValue?: string): Chainable;
-};
-
-/** Wrap async action to exit on completion (only for standalone CLI). */
-const withExit = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
-  (...args: A) => {
-    const isStandaloneCli = process.argv.some((arg) => arg.includes("openclaw") || arg.includes("hybrid-mem"));
-    Promise.resolve(fn(...args)).then(
-      () => {
-        if (isStandaloneCli) process.exit(process.exitCode ?? 0);
-      },
-      (err: unknown) => {
-        console.error(err);
-        if (isStandaloneCli) process.exit(1);
-        else throw err;
-      },
-    );
-  };
 
 export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void {
   const { runVerify, runInstall } = ctx;
