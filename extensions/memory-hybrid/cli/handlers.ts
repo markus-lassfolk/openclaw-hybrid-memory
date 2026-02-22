@@ -796,6 +796,8 @@ export async function runVerifyForCli(
             allJobs.set("weekly-deep-maintenance", { name, enabled });
           } else if (monthlyConsolidationRe.test(name) && !allJobs.has("monthly-consolidation")) {
             allJobs.set("monthly-consolidation", { name, enabled });
+          } else if (name && !allJobs.has(name)) {
+            allJobs.set(name, { name, enabled });
           }
         }
       } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
@@ -818,6 +820,8 @@ export async function runVerifyForCli(
             allJobs.set("weekly-deep-maintenance", { name: key, enabled });
           } else if (monthlyConsolidationRe.test(key) && !allJobs.has("monthly-consolidation")) {
             allJobs.set("monthly-consolidation", { name: key, enabled });
+          } else if (key && !allJobs.has(key)) {
+            allJobs.set(key, { name: key, enabled });
           }
         }
       }
