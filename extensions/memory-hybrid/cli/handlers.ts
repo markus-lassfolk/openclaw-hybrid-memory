@@ -124,14 +124,14 @@ function relativeTime(ms: number): string {
 
   if (abs < 60000) return future ? "in <1m" : "just now";
   if (abs < 3600000) {
-    const m = Math.round(abs / 60000);
+    const m = Math.floor(abs / 60000);
     return future ? `in ${m}m` : `${m}m ago`;
   }
   if (abs < 86400000) {
-    const h = Math.round(abs / 3600000);
+    const h = Math.floor(abs / 3600000);
     return future ? `in ${h}h` : `${h}h ago`;
   }
-  const d = Math.round(abs / 86400000);
+  const d = Math.floor(abs / 86400000);
   return future ? `in ${d}d` : `${d}d ago`;
 }
 
@@ -759,6 +759,8 @@ export async function runVerifyForCli(
             allJobs.set("weekly-deep-maintenance", { name, enabled, state });
           } else if (monthlyConsolidationRe.test(name)) {
             allJobs.set("monthly-consolidation", { name, enabled, state });
+          } else if (name) {
+            allJobs.set(name, { name, enabled, state });
           }
         }
       }
