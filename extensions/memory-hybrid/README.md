@@ -49,12 +49,12 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 
 ## Dependencies
 
-- `better-sqlite3` ^11.0.0
+- `better-sqlite3` ^12.0.0
 - `@lancedb/lancedb` ^0.23.0
 - `openai` ^6.16.0
 - `@sinclair/typebox` 0.34.47
 
-Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
+Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3. You may see an `npm warn deprecated prebuild-install` message during install; it comes from better-sqlite3's optional dependency and is harmless until [WiseLibs/better-sqlite3#655](https://github.com/WiseLibs/better-sqlite3/issues/655) is resolved.
 
 ## Credits
 
