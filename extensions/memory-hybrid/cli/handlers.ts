@@ -47,7 +47,7 @@ import type {
   VerifyCliSink,
 } from "./register.js";
 import type { SelfCorrectionRunResult } from "./types.js";
-import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
+import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, withLLMRetry, chatCompleteWithRetry } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
@@ -1832,13 +1832,15 @@ export async function runIngestFilesForCli(
     sink.log(`Processing batch ${b + 1}/${batches.length}...`);
     const userContent = ingestPrompt + "\n\n" + batches[b];
     try {
-      const content = await chatComplete({
+      const content = await chatCompleteWithRetry({
         model,
         content: userContent,
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
         geminiApiKey: cfg.distill?.apiKey,
+        fallbackModels: cfg.distill?.fallbackModels,
+        label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
       for (const line of lines) {
@@ -1978,13 +1980,15 @@ export async function runDistillForCli(
     progress.update(b + 1);
     const userContent = distillPrompt + "\n\n" + batches[b];
     try {
-      const content = await chatComplete({
+      const content = await chatCompleteWithRetry({
         model,
         content: userContent,
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
         geminiApiKey: cfg.distill?.apiKey,
+        fallbackModels: cfg.distill?.fallbackModels,
+        label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
       });
       const lines = content.split("\n").filter((l) => l.trim());
       for (const line of lines) {
