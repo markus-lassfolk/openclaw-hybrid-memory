@@ -1714,7 +1714,9 @@ function extractTextFromSessionJsonl(filePath: string): string {
         }
       }
     } catch {
-      // skip malformed lines
+      // NOTE: Intentionally NOT using capturePluginError here to avoid flooding
+      // error logs with JSON parse errors from malformed session lines.
+      // This is a best-effort parser; we skip bad lines silently.
     }
   }
   return parts.join("\n\n");

@@ -184,7 +184,7 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
     } catch (err) {
-      capturePluginError(err as Error, {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: 'read-session-file',
         severity: 'info',
         subsystem: 'reinforcement-extract'
@@ -205,7 +205,7 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
         const text = extractMessageText(msg.content);
         messages.push({ role, text, content: msg.content });
       } catch (err) {
-        capturePluginError(err as Error, {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: 'parse-session-line',
           severity: 'info',
           subsystem: 'reinforcement-extract'

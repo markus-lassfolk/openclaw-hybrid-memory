@@ -199,7 +199,17 @@ export async function runReflection(
 
   let stored = 0;
   for (const patternText of uniqueNewPatterns) {
-    const vec = await embeddings.embed(patternText);
+    let vec: number[];
+    try {
+      vec = await embeddings.embed(patternText);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'embed-pattern',
+        severity: 'info',
+        subsystem: 'reflection'
+      });
+      continue; // Skip this pattern on embed failure
+    }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
     for (const ev of existingVectors) {
@@ -336,7 +346,17 @@ export async function runReflectionRules(
   }
   let stored = 0;
   for (const ruleText of uniqueRules) {
-    const vec = await embeddings.embed(ruleText);
+    let vec: number[];
+    try {
+      vec = await embeddings.embed(ruleText);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'embed-rule',
+        severity: 'info',
+        subsystem: 'reflection'
+      });
+      continue; // Skip this rule on embed failure
+    }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
     for (const ev of existingVectors) {
@@ -459,7 +479,17 @@ export async function runReflectionMeta(
   }
   let stored = 0;
   for (const metaText of uniqueMetas) {
-    const vec = await embeddings.embed(metaText);
+    let vec: number[];
+    try {
+      vec = await embeddings.embed(metaText);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'embed-meta',
+        severity: 'info',
+        subsystem: 'reflection'
+      });
+      continue; // Skip this meta-pattern on embed failure
+    }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
     for (const ev of existingVectors) {

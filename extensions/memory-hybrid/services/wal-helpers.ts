@@ -7,7 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { WriteAheadLog } from "../backends/wal.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { capturePluginError } from "./error-reporter.js";
 
 const WAL_FAILURE_THRESHOLD = 10;
 let walFailureCount = 0;

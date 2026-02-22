@@ -314,7 +314,7 @@ function buildRichStatsExtras(
             const line = readFileSync(path, "utf-8").split("\n")[0]?.trim() ?? "";
             if (line) out[key] = line;
           } catch (err) {
-            capturePluginError(err as Error, {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               operation: 'read-goal-file',
               severity: 'info',
               subsystem: 'cli'
@@ -338,7 +338,7 @@ function buildRichStatsExtras(
                   const st = statSync(p);
                   resolve(st.isDirectory() ? 0 : st.size);
                 } catch (err) {
-                  capturePluginError(err as Error, {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                     operation: 'stat-check',
                     severity: 'info',
                     subsystem: 'cli'
@@ -352,7 +352,7 @@ function buildRichStatsExtras(
             });
           });
         } catch (err) {
-          capturePluginError(err as Error, {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: 'dir-size',
             severity: 'info',
             subsystem: 'cli'
@@ -363,7 +363,7 @@ function buildRichStatsExtras(
       try {
         if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
       } catch (err) {
-        capturePluginError(err as Error, {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: 'stat-check',
           severity: 'info',
           subsystem: 'cli'
@@ -373,7 +373,7 @@ function buildRichStatsExtras(
       try {
         if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
       } catch (err) {
-        capturePluginError(err as Error, {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: 'dir-size',
           severity: 'info',
           subsystem: 'cli'
@@ -461,7 +461,7 @@ function buildListCommands(ctx: HandlerContext): NonNullable<HybridMemCliContext
       const content = readFileSync(path, "utf-8");
       return { path, content };
     } catch (err) {
-      capturePluginError(err as Error, {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: 'read-report-file',
         severity: 'info',
         subsystem: 'cli'
