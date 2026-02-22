@@ -72,6 +72,26 @@ import {
   BATCH_STORE_IMPORTANCE,
 } from "../utils/constants.js";
 
+// Shared cron job definitions used by install and verify --fix
+const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
+const MAINTENANCE_CRON_JOBS = [
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
+] as Array<Record<string, unknown>>;
+
+const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
+  [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
+};
+
 // Helper function for progress reporting
 function createProgressReporter(
   sink: { log: (msg: string) => void },
@@ -418,30 +438,13 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     try {
       const cronDir = join(openclawDir, "cron");
       const cronStorePath = join(cronDir, "jobs.json");
-      const prefix = "hybrid-mem:";
-      const installJobs = [
-        { pluginJobId: prefix + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-        { pluginJobId: prefix + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-        { pluginJobId: prefix + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.", isolated: true, model: "gemini", enabled: true },
-        { pluginJobId: prefix + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.", isolated: true, model: "sonnet", enabled: true },
-        { pluginJobId: prefix + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
-        { pluginJobId: prefix + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.", isolated: true, model: "sonnet", enabled: true },
-      ] as Array<Record<string, unknown>>;
-      const legacyMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
-        [prefix + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
-        [prefix + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
-        [prefix + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
-        [prefix + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
-        [prefix + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-        [prefix + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
-      };
       mkdirSync(cronDir, { recursive: true });
       let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] } : {};
       if (!Array.isArray(store.jobs)) store.jobs = [];
       const jobsArr = store.jobs as Array<Record<string, unknown>>;
-      for (const def of installJobs) {
+      for (const def of MAINTENANCE_CRON_JOBS) {
         const id = def.pluginJobId as string;
-        if (!jobsArr.some((j) => j && (j.pluginJobId === id || legacyMatch[id]?.(j)))) {
+        if (!jobsArr.some((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)))) {
           jobsArr.push({ ...def });
         }
       }
@@ -928,76 +931,6 @@ export async function runVerifyForCli(
         // Add cron jobs (same logic as install)
         const cronDir = join(openclawDir, "cron");
         const cronStorePath = join(cronDir, "jobs.json");
-        const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
-        const nightlyJob = {
-          pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill",
-          name: "nightly-memory-sweep",
-          schedule: { kind: "cron", expr: "0 2 * * *" },
-          channel: "system",
-          message: "Check if distill is enabled (config distill.enabled !== false). If enabled, run nightly session distillation for last 3 days, then run openclaw hybrid-mem record-distill. Exit 0 if disabled.",
-          isolated: true,
-          model: "gemini",
-          enabled: true,
-        };
-        const weeklyJob = {
-          pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection",
-          name: "weekly-reflection",
-          schedule: { kind: "cron", expr: "0 3 * * 0" },
-          channel: "system",
-          message: "Check if reflection is enabled (config reflection.enabled !== false). If enabled, run: openclaw hybrid-mem reflect && openclaw hybrid-mem reflect-rules && openclaw hybrid-mem reflect-meta. Exit 0 if disabled.",
-          isolated: true,
-          model: "gemini",
-          enabled: true,
-        };
-        const weeklyExtractProceduresJob = {
-          pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures",
-          name: "weekly-extract-procedures",
-          schedule: { kind: "cron", expr: "0 4 * * 0" },
-          channel: "system",
-          message: "Check if procedures are enabled (config procedures.enabled !== false). If enabled, run openclaw hybrid-mem extract-procedures --days 7. Exit 0 if disabled.",
-          isolated: true,
-          model: "gemini",
-          enabled: true,
-        };
-        const selfCorrectionJob = {
-          pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis",
-          name: "self-correction-analysis",
-          schedule: { kind: "cron", expr: "30 2 * * *" },
-          channel: "system",
-          message: "Check if self-correction is enabled (config selfCorrection is truthy). If enabled, run openclaw hybrid-mem self-correction-run. Exit 0 if disabled.",
-          isolated: true,
-          model: "sonnet",
-          enabled: true,
-        };
-        const weeklyDeepMaintenanceJob = {
-          pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance",
-          name: "weekly-deep-maintenance",
-          schedule: { kind: "cron", expr: "0 4 * * 6" },
-          channel: "system",
-          message: "Weekly deep maintenance: run extract-procedures, extract-directives, extract-reinforcement, self-correction-run, scope promote, compact. Check feature configs before each step. Exit 0 if all disabled.",
-          isolated: true,
-          model: "sonnet",
-          enabled: true,
-        };
-        const monthlyConsolidationJob = {
-          pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation",
-          name: "monthly-consolidation",
-          schedule: { kind: "cron", expr: "0 5 1 * *" },
-          channel: "system",
-          message: "Monthly consolidation: run consolidate, build-languages, generate-auto-skills, backfill-decay. Check feature configs before each step. Exit 0 if all disabled.",
-          isolated: true,
-          model: "sonnet",
-          enabled: true,
-        };
-        const definedJobs = [nightlyJob, weeklyJob, weeklyExtractProceduresJob, selfCorrectionJob, weeklyDeepMaintenanceJob, monthlyConsolidationJob] as Array<Record<string, unknown>>;
-        const legacyNameMatch: Record<string, (j: Record<string, unknown>) => boolean> = {
-          [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
-          [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/.test(String(j.name ?? "")),
-          [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
-          [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
-          [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-          [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
-        };
 
         try {
           mkdirSync(cronDir, { recursive: true });
@@ -1008,9 +941,9 @@ export async function runVerifyForCli(
           if (!Array.isArray(store.jobs)) store.jobs = [];
           const jobs = store.jobs as Array<Record<string, unknown>>;
           let jobsChanged = false;
-          for (const def of definedJobs) {
+          for (const def of MAINTENANCE_CRON_JOBS) {
             const id = def.pluginJobId as string;
-            const existing = jobs.find((j) => j && (j.pluginJobId === id || legacyNameMatch[id]?.(j)));
+            const existing = jobs.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
             if (existing) {
               if (typeof existing.schedule === "string") {
                 existing.schedule = { kind: "cron", expr: existing.schedule };
@@ -1153,19 +1086,17 @@ export function runRecordDistillForCli(ctx: HandlerContext): RecordDistillResult
  * Returns session .jsonl file paths modified within the last `days` days.
  * Shared by procedure/directive/reinforcement extraction.
  */
-async function getSessionFilePathsSince(sessionDir: string, days: number): Promise<string[]> {
-  const fs = await import("node:fs");
-  const pathMod = await import("node:path");
-  if (!fs.existsSync(sessionDir)) return [];
+function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
+  if (!existsSync(sessionDir)) return [];
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   try {
-    const files = fs.readdirSync(sessionDir);
+    const files = readdirSync(sessionDir);
     return files
       .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
-      .map((f) => pathMod.join(sessionDir, f))
+      .map((f) => join(sessionDir, f))
       .filter((p) => {
         try {
-          return fs.statSync(p).mtimeMs >= cutoff;
+          return statSync(p).mtimeMs >= cutoff;
         } catch {
           return false;
         }
@@ -1190,7 +1121,7 @@ export async function runExtractProceduresForCli(
   const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
   let filePaths: string[] | undefined;
   if (opts.days != null && opts.days > 0) {
-    filePaths = await getSessionFilePathsSince(sessionDir, opts.days);
+    filePaths = getSessionFilePathsSince(sessionDir, opts.days);
   }
   try {
     return extractProceduresFromSessions(
@@ -1244,7 +1175,7 @@ export async function runExtractDirectivesForCli(
   const { factsDb, cfg } = ctx;
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
-  const filePaths = await getSessionFilePathsSince(sessionDir, days);
+  const filePaths = getSessionFilePathsSince(sessionDir, days);
 
   const directiveRegex = getDirectiveSignalRegex();
   const result = runDirectiveExtract({ filePaths, directiveRegex });
@@ -1299,7 +1230,7 @@ export async function runExtractReinforcementForCli(
   const { factsDb, cfg } = ctx;
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
-  const filePaths = await getSessionFilePathsSince(sessionDir, days);
+  const filePaths = getSessionFilePathsSince(sessionDir, days);
 
   const reinforcementRegex = getReinforcementSignalRegex();
   const result = runReinforcementExtract({ filePaths, reinforcementRegex });
@@ -1346,10 +1277,7 @@ export async function runExtractDailyForCli(
   sink: ExtractDailySink,
 ): Promise<ExtractDailyResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
-  const fs = await import("node:fs");
-  const path = await import("node:path");
-  const { homedir: getHomedir } = await import("node:os");
-  const memoryDir = path.join(getHomedir(), ".openclaw", "memory");
+  const memoryDir = join(homedir(), ".openclaw", "memory");
   const daysBack = opts.days;
   let totalExtracted = 0;
   let totalStored = 0;
@@ -1357,9 +1285,9 @@ export async function runExtractDailyForCli(
     const date = new Date();
     date.setDate(date.getDate() - d);
     const dateStr = date.toISOString().split("T")[0];
-    const filePath = path.join(memoryDir, `${dateStr}.md`);
-    if (!fs.existsSync(filePath)) continue;
-    const content = fs.readFileSync(filePath, "utf-8");
+    const filePath = join(memoryDir, `${dateStr}.md`);
+    if (!existsSync(filePath)) continue;
+    const content = readFileSync(filePath, "utf-8");
     const lines = content.split("\n").filter((l: string) => l.trim().length > 10);
     sink.log(`\nScanning ${dateStr} (${lines.length} lines)...`);
     for (const line of lines) {
@@ -1662,8 +1590,7 @@ export async function runBackfillForCli(
   const limit = opts.limit ?? 0;
   let stored = 0;
   let skipped = 0;
-  const totalCandidates = limit > 0 ? Math.min(allCandidates.length, limit) : allCandidates.length;
-  const progress = createProgressReporter(sink, totalCandidates, "Backfilling");
+  const progress = createProgressReporter(sink, allCandidates.length, "Backfilling");
   const sourceDateSec = (s: string | null) => {
     if (!s || typeof s !== "string") return null;
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
