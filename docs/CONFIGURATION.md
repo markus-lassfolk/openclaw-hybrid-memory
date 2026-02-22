@@ -49,6 +49,8 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-h
 
 **API key:** Inline the key if non-interactive shells don't load your env. Editing the config file directly is more reliable than using `config.patch`.
 
+**Embedding model preference:** Optional `embedding.models` is an ordered list of embedding model names (e.g. `["text-embedding-3-small"]`). The plugin tries the first; on failure (rate limit, provider down) it tries the next. All entries must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`). The first model in the list defines the dimension used for LanceDB. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-configuration).
+
 Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb` and `~/.openclaw/memory/facts.db`).
 
 ---

@@ -207,6 +207,32 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.model).toBe("text-embedding-3-small");
   });
 
+  it("parses embedding.models when same dimension", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+        models: ["text-embedding-3-small"],
+      },
+    });
+    expect(result.embedding.models).toEqual(["text-embedding-3-small"]);
+    expect(result.embedding.model).toBe("text-embedding-3-small");
+  });
+
+  it("rejects embedding.models when mixed dimensions", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+        models: ["text-embedding-3-small", "text-embedding-3-large"],
+      },
+    });
+    expect(result.embedding.models).toBeUndefined();
+    expect(result.embedding.model).toBe("text-embedding-3-small");
+  });
+
   it("respects autoCapture = false", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

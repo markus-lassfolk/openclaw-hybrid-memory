@@ -260,6 +260,8 @@ export type HybridMemoryConfig = {
     provider: "openai";
     model: string;
     apiKey: string;
+    /** Optional ordered preference list (gateway fallback). First model defines vector dimension; all must have same dimension. */
+    models?: string[];
   };
   lanceDbPath: string;
   sqlitePath: string;
@@ -667,8 +669,27 @@ export const hybridConfigSchema = {
       throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
 
-    const model =
-      typeof embedding.model === "string" ? embedding.model : DEFAULT_MODEL;
+    const singleModel = typeof embedding.model === "string" ? embedding.model : DEFAULT_MODEL;
+    const modelsRaw = Array.isArray(embedding.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
+    let embeddingModels: string[] | undefined;
+    if (modelsRaw.length > 0) {
+      const valid: string[] = [];
+      for (const m of modelsRaw) {
+        try {
+          vectorDimsForModel(m);
+          valid.push(m);
+        } catch {
+          /* skip unknown embedding model */
+        }
+      }
+      if (valid.length > 0) {
+        const firstDim = vectorDimsForModel(valid[0]);
+        if (valid.every((m) => vectorDimsForModel(m) === firstDim)) {
+          embeddingModels = valid;
+        }
+      }
+    }
+    const model = embeddingModels?.[0] ?? singleModel;
     vectorDimsForModel(model);
 
     // Parse custom categories
@@ -1164,6 +1185,7 @@ export const hybridConfigSchema = {
         provider: "openai",
         model,
         apiKey: resolveEnvVars(embedding.apiKey),
+        models: embeddingModels,
       },
       lanceDbPath:
         typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,

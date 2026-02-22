@@ -20,55 +20,65 @@ function hashText(text: string): string {
   return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
-/** OpenAI-based embedding provider (uses gateway client when provided). Optional in-memory cache to avoid redundant API calls. */
+/** OpenAI-based embedding provider (uses gateway client when provided). Optional in-memory cache. Supports model preference list (try in order on failure). */
 export class Embeddings implements EmbeddingProvider {
   private client: OpenAI;
   private cache = new Map<string, number[]>();
+  /** Ordered list: try first model, on failure try next (all must produce same vector dimension). */
+  private readonly models: string[];
 
   constructor(
     clientOrApiKey: OpenAI | string,
-    private model: string,
+    modelOrModels: string | string[],
   ) {
     this.client = typeof clientOrApiKey === "string"
       ? new OpenAI({ apiKey: clientOrApiKey })
       : clientOrApiKey;
+    this.models = Array.isArray(modelOrModels) ? modelOrModels : [modelOrModels];
+    if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
   }
 
   async embed(text: string): Promise<number[]> {
     const cacheKey = hashText(text);
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
-      // LRU: move to end by deleting and re-inserting
       this.cache.delete(cacheKey);
       this.cache.set(cacheKey, cached);
       return cached;
     }
 
     const { withLLMRetry } = await import("./chat.js");
-    let resp;
-    try {
-      resp = await withLLMRetry(
-        () => this.client.embeddings.create({
-          model: this.model,
-          input: text,
-        }),
-        { maxRetries: 2 },
-      );
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+    let lastErr: Error | undefined;
+    for (const model of this.models) {
+      try {
+        const resp = await withLLMRetry(
+          () => this.client.embeddings.create({
+            model,
+            input: text,
+          }),
+          { maxRetries: 2 },
+        );
+        const vector = resp.data[0].embedding;
+        if (this.cache.size >= EMBEDDING_CACHE_MAX) {
+          const firstKey = this.cache.keys().next().value;
+          if (firstKey !== undefined) this.cache.delete(firstKey);
+        }
+        this.cache.set(cacheKey, vector);
+        return vector;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        continue;
+      }
+    }
+    if (lastErr) {
+      capturePluginError(lastErr, {
         subsystem: "embeddings",
         operation: "embed",
+        phase: "fallback-exhausted",
       });
-      throw err;
+      throw lastErr;
     }
-    const vector = resp.data[0].embedding;
-
-    if (this.cache.size >= EMBEDDING_CACHE_MAX) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey !== undefined) this.cache.delete(firstKey);
-    }
-    this.cache.set(cacheKey, vector);
-    return vector;
+    throw new Error("Embeddings: no model available");
   }
 }
 
