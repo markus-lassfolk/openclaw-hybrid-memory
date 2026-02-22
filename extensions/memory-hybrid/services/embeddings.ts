@@ -29,7 +29,7 @@ export class Embeddings implements EmbeddingProvider {
     apiKey: string,
     private model: string,
   ) {
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({ apiKey, maxRetries: 0 });
   }
 
   async embed(text: string): Promise<number[]> {
