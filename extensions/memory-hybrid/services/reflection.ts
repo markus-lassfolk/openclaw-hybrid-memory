@@ -299,7 +299,7 @@ export async function runReflectionRules(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
+  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[]; geminiApiKey?: string },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionRulesResult> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -453,7 +453,7 @@ export async function runReflectionMeta(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
+  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[]; geminiApiKey?: string },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
