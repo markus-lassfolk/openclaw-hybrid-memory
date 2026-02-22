@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.2.221] - 2026-02-22
+
+Patch release: tool_use/tool_result sanitizer for Claude API, reflect --verbose, verify UX, LLM retry/fallback, Sentry false-positive fix (PR #78, closes #74–#77, #79).
+
+### Added
+
+- **Tool-use sanitizer:** `sanitizeMessagesForClaude()` and `llm_input` hook so every `tool_use` has a `tool_result` immediately after; prevents "LLM request rejected" when history is trimmed. Exported; doc TOOL-USE-TOOL-RESULT-ERROR.md.
+- **Reflect CLI:** `--verbose` for `reflect`, `reflect-rules`, `reflect-meta` (#74).
+- **Verify UX:** Cron job status and timing (last/next run, error preview); output grouped by section (#75, #77).
+- **LLM retry/fallback:** `withLLMRetry`, `chatCompleteWithRetry` for distill/ingest, reflection, classification, consolidation, language-keywords, embeddings, summarization; optional fallback models (#76).
+
+### Fixed
+
+- **Sentry:** No longer report ENOENT on optional `credentials-pending.json` (#79).
+
+### Changed
+
+- **Version bump** — Release 2026.02.22 revision (npm `2026.2.221`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.2.220] - 2026-02-22
 
 Refactor release: split monolithic `index.ts` into focused modules, plus security hardening (PR70 review), credential and CLI bug fixes, and improved error handling.
@@ -310,7 +331,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.220...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.221...HEAD
+[2026.2.221]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.221
 [2026.2.220]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.220
 [2026.2.210]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.210
 [2026.2.201]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.201
