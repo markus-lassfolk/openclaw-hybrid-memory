@@ -23,7 +23,7 @@ import {
   REFLECTION_META_MAX_CHARS,
 } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
-import { withLLMRetry, LLMRetryError } from "./chat.js";
+import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -43,6 +43,7 @@ export interface ReflectionOptions {
   dryRun: boolean;
   model: string;
   verbose?: boolean;
+  fallbackModels?: string[];
 }
 
 export interface ReflectionResult {
@@ -148,22 +149,16 @@ export async function runReflection(
   const prompt = fillPrompt(loadPrompt("reflection"), { window: String(windowDays), facts: factsBlock });
 
   let rawResponse: string;
-  let tokenUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   try {
-    const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model: opts.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: REFLECTION_TEMPERATURE,
-        max_tokens: 1500,
-      }),
-      { maxRetries: 2, label: "memory-hybrid: reflection" },
-    );
-    rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
-    tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
-    if (opts.verbose && tokenUsage) {
-      logger.info(`memory-hybrid: reflection — LLM tokens: ${tokenUsage.prompt_tokens}+${tokenUsage.completion_tokens}=${tokenUsage.total_tokens}`);
-    }
+    rawResponse = await chatCompleteWithRetry({
+      model: opts.model,
+      content: prompt,
+      temperature: REFLECTION_TEMPERATURE,
+      maxTokens: 1500,
+      openai,
+      fallbackModels: opts.fallbackModels ?? [],
+      label: "memory-hybrid: reflection",
+    });
   } catch (err) {
     logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
@@ -302,7 +297,7 @@ export async function runReflectionRules(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean },
+  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionRulesResult> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -317,22 +312,16 @@ export async function runReflectionRules(
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
   const prompt = fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock });
   let rawResponse: string;
-  let tokenUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   try {
-    const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model: opts.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: REFLECTION_TEMPERATURE,
-        max_tokens: 800,
-      }),
-      { maxRetries: 2, label: "memory-hybrid: reflect-rules" },
-    );
-    rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
-    tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
-    if (opts.verbose && tokenUsage) {
-      logger.info(`memory-hybrid: reflect-rules — LLM tokens: ${tokenUsage.prompt_tokens}+${tokenUsage.completion_tokens}=${tokenUsage.total_tokens}`);
-    }
+    rawResponse = await chatCompleteWithRetry({
+      model: opts.model,
+      content: prompt,
+      temperature: REFLECTION_TEMPERATURE,
+      maxTokens: 800,
+      openai,
+      fallbackModels: opts.fallbackModels ?? [],
+      label: "memory-hybrid: reflect-rules",
+    });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
@@ -461,7 +450,7 @@ export async function runReflectionMeta(
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean },
+  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -476,22 +465,16 @@ export async function runReflectionMeta(
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
   const prompt = fillPrompt(loadPrompt("reflection-meta"), { patterns: patternsBlock });
   let rawResponse: string;
-  let tokenUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   try {
-    const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model: opts.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: REFLECTION_TEMPERATURE,
-        max_tokens: 500,
-      }),
-      { maxRetries: 2, label: "memory-hybrid: reflect-meta" },
-    );
-    rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
-    tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
-    if (opts.verbose && tokenUsage) {
-      logger.info(`memory-hybrid: reflect-meta — LLM tokens: ${tokenUsage.prompt_tokens}+${tokenUsage.completion_tokens}=${tokenUsage.total_tokens}`);
-    }
+    rawResponse = await chatCompleteWithRetry({
+      model: opts.model,
+      content: prompt,
+      temperature: REFLECTION_TEMPERATURE,
+      maxTokens: 500,
+      openai,
+      fallbackModels: opts.fallbackModels ?? [],
+      label: "memory-hybrid: reflect-meta",
+    });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;

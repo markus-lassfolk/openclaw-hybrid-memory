@@ -744,7 +744,7 @@ export async function runVerifyForCli(
       const parts: string[] = [];
 
       if (job.state.lastRunAtMs) {
-        const lastStatus = job.state.lastStatus || "ok";
+        const lastStatus = job.state.lastStatus ?? "unknown";
         const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
         parts.push(lastRun);
       } else {
@@ -758,6 +758,8 @@ export async function runVerifyForCli(
       if (parts.length > 0) {
         statusDetails = "  " + parts.join("  ");
       }
+    } else {
+      statusDetails = "  last: never";
     }
 
     log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}${statusDetails}`);
