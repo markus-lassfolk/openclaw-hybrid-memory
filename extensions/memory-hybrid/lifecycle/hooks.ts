@@ -88,15 +88,17 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
 
       // Detect current agent identity at runtime
-      // Detect current agent identity at runtime (do not use cached currentAgentId so warnings always fire when detection fails)
-      const detectedAgentId = e.agentId || e.session?.agentId;
+      // Try multiple sources: event payload, api.context, or keep current
+      const detectedAgentId = e.agentId || e.session?.agentId || api.context?.agentId;
       if (detectedAgentId) {
         currentAgentId = detectedAgentId;
         // Update context reference
         ctx.currentAgentId = currentAgentId;
+        // Log successful detection at debug level to reduce log noise
+        api.logger.debug?.(`memory-hybrid: Detected agentId: ${detectedAgentId}`);
       } else {
         // Issue #9: Log when agent detection fails - fall back to orchestrator or keep current
-        api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload, falling back to orchestrator");
+        api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload or api.context, falling back to orchestrator");
         currentAgentId = currentAgentId || ctx.cfg.multiAgent.orchestratorId;
         ctx.currentAgentId = currentAgentId;
         if (ctx.cfg.multiAgent.defaultStoreScope === "agent" || ctx.cfg.multiAgent.defaultStoreScope === "auto") {

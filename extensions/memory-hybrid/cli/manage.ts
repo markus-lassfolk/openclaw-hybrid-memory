@@ -337,7 +337,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         scopeTarget: opts.scopeTarget,
       } : undefined;
 
-      const embedding = await embeddings.getEmbedding(query);
+      const embedding = await embeddings.embed(query);
       const vectorResults = await vectorDb.search(embedding, 50);
       const sqlResults = factsDb.search(query, 50, filters);
       let combined = merge(vectorResults, sqlResults, 20);
