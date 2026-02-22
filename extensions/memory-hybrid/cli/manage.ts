@@ -619,7 +619,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
   mem
     .command("show <id>")
-    .description("Show full detail for a fact or proposal (by ID)")
+    .description("Show full detail for a fact by ID. For proposals use: hybrid-mem proposals show <id> (supports --diff, --json)")
     .action(withExit(async (id: string) => {
       if (!listCommands?.showItem) {
         const fact = factsDb.get(id);
@@ -633,6 +633,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const item = await listCommands.showItem(id);
       if (!item) {
         console.log(`Item not found: ${id}`);
+        return;
+      }
+      if (item.type === "proposal") {
+        console.log(`Proposal ${id}. Use: openclaw hybrid-mem proposals show ${id} (--diff, --json)`);
         return;
       }
       console.log(`Type: ${item.type}`);
