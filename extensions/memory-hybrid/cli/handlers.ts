@@ -2000,7 +2000,10 @@ export async function runIngestFilesForCli(
     return { stored: 0, skipped: 0, extracted: 0, files: 0, dryRun: opts.dryRun };
   }
 
-  const model = cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const cronCfgIngest = getCronModelConfig(cfg);
+  const ingestPref = getLLMModelPreference(cronCfgIngest, "default");
+  const model = ingestPref[0] ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const ingestFallbacks = ingestPref.length > 1 ? ingestPref.slice(1) : cfg.distill?.fallbackModels;
   const ingestPrompt = loadPrompt("ingest-files");
   const batches: string[] = [];
   let currentBatch = "";
@@ -2037,14 +2040,11 @@ export async function runIngestFilesForCli(
     sink.log(`Processing batch ${b + 1}/${batches.length}...`);
     const userContent = ingestPrompt + "\n\n" + batches[b];
     try {
-      const ingestPref = getLLMModelPreference(getCronModelConfig(cfg), "default");
-      const ingestModel = model || ingestPref[0];
-      const ingestFallbacks = ingestPref.length > 1 ? ingestPref.slice(1) : cfg.distill?.fallbackModels;
       const content = await chatCompleteWithRetry({
-        model: ingestModel,
+        model: model,
         content: userContent,
         temperature: 0.2,
-        maxTokens: distillMaxOutputTokens(ingestModel),
+        maxTokens: distillMaxOutputTokens(model),
         openai,
         fallbackModels: ingestFallbacks,
         label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
@@ -2152,7 +2152,7 @@ export async function runDistillForCli(
   }
   const cronCfgDistill = getCronModelConfig(cfg);
   const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
-  const model = opts.model ?? cfg.distill?.defaultModel ?? heavyPref[0] ?? "gpt-4o";
+  const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? "gpt-4o";
   const distillFallbacks = heavyPref.length > 1 ? heavyPref.slice(1) : cfg.distill?.fallbackModels;
   const batches: string[] = [];
   let currentBatch = "";
