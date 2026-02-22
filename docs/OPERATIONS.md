@@ -42,7 +42,7 @@ After adding jobs, the gateway will pick them up on next start (or according to 
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.
 
-**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config. When you run **`openclaw hybrid-mem verify --fix`**, missing jobs are added with a **model chosen from your config** (Gemini → distill, Claude → claude, else OpenAI → reflection). See [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-maintenance-and-self-correction).
+**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config. When you run **`openclaw hybrid-mem verify --fix`**, missing jobs are added with a **model chosen from your config** (`llm.default` / `llm.heavy` when set, else legacy: Gemini → distill, Claude → claude, else OpenAI → reflection). See [CONFIGURATION.md § LLM routing and model preference](CONFIGURATION.md#llm-routing-and-model-preference) and [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 
 Example structure (actual `model` value is filled from your provider at install/verify time):
 

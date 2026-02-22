@@ -285,11 +285,13 @@ export type HybridMemoryConfig = {
   procedures: ProceduresConfig;
   /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
-  /** Optional: Gemini for distill (1M context). apiKey or env GOOGLE_API_KEY/GEMINI_API_KEY. defaultModel used when --model not passed. */
+  /** Optional: LLM preference lists for gateway-routed chat (issue #87). When set, all LLM calls use openai client + this list. */
+  llm?: LLMConfig;
+  /** Optional: Gemini for distill (1M context). apiKey/defaultModel deprecated in favor of llm + gateway. */
   distill?: {
     apiKey?: string;
     defaultModel?: string;
-    /** Fallback models to try if primary model fails after retries (optional). */
+    /** Fallback models to try if primary model fails after retries (optional). Deprecated: use llm.default/heavy. */
     fallbackModels?: string[];
     /** Enable directive extraction from sessions (default: true). */
     extractDirectives?: boolean;
@@ -369,6 +371,18 @@ export function isValidCategory(cat: string): boolean {
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 export type CronModelTier = "default" | "heavy";
 
+/** LLM model preference: ordered lists per tier, routed through OpenClaw gateway. */
+export type LLMConfig = {
+  /** Ordered preference for default-tier LLM calls (first available wins). */
+  default: string[];
+  /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
+  heavy: string[];
+  /** When true, if all preferred models fail, try the fallback model (or gateway default). */
+  fallbackToDefault?: boolean;
+  /** Single model to try when fallbackToDefault is true and all preferred models failed. Omit to use tier default (gpt-4o-mini / gpt-4o). */
+  fallbackModel?: string;
+};
+
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
 export type CronModelConfig = {
   embedding?: { apiKey?: string };
@@ -376,14 +390,12 @@ export type CronModelConfig = {
   reflection?: { model?: string };
   /** Optional: when present, use for cron LLM (e.g. Claude). */
   claude?: { apiKey?: string; defaultModel?: string };
+  /** Optional: gateway-routed LLM preference lists (issue #87). When set, overrides provider-based resolution. */
+  llm?: LLMConfig;
 };
 
-/**
- * Resolve which LLM model to use for a maintenance cron job based on user config.
- * Prefer provider the user has configured: Gemini (distill) > Claude > OpenAI (embedding/reflection) > fallback.
- * No hardcoded aliases: uses config defaults or sensible per-provider defaults.
- */
-export function getDefaultCronModel(
+/** Legacy single-model resolution (for backward compat when no llm config). Used only inside getLLMModelPreference when llm lists are empty. */
+function getDefaultCronModelLegacy(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
@@ -406,6 +418,40 @@ export function getDefaultCronModel(
   return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
 }
 
+/**
+ * Return ordered list of models to try for an LLM call (gateway fallback chain).
+ * Uses llm.default / llm.heavy when configured; otherwise legacy single-model resolution.
+ */
+export function getLLMModelPreference(
+  pluginConfig: CronModelConfig | undefined,
+  tier: CronModelTier,
+): string[] {
+  const list = tier === "heavy" ? pluginConfig?.llm?.heavy : pluginConfig?.llm?.default;
+  if (Array.isArray(list) && list.length > 0) {
+    const trimmed = list.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);
+    if (trimmed.length > 0) {
+      if (pluginConfig?.llm?.fallbackToDefault) {
+        const fallback = pluginConfig.llm.fallbackModel?.trim() || (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
+        return [...trimmed, fallback];
+      }
+      return trimmed;
+    }
+  }
+  return [getDefaultCronModelLegacy(pluginConfig, tier)];
+}
+
+/**
+ * Resolve which LLM model to use for a maintenance cron job based on user config.
+ * When llm.default/heavy are set, returns the first model in the preference list (gateway-routed).
+ * Otherwise legacy: prefer provider the user has configured (Gemini > Claude > OpenAI) > fallback.
+ */
+export function getDefaultCronModel(
+  pluginConfig: CronModelConfig | undefined,
+  tier: CronModelTier,
+): string {
+  const preferred = getLLMModelPreference(pluginConfig, tier);
+  return preferred[0] ?? (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
+}
 
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
 export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
@@ -414,6 +460,7 @@ export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
     distill: cfg.distill,
     reflection: cfg.reflection,
     claude: (cfg as Record<string, unknown>).claude as CronModelConfig["claude"],
+    llm: cfg.llm,
   };
 }
 
@@ -1098,6 +1145,20 @@ export const hybridConfigSchema = {
       trustToolScopeParams: multiAgentRaw?.trustToolScopeParams === true, // Default: false (secure by default)
     };
 
+    // Parse optional llm config (gateway-routed model preference, issue #87)
+    const llmRaw = cfg.llm as Record<string, unknown> | undefined;
+    const defaultList = llmRaw && Array.isArray(llmRaw.default) ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
+    const heavyList = llmRaw && Array.isArray(llmRaw.heavy) ? (llmRaw.heavy as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
+    const llm: LLMConfig | undefined =
+      defaultList.length > 0 && heavyList.length > 0
+        ? {
+            default: defaultList,
+            heavy: heavyList,
+            fallbackToDefault: llmRaw?.fallbackToDefault === true,
+            fallbackModel: typeof llmRaw?.fallbackModel === "string" && (llmRaw.fallbackModel as string).trim().length > 0 ? (llmRaw.fallbackModel as string).trim() : undefined,
+          }
+        : undefined;
+
     return {
       embedding: {
         provider: "openai",
@@ -1121,6 +1182,7 @@ export const hybridConfigSchema = {
       reflection,
       procedures,
       memoryTiering,
+      llm,
       distill,
       languageKeywords,
       ingest,

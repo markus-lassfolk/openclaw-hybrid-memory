@@ -311,7 +311,6 @@ export function registerMemoryTools(
                   temperature: 0.3,
                   maxTokens: 150,
                   openai,
-                  geminiApiKey: cfg.distill?.apiKey,
                 });
                 const hydeText = hydeContent.trim();
                 if (hydeText.length > 10) textToEmbed = hydeText;

@@ -23,7 +23,7 @@ openclaw hybrid-mem distill --max-sessions 10  # Limit for cost control
 openclaw hybrid-mem distill --max-session-tokens 20000  # Chunk oversized sessions (default: batch limit)
 ```
 
-**Model choice:** Pass `--model gemini-2.0-flash` (or `gemini-1.5-pro`) to use Google Gemini. Gemini has a 1M+ token context, so batches can be up to ~500k tokens (vs 80k for GPT). Set `distill.apiKey` and optionally `distill.defaultModel` in config (see [CONFIGURATION.md](CONFIGURATION.md)) so `openclaw hybrid-mem distill` defaults to Gemini without `--model`.
+**Model choice:** All distillation LLM calls go through the **OpenClaw gateway**; any provider the gateway supports works. Prefer configuring **`llm.heavy`** in plugin config (see [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [CONFIGURATION.md](CONFIGURATION.md)) so the plugin tries your preferred models in order (e.g. `gemini-2.0-flash`, then `claude-opus-4`, then `gpt-4o`). Long-context models (e.g. Gemini 1M+ tokens) use larger batches (~500k tokens); others use 80k. Pass `--model M` to override for a single run.
 
 This command scans `~/.openclaw/agents/*/sessions/*.jsonl`, extracts text, sends it to the LLM for fact extraction, deduplicates by embedding similarity, stores net-new facts, and records the run automatically. Cron-friendly: `openclaw hybrid-mem distill` via exec — no complex agent prompts needed.
 
@@ -53,7 +53,7 @@ So in one sentence: **it re-reads conversation logs in a chosen window (full or 
 
 Session distillation is a **batch fact-extraction pipeline** that **indexes and processes old session logs and historical memories**: it runs over historical OpenClaw session transcripts, extracts durable facts (and credentials when present), and stores them in the right place in **one run**. Facts go to hybrid memory (SQLite + LanceDB); credentials are routed automatically—to the **Secure Credential Vault** (plus a pointer in memory) when the vault is enabled, or to memory when it is not. No separate “facts” vs “credentials” distillation runs are needed. It complements the hybrid memory system's real-time auto-capture by retrospectively analyzing chat history.
 
-**Model choice:** The pipeline is designed to use **Google (Gemini)** for fact extraction. Gemini’s **1M+ token context window** lets you process large batches of old sessions in a single sub-agent run (e.g. ~50 sessions / ~500k tokens per batch by default; you can increase batch size to leverage the full window). Configure Gemini in OpenClaw and use `--model gemini` when spawning the distillation sub-agent (see [Running the Pipeline](#running-the-pipeline-manually) and [Nightly Cron Setup](#nightly-cron-setup)).
+**Model choice:** The pipeline uses whatever chat model the **OpenClaw gateway** provides; configure **`llm.heavy`** (see [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md)) for an ordered preference list (e.g. Gemini for 1M+ context, then Claude/OpenAI). Long-context models allow large batches (~500k tokens per batch); others use 80k. You can pass `--model M` to override for a run or spawn the distillation sub-agent with a specific model (see [Running the Pipeline](#running-the-pipeline-manually) and [Nightly Cron Setup](#nightly-cron-setup)).
 
 ### Why Session Distillation?
 

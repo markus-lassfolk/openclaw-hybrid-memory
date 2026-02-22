@@ -241,7 +241,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   temperature: 0.3,
                   maxTokens: 150,
                   openai: ctx.openai,
-                  geminiApiKey: ctx.cfg.distill?.apiKey,
                 });
                 const hydeText = hydeContent.trim();
                 if (hydeText.length > 10) textToEmbed = hydeText;
