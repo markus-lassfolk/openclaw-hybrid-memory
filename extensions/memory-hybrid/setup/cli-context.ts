@@ -20,7 +20,7 @@ import { runBuildLanguageKeywords } from "../services/language-keywords-build.js
 import { runExport } from "../services/export-memory.js";
 import { mergeResults } from "../services/merge-results.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { getMemoryCategories, getCronModelConfig, getLLMModelPreference } from "../config.js";
+import { getMemoryCategories, resolveReflectionModelAndFallbacks, getCronModelConfig } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
 import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -228,26 +228,20 @@ function buildCliContextServices(
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger);
     },
     runReflection: (opts) => {
-      const cronCfg = getCronModelConfig(cfg);
-      const pref = getLLMModelPreference(cronCfg, "default");
-      const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       return runReflection(factsDb, vectorDb, embeddings, openai, {
         defaultWindow: cfg.reflection.defaultWindow,
         minObservations: cfg.reflection.minObservations,
         enabled: cfg.reflection.enabled,
-      }, { ...opts, model: opts.model ?? pref[0], fallbackModels }, logSink);
+      }, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
     },
     runReflectionRules: (opts) => {
-      const cronCfg = getCronModelConfig(cfg);
-      const pref = getLLMModelPreference(cronCfg, "default");
-      const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
-      return runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? pref[0], fallbackModels }, logSink);
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      return runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
     },
     runReflectionMeta: (opts) => {
-      const cronCfg = getCronModelConfig(cfg);
-      const pref = getLLMModelPreference(cronCfg, "default");
-      const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
-      return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? pref[0], fallbackModels }, logSink);
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
     },
     runClassify: (opts) =>
       runClassifyForCli(factsDb, openai, cfg.autoClassify, opts, discoveredPath, logSink, undefined),
