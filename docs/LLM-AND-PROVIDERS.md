@@ -84,7 +84,7 @@ Use the **`llm`** block to give the plugin an ordered list of models per tier. T
 | `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages, etc.). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). |
 | `fallbackToDefault` | If `true`, after trying all models in the list, try one more fallback model (see below). |
-| `fallbackModel` | Optional. When `fallbackToDefault` is true, this model is tried last. Set to your **gateway default model** (e.g. from openclaw.yaml) for a provider-agnostic final fallback; omit to not add any extra fallback beyond the list. |
+| `fallbackModel` | Optional. When `fallbackToDefault` is true, this model is tried last — it is only added to the chain if not already present in the `default` or `heavy` list. Set to your **gateway default model** (e.g. from openclaw.yaml) for a provider-agnostic final fallback; omit to not add any extra fallback beyond the list. |
 
 **Fallback behaviour:** For each LLM call the plugin (1) tries each model in the list in order, (2) on failure (no key, 401, 403, 5xx, etc.) tries the next, (3) if `fallbackToDefault` is true and `fallbackModel` is set and not already in the list, tries it last, (4) only then fails the request.
 
