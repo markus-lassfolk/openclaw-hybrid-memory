@@ -959,12 +959,14 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .description("Run reflection (meta-patterns): extract meta-patterns from existing patterns")
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .action(withExit(async (opts?: { dryRun?: boolean; model?: string }) => {
+    .option("--verbose", "Log each meta-pattern as it is extracted")
+    .action(withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }) => {
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? reflectionConfig.model;
+      const verbose = !!opts?.verbose;
       let res;
       try {
-        res = await runReflectionMeta({ dryRun, model });
+        res = await runReflectionMeta({ dryRun, model, verbose });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "reflect-meta" });
         throw err;

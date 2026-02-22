@@ -41,6 +41,7 @@ export interface ReflectionOptions {
   window: number;
   dryRun: boolean;
   model: string;
+  verbose?: boolean;
 }
 
 export interface ReflectionResult {
