@@ -697,137 +697,12 @@ export async function runVerifyForCli(
     log("  If you don't use it, ignore this.");
   }
 
-  // Check for cron jobs
-  let nightlySweepDefined = false;
-  let nightlySweepEnabled = true;
+  // Job name regex patterns for matching
   const cronStorePath = join(openclawDir, "cron", "jobs.json");
-  if (existsSync(cronStorePath)) {
-    try {
-      const raw = readFileSync(cronStorePath, "utf-8");
-      const store = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = store.jobs;
-      if (Array.isArray(jobs)) {
-        const nightly = jobs.find((j: unknown) => {
-          if (typeof j !== "object" || j === null) return false;
-          const name = String((j as Record<string, unknown>).name ?? "").toLowerCase();
-          const pl = (j as Record<string, unknown>).payload as Record<string, unknown> | undefined;
-          const msg = String(pl?.message ?? (j as Record<string, unknown>).message ?? "").toLowerCase();
-          return /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name) || /nightly memory distillation|memory distillation pipeline/.test(msg);
-        }) as Record<string, unknown> | undefined;
-        if (nightly) {
-          nightlySweepDefined = true;
-          nightlySweepEnabled = nightly.enabled !== false;
-        }
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-cron-store" });
-      // ignore
-    }
-  }
-
-  if (!nightlySweepDefined && existsSync(defaultConfigPath)) {
-    try {
-      const raw = readFileSync(defaultConfigPath, "utf-8");
-      const root = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = root.jobs;
-      if (Array.isArray(jobs)) {
-        const nightly = jobs.find((j: unknown) => typeof j === "object" && j !== null && (j as Record<string, unknown>).name === "nightly-memory-sweep") as Record<string, unknown> | undefined;
-        if (nightly) {
-          nightlySweepDefined = true;
-          nightlySweepEnabled = nightly.enabled !== false;
-        }
-      } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
-        const nightly = (jobs as Record<string, unknown>)["nightly-memory-sweep"];
-        if (nightly && typeof nightly === "object") {
-          nightlySweepDefined = true;
-          nightlySweepEnabled = (nightly as Record<string, unknown>).enabled !== false;
-        }
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-root-config" });
-      // ignore
-    }
-  }
-
-  let weeklyReflectionDefined = false;
-  if (existsSync(cronStorePath)) {
-    try {
-      const raw = readFileSync(cronStorePath, "utf-8");
-      const store = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = store.jobs;
-      if (Array.isArray(jobs)) {
-        const weekly = jobs.find((j: unknown) => /weekly-reflection|memory reflection|pattern synthesis/i.test(String((j as Record<string, unknown>)?.name ?? ""))) as Record<string, unknown> | undefined;
-        if (weekly) weeklyReflectionDefined = true;
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-weekly-reflection" });
-      /* ignore */
-    }
-  }
-
-  if (!weeklyReflectionDefined && existsSync(defaultConfigPath)) {
-    try {
-      const raw = readFileSync(defaultConfigPath, "utf-8");
-      const root = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = root.jobs;
-      if (Array.isArray(jobs)) {
-        const weekly = jobs.find((j: unknown) => (j as Record<string, unknown>)?.name === "weekly-reflection");
-        if (weekly) weeklyReflectionDefined = true;
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-weekly-reflection-config" });
-      /* ignore */
-    }
-  }
-
-  let extractProceduresDefined = false;
-  let selfCorrectionDefined = false;
-  let weeklyDeepMaintenanceDefined = false;
-  let monthlyConsolidationDefined = false;
   const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
   const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
   const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
   const monthlyConsolidationRe = /monthly-consolidation/i;
-
-  if (existsSync(cronStorePath)) {
-    try {
-      const raw = readFileSync(cronStorePath, "utf-8");
-      const store = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = store.jobs;
-      if (Array.isArray(jobs)) {
-        if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
-        if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
-        if (jobs.some((j: unknown) => weeklyDeepMaintenanceRe.test(String((j as Record<string, unknown>)?.name ?? "")))) weeklyDeepMaintenanceDefined = true;
-        if (jobs.some((j: unknown) => monthlyConsolidationRe.test(String((j as Record<string, unknown>)?.name ?? "")))) monthlyConsolidationDefined = true;
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-additional-jobs" });
-      /* ignore */
-    }
-  }
-
-  if (existsSync(defaultConfigPath)) {
-    try {
-      const raw = readFileSync(defaultConfigPath, "utf-8");
-      const root = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = root.jobs;
-      if (Array.isArray(jobs)) {
-        if (jobs.some((j: unknown) => extractProceduresRe.test(String((j as Record<string, unknown>)?.name ?? "")))) extractProceduresDefined = true;
-        if (jobs.some((j: unknown) => selfCorrectionRe.test(String((j as Record<string, unknown>)?.name ?? "")))) selfCorrectionDefined = true;
-        if (jobs.some((j: unknown) => weeklyDeepMaintenanceRe.test(String((j as Record<string, unknown>)?.name ?? "")))) weeklyDeepMaintenanceDefined = true;
-        if (jobs.some((j: unknown) => monthlyConsolidationRe.test(String((j as Record<string, unknown>)?.name ?? "")))) monthlyConsolidationDefined = true;
-      } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
-        const keyed = jobs as Record<string, unknown>;
-        if (Object.keys(keyed).some((k) => extractProceduresRe.test(k))) extractProceduresDefined = true;
-        if (Object.keys(keyed).some((k) => selfCorrectionRe.test(k))) selfCorrectionDefined = true;
-        if (Object.keys(keyed).some((k) => weeklyDeepMaintenanceRe.test(k))) weeklyDeepMaintenanceDefined = true;
-        if (Object.keys(keyed).some((k) => monthlyConsolidationRe.test(k))) monthlyConsolidationDefined = true;
-      }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:check-additional-jobs-config" });
-      /* ignore */
-    }
-  }
 
   // Enhanced job status display
   log("\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):");
@@ -877,6 +752,63 @@ export async function runVerifyForCli(
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-job-state" });
+      // Continue with incomplete data
+    }
+  }
+
+  // Also check default config for jobs not found in cron store
+  if (existsSync(defaultConfigPath)) {
+    try {
+      const raw = readFileSync(defaultConfigPath, "utf-8");
+      const root = JSON.parse(raw) as Record<string, unknown>;
+      const jobs = root.jobs;
+      if (Array.isArray(jobs)) {
+        for (const j of jobs) {
+          if (typeof j !== "object" || j === null) continue;
+          const job = j as Record<string, unknown>;
+          const name = String(job.name ?? "");
+          const enabled = job.enabled !== false;
+
+          // Only add if not already found in cron store
+          if (name === "nightly-memory-sweep" && !allJobs.has("nightly-memory-sweep")) {
+            allJobs.set("nightly-memory-sweep", { name, enabled });
+          } else if (name === "weekly-reflection" && !allJobs.has("weekly-reflection")) {
+            allJobs.set("weekly-reflection", { name, enabled });
+          } else if (extractProceduresRe.test(name) && !allJobs.has("weekly-extract-procedures")) {
+            allJobs.set("weekly-extract-procedures", { name, enabled });
+          } else if (selfCorrectionRe.test(name) && !allJobs.has("self-correction-analysis")) {
+            allJobs.set("self-correction-analysis", { name, enabled });
+          } else if (weeklyDeepMaintenanceRe.test(name) && !allJobs.has("weekly-deep-maintenance")) {
+            allJobs.set("weekly-deep-maintenance", { name, enabled });
+          } else if (monthlyConsolidationRe.test(name) && !allJobs.has("monthly-consolidation")) {
+            allJobs.set("monthly-consolidation", { name, enabled });
+          }
+        }
+      } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+        const keyed = jobs as Record<string, unknown>;
+        for (const [key, value] of Object.entries(keyed)) {
+          if (typeof value !== "object" || value === null) continue;
+          const job = value as Record<string, unknown>;
+          const enabled = job.enabled !== false;
+
+          // Only add if not already found in cron store
+          if (key === "nightly-memory-sweep" && !allJobs.has("nightly-memory-sweep")) {
+            allJobs.set("nightly-memory-sweep", { name: key, enabled });
+          } else if (key === "weekly-reflection" && !allJobs.has("weekly-reflection")) {
+            allJobs.set("weekly-reflection", { name: key, enabled });
+          } else if (extractProceduresRe.test(key) && !allJobs.has("weekly-extract-procedures")) {
+            allJobs.set("weekly-extract-procedures", { name: key, enabled });
+          } else if (selfCorrectionRe.test(key) && !allJobs.has("self-correction-analysis")) {
+            allJobs.set("self-correction-analysis", { name: key, enabled });
+          } else if (weeklyDeepMaintenanceRe.test(key) && !allJobs.has("weekly-deep-maintenance")) {
+            allJobs.set("weekly-deep-maintenance", { name: key, enabled });
+          } else if (monthlyConsolidationRe.test(key) && !allJobs.has("monthly-consolidation")) {
+            allJobs.set("monthly-consolidation", { name: key, enabled });
+          }
+        }
+      }
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-default-config-jobs" });
       // Continue with incomplete data
     }
   }
@@ -963,7 +895,7 @@ export async function runVerifyForCli(
       process.exitCode = 2; // Scripting: 2 = restart pending (gateway restart recommended)
     }
     log("Note: If you see 'plugins.allow is empty' above, it is from OpenClaw. Optional: set plugins.allow to [\"openclaw-hybrid-memory\"] in openclaw.json for an explicit allow-list.");
-    if (!nightlySweepDefined) {
+    if (!allJobs.has("nightly-memory-sweep")) {
       log("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.");
     }
   } else {
