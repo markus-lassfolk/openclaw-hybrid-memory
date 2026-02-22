@@ -402,6 +402,8 @@ function getDefaultCronModelLegacy(
   tier: CronModelTier,
 ): string {
   if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  const reflectionModel = pluginConfig.reflection?.model?.trim();
+  if (reflectionModel) return reflectionModel;
   if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
     const defaultModel = pluginConfig.distill.defaultModel?.trim();
     if (defaultModel) return defaultModel;
@@ -413,8 +415,6 @@ function getDefaultCronModelLegacy(
     return tier === "heavy" ? "claude-opus-4-20250514" : "claude-sonnet-4-20250514";
   }
   if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
-    const reflectionModel = pluginConfig.reflection?.model?.trim();
-    if (reflectionModel) return reflectionModel;
     return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
   }
   return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
