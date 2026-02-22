@@ -577,7 +577,7 @@ export async function runVerifyForCli(
   } catch (e) {
     issues.push(`Embedding API: ${String(e)}`);
     fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
-    log(`Embedding API: FAIL — ${String(e)}`);
+    log(`❌ Embedding API: FAIL — ${String(e)}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }
 
@@ -741,8 +741,13 @@ export async function runVerifyForCli(
           const enabled = job.enabled !== false;
           const state = job.state as { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string } | undefined;
 
-          // Map job names to our known jobs
-          if (/nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name.toLowerCase())) {
+          // Extract payload message for fallback matching
+          const payload = job.payload as Record<string, unknown> | undefined;
+          const msg = String((payload?.message ?? job.message) || "");
+
+          // Map job names to our known jobs (check both name and payload message)
+          if (/nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name.toLowerCase()) ||
+              /nightly memory distillation|memory distillation pipeline/i.test(msg)) {
             allJobs.set("nightly-memory-sweep", { name, enabled, state });
           } else if (/weekly-reflection|memory reflection|pattern synthesis/i.test(name)) {
             allJobs.set("weekly-reflection", { name, enabled, state });

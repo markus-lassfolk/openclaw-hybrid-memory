@@ -42,32 +42,22 @@ export class Embeddings implements EmbeddingProvider {
       return cached;
     }
 
-    // Retry logic for transient errors (rate limits, 5xx)
-    const maxRetries = 2;
-    let lastError: Error | undefined;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const resp = await this.client.embeddings.create({
-          model: this.model,
-          input: text,
-        });
-        const vector = resp.data[0].embedding;
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => this.client.embeddings.create({
+        model: this.model,
+        input: text,
+      }),
+      { maxRetries: 2 }
+    );
+    const vector = resp.data[0].embedding;
 
-        if (this.cache.size >= EMBEDDING_CACHE_MAX) {
-          const firstKey = this.cache.keys().next().value;
-          if (firstKey !== undefined) this.cache.delete(firstKey);
-        }
-        this.cache.set(cacheKey, vector);
-        return vector;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        if (attempt < maxRetries) {
-          const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
-          await new Promise((r) => setTimeout(r, delay));
-        }
-      }
+    if (this.cache.size >= EMBEDDING_CACHE_MAX) {
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey !== undefined) this.cache.delete(firstKey);
     }
-    throw lastError;
+    this.cache.set(cacheKey, vector);
+    return vector;
   }
 }
 

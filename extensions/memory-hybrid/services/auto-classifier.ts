@@ -61,28 +61,16 @@ async function discoverCategoriesFromOther(
     const prompt = fillPrompt(loadPrompt("category-discovery"), { facts: factLines });
 
     try {
-      // Retry logic for transient errors (rate limits, 5xx)
-      const maxRetries = 2;
-      let lastError: Error | undefined;
-      let resp;
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          resp = await openai.chat.completions.create({
-            model: config.model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0,
-            max_tokens: batch.length * 24,
-          });
-          break;
-        } catch (err) {
-          lastError = err instanceof Error ? err : new Error(String(err));
-          if (attempt < maxRetries) {
-            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
-            await new Promise((r) => setTimeout(r, delay));
-          }
-        }
-      }
-      if (!resp) throw lastError;
+      const { withLLMRetry } = await import("./chat.js");
+      const resp = await withLLMRetry(
+        () => openai.chat.completions.create({
+          model: config.model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: batch.length * 24,
+        }),
+        { maxRetries: 2 }
+      );
       const content = resp.choices[0]?.message?.content?.trim() || "[]";
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (!jsonMatch) continue;
@@ -161,28 +149,16 @@ ${factLines}
 Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]`;
 
   try {
-    // Retry logic for transient errors (rate limits, 5xx)
-    const maxRetries = 2;
-    let lastError: Error | undefined;
-    let resp;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        resp = await openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: facts.length * 20,
-        });
-        break;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        if (attempt < maxRetries) {
-          const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
-          await new Promise((r) => setTimeout(r, delay));
-        }
-      }
-    }
-    if (!resp) throw lastError;
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: facts.length * 20,
+      }),
+      { maxRetries: 2 }
+    );
 
     const content = resp.choices[0]?.message?.content?.trim() || "[]";
     // Extract JSON array from response (handle markdown code blocks)
