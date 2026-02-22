@@ -680,13 +680,16 @@ export const hybridConfigSchema = {
           vectorDimsForModel(m);
           valid.push(m);
         } catch {
-          /* skip unknown embedding model; consider logging when logger available (e.g. at init) so users see dropped entries */
+          console.warn(`memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
         }
       }
       if (valid.length > 0) {
         const firstDim = vectorDimsForModel(valid[0]);
         if (valid.every((m) => vectorDimsForModel(m) === firstDim)) {
           embeddingModels = valid;
+        } else {
+          const dims = valid.map((m) => `${m}=${vectorDimsForModel(m)}`).join(", ");
+          console.warn(`memory-hybrid: embedding.models — models have mismatched vector dimensions (${dims}); all will be ignored. Models in a list must share the same output dimension.`);
         }
       }
     }
