@@ -6,6 +6,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureStep } from "../types/memory.js";
 import type { ExtractProceduresResult } from "../cli/register.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type ParsedSession = {
   sessionId: string;
@@ -234,6 +235,10 @@ export async function extractProceduresFromSessions(
     try {
       content = fs.readFileSync(filePath, "utf-8");
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "procedure-extractor",
+        operation: "read-session-file",
+      });
       logger.warn(`procedure-extractor: read failed ${filePath}: ${err}`);
       continue;
     }

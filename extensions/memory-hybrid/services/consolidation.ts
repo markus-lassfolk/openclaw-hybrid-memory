@@ -12,7 +12,7 @@ import type { Embeddings } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../config.js";
+import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { extractTags } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
 

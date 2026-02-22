@@ -19,8 +19,6 @@ import {
   REFLECTION_IMPORTANCE,
   REFLECTION_DEDUPE_THRESHOLD,
   REFLECTION_TEMPERATURE,
-} from "../config.js";
-import {
   REFLECTION_PATTERN_MAX_CHARS,
   REFLECTION_META_MAX_CHARS,
 } from "../utils/constants.js";

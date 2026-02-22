@@ -583,6 +583,7 @@ export class FactsDB {
       entry.expiresAt !== undefined
         ? entry.expiresAt
         : calculateExpiry(decayClass, nowSec);
+    const importance = entry.importance ?? 0.7;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
     const normHash = normalizedHash(entry.text);
@@ -618,7 +619,7 @@ export class FactsDB {
         id,
         entry.text,
         entry.category,
-        entry.importance,
+        importance,
         entry.entity,
         entry.key,
         entry.value,

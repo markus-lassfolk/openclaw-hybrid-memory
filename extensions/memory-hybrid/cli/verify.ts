@@ -3,6 +3,7 @@
  */
 
 import type { InstallCliResult, VerifyCliSink } from "./types.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export type VerifyContext = {
   runVerify: (opts: { fix: boolean; logFile?: string }, sink: VerifyCliSink) => Promise<void>;
@@ -42,10 +43,15 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
     .action(withExit(async (opts: { fix?: boolean; logFile?: string }) => {
-      await runVerify(
-        { fix: !!opts.fix, logFile: opts.logFile },
-        { log: (s) => console.log(s), error: (s) => console.error(s) },
-      );
+      try {
+        await runVerify(
+          { fix: !!opts.fix, logFile: opts.logFile },
+          { log: (s) => console.log(s), error: (s) => console.error(s) },
+        );
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "verify" });
+        throw err;
+      }
     }));
 
   mem
@@ -53,7 +59,13 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .description("Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.")
     .option("--dry-run", "Print what would be merged without writing")
     .action(withExit(async (opts: { dryRun?: boolean }) => {
-      const result = await runInstall({ dryRun: !!opts.dryRun });
+      let result;
+      try {
+        result = await runInstall({ dryRun: !!opts.dryRun });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "install" });
+        throw err;
+      }
       if (!result.ok) {
         console.error(result.error);
         process.exitCode = 1;

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry } from "../types/memory.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
+import { capturePluginError } from "./error-reporter.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 
@@ -72,6 +73,10 @@ export function generateAutoSkills(
     try {
       mkdirSync(skillDir, { recursive: true });
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "procedure-skill-generator",
+        operation: "mkdir-skill-dir",
+      });
       logger.warn(`procedure-skill-generator: mkdir ${skillDir}: ${err}`);
       skipped++;
       continue;
@@ -117,6 +122,10 @@ ${stepsMd}
       writeFileSync(skillPath, skillMd, "utf-8");
       writeFileSync(recipePath, JSON.stringify(steps, null, 2), "utf-8");
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "procedure-skill-generator",
+        operation: "write-skill-files",
+      });
       logger.warn(`procedure-skill-generator: write ${skillPath}: ${err}`);
       skipped++;
       continue;

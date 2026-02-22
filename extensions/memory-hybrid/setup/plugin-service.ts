@@ -1,13 +1,13 @@
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import type { ClawdbotPluginApi } from "@anthropic/openclaw-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
-import type { WriteAheadLog } from "../backends/write-ahead-log.js";
-import type { HybridMemoryConfig, MemoryCategory } from "../types.js";
+import type { WriteAheadLog } from "../backends/wal.js";
+import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { OpenAI } from "openai";
 import {
   initErrorReporter,
@@ -101,6 +101,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         } catch (err) {
           api.logger.warn(`memory-hybrid: error reporter initialization failed: ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
             operation: "init-error-reporter",
           });
         }
@@ -151,6 +152,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                     }).catch((err) => {
                       api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
                       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "plugin-service",
                         operation: "wal-recovery-vector-store",
                       });
                     });
@@ -167,6 +169,7 @@ export function createPluginService(ctx: PluginServiceContext) {
             } catch (err) {
               api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "plugin-service",
                 operation: "wal-recovery-entry",
               });
               failed++;
@@ -186,6 +189,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           } catch (err) {
             api.logger.warn(`memory-hybrid: WAL prune failed: ${err}`);
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
               operation: "wal-prune-stale",
             });
           }
@@ -205,6 +209,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         } catch (err) {
           api.logger.warn(`memory-hybrid: periodic prune failed: ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
             operation: "periodic-prune",
           });
         }
@@ -224,6 +229,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           } catch (err) {
             api.logger.warn(`memory-hybrid: startup auto-classify failed: ${err}`);
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
               operation: "startup-auto-classify",
             });
           }
@@ -237,6 +243,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           } catch (err) {
             api.logger.warn(`memory-hybrid: daily auto-classify failed: ${err}`);
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
               operation: "daily-auto-classify",
             });
           }
@@ -271,6 +278,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           } catch (err) {
             api.logger.warn(`memory-hybrid: language keywords build failed: ${err}`);
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
               operation: "language-keywords-build",
             });
           }
@@ -333,6 +341,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           } catch (e) {
             api.logger.warn?.(`memory-hybrid: post-upgrade pipeline error: ${e}`);
             capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+              subsystem: "plugin-service",
               operation: "post-upgrade-pipeline",
             });
           }

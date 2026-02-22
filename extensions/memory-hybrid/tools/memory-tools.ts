@@ -143,6 +143,23 @@ export function registerMemoryTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          return await memoryRecallImpl(params);
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "memory-recall",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory_recall" },
+  );
+
+  // Internal implementation so we can return from the try block
+  async function memoryRecallImpl(params: Record<string, unknown>) {
         const {
           query: queryParam,
           id: idParam,
@@ -299,6 +316,11 @@ export function registerMemoryTools(
                 const hydeText = hydeContent.trim();
                 if (hydeText.length > 10) textToEmbed = hydeText;
               } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  subsystem: "search",
+                  operation: "hyde-generation",
+                  phase: "runtime",
+                });
                 api.logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);
               }
             }
@@ -395,10 +417,7 @@ export function registerMemoryTools(
           ],
           details: { count: results.length, memories: sanitized },
         };
-      },
-    },
-    { name: "memory_recall" },
-  );
+  }
 
   if (cfg.procedures.enabled) {
     api.registerTool(
@@ -431,22 +450,23 @@ export function registerMemoryTools(
           ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
-          const { taskDescription, limit = 5, agentId, userId, sessionId } = params as {
-            taskDescription: string;
-            limit?: number;
-            agentId?: string;
-            userId?: string;
-            sessionId?: string;
-          };
-          const q = typeof taskDescription === "string" && taskDescription.trim().length > 0
-            ? taskDescription.trim()
-            : null;
-          if (!q) {
-            return {
-              content: [{ type: "text" as const, text: "Provide a task description to recall procedures." }],
-              details: { count: 0 },
+          try {
+            const { taskDescription, limit = 5, agentId, userId, sessionId } = params as {
+              taskDescription: string;
+              limit?: number;
+              agentId?: string;
+              userId?: string;
+              sessionId?: string;
             };
-          }
+            const q = typeof taskDescription === "string" && taskDescription.trim().length > 0
+              ? taskDescription.trim()
+              : null;
+            if (!q) {
+              return {
+                content: [{ type: "text" as const, text: "Provide a task description to recall procedures." }],
+                details: { count: 0 },
+              };
+            }
 
           // Build scope filter (same logic as memory_recall)
           const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentId, cfg);
@@ -498,6 +518,14 @@ export function registerMemoryTools(
             content: [{ type: "text" as const, text: lines.join("\n") }],
             details: { count: positiveList.length + negatives.length, procedures: positiveList.length, warnings: negatives.length },
           };
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "memory",
+              operation: "memory-recall-procedures",
+              phase: "runtime",
+            });
+            throw err;
+          }
         },
       },
       { name: "memory_recall_procedures" },
@@ -557,33 +585,34 @@ export function registerMemoryTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const {
-          text,
-          importance = 0.7,
-          category = "other",
-          entity: paramEntity,
-          key: paramKey,
-          value: paramValue,
-          decayClass: paramDecayClass,
-          tags: paramTags,
-          supersedes,
-          scope: paramScope,
-          scopeTarget: paramScopeTarget,
-        } = params as {
-          text: string;
-          importance?: number;
-          category?: MemoryCategory;
-          entity?: string;
-          key?: string;
-          value?: string;
-          decayClass?: DecayClass;
-          tags?: string[];
-          supersedes?: string;
-          scope?: "global" | "user" | "agent" | "session";
-          scopeTarget?: string;
-        };
+        try {
+          const {
+            text,
+            importance = 0.7,
+            category = "other",
+            entity: paramEntity,
+            key: paramKey,
+            value: paramValue,
+            decayClass: paramDecayClass,
+            tags: paramTags,
+            supersedes,
+            scope: paramScope,
+            scopeTarget: paramScopeTarget,
+          } = params as {
+            text: string;
+            importance?: number;
+            category?: MemoryCategory;
+            entity?: string;
+            key?: string;
+            value?: string;
+            decayClass?: DecayClass;
+            tags?: string[];
+            supersedes?: string;
+            scope?: "global" | "user" | "agent" | "session";
+            scopeTarget?: string;
+          };
 
-        let textToStore = text;
+          let textToStore = text;
         textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
 
         if (factsDb.hasDuplicate(textToStore)) {
@@ -696,6 +725,11 @@ export function registerMemoryTools(
         try {
           vector = await embeddings.embed(textToStore);
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "store-embed",
+            phase: "runtime",
+          });
           api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
         }
 
@@ -762,6 +796,12 @@ export function registerMemoryTools(
                     await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
                   }
                 } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    subsystem: "vector",
+                    operation: "store-update-supersede",
+                    phase: "runtime",
+                    backend: "lancedb",
+                  });
                   api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                 }
 
@@ -924,6 +964,14 @@ export function registerMemoryTools(
             ...(autoLinked > 0 ? { autoLinked } : {}),
           },
         };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "memory-store",
+            phase: "runtime",
+          });
+          throw err;
+        }
       },
     },
     { name: "memory_store" },
@@ -950,13 +998,14 @@ export function registerMemoryTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const { memoryId, scope, scopeTarget } = params as {
-          memoryId: string;
-          scope: "global" | "agent";
-          scopeTarget?: string;
-        };
-        const entry = factsDb.getById(memoryId);
-        if (!entry) {
+        try {
+          const { memoryId, scope, scopeTarget } = params as {
+            memoryId: string;
+            scope: "global" | "agent";
+            scopeTarget?: string;
+          };
+          const entry = factsDb.getById(memoryId);
+          if (!entry) {
           return {
             content: [{ type: "text", text: `No memory found with id: ${memoryId}.` }],
             details: { error: "not_found" },
@@ -984,6 +1033,14 @@ export function registerMemoryTools(
           ],
           details: { action: "promoted", id: memoryId, scope, scopeTarget: scope === "agent" ? scopeTarget : undefined },
         };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "memory-promote",
+            phase: "runtime",
+          });
+          throw err;
+        }
       },
     },
     { name: "memory_promote" },
@@ -1003,12 +1060,13 @@ export function registerMemoryTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const { query, memoryId } = params as {
-          query?: string;
-          memoryId?: string;
-        };
+        try {
+          const { query, memoryId } = params as {
+            query?: string;
+            memoryId?: string;
+          };
 
-        if (memoryId) {
+          if (memoryId) {
           // Support prefix matching: if the ID looks truncated (not a full UUID),
           // try to resolve the full ID via prefix search
           let resolvedId = memoryId;
@@ -1089,6 +1147,12 @@ export function registerMemoryTools(
             const vector = await embeddings.embed(query);
             lanceResults = await vectorDb.search(vector, 5, 0.7);
           } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "vector",
+              operation: "forget-vector-search",
+              phase: "runtime",
+              backend: "lancedb",
+            });
             api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
           }
 
@@ -1160,6 +1224,14 @@ export function registerMemoryTools(
           content: [{ type: "text", text: "Provide query or memoryId." }],
           details: { error: "missing_param" },
         };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "memory-forget",
+            phase: "runtime",
+          });
+          throw err;
+        }
       },
     },
     { name: "memory_forget" },

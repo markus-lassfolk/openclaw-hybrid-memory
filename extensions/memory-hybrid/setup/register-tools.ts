@@ -19,7 +19,12 @@ import { registerMemoryTools } from "../tools/memory-tools.js";
 import { registerGraphTools } from "../tools/graph-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerPersonaTools } from "../tools/persona-tools.js";
-import { registerUtilityTools } from "../tools/utility-tools.js";
+import {
+  registerUtilityTools,
+  type RunReflectionFn,
+  type RunReflectionRulesFn,
+  type RunReflectionMetaFn,
+} from "../tools/utility-tools.js";
 import { registerProposalsCli } from "../cli/proposals.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
@@ -57,25 +62,9 @@ export interface ToolsContext {
     limit: number,
     minScore?: number
   ) => Promise<MemoryEntry[]>;
-  runReflection: (
-    factsDb: FactsDB,
-    openai: OpenAI,
-    model: string,
-    maxFactsPerCategory: number,
-    logger: { warn: (m: string) => void }
-  ) => Promise<Array<{ category: string; patterns: string[] }>>;
-  runReflectionRules: (
-    factsDb: FactsDB,
-    openai: OpenAI,
-    model: string,
-    logger: { warn: (m: string) => void }
-  ) => Promise<string[]>;
-  runReflectionMeta: (
-    factsDb: FactsDB,
-    openai: OpenAI,
-    model: string,
-    logger: { warn: (m: string) => void }
-  ) => Promise<string | null>;
+  runReflection: RunReflectionFn;
+  runReflectionRules: RunReflectionRulesFn;
+  runReflectionMeta: RunReflectionMetaFn;
 }
 
 /**

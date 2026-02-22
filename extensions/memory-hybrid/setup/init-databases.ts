@@ -1,15 +1,14 @@
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import OpenAI from "openai";
-import type { ClawdbotPluginApi } from "@anthropic/openclaw-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
-import { CredentialsDB, type CredentialType } from "../backends/credentials-db.js";
+import { CredentialsDB } from "../backends/credentials-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { Embeddings } from "../services/embeddings.js";
-import { vectorDimsForModel } from "../config.js";
-import type { HybridMemoryConfig } from "../types.js";
+import { vectorDimsForModel, type HybridMemoryConfig, type CredentialType } from "../config.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
@@ -96,6 +95,7 @@ export function initializeDatabases(
       api.logger.warn(`memory-hybrid: failed to load discovered categories: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "load-discovered-categories",
+        subsystem: "config",
       });
     }
   }
@@ -196,29 +196,29 @@ export function closeOldDatabases(context: {
   if (typeof factsDb?.close === "function") {
     try {
       factsDb.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "factsDb" });
     }
   }
   if (typeof vectorDb?.close === "function") {
     try {
       vectorDb.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "vectorDb" });
     }
   }
   if (credentialsDb) {
     try {
       credentialsDb.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "credentialsDb" });
     }
   }
   if (proposalsDb) {
     try {
       proposalsDb.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "proposalsDb" });
     }
   }
 }
