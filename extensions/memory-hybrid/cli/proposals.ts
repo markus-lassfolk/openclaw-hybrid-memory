@@ -337,8 +337,13 @@ export async function applyApprovedProposal(
     writeFileSync(targetPath, applied.content);
     const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
     if (!commitResult.ok) {
-      // Rollback the file write to avoid leaving the file modified but uncommitted (inconsistent state).
       writeFileSync(targetPath, original);
+      const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+      if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
+        const cwd = repoRoot.stdout.trim();
+        const relPath = relative(cwd, targetPath);
+        spawnSync("git", ["reset", "HEAD", "--", relPath], { cwd, encoding: "utf-8" });
+      }
       return {
         ok: false,
         error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
