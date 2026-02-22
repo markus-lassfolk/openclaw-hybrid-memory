@@ -15,6 +15,12 @@ import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
+export interface HealthStatus {
+  embeddingsOk: boolean;
+  credentialsVaultOk: boolean;
+  lastCheckTime: number;
+}
+
 export interface DatabaseContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
@@ -25,6 +31,7 @@ export interface DatabaseContext {
   proposalsDb: ProposalsDB | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
+  health: HealthStatus;
 }
 
 /**
@@ -101,13 +108,19 @@ export function initializeDatabases(
     }
   }
 
+  // Health status tracking for verification checks
+  const health: HealthStatus = {
+    embeddingsOk: false,
+    credentialsVaultOk: false,
+    lastCheckTime: Date.now(),
+  };
+
   // Prerequisite checks (async, don't block plugin start): verify keys and model access
-  // Note: These checks run in background. If they fail, the plugin will continue running
-  // but memory operations requiring embeddings will fail at runtime. Users should run
-  // 'openclaw hybrid-mem verify' if they see errors.
+  // Health status can be queried by tools to fail gracefully instead of throwing at runtime.
   void (async () => {
     try {
       await embeddings.embed("verify");
+      health.embeddingsOk = true;
       api.logger.info("memory-hybrid: embedding API check OK");
     } catch (e) {
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
@@ -129,6 +142,7 @@ export function initializeDatabases(
           const first = items[0];
           credentialsDb.get(first.service, first.type as CredentialType);
         }
+        health.credentialsVaultOk = true;
         api.logger.info("memory-hybrid: credentials vault check OK");
       } catch (e) {
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {
@@ -199,6 +213,7 @@ export function initializeDatabases(
     proposalsDb,
     resolvedLancePath,
     resolvedSqlitePath,
+    health,
   };
 }
 
