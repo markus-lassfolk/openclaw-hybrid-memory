@@ -15,20 +15,20 @@ describe("version command utilities", () => {
 
     it("returns 0 for equal versions", () => {
       expect(compare("1.0.0", "1.0.0")).toBe(0);
-      expect(compare("2026.2.221", "2026.2.221")).toBe(0);
+      expect(compare("2026.2.222", "2026.2.222")).toBe(0);
     });
 
     it("returns -1 when first version is older", () => {
       expect(compare("1.0.0", "1.0.1")).toBe(-1);
       expect(compare("1.0.0", "2.0.0")).toBe(-1);
-      expect(compare("2026.2.220", "2026.2.221")).toBe(-1);
+      expect(compare("2026.2.220", "2026.2.222")).toBe(-1);
       expect(compare("2026.1.999", "2026.2.0")).toBe(-1);
     });
 
     it("returns 1 when first version is newer", () => {
       expect(compare("1.0.1", "1.0.0")).toBe(1);
       expect(compare("2.0.0", "1.0.0")).toBe(1);
-      expect(compare("2026.2.221", "2026.2.220")).toBe(1);
+      expect(compare("2026.2.222", "2026.2.220")).toBe(1);
       expect(compare("2026.2.0", "2026.1.999")).toBe(1);
     });
 
@@ -178,17 +178,17 @@ describe("version command utilities", () => {
 
     it("shows update available when installed is older", () => {
       expect(updateHint("1.0.0", "1.0.1")).toBe(" ⬆ update available");
-      expect(updateHint("2026.2.220", "2026.2.221")).toBe(" ⬆ update available");
+      expect(updateHint("2026.2.220", "2026.2.222")).toBe(" ⬆ update available");
     });
 
     it("shows up to date when versions match", () => {
       expect(updateHint("1.0.0", "1.0.0")).toBe(" (up to date)");
-      expect(updateHint("2026.2.221", "2026.2.221")).toBe(" (up to date)");
+      expect(updateHint("2026.2.222", "2026.2.222")).toBe(" (up to date)");
     });
 
     it("shows up to date when installed is newer", () => {
       expect(updateHint("1.0.1", "1.0.0")).toBe(" (up to date)");
-      expect(updateHint("2026.2.222", "2026.2.221")).toBe(" (up to date)");
+      expect(updateHint("2026.2.223", "2026.2.222")).toBe(" (up to date)");
     });
 
     it("returns empty string when latest is null", () => {
@@ -209,7 +209,7 @@ describe("version command utilities", () => {
     };
 
     it("includes all required fields", () => {
-      const installed = "2026.2.221";
+      const installed = "2026.2.222";
       const githubVersion = "2026.2.222";
       const npmVersion = "2026.2.222";
 
@@ -232,7 +232,7 @@ describe("version command utilities", () => {
 
     it("sets updateAvailable to true when GitHub has newer version", () => {
       const installed = "2026.2.220";
-      const githubVersion = "2026.2.221";
+      const githubVersion = "2026.2.222";
       const npmVersion = "2026.2.220";
 
       const updateAvailable =
@@ -245,7 +245,7 @@ describe("version command utilities", () => {
     it("sets updateAvailable to true when npm has newer version", () => {
       const installed = "2026.2.220";
       const githubVersion = "2026.2.220";
-      const npmVersion = "2026.2.221";
+      const npmVersion = "2026.2.222";
 
       const updateAvailable =
         (githubVersion != null && compare(installed, githubVersion) < 0) ||
@@ -255,9 +255,9 @@ describe("version command utilities", () => {
     });
 
     it("sets updateAvailable to false when installed is up to date", () => {
-      const installed = "2026.2.221";
-      const githubVersion = "2026.2.221";
-      const npmVersion = "2026.2.221";
+      const installed = "2026.2.222";
+      const githubVersion = "2026.2.222";
+      const npmVersion = "2026.2.222";
 
       const updateAvailable =
         (githubVersion != null && compare(installed, githubVersion) < 0) ||
@@ -268,8 +268,8 @@ describe("version command utilities", () => {
 
     it("sets updateAvailable to false when installed is newer", () => {
       const installed = "2026.2.222";
-      const githubVersion = "2026.2.221";
-      const npmVersion = "2026.2.221";
+      const githubVersion = "2026.2.222";
+      const npmVersion = "2026.2.222";
 
       const updateAvailable =
         (githubVersion != null && compare(installed, githubVersion) < 0) ||
@@ -279,7 +279,7 @@ describe("version command utilities", () => {
     });
 
     it("handles unavailable versions", () => {
-      const installed = "2026.2.221";
+      const installed = "2026.2.222";
       const githubVersion = null;
       const npmVersion = null;
 
@@ -301,19 +301,19 @@ describe("version command utilities", () => {
 
   describe("GitHub API response parsing", () => {
     it("extracts version from tag_name with v prefix", () => {
-      const data = { tag_name: "v2026.2.221" };
+      const data = { tag_name: "v2026.2.222" };
       const tag = data.tag_name;
       const version = typeof tag === "string" ? tag.replace(/^v/, "") : null;
       
-      expect(version).toBe("2026.2.221");
+      expect(version).toBe("2026.2.222");
     });
 
     it("extracts version from tag_name without v prefix", () => {
-      const data = { tag_name: "2026.2.221" };
+      const data = { tag_name: "2026.2.222" };
       const tag = data.tag_name;
       const version = typeof tag === "string" ? tag.replace(/^v/, "") : null;
       
-      expect(version).toBe("2026.2.221");
+      expect(version).toBe("2026.2.222");
     });
 
     it("returns null for missing tag_name", () => {
@@ -335,10 +335,10 @@ describe("version command utilities", () => {
 
   describe("npm registry response parsing", () => {
     it("extracts version from response", () => {
-      const data = { version: "2026.2.221" };
+      const data = { version: "2026.2.222" };
       const version = typeof data.version === "string" ? data.version : null;
       
-      expect(version).toBe("2026.2.221");
+      expect(version).toBe("2026.2.222");
     });
 
     it("returns null for missing version", () => {
@@ -375,7 +375,7 @@ describe("version command utilities", () => {
 
     it("shows 'installed is newer' for GitHub when installed > github", () => {
       const installed = "2026.2.222";
-      const githubVersion = "2026.2.221";
+      const githubVersion = "2026.2.222";
       
       const hint = githubVersion != null && compare(installed, githubVersion) > 0
         ? " (installed is newer)"
@@ -386,7 +386,7 @@ describe("version command utilities", () => {
 
     it("shows 'installed is newer' for npm when installed > npm", () => {
       const installed = "2026.2.222";
-      const npmVersion = "2026.2.221";
+      const npmVersion = "2026.2.222";
       
       const hint = npmVersion != null && compare(installed, npmVersion) > 0
         ? " (installed is newer)"
@@ -396,8 +396,8 @@ describe("version command utilities", () => {
     });
 
     it("does not show 'installed is newer' when versions match", () => {
-      const installed = "2026.2.221";
-      const githubVersion = "2026.2.221";
+      const installed = "2026.2.222";
+      const githubVersion = "2026.2.222";
       
       const hint = githubVersion != null && compare(installed, githubVersion) > 0
         ? " (installed is newer)"
