@@ -89,7 +89,7 @@ export type ManageContext = {
     dryRun?: boolean;
     model?: string;
     approve?: boolean;
-    noApplyTools?: boolean;
+    applyTools?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
   runExport: (opts: {
     outputPath: string;
@@ -1041,17 +1041,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       dryRun?: boolean;
       model?: string;
       approve?: boolean;
-      noApplyTools?: boolean;
+      applyTools?: boolean;
     }) => {
       const extractPath = opts?.extractPath;
       const workspace = opts?.workspace;
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? ctx.autoClassifyConfig.model;
       const approve = !!opts?.approve;
-      const noApplyTools = !!opts?.noApplyTools;
       let res;
       try {
-        res = await runSelfCorrectionRun({ extractPath, workspace, dryRun, model, approve, noApplyTools });
+        res = await runSelfCorrectionRun({ extractPath, workspace, dryRun, model, approve, applyTools: opts?.applyTools });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "self-correction-run" });
         throw err;
