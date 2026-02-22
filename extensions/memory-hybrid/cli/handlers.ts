@@ -116,6 +116,25 @@ function createProgressReporter(
   };
 }
 
+// Helper function for relative time display
+function relativeTime(ms: number): string {
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const future = diff > 0;
+
+  if (abs < 60000) return "just now";
+  if (abs < 3600000) {
+    const m = Math.round(abs / 60000);
+    return future ? `in ${m}m` : `${m}m ago`;
+  }
+  if (abs < 86400000) {
+    const h = Math.round(abs / 3600000);
+    return future ? `in ${h}h` : `${h}h ago`;
+  }
+  const d = Math.round(abs / 86400000);
+  return future ? `in ${d}d` : `${d}d ago`;
+}
+
 /**
  * Handler Context
  *
@@ -492,6 +511,8 @@ export async function runVerifyForCli(
   let embeddingOk = false;
   const loadBlocking: string[] = [];
 
+  log("\n───── Infrastructure ─────");
+
   if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
     issues.push("embedding.apiKey is missing, placeholder, or too short");
     loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
@@ -506,8 +527,8 @@ export async function runVerifyForCli(
   }
   const openclawDir = join(homedir(), ".openclaw");
   const defaultConfigPath = join(openclawDir, "openclaw.json");
-  if (configOk) log("Config: embedding.apiKey and model present");
-  else log("Config: issues found");
+  if (configOk) log("✅ Config: embedding.apiKey and model present");
+  else log("❌ Config: issues found");
 
   const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const isBindingsError = (msg: string) =>
@@ -518,7 +539,7 @@ export async function runVerifyForCli(
   try {
     const n = factsDb.count();
     sqliteOk = true;
-    log(`SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
+    log(`✅ SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
   } catch (e) {
     const msg = String(e);
     issues.push(`SQLite: ${msg}`);
@@ -528,14 +549,14 @@ export async function runVerifyForCli(
     } else {
       fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
     }
-    log(`SQLite: FAIL — ${msg}`);
+    log(`❌ SQLite: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:sqlite-check" });
   }
 
   try {
     const n = await vectorDb.count();
     lanceOk = true;
-    log(`LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
+    log(`✅ LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
   } catch (e) {
     const msg = String(e);
     issues.push(`LanceDB: ${msg}`);
@@ -545,14 +566,14 @@ export async function runVerifyForCli(
     } else {
       fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
     }
-    log(`LanceDB: FAIL — ${msg}`);
+    log(`❌ LanceDB: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:lancedb-check" });
   }
 
   try {
     await embeddings.embed("verify test");
     embeddingOk = true;
-    log("Embedding API: OK");
+    log("✅ Embedding API: OK");
   } catch (e) {
     issues.push(`Embedding API: ${String(e)}`);
     fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
@@ -567,8 +588,10 @@ export async function runVerifyForCli(
       ? "Mode: Custom"
       : `Mode: ${cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)} (preset)`
     : "Mode: Custom";
-  log(`\n${modeLabel}${restartPending ? " — restart pending" : ""}`);
-  log("\nFeatures (all on/off toggles, values match config true/false):");
+  log(`\n───── Memory Mode ─────`);
+  log(`${modeLabel}${restartPending ? " — restart pending" : ""}`);
+
+  log("\n───── Core Features ─────");
   log(`  autoCapture: ${bool(cfg.autoCapture)}`);
   log(`  autoRecall: ${bool(cfg.autoRecall.enabled)}`);
   log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "false"}`);
@@ -806,42 +829,111 @@ export async function runVerifyForCli(
     }
   }
 
-  log("\nOptional / suggested jobs (cron store at ~/.openclaw/cron/jobs.json):");
-  if (nightlySweepDefined) {
-    log(`  nightly-memory-sweep (session distillation): defined, ${nightlySweepEnabled ? "true" : "false"}`);
-  } else {
-    log("  nightly-memory-sweep (session distillation): not defined");
-    fixes.push("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs (e.g. cron store or UI) or system cron. See docs/SESSION-DISTILLATION.md § Nightly Cron Setup.");
+  // Enhanced job status display
+  log("\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):");
+
+  // Read all jobs with state information
+  interface JobInfo {
+    name: string;
+    enabled: boolean;
+    state?: {
+      nextRunAtMs?: number;
+      lastRunAtMs?: number;
+      lastStatus?: string;
+      lastError?: string;
+    };
   }
-  if (weeklyReflectionDefined) {
-    log("  weekly-reflection (pattern synthesis): defined");
-  } else {
-    log("  weekly-reflection (pattern synthesis): not defined");
-    fixes.push("Optional: Set up weekly reflection via jobs. See docs/REFLECTION.md § Scheduled Job. Run 'openclaw hybrid-mem verify --fix' to add.");
+
+  const allJobs = new Map<string, JobInfo>();
+
+  if (existsSync(cronStorePath)) {
+    try {
+      const raw = readFileSync(cronStorePath, "utf-8");
+      const store = JSON.parse(raw) as Record<string, unknown>;
+      const jobs = store.jobs;
+      if (Array.isArray(jobs)) {
+        for (const j of jobs) {
+          if (typeof j !== "object" || j === null) continue;
+          const job = j as Record<string, unknown>;
+          const name = String(job.name ?? "");
+          const enabled = job.enabled !== false;
+          const state = job.state as { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string } | undefined;
+
+          // Map job names to our known jobs
+          if (/nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/.test(name.toLowerCase())) {
+            allJobs.set("nightly-memory-sweep", { name, enabled, state });
+          } else if (/weekly-reflection|memory reflection|pattern synthesis/i.test(name)) {
+            allJobs.set("weekly-reflection", { name, enabled, state });
+          } else if (extractProceduresRe.test(name)) {
+            allJobs.set("weekly-extract-procedures", { name, enabled, state });
+          } else if (selfCorrectionRe.test(name)) {
+            allJobs.set("self-correction-analysis", { name, enabled, state });
+          } else if (weeklyDeepMaintenanceRe.test(name)) {
+            allJobs.set("weekly-deep-maintenance", { name, enabled, state });
+          } else if (monthlyConsolidationRe.test(name)) {
+            allJobs.set("monthly-consolidation", { name, enabled, state });
+          }
+        }
+      }
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-job-state" });
+      // Continue with incomplete data
+    }
   }
-  if (extractProceduresDefined) {
-    log("  weekly-extract-procedures (procedural memory): defined");
-  } else {
-    log("  weekly-extract-procedures (procedural memory): not defined");
-    fixes.push("Optional: Set up procedural memory extraction via jobs. See docs/PROCEDURAL-MEMORY.md. Run 'openclaw hybrid-mem verify --fix' to add.");
-  }
-  if (selfCorrectionDefined) {
-    log("  self-correction-analysis: defined");
-  } else {
-    log("  self-correction-analysis: not defined");
-    fixes.push("Optional: Set up self-correction analysis via jobs. See docs/SELF-CORRECTION-PIPELINE.md. Run 'openclaw hybrid-mem verify --fix' to add.");
-  }
-  if (weeklyDeepMaintenanceDefined) {
-    log("  weekly-deep-maintenance: defined");
-  } else {
-    log("  weekly-deep-maintenance: not defined");
-    fixes.push("Optional: Set up weekly deep maintenance via jobs. Run 'openclaw hybrid-mem verify --fix' to add.");
-  }
-  if (monthlyConsolidationDefined) {
-    log("  monthly-consolidation: defined");
-  } else {
-    log("  monthly-consolidation: not defined");
-    fixes.push("Optional: Set up monthly consolidation via jobs. Run 'openclaw hybrid-mem verify --fix' to add.");
+
+  // Display each job with its status
+  const jobsToDisplay = [
+    { key: "nightly-memory-sweep", description: "session distillation", docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup" },
+    { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
+    { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
+    { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
+    { key: "weekly-deep-maintenance", description: "deep maintenance", docsPath: null },
+    { key: "monthly-consolidation", description: "monthly consolidation", docsPath: null },
+  ];
+
+  for (const { key, description, docsPath } of jobsToDisplay) {
+    const job = allJobs.get(key);
+
+    if (!job) {
+      log(`  ❌ ${key.padEnd(30)} missing`);
+      const fixMsg = docsPath
+        ? `Optional: Set up ${description} via jobs. See ${docsPath}. Run 'openclaw hybrid-mem verify --fix' to add.`
+        : `Optional: Set up ${description} via jobs. Run 'openclaw hybrid-mem verify --fix' to add.`;
+      fixes.push(fixMsg);
+      continue;
+    }
+
+    const statusIcon = job.enabled ? "✅" : "⏸️ ";
+    const statusText = job.enabled ? "enabled " : "disabled";
+
+    let statusDetails = "";
+    if (job.state) {
+      const parts: string[] = [];
+
+      if (job.state.lastRunAtMs) {
+        const lastStatus = job.state.lastStatus || "ok";
+        const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
+        parts.push(lastRun);
+      } else {
+        parts.push("last: never");
+      }
+
+      if (job.state.nextRunAtMs) {
+        parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
+      }
+
+      if (parts.length > 0) {
+        statusDetails = "  " + parts.join("  ");
+      }
+    }
+
+    log(`  ${statusIcon} ${key.padEnd(30)} ${statusText}${statusDetails}`);
+
+    // Show error details on next line if present
+    if (job.state?.lastError && job.state.lastStatus === "error") {
+      const errorPreview = job.state.lastError.slice(0, 100);
+      log(`     └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
+    }
   }
 
   log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");

@@ -23,6 +23,7 @@ import {
   REFLECTION_META_MAX_CHARS,
 } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
+import { withLLMRetry } from "./chat.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -147,20 +148,29 @@ export async function runReflection(
   const prompt = fillPrompt(loadPrompt("reflection"), { window: String(windowDays), facts: factsBlock });
 
   let rawResponse: string;
+  let tokenUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   try {
-    const resp = await openai.chat.completions.create({
-      model: opts.model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: REFLECTION_TEMPERATURE,
-      max_tokens: 1500,
-    });
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model: opts.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: REFLECTION_TEMPERATURE,
+        max_tokens: 1500,
+      }),
+      { label: "memory-hybrid: reflection" },
+    );
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
+    tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+    if (opts.verbose && tokenUsage) {
+      logger.info(`memory-hybrid: reflection — LLM tokens: ${tokenUsage.prompt_tokens}+${tokenUsage.completion_tokens}=${tokenUsage.total_tokens}`);
+    }
   } catch (err) {
     logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'reflection-llm',
       subsystem: 'openai',
       windowDays,
+      retryAttempt: 3, // Failed after all retries
     });
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
@@ -227,7 +237,12 @@ export async function runReflection(
         break;
       }
     }
-    if (isDuplicate) continue;
+    if (isDuplicate) {
+      if (opts.verbose) {
+        logger.info(`memory-hybrid: reflection — skipped duplicate: ${patternText.slice(0, 60)}...`);
+      }
+      continue;
+    }
 
     if (opts.dryRun) {
       logger.info(`memory-hybrid: reflection [dry-run] would store: ${patternText.slice(0, 60)}...`);
@@ -246,6 +261,10 @@ export async function runReflection(
       decayClass: "permanent",
       tags: ["reflection", "pattern"],
     });
+
+    if (opts.verbose) {
+      logger.info(`memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? '...' : ''}`);
+    }
     try {
       await vectorDb.store({
         text: patternText,
@@ -297,19 +316,28 @@ export async function runReflectionRules(
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
   const prompt = fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock });
   let rawResponse: string;
+  let tokenUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   try {
-    const resp = await openai.chat.completions.create({
-      model: opts.model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: REFLECTION_TEMPERATURE,
-      max_tokens: 800,
-    });
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model: opts.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: REFLECTION_TEMPERATURE,
+        max_tokens: 800,
+      }),
+      { label: "memory-hybrid: reflect-rules" },
+    );
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
+    tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+    if (opts.verbose && tokenUsage) {
+      logger.info(`memory-hybrid: reflect-rules — LLM tokens: ${tokenUsage.prompt_tokens}+${tokenUsage.completion_tokens}=${tokenUsage.total_tokens}`);
+    }
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'reflection-rules-llm',
       subsystem: 'openai',
+      retryAttempt: 3, // Failed after all retries
     });
     return { rulesExtracted: 0, rulesStored: 0 };
   }
@@ -381,7 +409,12 @@ export async function runReflectionRules(
         break;
       }
     }
-    if (isDuplicate) continue;
+    if (isDuplicate) {
+      if (opts.verbose) {
+        logger.info(`memory-hybrid: reflect-rules — skipped duplicate: ${ruleText.slice(0, 50)}...`);
+      }
+      continue;
+    }
     if (opts.dryRun) {
       logger.info(`memory-hybrid: reflect-rules [dry-run] would store: ${ruleText.slice(0, 50)}...`);
       stored++;
@@ -398,6 +431,10 @@ export async function runReflectionRules(
       decayClass: "permanent",
       tags: ["reflection", "rule"],
     });
+
+    if (opts.verbose) {
+      logger.info(`memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? '...' : ''}`);
+    }
     try {
       await vectorDb.store({ text: ruleText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "rule", id: entry.id });
     } catch (err) {
@@ -437,19 +474,28 @@ export async function runReflectionMeta(
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
   const prompt = fillPrompt(loadPrompt("reflection-meta"), { patterns: patternsBlock });
   let rawResponse: string;
+  let tokenUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   try {
-    const resp = await openai.chat.completions.create({
-      model: opts.model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: REFLECTION_TEMPERATURE,
-      max_tokens: 500,
-    });
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model: opts.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: REFLECTION_TEMPERATURE,
+        max_tokens: 500,
+      }),
+      { label: "memory-hybrid: reflect-meta" },
+    );
     rawResponse = (resp.choices[0]?.message?.content ?? "").trim();
+    tokenUsage = resp.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+    if (opts.verbose && tokenUsage) {
+      logger.info(`memory-hybrid: reflect-meta — LLM tokens: ${tokenUsage.prompt_tokens}+${tokenUsage.completion_tokens}=${tokenUsage.total_tokens}`);
+    }
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'reflection-meta-llm',
       subsystem: 'openai',
+      retryAttempt: 3, // Failed after all retries
     });
     return { metaExtracted: 0, metaStored: 0 };
   }
@@ -521,7 +567,12 @@ export async function runReflectionMeta(
         break;
       }
     }
-    if (isDuplicate) continue;
+    if (isDuplicate) {
+      if (opts.verbose) {
+        logger.info(`memory-hybrid: reflect-meta — skipped duplicate: ${metaText.slice(0, 50)}...`);
+      }
+      continue;
+    }
     if (opts.dryRun) {
       logger.info(`memory-hybrid: reflect-meta [dry-run] would store: ${metaText.slice(0, 50)}...`);
       stored++;
@@ -538,6 +589,10 @@ export async function runReflectionMeta(
       decayClass: "permanent",
       tags: ["reflection", "pattern", "meta"],
     });
+
+    if (opts.verbose) {
+      logger.info(`memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? '...' : ''}`);
+    }
     try {
       await vectorDb.store({ text: metaText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "pattern", id: entry.id });
     } catch (err) {
