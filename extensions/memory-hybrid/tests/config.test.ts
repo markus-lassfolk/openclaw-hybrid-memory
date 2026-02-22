@@ -627,6 +627,57 @@ describe("hybridConfigSchema.parse", () => {
     expect(getDefaultCronModel(cronCfg, "heavy")).toBe("gpt-4o");
   });
 
+  it("getLLMModelPreference legacy path: Gemini first (distill.apiKey set)", () => {
+    const cronCfg = {
+      embedding: { apiKey: "sk-embed-key-that-is-long-enough" },
+      distill: { apiKey: "GEMINI_API_KEY_LONG_ENOUGH_12345", defaultModel: "gemini-custom" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-custom"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-custom"]);
+  });
+
+  it("getLLMModelPreference legacy path: Gemini default model when distill.defaultModel unset", () => {
+    const cronCfg = {
+      distill: { apiKey: "GEMINI_API_KEY_LONG_ENOUGH_12345" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-2.0-flash-thinking-exp-01-21"]);
+  });
+
+  it("getLLMModelPreference legacy path: Claude second (claude.apiKey set, no distill)", () => {
+    const cronCfg = {
+      claude: { apiKey: "sk-claude-key-that-is-long-enough", defaultModel: "claude-custom" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["claude-custom"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["claude-custom"]);
+  });
+
+  it("getLLMModelPreference legacy path: Claude defaults when claude.defaultModel unset", () => {
+    const cronCfg = {
+      claude: { apiKey: "sk-claude-key-that-is-long-enough" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["claude-sonnet-4-20250514"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["claude-opus-4-20250514"]);
+  });
+
+  it("getLLMModelPreference legacy path: OpenAI third (embedding.apiKey, no distill/claude)", () => {
+    const cronCfg = {
+      embedding: { apiKey: "sk-embed-key-that-is-long-enough" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gpt-4o-mini"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
+  });
+
+  it("getLLMModelPreference legacy path: reflection.model does NOT override provider priority", () => {
+    const cronCfg = {
+      distill: { apiKey: "GEMINI_API_KEY_LONG_ENOUGH_12345" },
+      reflection: { model: "gpt-4o-mini" },
+    };
+    // reflection.model should NOT override Gemini when distill.apiKey is configured
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-2.0-flash-thinking-exp-01-21"]);
+  });
+
   it("parses optional selfCorrection config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

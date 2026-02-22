@@ -1439,7 +1439,7 @@ export async function runGenerateProposalsForCli(
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, "heavy");
   const model = pref[0];
-  const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? []));
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -1485,13 +1485,17 @@ export async function runGenerateProposalsForCli(
     const snapshot = getFileSnapshot(join(workspace, targetFile));
     let confidence = Number(item.confidence);
     if (!Number.isFinite(confidence) || confidence < minConf) continue;
+    const originalConfidence = confidence;
     const parsed = parseSuggestedChange(String(item.suggestedChange ?? ""));
     if (parsed.changeType === "replace" && targetFile === "SOUL.md") {
       confidence = Math.min(confidence, 0.5);
     } else if (parsed.changeType === "replace") {
       confidence = Math.min(confidence, 0.6);
     }
-    if (confidence < minConf) continue;
+    if (confidence < minConf) {
+      ctx.logger.info?.(`memory-hybrid: proposal dropped — confidence capped from ${originalConfidence.toFixed(2)} to ${confidence.toFixed(2)} (below minConf ${minConf}): ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`);
+      continue;
+    }
     const title = String(item.title ?? "Update from reflection").slice(0, 256);
     const observation = String(item.observation ?? "").slice(0, 2000);
     const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
@@ -2010,7 +2014,7 @@ export async function runIngestFilesForCli(
   const cronCfgIngest = getCronModelConfig(cfg);
   const ingestPref = getLLMModelPreference(cronCfgIngest, "default");
   const model = ingestPref[0] ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
-  const ingestFallbacks = ingestPref.length > 1 ? ingestPref.slice(1) : cfg.distill?.fallbackModels;
+  const ingestFallbacks = ingestPref.length > 1 ? ingestPref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   const ingestPrompt = loadPrompt("ingest-files");
   const batches: string[] = [];
   let currentBatch = "";
@@ -2160,7 +2164,7 @@ export async function runDistillForCli(
   const cronCfgDistill = getCronModelConfig(cfg);
   const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
   const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? "gpt-4o";
-  const distillFallbacks = heavyPref.length > 1 ? heavyPref.slice(1) : cfg.distill?.fallbackModels;
+  const distillFallbacks = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   const batches: string[] = [];
   let currentBatch = "";
   const batchTokenLimit = distillBatchTokenLimit(model);
@@ -2440,7 +2444,9 @@ export async function runSelfCorrectionRunForCli(
   const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
     incidents_json: JSON.stringify(incidents),
   });
-  const model = opts.model ?? (getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy")[0]) ?? "gpt-4o";
+  const heavyPref = getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy");
+  const model = opts.model ?? heavyPref[0] ?? "gpt-4o";
+  const scFallbackModels = opts.model ? [] : (heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])));
   let analysed: Array<{
     category: string;
     severity: string;
@@ -2470,12 +2476,14 @@ export async function runSelfCorrectionRunForCli(
       content = (r.stdout ?? "") + (r.stderr ?? "");
       if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
     } else {
-      content = await chatComplete({
+      content = await chatCompleteWithRetry({
         model,
         content: prompt,
         temperature: 0.2,
         maxTokens: distillMaxOutputTokens(model),
         openai,
+        fallbackModels: scFallbackModels,
+        label: "memory-hybrid: self-correction analyze",
       });
     }
     const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -2556,13 +2564,14 @@ export async function runSelfCorrectionRunForCli(
           current_tools: currentTools,
           new_rules: toolsSuggestions.join("\n"),
         });
-        const rewriteModel = opts.model ?? (getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy")[0]) ?? "gpt-4o";
-        const rewritten = await chatComplete({
-          model: rewriteModel,
+        const rewritten = await chatCompleteWithRetry({
+          model,
           content: rewritePrompt,
           temperature: 0.2,
           maxTokens: 16000,
           openai,
+          fallbackModels: scFallbackModels,
+          label: "memory-hybrid: self-correction rewrite-tools",
         });
         const cleaned = rewritten.trim().replace(/^```\w*\n?|```\s*$/g, "").trim();
         if (cleaned.length > 50) {

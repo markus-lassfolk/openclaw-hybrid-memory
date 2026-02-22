@@ -61,8 +61,13 @@ export function initializeDatabases(
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
   vectorDb.setLogger(api.logger);
   // Use gateway-proxied OpenAI client when running inside the gateway (option 2: env-based discovery)
-  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayBaseUrl = gatewayPort ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayPortNum = gatewayPortRaw !== undefined ? parseInt(gatewayPortRaw, 10) : NaN;
+  const gatewayPort = !isNaN(gatewayPortNum) && gatewayPortNum >= 1 && gatewayPortNum <= 65535 ? gatewayPortNum : undefined;
+  if (gatewayPortRaw !== undefined && gatewayPort === undefined) {
+    api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT "${gatewayPortRaw}" is not a valid port number (1-65535); gateway base URL not used`);
+  }
+  const gatewayBaseUrl = gatewayPort !== undefined ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   const openai = new OpenAI({ apiKey: cfg.embedding.apiKey ?? "unused", ...(gatewayBaseUrl ? { baseURL: gatewayBaseUrl } : {}) });
   const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
   const embeddings = new Embeddings(openai, embeddingModels);
