@@ -61,12 +61,16 @@ async function discoverCategoriesFromOther(
     const prompt = fillPrompt(loadPrompt("category-discovery"), { facts: factLines });
 
     try {
-      const resp = await openai.chat.completions.create({
-        model: config.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: batch.length * 24,
-      });
+      const { withLLMRetry } = await import("./chat.js");
+      const resp = await withLLMRetry(
+        () => openai.chat.completions.create({
+          model: config.model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: batch.length * 24,
+        }),
+        { maxRetries: 2 }
+      );
       const content = resp.choices[0]?.message?.content?.trim() || "[]";
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (!jsonMatch) continue;
@@ -145,12 +149,16 @@ ${factLines}
 Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]`;
 
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
-      max_tokens: facts.length * 20,
-    });
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () => openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: facts.length * 20,
+      }),
+      { maxRetries: 2 }
+    );
 
     const content = resp.choices[0]?.message?.content?.trim() || "[]";
     // Extract JSON array from response (handle markdown code blocks)

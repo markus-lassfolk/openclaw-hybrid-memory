@@ -289,6 +289,8 @@ export type HybridMemoryConfig = {
   distill?: {
     apiKey?: string;
     defaultModel?: string;
+    /** Fallback models to try if primary model fails after retries (optional). */
+    fallbackModels?: string[];
     /** Enable directive extraction from sessions (default: true). */
     extractDirectives?: boolean;
     /** Enable reinforcement extraction from sessions (default: true). */
@@ -892,6 +894,9 @@ export const hybridConfigSchema = {
         ? {
             apiKey: typeof distillRaw.apiKey === "string" ? distillRaw.apiKey : undefined,
             defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
+            fallbackModels: Array.isArray(distillRaw.fallbackModels) && distillRaw.fallbackModels.every((m) => typeof m === "string")
+              ? (distillRaw.fallbackModels as string[])
+              : undefined,
             extractDirectives: distillRaw.extractDirectives !== false,
             extractReinforcement: distillRaw.extractReinforcement !== false,
             reinforcementBoost: typeof distillRaw.reinforcementBoost === "number" && distillRaw.reinforcementBoost >= 0 && distillRaw.reinforcementBoost <= 1.0

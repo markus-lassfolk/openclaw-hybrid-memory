@@ -432,4 +432,5 @@ export const _testing = {
 };
 
 export { versionInfo } from "./versionInfo.js";
+export { sanitizeMessagesForClaude, type MessageLike } from "./utils/sanitize-messages.js";
 export default memoryHybridPlugin;
