@@ -65,9 +65,18 @@ export function initializeDatabases(
   const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
   const embeddings = new Embeddings(openaiForEmbeddings, embeddingModels);
   // Chat/LLM client uses gateway when available (embeddings never do)
-  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayBaseUrl = gatewayPort ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
-  const openai = new OpenAI({ apiKey: cfg.embedding.apiKey ?? "unused", ...(gatewayBaseUrl ? { baseURL: gatewayBaseUrl } : {}) });
+  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayPortNum = gatewayPortRaw !== undefined ? parseInt(gatewayPortRaw, 10) : NaN;
+  const gatewayPort = !Number.isNaN(gatewayPortNum) && gatewayPortNum >= 1 && gatewayPortNum <= 65535 ? gatewayPortNum : undefined;
+  if (gatewayPortRaw !== undefined && gatewayPort === undefined) {
+    api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT "${gatewayPortRaw}" is not a valid port (1-65535); gateway base URL not used`);
+  }
+  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayBaseUrl = gatewayPort !== undefined ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+  // When routing through gateway, use the gateway token for auth (not the OpenAI API key)
+  const openai = gatewayBaseUrl
+    ? new OpenAI({ apiKey: gatewayToken ?? "unused", baseURL: gatewayBaseUrl })
+    : new OpenAI({ apiKey: cfg.embedding.apiKey });
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {

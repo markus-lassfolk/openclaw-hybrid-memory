@@ -20,7 +20,7 @@ import { runBuildLanguageKeywords } from "../services/language-keywords-build.js
 import { runExport } from "../services/export-memory.js";
 import { mergeResults } from "../services/merge-results.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { getMemoryCategories, resolveReflectionModelAndFallbacks, getCronModelConfig } from "../config.js";
+import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
 import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
