@@ -5,6 +5,7 @@
 
 import OpenAI from "openai";
 import { createHash } from "node:crypto";
+import { capturePluginError } from "./error-reporter.js";
 
 /** Interface for embedding providers (enables swapping OpenAI for other backends). */
 export interface EmbeddingProvider {
@@ -65,6 +66,10 @@ export async function safeEmbed(
   try {
     return await provider.embed(text);
   } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'safe-embed',
+      subsystem: 'embeddings',
+    });
     if (logWarn) logWarn(`memory-hybrid: embedding failed: ${err}`);
     return null;
   }

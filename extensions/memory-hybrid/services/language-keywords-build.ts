@@ -17,6 +17,7 @@ import {
   type KeywordGroup,
   clearKeywordCache,
 } from "../utils/language-keywords.js";
+import { capturePluginError } from "./error-reporter.js";
 import {
   KEYWORD_GROUP_INTENTS,
   STRUCTURAL_TRIGGER_INTENTS,
@@ -93,7 +94,12 @@ ${block}`;
       .filter((x): x is string => typeof x === "string")
       .map((x) => x.toLowerCase().slice(0, 3))
       .filter((x) => x.length >= 2);
-  } catch {
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'parse-language-codes',
+      severity: 'info',
+      subsystem: 'language-keywords'
+    });
     return [];
   }
 }
@@ -272,7 +278,12 @@ export async function generateIntentBasedLanguages(
     }
 
     return { translations, triggerStructures, extraction };
-  } catch {
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'parse-intent-response',
+      severity: 'info',
+      subsystem: 'language-keywords'
+    });
     return { translations: {}, triggerStructures: {}, extraction: {} };
   }
 }
@@ -327,7 +338,12 @@ Each value must be an array of translated strings in the same order as the Engli
       if (Object.keys(out).length > 0) result[lang] = out as Record<KeywordGroup, string[]>;
     }
     return result;
-  } catch {
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'parse-translation-response',
+      severity: 'info',
+      subsystem: 'language-keywords'
+    });
     return {};
   }
 }

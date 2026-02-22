@@ -14,6 +14,7 @@ import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
@@ -583,6 +584,7 @@ export class FactsDB {
       entry.expiresAt !== undefined
         ? entry.expiresAt
         : calculateExpiry(decayClass, nowSec);
+    const importance = entry.importance ?? 0.7;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
     const normHash = normalizedHash(entry.text);
@@ -618,7 +620,7 @@ export class FactsDB {
         id,
         entry.text,
         entry.category,
-        entry.importance,
+        importance,
         entry.entity,
         entry.key,
         entry.value,
@@ -1120,7 +1122,12 @@ export class FactsDB {
               if (results.length >= limit) break;
             }
           }
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'fts-query',
+            severity: 'info',
+            subsystem: 'facts'
+          });
           // FTS query can fail on unusual input; ignore
         }
       }
@@ -1170,7 +1177,12 @@ export class FactsDB {
         try {
           const parsed = JSON.parse(raw);
           return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'json-parse-quotes',
+            severity: 'info',
+            subsystem: 'facts'
+          });
           return null;
         }
       })(),
@@ -1193,6 +1205,11 @@ export class FactsDB {
       entity: (row.entity as string) || null,
       key: (row.key as string) || null,
     }));
+  }
+
+  /** Alias for getById for CLI compatibility. */
+  get(id: string): MemoryEntry | null {
+    return this.getById(id);
   }
 
   /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
@@ -1361,6 +1378,53 @@ export class FactsDB {
     return rows.map((row) => this.rowToEntry(row));
   }
 
+  /** List recent facts with optional filters (for CLI list command). Order: created_at DESC. */
+  list(
+    limit: number,
+    filters?: {
+      category?: string;
+      entity?: string;
+      key?: string;
+      source?: string;
+      tier?: string;
+    },
+  ): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const parts: string[] = [
+      "(expires_at IS NULL OR expires_at > ?)",
+      "superseded_at IS NULL",
+    ];
+    const params: unknown[] = [nowSec];
+    if (filters?.category != null) {
+      parts.push("category = ?");
+      params.push(filters.category);
+    }
+    if (filters?.entity != null) {
+      parts.push("lower(entity) = lower(?)");
+      params.push(filters.entity);
+    }
+    if (filters?.key != null) {
+      parts.push("lower(key) = lower(?)");
+      params.push(filters.key);
+    }
+    if (filters?.source != null) {
+      parts.push("source = ?");
+      params.push(filters.source);
+    }
+    if (filters?.tier != null) {
+      parts.push("COALESCE(tier, 'warm') = ?");
+      params.push(filters.tier);
+    }
+    const where = parts.join(" AND ");
+    params.push(limit);
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts WHERE ${where} ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?`,
+      )
+      .all(...params) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
   /** Get texts of superseded facts (for filtering LanceDB results). Cached for 1 minute to avoid repeated queries. */
   getSupersededTexts(): Set<string> {
     const now = Date.now();
@@ -1460,7 +1524,12 @@ export class FactsDB {
       try {
         const parsed = JSON.parse(existingJson);
         if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'json-parse-quotes',
+          severity: 'info',
+          subsystem: 'facts'
+        });
         // Corrupted JSON — start fresh
       }
     }
@@ -1588,7 +1657,12 @@ export class FactsDB {
     if (!row) return null;
     try {
       return { id: row.id, ...JSON.parse(row.text) };
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'json-parse-checkpoint',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return null;
     }
   }
@@ -1649,12 +1723,27 @@ export class FactsDB {
     return stats;
   }
 
+  /** Distinct memory categories present in non-superseded facts (for CLI stats/categories). */
+  uniqueMemoryCategories(): string[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT DISTINCT category FROM facts WHERE superseded_at IS NULL ORDER BY category`,
+      )
+      .all() as Array<{ category: string }>;
+    return rows.map((r) => r.category || "other");
+  }
+
   /** Count of procedures (from procedures table). Returns 0 if table does not exist. */
   proceduresCount(): number {
     try {
       const row = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM procedures`).get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-procedures',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1666,7 +1755,12 @@ export class FactsDB {
         .prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE last_validated IS NOT NULL`)
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-procedures-validated',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1678,7 +1772,12 @@ export class FactsDB {
         .prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE promoted_to_skill = 1`)
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-procedures-promoted',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1690,7 +1789,12 @@ export class FactsDB {
         .prepare(`SELECT COUNT(*) as cnt FROM memory_links`)
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-links',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1714,7 +1818,12 @@ export class FactsDB {
         )
         .get() as { cnt: number };
       return row?.cnt ?? 0;
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'count-meta-patterns',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return 0;
     }
   }
@@ -1861,7 +1970,12 @@ export class FactsDB {
         try {
           const parsed = JSON.parse(raw);
           return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
-        } catch {
+        } catch (err) {
+          capturePluginError(err as Error, {
+            operation: 'json-parse-quotes',
+            severity: 'info',
+            subsystem: 'facts'
+          });
           return null;
         }
       })(),
@@ -1953,7 +2067,12 @@ export class FactsDB {
         .prepare(`SELECT * FROM procedures ORDER BY updated_at DESC, created_at DESC LIMIT ?`)
         .all(limit) as Array<Record<string, unknown>>;
       return rows.map((r) => this.procedureRowToEntry(r));
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'list-procedures',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -1981,7 +2100,12 @@ export class FactsDB {
         )
         .all(safeQuery, limit) as Array<Record<string, unknown>>;
       return rows.map((r) => this.procedureRowToEntry(r));
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'fts-query',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -2039,7 +2163,12 @@ export class FactsDB {
       });
 
       return scored.slice(0, limit).map((r) => this.procedureRowToEntry(r));
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'fts-query',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -2154,7 +2283,12 @@ export class FactsDB {
       });
 
       return scored.slice(0, limit);
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'fts-query',
+        severity: 'info',
+        subsystem: 'facts'
+      });
       return [];
     }
   }
@@ -2294,7 +2428,95 @@ export class FactsDB {
     return rows.map((r) => this.procedureRowToEntry(r));
   }
 
+  /** Alias for pruneExpired() for backward compatibility */
+  prune(): number {
+    return this.pruneExpired();
+  }
+
+  /** Alias for backfillDecayClasses() for backward compatibility */
+  backfillDecay(): Record<string, number> {
+    return this.backfillDecayClasses();
+  }
+
+  /** Get reflection statistics - stub for future implementation */
+  statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
+    return { reflectionPatternsCount: 0, reflectionRulesCount: 0 };
+  }
+
+  /** Get self-correction incidents count - stub for future implementation */
+  selfCorrectionIncidentsCount(): number {
+    return 0;
+  }
+
+  /** Get language keywords count - stub for future implementation */
+  languageKeywordsCount(): number {
+    return 0;
+  }
+
+  /** Get statistics by source */
+  statsBySource(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(`SELECT source, COUNT(*) as count FROM facts GROUP BY source`)
+      .all() as Array<{ source: string; count: number }>;
+    return Object.fromEntries(rows.map((r) => [r.source, r.count]));
+  }
+
+  /** Alias for estimateStoredTokens() for backward compatibility */
+  estimateTokens(): number {
+    return this.estimateStoredTokens();
+  }
+
+  /** Get unique scopes in the database */
+  uniqueScopes(): Array<{ scope: string; scopeTarget: string | null }> {
+    const rows = this.liveDb
+      .prepare(`SELECT DISTINCT scope, scope_target as scopeTarget FROM facts WHERE scope IS NOT NULL`)
+      .all() as Array<{ scope: string; scopeTarget: string | null }>;
+    return rows;
+  }
+
+  /** Get statistics by scope */
+  scopeStats(): Array<{ scope: string; scopeTarget: string | null; count: number }> {
+    const rows = this.liveDb
+      .prepare(`SELECT scope, scope_target as scopeTarget, COUNT(*) as count FROM facts WHERE scope IS NOT NULL GROUP BY scope, scope_target`)
+      .all() as Array<{ scope: string; scopeTarget: string | null; count: number }>;
+    return rows;
+  }
+
+  /** Prune facts matching scope filter */
+  pruneScopedFacts(scopeFilter: ScopeFilter): number {
+    const conditions: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (scopeFilter.userId !== undefined) {
+      conditions.push(`(scope = 'user' AND scope_target = ?)`);
+      params.push(scopeFilter.userId);
+    }
+    if (scopeFilter.agentId !== undefined) {
+      conditions.push(`(scope = 'agent' AND scope_target = ?)`);
+      params.push(scopeFilter.agentId);
+    }
+    if (scopeFilter.sessionId !== undefined) {
+      conditions.push(`(scope = 'session' AND scope_target = ?)`);
+      params.push(scopeFilter.sessionId);
+    }
+
+    if (conditions.length === 0) return 0;
+
+    const query = `DELETE FROM facts WHERE ${conditions.join(' OR ')}`;
+    const result = this.liveDb.prepare(query).run(...params);
+    return result.changes;
+  }
+
   close(): void {
-    try { this.db.close(); } catch { /* already closed */ }
+    try {
+      this.db.close();
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'db-close',
+        severity: 'info',
+        subsystem: 'facts'
+      });
+      /* already closed */
+    }
   }
 }

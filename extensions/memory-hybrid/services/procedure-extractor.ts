@@ -6,6 +6,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureStep } from "../types/memory.js";
 import type { ExtractProceduresResult } from "../cli/register.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type ParsedSession = {
   sessionId: string;
@@ -51,7 +52,12 @@ function looksLikeFailure(content: unknown): boolean {
       } else {
         s = str;
       }
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'stringify-result',
+        severity: 'info',
+        subsystem: 'procedures'
+      });
       // If stringification fails (circular refs, etc.), assume not a failure
       return false;
     }
@@ -82,7 +88,12 @@ export function parseSessionJsonl(
     let obj: unknown;
     try {
       obj = JSON.parse(line);
-    } catch {
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'parse-session-line',
+        severity: 'info',
+        subsystem: 'procedures'
+      });
       continue;
     }
     if (!obj || typeof obj !== "object") continue;
@@ -234,6 +245,10 @@ export async function extractProceduresFromSessions(
     try {
       content = fs.readFileSync(filePath, "utf-8");
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "procedure-extractor",
+        operation: "read-session-file",
+      });
       logger.warn(`procedure-extractor: read failed ${filePath}: ${err}`);
       continue;
     }

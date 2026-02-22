@@ -10,6 +10,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
@@ -129,8 +130,8 @@ export class CredentialsDB {
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] === CRED_KDF_PLAINTEXT) {
       // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
-      // @ts-expect-error - Override readonly property to match DB state
-      this.encrypted = false;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this as any).encrypted = false;
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);
@@ -238,7 +239,12 @@ export class CredentialsDB {
     if (this.kdfVersion === 1) {
       try {
         this.migrateLegacyVault();
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: 'migrate-vault',
+          severity: 'info',
+          subsystem: 'credentials'
+        });
         // Migration is best-effort; failure should not block credential retrieval
       }
     }
@@ -312,7 +318,16 @@ export class CredentialsDB {
   }
 
   close(): void {
-    try { this.db.close(); } catch { /* already closed */ }
+    try {
+      this.db.close();
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'db-close',
+        severity: 'info',
+        subsystem: 'credentials'
+      });
+      /* already closed */
+    }
   }
 }
 
