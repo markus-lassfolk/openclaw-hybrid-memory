@@ -948,7 +948,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 try {
                   const classification = await classifyMemoryOperation(
                     textToStore, extracted.entity, extracted.key, similarFacts,
-                    ctx.openai, ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default"), api.logger,
+                    ctx.openai, ctx.cfg.store.classifyModel, api.logger,
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
