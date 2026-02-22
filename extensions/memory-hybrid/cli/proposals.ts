@@ -2,14 +2,17 @@
  * CLI commands for managing persona proposals (human-only operations)
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import type { Chainable } from "./shared.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig, IdentityFileType } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { getFileSnapshot } from "../utils/file-snapshot.js";
 
 export interface ProposalsCliContext {
   proposalsDb: ProposalsDB;
@@ -64,6 +67,97 @@ function formatExpires(proposal: { expiresAt: number | null; createdAt: number }
   return `${days}d`;
 }
 
+type ProposalChangeType = "append" | "replace";
+
+const REPLACE_PREFIXES = [
+  /^replace the entire file\b/i,
+  /^replace entire file\b/i,
+  /^replace the whole file\b/i,
+  /^replace whole file\b/i,
+  /^replace the file\b/i,
+];
+
+function parseSuggestedChange(suggestedChange: string): { changeType: ProposalChangeType; content: string } {
+  const lines = suggestedChange.split(/\r?\n/);
+  const firstLine = lines[0]?.trim() ?? "";
+  const replaceMatch = REPLACE_PREFIXES.find((re) => re.test(firstLine));
+  if (replaceMatch) {
+    const remainderMatch = firstLine.match(/^\s*replace(?:\s+the)?\s+(?:entire|whole)?\s*file\b\s*:?\s*(.*)$/i);
+    const remainder = remainderMatch?.[1] ? remainderMatch[1] : "";
+    let content = [remainder, ...lines.slice(1)].join("\n");
+    content = content.replace(/^\s*(with|with the following|with the following content)\s*:\s*\n?/i, "");
+    return { changeType: "replace", content };
+  }
+  return { changeType: "append", content: suggestedChange };
+}
+
+function buildAppendBlock(proposalId: string, observation: string, suggestedChange: string, timestamp: string): string {
+  const escapeHtmlComment = (text: string): string =>
+    text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
+  const safeObservation = escapeHtmlComment(observation);
+  return `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${suggestedChange}\n`;
+}
+
+function buildAppliedContent(
+  original: string,
+  proposal: { id: string; observation: string; suggestedChange: string },
+  timestamp: string,
+): { changeType: ProposalChangeType; content: string } {
+  const parsed = parseSuggestedChange(proposal.suggestedChange);
+  if (parsed.changeType === "replace") {
+    return { changeType: "replace", content: parsed.content };
+  }
+  return {
+    changeType: "append",
+    content: original + buildAppendBlock(proposal.id, proposal.observation, parsed.content, timestamp),
+  };
+}
+
+function buildUnifiedDiff(currentContent: string, proposedContent: string, targetFile: string): string {
+  const diffDir = mkdtempSync(join(tmpdir(), "proposal-diff-"));
+  const currentPath = join(diffDir, "current.txt");
+  const proposedPath = join(diffDir, "proposed.txt");
+  try {
+    writeFileSync(currentPath, currentContent, "utf-8");
+    writeFileSync(proposedPath, proposedContent, "utf-8");
+    const result = spawnSync(
+      "git",
+      ["diff", "--no-index", "--label", `${targetFile} (current)`, "--label", `${targetFile} (proposed)`, "--", currentPath, proposedPath],
+      { encoding: "utf-8" },
+    );
+    if (result.status !== 0 && result.status !== 1) {
+      throw new Error(result.stderr || result.stdout || "git diff failed");
+    }
+    const out = (result.stdout || "").trimEnd();
+    return out || "(no changes)";
+  } finally {
+    rmSync(diffDir, { recursive: true, force: true });
+  }
+}
+
+function commitProposalChange(
+  targetPath: string,
+  proposalId: string,
+  targetFile: string,
+): { ok: true } | { ok: false; error: string } {
+  const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+  if (repoRoot.status !== 0 || !repoRoot.stdout.trim()) {
+    return { ok: false, error: `Failed to resolve git repo root: ${repoRoot.stderr || repoRoot.stdout}` };
+  }
+  const cwd = repoRoot.stdout.trim();
+  const relPath = relative(cwd, targetPath);
+  const add = spawnSync("git", ["add", "--", relPath], { cwd, encoding: "utf-8" });
+  if (add.status !== 0) {
+    return { ok: false, error: `git add failed: ${add.stderr || add.stdout}` };
+  }
+  const message = `chore: apply persona proposal ${proposalId} to ${targetFile}`;
+  const commit = spawnSync("git", ["commit", "-m", message, "--", relPath], { cwd, encoding: "utf-8" });
+  if (commit.status !== 0) {
+    return { ok: false, error: `git commit failed: ${commit.stderr || commit.stdout}` };
+  }
+  return { ok: true };
+}
+
 /**
  * Register CLI commands for persona proposal management
  * NOTE: These are human-only commands and NOT exposed as agent-callable tools
@@ -82,8 +176,27 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
         console.error(`Proposal ${proposalId} not found`);
         process.exit(1);
       }
+      const targetPath = ctx.api.resolvePath(proposal.targetFile);
+      const includeDiff = !!opts?.diff || !!opts?.json;
+      let diffText: string | null = null;
+      if (includeDiff && existsSync(targetPath)) {
+        try {
+          const current = readFileSync(targetPath, "utf-8");
+          const proposed = buildAppliedContent(current, proposal, new Date().toISOString()).content;
+          diffText = buildUnifiedDiff(current, proposed, proposal.targetFile);
+        } catch (err) {
+          diffText = null;
+        }
+      } else if (includeDiff) {
+        try {
+          const proposed = buildAppliedContent("", proposal, new Date().toISOString()).content;
+          diffText = buildUnifiedDiff("", proposed, proposal.targetFile);
+        } catch (err) {
+          diffText = null;
+        }
+      }
       if (opts?.json) {
-        console.log(JSON.stringify(proposal, null, 2));
+        console.log(JSON.stringify({ ...proposal, diff: diffText }, null, 2));
         return;
       }
       const created = new Date(proposal.createdAt * 1000).toISOString();
@@ -101,25 +214,10 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
       console.log("── Suggested Change ──");
       console.log(proposal.suggestedChange);
       if (opts?.diff) {
-        const targetPath = ctx.api.resolvePath(proposal.targetFile);
         console.log("");
         console.log("── Preview (diff) ──");
-        if (existsSync(targetPath)) {
-          const current = readFileSync(targetPath, "utf-8");
-          console.log(`--- ${proposal.targetFile} (current)`);
-          console.log(`+++ ${proposal.targetFile} (with suggestion)`);
-          for (const line of current.split(/\n/)) {
-            console.log(`  ${line}`);
-          }
-          for (const line of proposal.suggestedChange.split(/\n/)) {
-            console.log(`+ ${line}`);
-          }
-        } else {
-          console.log("(target file not found; showing suggested content as addition)");
-          for (const line of proposal.suggestedChange.split(/\n/)) {
-            console.log(`+ ${line}`);
-          }
-        }
+        if (diffText) console.log(diffText);
+        else console.log("(diff unavailable)");
       }
     });
 
@@ -159,8 +257,7 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
         if (applyResult.ok) {
           console.log(`Applied to ${applyResult.targetFile}. Backup: ${applyResult.backupPath}`);
         } else {
-          ctx.proposalsDb.updateStatus(proposalId, "pending");
-          console.error(`Apply failed: ${applyResult.error}. Proposal reverted to pending. Run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`);
+          console.error(`Apply failed: ${applyResult.error}. Proposal remains approved. Run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`);
         }
       }
     });
@@ -215,21 +312,40 @@ export async function applyApprovedProposal(
     return { ok: false, error: `Proposal ${proposalId} contains potentially dangerous content and cannot be applied.` };
   }
   try {
+    const currentSnapshot = getFileSnapshot(targetPath);
+    if (proposal.targetHash && currentSnapshot?.hash && proposal.targetHash !== currentSnapshot.hash) {
+      return {
+        ok: false,
+        error: `Target file ${proposal.targetFile} has changed since proposal creation (hash mismatch). Review and re-approve.`,
+      };
+    }
+    if (!proposal.targetHash && proposal.targetMtimeMs != null && currentSnapshot?.mtimeMs != null && proposal.targetMtimeMs !== currentSnapshot.mtimeMs) {
+      return {
+        ok: false,
+        error: `Target file ${proposal.targetFile} has changed since proposal creation (mtime mismatch). Review and re-approve.`,
+      };
+    }
     const original = readFileSync(targetPath, "utf-8");
     const backupPath = `${targetPath}.backup-${Date.now()}`;
     writeFileSync(backupPath, original);
-    const escapeHtmlComment = (text: string): string =>
-      text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
     const timestamp = new Date().toISOString();
-    const safeObservation = escapeHtmlComment(proposal.observation);
-    const changeBlock = `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${proposal.suggestedChange}\n`;
-    writeFileSync(targetPath, original + changeBlock);
+    const applied = buildAppliedContent(original, proposal, timestamp);
+    if (!applied.content.trim()) {
+      return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
+    }
+    writeFileSync(targetPath, applied.content);
+    const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
+    if (!commitResult.ok) {
+      writeFileSync(targetPath, original);
+      return { ok: false, error: commitResult.error };
+    }
     ctx.proposalsDb.markApplied(proposalId);
     await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
       targetFile: proposal.targetFile,
       targetPath,
       backupPath,
       timestamp,
+      changeType: applied.changeType,
     }, { error: console.error });
     return {
       ok: true,

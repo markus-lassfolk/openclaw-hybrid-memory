@@ -406,6 +406,29 @@ export function getDefaultCronModel(
   return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
 }
 
+/**
+ * Resolve which stable model alias to use in cron jobs.
+ * Use provider aliases for Gemini/Claude so job definitions remain stable across model updates.
+ */
+export function getCronModelAlias(
+  pluginConfig: CronModelConfig | undefined,
+  tier: CronModelTier,
+): string {
+  if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
+    return "gemini";
+  }
+  if (pluginConfig.claude?.apiKey && pluginConfig.claude.apiKey.length >= 10) {
+    return "sonnet";
+  }
+  if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
+    const reflectionModel = pluginConfig.reflection?.model?.trim();
+    if (reflectionModel) return reflectionModel;
+    return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  }
+  return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+}
+
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
 export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
   return {

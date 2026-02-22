@@ -33,6 +33,8 @@ export async function chatComplete(opts: {
   const { model, content, temperature = 0.2, maxTokens } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
 
+  // This path runs when the requested model is Gemini (chosen by config / getDefaultCronModel etc.).
+  // Retries below are for resilience (429/5xx), not provider preference — we stay model-agnostic.
   if (isGeminiModel(model)) {
     const apiKey = resolveGeminiApiKey(opts.geminiApiKey);
     if (!apiKey) {

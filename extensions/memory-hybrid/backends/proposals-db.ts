@@ -25,6 +25,8 @@ export type ProposalEntry = {
   appliedAt: number | null;
   expiresAt: number | null;
   rejectionReason: string | null;
+  targetMtimeMs: number | null;
+  targetHash: string | null;
 };
 
 export class ProposalsDB {
@@ -53,7 +55,9 @@ export class ProposalsDB {
         reviewed_by TEXT,
         applied_at INTEGER,
         expires_at INTEGER,
-        rejection_reason TEXT
+        rejection_reason TEXT,
+        target_mtime_ms REAL,
+        target_hash TEXT
       )
     `);
 
@@ -64,6 +68,7 @@ export class ProposalsDB {
     `);
 
     this.migrateRejectionReasonColumn();
+    this.migrateTargetSnapshotColumns();
   }
 
   private migrateRejectionReasonColumn(): void {
@@ -74,6 +79,18 @@ export class ProposalsDB {
     this.db.exec(`ALTER TABLE proposals ADD COLUMN rejection_reason TEXT`);
   }
 
+  private migrateTargetSnapshotColumns(): void {
+    const cols = this.db
+      .prepare(`PRAGMA table_info(proposals)`)
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "target_mtime_ms")) {
+      this.db.exec(`ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL`);
+    }
+    if (!cols.some((c) => c.name === "target_hash")) {
+      this.db.exec(`ALTER TABLE proposals ADD COLUMN target_hash TEXT`);
+    }
+  }
+
   create(entry: {
     targetFile: string;
     title: string;
@@ -82,6 +99,8 @@ export class ProposalsDB {
     confidence: number;
     evidenceSessions: string[];
     expiresAt?: number | null;
+    targetMtimeMs?: number | null;
+    targetHash?: string | null;
   }): ProposalEntry {
     const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
@@ -89,8 +108,8 @@ export class ProposalsDB {
 
     this.db
       .prepare(
-        `INSERT INTO proposals (id, target_file, title, observation, suggested_change, confidence, evidence_sessions, status, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        `INSERT INTO proposals (id, target_file, title, observation, suggested_change, confidence, evidence_sessions, status, created_at, expires_at, target_mtime_ms, target_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -102,6 +121,8 @@ export class ProposalsDB {
         evidenceJson,
         now,
         entry.expiresAt ?? null,
+        entry.targetMtimeMs ?? null,
+        entry.targetHash ?? null,
       );
 
     return this.get(id)!;
@@ -208,6 +229,8 @@ export class ProposalsDB {
       appliedAt: row.applied_at,
       expiresAt: row.expires_at,
       rejectionReason: row.rejection_reason,
+      targetMtimeMs: row.target_mtime_ms ?? null,
+      targetHash: row.target_hash ?? null,
     };
   }
 
