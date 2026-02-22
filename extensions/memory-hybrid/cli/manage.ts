@@ -72,6 +72,9 @@ export type ManageContext = {
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  runDistill?: (opts: { dryRun: boolean; days?: number }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; skipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean }>;
+  runRecordDistill?: () => Promise<unknown>;
+  runExtractProcedures?: (opts: { days?: number; dryRun: boolean }) => Promise<unknown>;
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
     | { ok: true; path: string; topLanguages: string[]; languagesAdded: number }
     | { ok: false; error: string }
@@ -166,11 +169,106 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runSelfCorrectionExtract,
     runSelfCorrectionRun,
     runCompaction,
+    runDistill,
+    runRecordDistill,
+    runExtractProcedures,
     runBuildLanguageKeywords,
     runExport,
     listCommands,
     tieringEnabled,
   } = ctx;
+
+  mem
+    .command("run-all")
+    .description("Run all maintenance tasks in optimal order (prune, compact, distill, extract-procedures, reflection, self-correction). Use --dry-run to list steps only.")
+    .option("--dry-run", "List steps that would run without executing")
+    .action(withExit(async (opts?: { dryRun?: boolean }) => {
+      const dryRun = !!opts?.dryRun;
+      const log = (s: string) => console.log(s);
+      const sink = { log, warn: (s: string) => console.warn(s) };
+      const steps: { name: string; run: () => Promise<void> }[] = [
+        {
+          name: "backfill-decay",
+          run: async () => {
+            const n = factsDb.backfillDecay();
+            log(`Backfilled decay for ${n} facts.`);
+          },
+        },
+        {
+          name: "prune",
+          run: async () => {
+            const n = factsDb.prune();
+            log(`Pruned ${n} expired facts.`);
+          },
+        },
+        {
+          name: "compact",
+          run: async () => {
+            const c = await runCompaction();
+            log(`Compaction: hot=${c.hot} warm=${c.warm} cold=${c.cold}`);
+          },
+        },
+        ...(runDistill
+          ? [{
+              name: "distill (3 days)",
+              run: async () => {
+                const r = await runDistill({ dryRun: false, days: 3 }, sink);
+                log(`Distill: ${r.stored} stored from ${r.sessionsScanned} sessions.`);
+              },
+            }]
+          : []),
+        ...(runRecordDistill
+          ? [{ name: "record-distill", run: () => runRecordDistill!().then(() => log("Recorded distill.")) }]
+          : []),
+        ...(runExtractProcedures
+          ? [{
+              name: "extract-procedures (7 days)",
+              run: async () => {
+                await runExtractProcedures({ days: 7, dryRun: false });
+                log("Extract procedures done.");
+              },
+            }]
+          : []),
+        {
+          name: "reflect",
+          run: async () => {
+            const r = await runReflection({ window: reflectionConfig.defaultWindow, dryRun: false, model: reflectionConfig.model });
+            log(`Reflect: ${r.patternsStored} patterns stored.`);
+          },
+        },
+        {
+          name: "reflect-rules",
+          run: async () => {
+            const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model });
+            log(`Reflect-rules: ${r.rulesStored} rules stored.`);
+          },
+        },
+        {
+          name: "reflect-meta",
+          run: async () => {
+            const r = await runReflectionMeta({ dryRun: false, model: reflectionConfig.model });
+            log(`Reflect-meta: ${r.metaStored} meta-patterns stored.`);
+          },
+        },
+        {
+          name: "self-correction-run",
+          run: async () => {
+            await runSelfCorrectionRun({ dryRun: false });
+            log("Self-correction run done.");
+          },
+        },
+      ];
+      if (dryRun) {
+        log("run-all (dry-run). Would run:");
+        steps.forEach((s, i) => log(`  ${i + 1}. ${s.name}`));
+        return;
+      }
+      for (let i = 0; i < steps.length; i++) {
+        log(`[${i + 1}/${steps.length}] ${steps[i].name}`);
+        await steps[i].run();
+      }
+      log("run-all complete.");
+    }));
 
   mem
     .command("compact")
@@ -431,7 +529,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       console.log(JSON.stringify(item.data, null, 2));
     }));
 
-  const proposals = mem.command("proposals").description("Manage persona-driven proposals (issue #56)");
+  const proposals = mem.command("proposals").description("Manage persona-driven proposals");
   proposals
     .command("list")
     .description("List pending proposals")
