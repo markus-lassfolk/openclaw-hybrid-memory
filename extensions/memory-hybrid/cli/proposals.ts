@@ -83,7 +83,7 @@ const REPLACE_PREFIXES = [
   /^replace the file\b/i,
 ];
 
-export function parseSuggestedChange(suggestedChange: string): { changeType: ProposalChangeType; content: string } {
+function parseSuggestedChange(suggestedChange: string): { changeType: ProposalChangeType; content: string } {
   const lines = suggestedChange.split(/\r?\n/);
   const firstLine = lines[0]?.trim() ?? "";
   const replaceMatch = REPLACE_PREFIXES.find((re) => re.test(firstLine));
@@ -142,19 +142,12 @@ export function buildUnifiedDiff(currentContent: string, proposedContent: string
   }
 }
 
-/** Returns true if the given path (or its directory) is inside a git repository. */
-function isGitRepo(dirOrFilePath: string): boolean {
-  const dir = dirOrFilePath.endsWith("/") ? dirOrFilePath.slice(0, -1) : dirname(dirOrFilePath);
-  const result = spawnSync("git", ["rev-parse", "--git-dir"], { cwd: dir, encoding: "utf-8" });
-  return result.status === 0 && !!result.stdout?.trim();
-}
-
 function commitProposalChange(
   targetPath: string,
   proposalId: string,
   targetFile: string,
 ): { ok: true } | { ok: false; error: string } {
-  const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: dirname(targetPath), encoding: "utf-8" });
+  const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
   if (repoRoot.status !== 0 || !repoRoot.stdout.trim()) {
     return { ok: false, error: `Failed to resolve git repo root: ${repoRoot.stderr || repoRoot.stdout}` };
   }
@@ -348,13 +341,19 @@ export async function applyApprovedProposal(
       return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
     }
     writeFileSync(targetPath, applied.content);
-    if (isGitRepo(targetPath)) {
-      const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
-      if (!commitResult.ok) {
-        ctx.api?.logger?.warn?.(
-          `memory-hybrid: Git commit failed after applying proposal ${proposalId}; file was written successfully. ${commitResult.error}`,
-        );
+    const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
+    if (!commitResult.ok) {
+      writeFileSync(targetPath, original);
+      const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+      if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
+        const cwd = repoRoot.stdout.trim();
+        const relPath = relative(cwd, targetPath);
+        spawnSync("git", ["reset", "HEAD", "--", relPath], { cwd, encoding: "utf-8" });
       }
+      return {
+        ok: false,
+        error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
+      };
     }
     ctx.proposalsDb.markApplied(proposalId);
     await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
