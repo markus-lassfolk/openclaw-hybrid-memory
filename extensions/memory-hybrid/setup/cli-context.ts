@@ -24,7 +24,7 @@ import { getMemoryCategories } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
 import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { applyApprovedProposal } from "../cli/proposals.js";
+import { applyApprovedProposal, registerProposalsCli } from "../cli/proposals.js";
 
 /** Help text shown after hybrid-mem commands list */
 export const HYBRID_MEM_HELP_GROUPED = `
@@ -285,7 +285,7 @@ export function registerHybridMemCliWithApi(
     ({ program }) => {
       try {
         const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
-        registerCliWithHelp(program, cliCtx);
+        registerCliWithHelp(program, cliCtx, handlerCtx, api);
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:callback" });
         throw err;
@@ -617,6 +617,8 @@ export function createHybridMemCliContext(
 export function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },
   ctx: HybridMemCliContext,
+  handlerCtx?: HandlerContext,
+  api?: ClawdbotPluginApi,
 ): void {
   const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands");
   try {
@@ -624,6 +626,20 @@ export function registerCliWithHelp(
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:hybrid-mem" });
     throw err;
+  }
+  // Register proposals subcommands (proposals show/approve/reject/list)
+  if (handlerCtx?.proposalsDb && api && handlerCtx.cfg) {
+    try {
+      registerProposalsCli(mem as Parameters<typeof registerProposalsCli>[0], {
+        proposalsDb: handlerCtx.proposalsDb,
+        cfg: handlerCtx.cfg,
+        resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
+        api,
+      });
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:proposals" });
+      throw err;
+    }
   }
   if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
     (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", HYBRID_MEM_HELP_GROUPED);
