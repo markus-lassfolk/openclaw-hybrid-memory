@@ -177,44 +177,39 @@ export async function runStoreForCli(
 
   if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
     const parsed = tryParseCredentialForVault(text, entity, key, value);
-    if (parsed) {
-      try {
-        credentialsDb.store({
-          service: parsed.service,
-          type: parsed.type,
-          value: parsed.secretValue,
-          url: parsed.url,
-          notes: parsed.notes,
-        });
-        const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-        const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
-        const pointerEntry = factsDb.store({
-          text: pointerText,
-          category: "technical" as MemoryCategory,
-          importance: CLI_STORE_IMPORTANCE,
-          entity: "Credentials",
-          key: parsed.service,
-          value: pointerValue,
-          source: "cli",
-          sourceDate,
-          tags: ["auth", ...extractTags(pointerText, "Credentials")],
-        });
-        try {
-          const vector = await embeddings.embed(pointerText);
-          if (!(await vectorDb.hasDuplicate(vector))) {
-            await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
-          }
-        } catch (err) {
-          log.warn(`memory-hybrid: vector store failed: ${err}`);
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
-        }
-        return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-store" });
-        return { outcome: "credential_parse_error" };
+  if (parsed) {
+    credentialsDb.store({
+      service: parsed.service,
+      type: parsed.type,
+      value: parsed.secretValue,
+      url: parsed.url,
+      notes: parsed.notes,
+    });
+    const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+    const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+    const pointerEntry = factsDb.store({
+      text: pointerText,
+      category: "technical" as MemoryCategory,
+      importance: CLI_STORE_IMPORTANCE,
+      entity: "Credentials",
+      key: parsed.service,
+      value: pointerValue,
+      source: "cli",
+      sourceDate,
+      tags: ["auth", ...extractTags(pointerText, "Credentials")],
+    });
+    try {
+      const vector = await embeddings.embed(pointerText);
+      if (!(await vectorDb.hasDuplicate(vector))) {
+        await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
       }
+    } catch (err) {
+      log.warn(`memory-hybrid: vector store failed: ${err}`);
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
     }
-    return { outcome: "credential_parse_error" };
+    return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
+  }
+  return { outcome: "credential_parse_error" };
   }
 
   const tags = opts.tags
@@ -1191,8 +1186,8 @@ export async function runExtractDirectivesForCli(
   // Store directives as facts if not dry-run
   let stored = 0;
   if (!opts.dryRun) {
-    try {
-      for (const incident of result.incidents) {
+    for (const incident of result.incidents) {
+      try {
         if (factsDb.hasDuplicate(incident.extractedRule)) continue;
         const category = incident.categories.includes("preference") ? "preference" :
                         incident.categories.includes("absolute_rule") ? "rule" :
@@ -1214,10 +1209,9 @@ export async function runExtractDirectivesForCli(
           confidence: incident.confidence,
         });
         stored++;
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
       }
-    } catch (err) {
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
-      throw err;
     }
   }
 
@@ -1247,8 +1241,8 @@ export async function runExtractReinforcementForCli(
 
   // Annotate facts/procedures with reinforcement if not dry-run
   if (!opts.dryRun) {
-    try {
-      for (const incident of result.incidents) {
+    for (const incident of result.incidents) {
+      try {
         // Reinforce recalled memories
         for (const memId of incident.recalledMemoryIds) {
           factsDb.reinforceFact(memId, incident.userMessage);
@@ -1262,10 +1256,9 @@ export async function runExtractReinforcementForCli(
             factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold ?? 2);
           }
         }
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli" });
       }
-    } catch (err) {
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli" });
-      throw err;
     }
   }
 
