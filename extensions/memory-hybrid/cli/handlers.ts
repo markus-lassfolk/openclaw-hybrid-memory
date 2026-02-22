@@ -1439,7 +1439,7 @@ export async function runGenerateProposalsForCli(
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, "heavy");
   const model = pref[0];
-  const fallbackModels = pref.length > 1 ? pref.slice(1) : [];
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.distill?.fallbackModels;
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -2433,7 +2433,7 @@ export async function runSelfCorrectionRunForCli(
   const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
     incidents_json: JSON.stringify(incidents),
   });
-  const model = opts.model ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
+  const model = opts.model ?? (getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy")[0]) ?? "gpt-4o";
   let analysed: Array<{
     category: string;
     severity: string;

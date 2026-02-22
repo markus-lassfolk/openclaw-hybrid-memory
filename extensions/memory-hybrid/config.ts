@@ -434,7 +434,10 @@ export function getLLMModelPreference(
     if (trimmed.length > 0) {
       if (pluginConfig?.llm?.fallbackToDefault) {
         const fallback = pluginConfig.llm.fallbackModel?.trim() || (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
-        return [...trimmed, fallback];
+        if (!trimmed.includes(fallback)) {
+          return [...trimmed, fallback];
+        }
+        return trimmed;
       }
       return trimmed;
     }
