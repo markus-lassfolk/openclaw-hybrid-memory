@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { PROPOSAL_STATUSES, type HybridMemoryConfig } from "../config.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export interface PluginContext {
   proposalsDb?: ProposalsDB;
@@ -51,6 +52,11 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
       await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
     } catch (err) {
       const msg = `Audit log write failed: ${err}`;
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'persona-proposal-audit',
+        subsystem: 'proposals',
+        proposalId,
+      });
       if (logger?.warn) {
         logger.warn(`memory-hybrid: ${msg}`);
       } else if (logger?.error) {

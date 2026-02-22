@@ -125,15 +125,11 @@ import {
 import { runFindDuplicates } from "./services/find-duplicates.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "./services/credential-migration.js";
-import { registerMemoryTools, type PluginContext as MemoryToolsContext } from "./tools/memory-tools.js";
-import { registerCredentialTools } from "./tools/credential-tools.js";
-import { registerGraphTools } from "./tools/graph-tools.js";
-import { registerPersonaTools } from "./tools/persona-tools.js";
-import { registerUtilityTools } from "./tools/utility-tools.js";
-import { createLifecycleHooks, type LifecycleContext } from "./lifecycle/hooks.js";
 import { registerProposalsCli, type ProposalsCliContext } from "./cli/proposals.js";
 import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
 import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.js";
+import { registerTools, type ToolsContext } from "./setup/register-tools.js";
+import { registerLifecycleHooks, type HooksContext } from "./setup/register-hooks.js";
 
 // ============================================================================
 // Backend Imports (extracted from god file for maintainability)
@@ -277,70 +273,28 @@ const memoryHybridPlugin = {
     // Tools
     // ========================================================================
 
-    // Register all tools using extracted modules
-    registerMemoryTools(
-      { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentId },
-      api,
+    // Register all tools using extracted wiring module
+    registerTools({
+      factsDb,
+      vectorDb,
+      cfg,
+      embeddings,
+      openai,
+      wal,
+      credentialsDb,
+      proposalsDb,
+      lastProgressiveIndexIds,
+      currentAgentId,
+      resolvedSqlitePath,
+      timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
       buildToolScopeFilter,
-      (operation, data, logger) => walWrite(wal, operation, data, logger),
-      (id, logger) => walRemove(wal, id, logger),
-      findSimilarByEmbedding
-    );
-
-    if (cfg.graph.enabled) {
-      registerGraphTools({ factsDb, cfg }, api);
-    }
-
-    if (cfg.credentials.enabled && credentialsDb) {
-      registerCredentialTools({ credentialsDb, cfg, api }, api);
-    }
-
-    if (cfg.personaProposals.enabled && proposalsDb) {
-      registerPersonaTools({ proposalsDb, cfg, resolvedSqlitePath }, api);
-
-      // NOTE: persona_proposal_review and persona_proposal_apply are intentionally
-      // NOT registered as agent-callable tools. They are CLI-only commands to ensure
-      // human approval is required. This prevents agents from self-approving and
-      // applying their own proposals, maintaining the security guarantee.
-
-      // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop)
-      timers.proposalsPruneTimer.value = setInterval(() => {
-        try {
-          if (proposalsDb) {
-            const pruned = proposalsDb.pruneExpired();
-            if (pruned > 0) {
-              api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
-            }
-          }
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "proposals",
-            operation: "periodic-prune",
-          });
-          api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
-        }
-      }, 24 * 60 * 60_000); // daily
-
-      // Register CLI commands for human-only review/apply operations
-      api.registerCli(({ program }) => {
-        registerProposalsCli(program, {
-          proposalsDb: proposalsDb!,
-          cfg,
-          resolvedSqlitePath,
-          api,
-        });
-      });
-    }
-
-    registerUtilityTools(
-      { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath },
-      api,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding,
       runReflection,
       runReflectionRules,
       runReflectionMeta,
-      (operation, data) => walWrite(wal, operation, data, api.logger),
-      (id) => walRemove(wal, id, api.logger)
-    );
+    }, api);
 
     // ========================================================================
     // CLI Commands
@@ -2870,7 +2824,8 @@ const memoryHybridPlugin = {
     // Lifecycle Hooks
     // ========================================================================
 
-    const lifecycleContext: LifecycleContext = {
+    // Register lifecycle event hooks using extracted wiring module
+    registerLifecycleHooks({
       factsDb,
       vectorDb,
       embeddings,
@@ -2887,16 +2842,7 @@ const memoryHybridPlugin = {
       findSimilarByEmbedding,
       shouldCapture,
       detectCategory,
-    };
-
-    const hooks = createLifecycleHooks(lifecycleContext);
-    hooks.onAgentStart(api);
-    hooks.onAgentEnd(api);
-
-    // Update context refs from hooks (they may have been mutated)
-    // Note: This is a workaround for the fact that the hooks need to update these values
-    // but we can't easily pass them by reference in TypeScript without using objects.
-    // The hooks update ctx.currentAgentId and ctx.lastProgressiveIndexIds internally.
+    }, api);
     // ========================================================================
     // Service
     // ========================================================================
