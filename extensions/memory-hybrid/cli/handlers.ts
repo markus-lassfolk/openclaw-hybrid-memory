@@ -1473,7 +1473,8 @@ export async function runGenerateProposalsForCli(
     if (recentCount + created >= limit) break;
     const targetFile = String(item.targetFile ?? "").trim();
     if (!allowedFiles.includes(targetFile as any)) continue;
-    const snapshot = getFileSnapshot(api.resolvePath(targetFile));
+    const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const snapshot = getFileSnapshot(join(workspace, targetFile));
     const confidence = Number(item.confidence);
     if (!Number.isFinite(confidence) || confidence < minConf) continue;
     const title = String(item.title ?? "Update from reflection").slice(0, 256);

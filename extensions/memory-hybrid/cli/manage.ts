@@ -4,6 +4,7 @@
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
 import type {
@@ -732,7 +733,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         return;
       }
       const proposal = item.data as { id: string; status: string; targetFile: string; confidence: number; observation: string; suggestedChange: string; createdAt: number; evidenceSessions?: string[] };
-      const targetPath = resolvePath ? resolvePath(proposal.targetFile) : proposal.targetFile;
+      const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+      const targetPath = join(workspace, proposal.targetFile);
       const includeDiff = !!opts?.diff || !!opts?.json;
       let diffText: string | null = null;
       if (includeDiff) {
