@@ -76,8 +76,8 @@ export async function migrateCredentialsToVault(
       } catch {
         // LanceDB row might not exist
       }
-      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-      const pointerValue = VAULT_POINTER_PREFIX + parsed.service;
+      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
+      const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
       const pointerEntry = factsDb.store({
         text: pointerText,
         category: "technical" as MemoryCategory,

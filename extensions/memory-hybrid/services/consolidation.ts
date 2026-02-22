@@ -15,6 +15,7 @@ import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { extractTags, SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
+import { cosineSimilarity } from "./reflection.js";
 
 export interface ConsolidateOptions {
   threshold: number;
@@ -133,7 +134,7 @@ export async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const score = vi.reduce((s, v, k) => s + v * vj[k], 0);
+      const score = cosineSimilarity(vi, vj);
       if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }
