@@ -800,13 +800,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("before_agent_start", async () => {
         try {
           await access(pendingPath);
-        } catch (err) {
-          capturePluginError(err as Error, {
-            operation: 'access-pending-file',
-            severity: 'info',
-            subsystem: 'lifecycle'
-          });
-          return;
+        } catch {
+          return; // File doesn't exist — no pending credentials, normal case
         }
         try {
           const raw = await readFile(pendingPath, "utf-8");
