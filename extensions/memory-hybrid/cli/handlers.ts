@@ -2124,7 +2124,7 @@ export async function runSelfCorrectionRunForCli(
     dryRun?: boolean;
     model?: string;
     approve?: boolean;
-    noApplyTools?: boolean;
+    applyTools?: boolean;
   },
 ): Promise<SelfCorrectionRunResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, logger } = ctx;
@@ -2271,9 +2271,10 @@ export async function runSelfCorrectionRunForCli(
     }
   }
 
-  const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !opts.noApplyTools;
+  const noApplyTools = opts.applyTools === false;
+  const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !noApplyTools;
   if (toolsSuggestions.length > 0 && !opts.dryRun) {
-    if (scCfg.autoRewriteTools && existsSync(toolsPath)) {
+    if (scCfg.autoRewriteTools && shouldApplyTools && existsSync(toolsPath)) {
       try {
         const currentTools = readFileSync(toolsPath, "utf-8");
         const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
