@@ -380,7 +380,7 @@ export type CronModelConfig = {
 
 /**
  * Resolve which LLM model to use for a maintenance cron job based on user config.
- * Prefer provider the user has configured: Gemini (distill) > OpenAI (embedding/reflection) > fallback.
+ * Prefer provider the user has configured: Gemini (distill) > Claude > OpenAI (embedding/reflection) > fallback.
  * No hardcoded aliases: uses config defaults or sensible per-provider defaults.
  */
 export function getDefaultCronModel(
@@ -393,6 +393,11 @@ export function getDefaultCronModel(
     if (defaultModel) return defaultModel;
     return tier === "heavy" ? "gemini-2.0-flash-thinking-exp-01-21" : "gemini-2.0-flash";
   }
+  if (pluginConfig.claude?.apiKey && pluginConfig.claude.apiKey.length >= 10) {
+    const defaultModel = pluginConfig.claude.defaultModel?.trim();
+    if (defaultModel) return defaultModel;
+    return tier === "heavy" ? "claude-opus-4-20250514" : "claude-sonnet-4-20250514";
+  }
   if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
     const reflectionModel = pluginConfig.reflection?.model?.trim();
     if (reflectionModel) return reflectionModel;
@@ -401,25 +406,6 @@ export function getDefaultCronModel(
   return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
 }
 
-/**
- * Resolve which stable model alias to use in cron jobs.
- * Use provider aliases for Gemini so job definitions remain stable across model updates.
- */
-export function getCronModelAlias(
-  pluginConfig: CronModelConfig | undefined,
-  tier: CronModelTier,
-): string {
-  if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
-  if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
-    return tier === "heavy" ? "gemini-heavy" : "gemini";
-  }
-  if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
-    const reflectionModel = pluginConfig.reflection?.model?.trim();
-    if (reflectionModel) return reflectionModel;
-    return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
-  }
-  return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
-}
 
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
 export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
