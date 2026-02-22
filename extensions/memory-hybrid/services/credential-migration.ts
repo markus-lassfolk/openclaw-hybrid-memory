@@ -4,9 +4,9 @@
  */
 
 import { writeFileSync } from "fs";
-import type { FactsDB } from "../backends/facts.js";
-import type { VectorDB } from "../backends/vector.js";
-import type { CredentialsDB } from "../backends/credentials.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { Embeddings } from "./embeddings.js";
 import type { MemoryCategory } from "../types/memory.js";
 import { tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "./auto-capture.js";

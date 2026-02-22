@@ -1699,7 +1699,7 @@ function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string
       const sessionsDir = join(agentsDir, agentName.name, "sessions");
       if (!existsSync(sessionsDir)) continue;
       for (const f of readdirSync(sessionsDir, { withFileTypes: true })) {
-        if (!f.isFile() || !f.name.endsWith(".jsonl") || f.name.startsWith(".deleted.")) continue;
+        if (!f.isFile() || !f.name.endsWith(".jsonl") || f.name.startsWith(".deleted")) continue;
         const fp = join(sessionsDir, f.name);
         try {
           const stat = statSync(fp);

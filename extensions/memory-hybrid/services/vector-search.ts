@@ -2,7 +2,7 @@
  * Vector search service: find similar memories by embedding.
  */
 
-import type { VectorDB } from "../backends/vector.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 /**

@@ -7,8 +7,8 @@
  * 3. Meta-patterns (runReflectionMeta): Synthesize patterns into 1-3 meta-patterns
  */
 
-import type { FactsDB } from "../backends/facts.js";
-import type { VectorDB } from "../backends/vector.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
