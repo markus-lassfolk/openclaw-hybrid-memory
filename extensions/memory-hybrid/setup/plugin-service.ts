@@ -99,6 +99,8 @@ export function createPluginService(ctx: PluginServiceContext) {
               environment: cfg.errorReporting.environment,
               sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
               maxBreadcrumbs: 10,
+              botId: cfg.errorReporting.botId,
+              botName: cfg.errorReporting.botName,
             },
             versionInfo.pluginVersion,
             api.logger,

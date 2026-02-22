@@ -205,6 +205,16 @@
       "label": "Error reporting sample rate",
       "help": "Fraction of errors to report 0–1 (default: 1.0)"
     },
+    "errorReporting.botId": {
+      "label": "Error reporting bot ID",
+      "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "help": "Optional UUID for this bot instance; sent as tag so GlitchTip can group errors by bot. Omit to not tag by bot."
+    },
+    "errorReporting.botName": {
+      "label": "Error reporting friendly name",
+      "placeholder": "Maeve",
+      "help": "Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag so reports show a readable name in GlitchTip."
+    },
     "wal.enabled": {
       "label": "Write-Ahead Log",
       "help": "Enable WAL for crash resilience - logs memory operations before committing (default: enabled)"
@@ -500,7 +510,9 @@
           "mode": { "type": "string", "enum": ["community", "self-hosted"], "default": "community", "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance." },
           "dsn": { "type": "string", "description": "Custom DSN for self-hosted mode. Community mode uses built-in endpoint." },
           "environment": { "type": "string", "default": "production", "description": "Environment tag (default: production)" },
-          "sampleRate": { "type": "number", "minimum": 0, "maximum": 1, "default": 1.0, "description": "Sample rate 0–1 (default: 1.0)" }
+          "sampleRate": { "type": "number", "minimum": 0, "maximum": 1, "default": 1.0, "description": "Sample rate 0–1 (default: 1.0)" },
+          "botId": { "type": "string", "description": "Optional UUID for this bot; sent as tag so GlitchTip can group errors by bot" },
+          "botName": { "type": "string", "description": "Optional friendly name (e.g. Maeve, Doris); sent as tag for readable reports" }
         },
         "required": ["enabled", "consent"],
         "description": "Opt-in error reporting to GlitchTip/Sentry. See docs/ERROR-REPORTING.md."

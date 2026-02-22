@@ -23,6 +23,10 @@ export interface ErrorReporterConfig {
   maxBreadcrumbs: number; // PRIVACY: Always passed as 0 (breadcrumbs can contain user prompts). Not user-configurable.
   sampleRate: number;  // 0.0-1.0, default 1.0
   consent: boolean;    // explicit opt-in required
+  /** Optional UUID for this bot instance; sent as tag so GlitchTip can group errors by bot. */
+  botId?: string;
+  /** Optional friendly name (e.g. Maeve, Doris); sent as tag for readable reports. */
+  botName?: string;
 }
 
 /** Hardcoded DSN for community error reporting (anonymous telemetry) */
@@ -104,6 +108,13 @@ export async function initErrorReporter(
     },
   });
 
+  if (config.botId) {
+    Sentry.setTag("bot_id", config.botId);
+  }
+  if (config.botName) {
+    Sentry.setTag("bot_name", config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, ""));
+  }
+
   initialized = true;
   const dsnHost = resolvedDsn.split('@')[1] || '***';
   logger.info?.('[ErrorReporter] Initialized with DSN host:', dsnHost);
@@ -145,6 +156,8 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
       operation: event.tags?.operation ? scrubString(String(event.tags.operation)) : undefined,
       phase: event.tags?.phase ? scrubString(String(event.tags.phase)) : undefined,
       backend: event.tags?.backend ? scrubString(String(event.tags.backend)) : undefined,
+      bot_id: event.tags?.bot_id ? scrubString(String(event.tags.bot_id)) : undefined,
+      bot_name: event.tags?.bot_name ? scrubString(String(event.tags.bot_name).slice(0, 64)) : undefined,
     },
     contexts: {
       ...(event.contexts?.config_shape ? {

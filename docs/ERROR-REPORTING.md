@@ -45,6 +45,27 @@ Add the following to your `openclaw.json` (gateway config) or plugin config:
 | `dsn` | string | Yes (if enabled) | — | GlitchTip/Sentry Data Source Name |
 | `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging") |
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
+| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. |
+| `botName` | string | No | — | **Optional.** Friendly name for this bot (e.g. `Maeve`, `Doris`). Sent as a tag so reports show a readable name in GlitchTip. Max 64 characters. |
+
+### Setting via config-set
+
+You can set any error-reporting key with the CLI so you don’t have to edit JSON by hand:
+
+```bash
+openclaw hybrid-mem config-set errorReporting.enabled true
+openclaw hybrid-mem config-set errorReporting.consent true
+openclaw hybrid-mem config-set errorReporting.botName Maeve
+openclaw hybrid-mem config-set errorReporting.botId 550e8400-e29b-41d4-a716-446655440000
+```
+
+Use `true` / `false` for booleans. For help on a key:
+
+```bash
+openclaw hybrid-mem help config-set errorReporting.botName
+```
+
+Restart the gateway after changing config for it to take effect.
 
 ---
 
@@ -86,6 +107,26 @@ If you prefer Sentry's cloud service:
 
 ---
 
+## Grouping errors by bot
+
+If you run multiple bots (or gateways) and send errors to the same GlitchTip project, you can give each instance a stable **bot ID** (UUID) so events are tagged and you can group/filter by bot:
+
+```json
+"errorReporting": {
+  "enabled": true,
+  "consent": true,
+  "botId": "550e8400-e29b-41d4-a716-446655440000",
+  "botName": "Maeve"
+}
+```
+
+- **botId**: Generate a UUID per bot (e.g. `uuidgen` on macOS/Linux, or [uuidgenerator.net](https://www.uuidgenerator.net/)) and set it in config. In GlitchTip, use the **bot_id** tag to filter or group issues by bot.
+- **botName**: Set a friendly name (e.g. `Maeve`, `Doris`) so reports show a readable name in GlitchTip (sent as **bot_name** tag). Max 64 characters.
+
+Omit either or both if you do not need them.
+
+---
+
 ## What Gets Reported
 
 ### ✅ What IS Sent
@@ -96,6 +137,8 @@ If you prefer Sentry's cloud service:
 - **Plugin version** (e.g., `openclaw-hybrid-memory@2026.2.181`)
 - **Environment tag** (e.g., `production`)
 - **Operation context** (e.g., `subsystem: "vector-db"`, `operation: "store"`)
+- **Bot ID** (optional): if you set `errorReporting.botId` to a UUID, it is sent as a tag so you can **group and filter errors by bot** in GlitchTip
+- **Friendly name** (optional): if you set `errorReporting.botName` (e.g. `Maeve`, `Doris`), it is sent as a tag so reports show a readable name in GlitchTip
 
 ### ❌ What IS NOT Sent
 
