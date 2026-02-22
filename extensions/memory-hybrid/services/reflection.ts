@@ -335,10 +335,11 @@ export async function runReflectionRules(
     }
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
+    const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'reflection-rules-llm',
       subsystem: 'openai',
-      retryAttempt: 3, // Failed after all retries
+      retryAttempt,
     });
     return { rulesExtracted: 0, rulesStored: 0 };
   }
@@ -493,10 +494,11 @@ export async function runReflectionMeta(
     }
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
+    const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'reflection-meta-llm',
       subsystem: 'openai',
-      retryAttempt: 3, // Failed after all retries
+      retryAttempt,
     });
     return { metaExtracted: 0, metaStored: 0 };
   }
