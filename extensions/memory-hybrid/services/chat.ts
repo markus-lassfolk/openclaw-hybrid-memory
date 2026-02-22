@@ -78,3 +78,27 @@ export function distillBatchTokenLimit(model: string): number {
 export function distillMaxOutputTokens(model: string): number {
   return isGeminiModel(model) ? 65_536 : 8000;
 }
+
+/**
+ * Retry wrapper for LLM calls with exponential backoff.
+ * Retries on failure with increasing delays: 1s, 3s, 9s.
+ */
+export async function withLLMRetry<T>(
+  fn: () => Promise<T>,
+  opts?: { maxRetries?: number; label?: string },
+): Promise<T> {
+  const maxRetries = opts?.maxRetries ?? 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
+      if (opts?.label) {
+        console.warn(`${opts.label}: attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`);
+      }
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("unreachable");
+}
