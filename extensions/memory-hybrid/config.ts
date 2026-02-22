@@ -680,7 +680,7 @@ export const hybridConfigSchema = {
           vectorDimsForModel(m);
           valid.push(m);
         } catch {
-          /* skip unknown embedding model */
+          /* skip unknown embedding model; consider logging when logger available (e.g. at init) so users see dropped entries */
         }
       }
       if (valid.length > 0) {

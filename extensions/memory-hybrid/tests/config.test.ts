@@ -627,6 +627,22 @@ describe("hybridConfigSchema.parse", () => {
     expect(getDefaultCronModel(cronCfg, "heavy")).toBe("gpt-4o");
   });
 
+  it("getLLMModelPreference when llm is undefined uses legacy single model", () => {
+    const cronCfg = undefined;
+    const defaultList = getLLMModelPreference(cronCfg, "default");
+    const heavyList = getLLMModelPreference(cronCfg, "heavy");
+    expect(defaultList).toHaveLength(1);
+    expect(heavyList).toHaveLength(1);
+    expect(defaultList[0]).toBe("gpt-4o-mini");
+    expect(heavyList[0]).toBe("gpt-4o");
+  });
+
+  it("getLLMModelPreference when llm tier arrays are empty uses legacy", () => {
+    const cronCfg = { llm: { default: [], heavy: [] } };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gpt-4o-mini"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
+  });
+
   it("getLLMModelPreference legacy path: Gemini first (distill.apiKey set)", () => {
     const cronCfg = {
       embedding: { apiKey: "sk-embed-key-that-is-long-enough" },

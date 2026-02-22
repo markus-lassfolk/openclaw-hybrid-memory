@@ -1395,6 +1395,14 @@ export async function runGenerateProposalsForCli(
   const allRelevant = factsDb.getAll({ scopeFilter }).filter(
     (f) => (f.category === "pattern" || f.category === "rule") && !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
+  if (!scopeFilter && allRelevant.length > 0) {
+    const scopeKeys = new Set(allRelevant.map((f) => `${f.scope ?? "global"}:${f.scopeTarget ?? ""}`).filter(Boolean));
+    if (scopeKeys.size > 1) {
+      ctx.logger.warn?.(
+        "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; reflection data from multiple agents/users is included. Set autoRecall.scopeFilter (e.g. agentId/userId) to avoid cross-agent proposal contamination.",
+      );
+    }
+  }
   const patterns = allRelevant.filter((f) => f.category === "pattern");
   const rules = allRelevant.filter((f) => f.category === "rule");
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
@@ -1484,8 +1492,7 @@ export async function runGenerateProposalsForCli(
     const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
     const snapshot = getFileSnapshot(join(workspace, targetFile));
     let confidence = Number(item.confidence);
-    if (!Number.isFinite(confidence) || confidence < minConf) continue;
-    const originalConfidence = confidence;
+    if (!Number.isFinite(confidence)) continue;
     const parsed = parseSuggestedChange(String(item.suggestedChange ?? ""));
     if (parsed.changeType === "replace" && targetFile === "SOUL.md") {
       confidence = Math.min(confidence, 0.5);
@@ -1493,7 +1500,7 @@ export async function runGenerateProposalsForCli(
       confidence = Math.min(confidence, 0.6);
     }
     if (confidence < minConf) {
-      ctx.logger.info?.(`memory-hybrid: proposal dropped — confidence capped from ${originalConfidence.toFixed(2)} to ${confidence.toFixed(2)} (below minConf ${minConf}): ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`);
+      ctx.logger.info?.(`memory-hybrid: proposal dropped — confidence ${confidence < Number(item.confidence) ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})` : `below minConf ${minConf}`}: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`);
       continue;
     }
     const title = String(item.title ?? "Update from reflection").slice(0, 256);
