@@ -2,7 +2,7 @@
  * CLI commands for managing persona proposals (human-only operations)
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -83,7 +83,7 @@ const REPLACE_PREFIXES = [
   /^replace the file\b/i,
 ];
 
-function parseSuggestedChange(suggestedChange: string): { changeType: ProposalChangeType; content: string } {
+export function parseSuggestedChange(suggestedChange: string): { changeType: ProposalChangeType; content: string } {
   const lines = suggestedChange.split(/\r?\n/);
   const firstLine = lines[0]?.trim() ?? "";
   const replaceMatch = REPLACE_PREFIXES.find((re) => re.test(firstLine));
@@ -96,6 +96,21 @@ function parseSuggestedChange(suggestedChange: string): { changeType: ProposalCh
     return { changeType: "replace", content };
   }
   return { changeType: "append", content: suggestedChange };
+}
+
+/**
+ * Apply confidence cap for replace-type proposals (issue #89).
+ * SOUL.md replace is capped at 0.5; other file replace at 0.6; append unchanged.
+ */
+export function capProposalConfidence(confidence: number, targetFile: string, suggestedChange: string): number {
+  const parsed = parseSuggestedChange(suggestedChange);
+  if (parsed.changeType === "replace" && targetFile === "SOUL.md") {
+    return Math.min(confidence, 0.5);
+  }
+  if (parsed.changeType === "replace") {
+    return Math.min(confidence, 0.6);
+  }
+  return confidence;
 }
 
 function buildAppendBlock(proposalId: string, observation: string, suggestedChange: string, timestamp: string): string {
@@ -142,12 +157,24 @@ export function buildUnifiedDiff(currentContent: string, proposedContent: string
   }
 }
 
+/** Returns true if the given path (or its directory) is inside a git repository. */
+function isGitRepo(dirOrFilePath: string): boolean {
+  let dir: string;
+  try {
+    dir = statSync(dirOrFilePath).isDirectory() ? dirOrFilePath : dirname(dirOrFilePath);
+  } catch {
+    dir = dirname(dirOrFilePath);
+  }
+  const result = spawnSync("git", ["rev-parse", "--git-dir"], { cwd: dir, encoding: "utf-8" });
+  return result.status === 0 && !!result.stdout?.trim();
+}
+
 function commitProposalChange(
   targetPath: string,
   proposalId: string,
   targetFile: string,
 ): { ok: true } | { ok: false; error: string } {
-  const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+  const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: dirname(targetPath), encoding: "utf-8" });
   if (repoRoot.status !== 0 || !repoRoot.stdout.trim()) {
     return { ok: false, error: `Failed to resolve git repo root: ${repoRoot.stderr || repoRoot.stdout}` };
   }
@@ -284,7 +311,12 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
     });
 }
 
-export type ApplyProposalContext = Pick<ProposalsCliContext, "proposalsDb" | "cfg" | "resolvedSqlitePath" | "api">;
+export type ApplyProposalContext = {
+  proposalsDb: ProposalsDB;
+  cfg: { personaProposals: { allowedFiles: string[] } };
+  resolvedSqlitePath: string;
+  api?: { logger?: { warn?: (msg: string) => void } };
+};
 
 /**
  * Apply an approved proposal to its target file and mark as applied.
@@ -341,14 +373,20 @@ export async function applyApprovedProposal(
       return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
     }
     writeFileSync(targetPath, applied.content);
-    const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
-    if (!commitResult.ok) {
-      // Rollback the file write to avoid leaving the file modified but uncommitted (inconsistent state).
-      writeFileSync(targetPath, original);
-      return {
-        ok: false,
-        error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
-      };
+    if (isGitRepo(targetPath)) {
+      const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
+      if (!commitResult.ok) {
+        // Roll back the file write to avoid leaving the workspace in an inconsistent state
+        // (file modified on disk but not committed to git).
+        writeFileSync(targetPath, original);
+        ctx.api?.logger?.warn?.(
+          `memory-hybrid: Git commit failed after applying proposal ${proposalId}; file write rolled back. ${commitResult.error}`,
+        );
+        return {
+          ok: false,
+          error: `Git commit failed for proposal ${proposalId}; file write was rolled back. ${commitResult.error}`,
+        };
+      }
     }
     ctx.proposalsDb.markApplied(proposalId);
     await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {

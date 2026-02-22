@@ -9,6 +9,9 @@ import {
   vectorDimsForModel,
   hybridConfigSchema,
   CREDENTIAL_TYPES,
+  getDefaultCronModel,
+  getCronModelConfig,
+  getLLMModelPreference,
   type DecayClass,
   type HybridMemoryConfig,
 } from "../config.js";
@@ -201,6 +204,32 @@ describe("hybridConfigSchema.parse", () => {
     const result = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass" },
     });
+    expect(result.embedding.model).toBe("text-embedding-3-small");
+  });
+
+  it("parses embedding.models when same dimension", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+        models: ["text-embedding-3-small"],
+      },
+    });
+    expect(result.embedding.models).toEqual(["text-embedding-3-small"]);
+    expect(result.embedding.model).toBe("text-embedding-3-small");
+  });
+
+  it("rejects embedding.models when mixed dimensions", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+        models: ["text-embedding-3-small", "text-embedding-3-large"],
+      },
+    });
+    expect(result.embedding.models).toBeUndefined();
     expect(result.embedding.model).toBe("text-embedding-3-small");
   });
 
@@ -530,6 +559,139 @@ describe("hybridConfigSchema.parse", () => {
   it("distill is undefined when omitted", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeUndefined();
+  });
+
+  it("parses llm config when default and heavy arrays are non-empty", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        default: ["gemini-2.0-flash", "gpt-4o-mini"],
+        heavy: ["gemini-2.0-flash-thinking", "gpt-4o"],
+        fallbackToDefault: true,
+        fallbackModel: "gpt-4o-mini",
+      },
+    });
+    expect(result.llm).toBeDefined();
+    expect(result.llm!.default).toEqual(["gemini-2.0-flash", "gpt-4o-mini"]);
+    expect(result.llm!.heavy).toEqual(["gemini-2.0-flash-thinking", "gpt-4o"]);
+    expect(result.llm!.fallbackToDefault).toBe(true);
+    expect(result.llm!.fallbackModel).toBe("gpt-4o-mini");
+  });
+
+  it("allows single-tier llm (only default or only heavy)", () => {
+    const withHeavyOnly = hybridConfigSchema.parse({
+      ...validBase,
+      llm: { default: [], heavy: ["gpt-4o"] },
+    });
+    expect(withHeavyOnly.llm).toBeDefined();
+    expect(withHeavyOnly.llm!.default).toEqual([]);
+    expect(withHeavyOnly.llm!.heavy).toEqual(["gpt-4o"]);
+    const withDefaultOnly = hybridConfigSchema.parse({
+      ...validBase,
+      llm: { default: ["gpt-4o-mini"], heavy: [] },
+    });
+    expect(withDefaultOnly.llm).toBeDefined();
+    expect(withDefaultOnly.llm!.default).toEqual(["gpt-4o-mini"]);
+    expect(withDefaultOnly.llm!.heavy).toEqual([]);
+  });
+
+  it("getLLMModelPreference does not append fallback when fallbackModel is unset", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        default: ["gemini-2.0-flash"],
+        heavy: ["gpt-4o"],
+        fallbackToDefault: true,
+        fallbackModel: undefined,
+      },
+    });
+    const cronCfg = getCronModelConfig(cfg);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
+  });
+
+  it("getLLMModelPreference returns list and fallback when llm configured", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        default: ["gemini-2.0-flash", "gpt-4o-mini"],
+        heavy: ["gpt-4o"],
+        fallbackToDefault: true,
+        fallbackModel: "gpt-4o-mini",
+      },
+    });
+    const cronCfg = getCronModelConfig(cfg);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash", "gpt-4o-mini"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o", "gpt-4o-mini"]);
+    expect(getDefaultCronModel(cronCfg, "default")).toBe("gemini-2.0-flash");
+    expect(getDefaultCronModel(cronCfg, "heavy")).toBe("gpt-4o");
+  });
+
+  it("getLLMModelPreference when llm is undefined uses legacy single model", () => {
+    const cronCfg = undefined;
+    const defaultList = getLLMModelPreference(cronCfg, "default");
+    const heavyList = getLLMModelPreference(cronCfg, "heavy");
+    expect(defaultList).toHaveLength(1);
+    expect(heavyList).toHaveLength(1);
+    expect(defaultList[0]).toBe("gpt-4o-mini");
+    expect(heavyList[0]).toBe("gpt-4o");
+  });
+
+  it("getLLMModelPreference when llm tier arrays are empty uses legacy", () => {
+    const cronCfg = { llm: { default: [], heavy: [] } };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gpt-4o-mini"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
+  });
+
+  it("getLLMModelPreference legacy path: Gemini first (distill.apiKey set)", () => {
+    const cronCfg = {
+      embedding: { apiKey: "sk-embed-key-that-is-long-enough" },
+      distill: { apiKey: "GEMINI_API_KEY_LONG_ENOUGH_12345", defaultModel: "gemini-custom" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-custom"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-custom"]);
+  });
+
+  it("getLLMModelPreference legacy path: Gemini default model when distill.defaultModel unset", () => {
+    const cronCfg = {
+      distill: { apiKey: "GEMINI_API_KEY_LONG_ENOUGH_12345" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-2.0-flash-thinking-exp-01-21"]);
+  });
+
+  it("getLLMModelPreference legacy path: Claude second (claude.apiKey set, no distill)", () => {
+    const cronCfg = {
+      claude: { apiKey: "sk-claude-key-that-is-long-enough", defaultModel: "claude-custom" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["claude-custom"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["claude-custom"]);
+  });
+
+  it("getLLMModelPreference legacy path: Claude defaults when claude.defaultModel unset", () => {
+    const cronCfg = {
+      claude: { apiKey: "sk-claude-key-that-is-long-enough" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["claude-sonnet-4-20250514"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["claude-opus-4-20250514"]);
+  });
+
+  it("getLLMModelPreference legacy path: OpenAI third (embedding.apiKey, no distill/claude)", () => {
+    const cronCfg = {
+      embedding: { apiKey: "sk-embed-key-that-is-long-enough" },
+    };
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gpt-4o-mini"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
+  });
+
+  it("getLLMModelPreference legacy path: reflection.model does NOT override provider priority", () => {
+    const cronCfg = {
+      distill: { apiKey: "GEMINI_API_KEY_LONG_ENOUGH_12345" },
+      reflection: { model: "gpt-4o-mini" },
+    };
+    // reflection.model should NOT override Gemini when distill.apiKey is configured
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-2.0-flash-thinking-exp-01-21"]);
   });
 
   it("parses optional selfCorrection config", () => {

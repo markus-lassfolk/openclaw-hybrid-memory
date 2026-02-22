@@ -42,6 +42,7 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 | **[Quick Start](QUICKSTART)** | Install, configure, verify &mdash; get running in 10 minutes |
 | **[Autonomous Setup](SETUP-AUTONOMOUS)** | Let an OpenClaw agent install it for you |
 | **[Configuration](CONFIGURATION)** | Full `openclaw.json` reference |
+| **[LLMs and Providers](LLM-AND-PROVIDERS)** | Prerequisites, what LLMs are used for, gateway routing, `llm` config |
 
 ### Architecture & internals
 

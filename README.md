@@ -69,7 +69,8 @@ openclaw plugins install openclaw-hybrid-memory
 # 2. Apply recommended config (memory slot, compaction prompts, nightly job)
 openclaw hybrid-mem install
 
-# 3. Set your OpenAI API key in ~/.openclaw/openclaw.json
+# 3. Configure embedding (required) and optionally LLM preferences in ~/.openclaw/openclaw.json
+#    See docs/LLM-AND-PROVIDERS.md — any provider the OpenClaw gateway supports works.
 
 # 4. Restart and verify
 openclaw gateway stop && openclaw gateway start
@@ -88,8 +89,10 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Prerequisites
 
-- **OpenAI API key** (required) - for embeddings (`text-embedding-3-small`) and optional LLM features (`gpt-4o-mini`). The plugin will not load without it.
-- **Google Gemini API** (optional) - recommended for session distillation (1M+ token context window). See [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md).
+- **Embedding access** (required) — for semantic search (auto-recall, store, ingest). Configure `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config.
+- **Chat/completion access** (optional for basic memory) — required for distillation, reflection, auto-classify, and other LLM-backed features. All LLM calls go through the **OpenClaw gateway**; any provider the gateway supports works (OpenAI, Gemini, Claude, Groq, OpenRouter, Ollama, etc.). No provider-specific keys in the plugin; optional **`llm`** config defines model preference lists and fallback.
+
+See [docs/LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for what LLMs are used for and how to configure them.
 
 ---
 
@@ -111,6 +114,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 |----------|-------------|
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap files |
 | **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference |
+| **[LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md)** | Prerequisites, what LLMs are used for, gateway routing, `llm` config |
 | **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates; index of [per-feature docs](docs/FEATURES.md#feature-documentation-by-topic) |
 | **[CLI-REFERENCE.md](docs/CLI-REFERENCE.md)** | All 34 `openclaw hybrid-mem` commands |
 | **[MEMORY-PROTOCOL.md](docs/MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md block |

@@ -1,31 +1,15 @@
 /**
  * Unified chat completion for distill and other LLM features.
- * Routes to OpenAI or Gemini based on model name.
+ * All LLM calls go through the OpenClaw gateway (openai client); provider-agnostic model fallback (issue #87).
  */
 
 import OpenAI from "openai";
+import { capturePluginError } from "./error-reporter.js";
 
-/** Exported for tests. */
-export function isGeminiModel(model: string): boolean {
+/** True when model name suggests long-context (e.g. Gemini, thinking). Used only for token limits. */
+function isLongContextModel(model: string): boolean {
   const m = model.toLowerCase();
   return m.includes("gemini") || m.startsWith("models/gemini");
-}
-
-/** Exported for tests. Returns true for Claude/Anthropic model names. */
-export function isAnthropicModel(model: string): boolean {
-  const m = model.toLowerCase();
-  return m.startsWith("claude-") || m.includes("anthropic/claude");
-}
-
-function resolveGeminiApiKey(configKey?: string): string | null {
-  if (configKey && configKey.trim().length >= 10) {
-    if (configKey.startsWith("env:")) {
-      const varName = configKey.slice(4).trim();
-      return process.env[varName] ?? null;
-    }
-    return configKey;
-  }
-  return process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY ?? null;
 }
 
 export async function chatComplete(opts: {
@@ -34,91 +18,36 @@ export async function chatComplete(opts: {
   temperature?: number;
   maxTokens?: number;
   openai: OpenAI;
-  geminiApiKey?: string;
 }): Promise<string> {
   const { model, content, temperature = 0.2, maxTokens } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
 
-  if (isAnthropicModel(model)) {
-    throw new Error(
-      `Anthropic/Claude model "${model}" cannot be used via the OpenAI SDK. ` +
-        `Set distill.apiKey (Gemini) or embedding.apiKey (OpenAI) as your LLM provider, ` +
-        `or remove claude.* from plugin config to avoid routing LLM calls to Claude.`,
-    );
-  }
-
-  // This path runs when the requested model is Gemini (chosen by config / getDefaultCronModel etc.).
-  // Retries below are for resilience (429/5xx), not provider preference — we stay model-agnostic.
-  if (isGeminiModel(model)) {
-    const apiKey = resolveGeminiApiKey(opts.geminiApiKey);
-    if (!apiKey) {
-      throw new Error(
-        "Gemini API key required for Gemini models. Set plugins.entries[\"openclaw-hybrid-memory\"].config.distill.apiKey, or GOOGLE_API_KEY / GEMINI_API_KEY env var.",
-      );
-    }
-    const modelId = model.startsWith("models/") ? model.slice(7) : model;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
-    const body = JSON.stringify({
-      contents: [{ parts: [{ text: content }] }],
-      generationConfig: {
-        temperature,
-        maxOutputTokens: effectiveMaxTokens,
-      },
+  try {
+    const resp = await opts.openai.chat.completions.create({
+      model,
+      messages: [{ role: "user", content }],
+      temperature,
+      max_tokens: effectiveMaxTokens,
     });
-    const maxAttempts = 3;
-    let lastRes: Response | null = null;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body,
-      });
-      lastRes = res;
-      const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
-      if (res.ok) break;
-      if (retryable && attempt < maxAttempts) {
-        const delayMs = attempt * 1000;
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-      const errText = await res.text();
-      throw new Error(`Gemini API error ${res.status}: ${errText}`);
-    }
-    type GeminiResponse = { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    const data = (await lastRes!.json()) as GeminiResponse;
-    const parts = data.candidates?.[0]?.content?.parts;
-    if (!parts || parts.length === 0) {
-      throw new Error("Gemini returned no text");
-    }
-    const text = parts.map(p => p.text ?? '').join('');
-    if (text.length === 0) {
-      throw new Error("Gemini returned no text");
-    }
-    return text;
+    return resp.choices[0]?.message?.content?.trim() ?? "";
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    capturePluginError(error, {
+      subsystem: "chat",
+      operation: "chatComplete",
+      phase: "gateway",
+    });
+    throw error;
   }
-
-  const resp = await opts.openai.chat.completions.create({
-    model,
-    messages: [{ role: "user", content }],
-    temperature,
-    max_tokens: effectiveMaxTokens,
-  });
-  return resp.choices[0]?.message?.content?.trim() ?? "";
 }
 
 export function distillBatchTokenLimit(model: string): number {
-  if (isGeminiModel(model)) {
-    return 500_000;
-  }
-  return 80_000;
+  return isLongContextModel(model) ? 500_000 : 80_000;
 }
 
-/** Max output tokens for distill/ingest LLM calls. Gemini supports 65k+ for long fact lists; OpenAI default 8k. */
+/** Max output tokens for distill/ingest LLM calls. Long-context models (e.g. gateway-routed Gemini) support 65k+; else 8k. */
 export function distillMaxOutputTokens(model: string): number {
-  return isGeminiModel(model) ? 65_536 : 8000;
+  return isLongContextModel(model) ? 65_536 : 8000;
 }
 
 /**
@@ -131,7 +60,7 @@ export class LLMRetryError extends Error {
     public readonly attemptNumber: number,
   ) {
     super(message);
-    this.name = 'LLMRetryError';
+    this.name = "LLMRetryError";
   }
 }
 
@@ -153,11 +82,17 @@ export async function withLLMRetry<T>(
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (attempt === maxRetries) {
-        throw new LLMRetryError(
+        const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
           lastError,
           attempt + 1,
         );
+        capturePluginError(retryError, {
+          subsystem: "chat",
+          operation: "withLLMRetry",
+          retryAttempt: attempt + 1,
+        });
+        throw retryError;
       }
       const delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
       if (opts?.label) {
@@ -172,6 +107,7 @@ export async function withLLMRetry<T>(
 /**
  * Wrapper for chatComplete with retry and fallback model support.
  * Tries primary model with retries, then falls back to each fallback model in order.
+ * All calls go through the gateway (openai client).
  */
 export async function chatCompleteWithRetry(opts: {
   model: string;
@@ -179,7 +115,6 @@ export async function chatCompleteWithRetry(opts: {
   temperature?: number;
   maxTokens?: number;
   openai: OpenAI;
-  geminiApiKey?: string;
   fallbackModels?: string[];
   label?: string;
 }): Promise<string> {
@@ -192,9 +127,7 @@ export async function chatCompleteWithRetry(opts: {
   for (let i = 0; i < modelsToTry.length; i++) {
     const currentModel = modelsToTry[i];
     const isFallback = i > 0;
-    const attemptLabel = isFallback
-      ? `${label} (fallback: ${currentModel})`
-      : label;
+    const attemptLabel = isFallback ? `${label} (fallback: ${currentModel})` : label;
 
     try {
       return await withLLMRetry(
@@ -204,10 +137,18 @@ export async function chatCompleteWithRetry(opts: {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (i < modelsToTry.length - 1) {
-        console.warn(`${label}: model ${currentModel} failed after retries, trying fallback model ${modelsToTry[i + 1]}...`);
+        console.warn(
+          `${label}: model ${currentModel} failed after retries, trying fallback model ${modelsToTry[i + 1]}...`,
+        );
       }
     }
   }
 
-  throw lastError ?? new Error("All models failed");
+  const finalError = lastError ?? new Error("All models failed");
+  capturePluginError(finalError, {
+    subsystem: "chat",
+    operation: "chatCompleteWithRetry",
+    phase: "fallback-exhausted",
+  });
+  throw finalError;
 }

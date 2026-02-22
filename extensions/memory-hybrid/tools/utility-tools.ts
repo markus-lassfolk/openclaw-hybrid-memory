@@ -7,6 +7,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { getCronModelConfig, getLLMModelPreference } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
@@ -27,7 +28,7 @@ export type RunReflectionFn = (
   embeddings: Embeddings,
   openai: OpenAI,
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
-  opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[]; geminiApiKey?: string },
+  opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }>;
 
@@ -36,7 +37,7 @@ export type RunReflectionRulesFn = (
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; fallbackModels?: string[]; geminiApiKey?: string },
+  opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ rulesExtracted: number; rulesStored: number }>;
 
@@ -45,7 +46,7 @@ export type RunReflectionMetaFn = (
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; fallbackModels?: string[]; geminiApiKey?: string },
+  opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ metaExtracted: number; metaStored: number }>;
 
@@ -225,6 +226,9 @@ export function registerUtilityTools(
           90,
           Math.max(1, typeof params.window === "number" ? params.window : reflectionCfg.defaultWindow),
         );
+        const cronCfg = getCronModelConfig(cfg);
+        const pref = getLLMModelPreference(cronCfg, "default");
+        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
         try {
           const result = await runReflection(
             factsDb,
@@ -232,7 +236,7 @@ export function registerUtilityTools(
             embeddings,
             openai,
             { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
-            { window, dryRun: false, model: reflectionCfg.model, fallbackModels: cfg.distill?.fallbackModels, geminiApiKey: cfg.distill?.apiKey },
+            { window, dryRun: false, model: pref[0], fallbackModels },
             api.logger,
           );
           return {
@@ -277,13 +281,16 @@ export function registerUtilityTools(
             details: { error: "reflection_disabled" },
           };
         }
+        const cronCfg = getCronModelConfig(cfg);
+        const pref = getLLMModelPreference(cronCfg, "default");
+        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
         try {
           const result = await runReflectionRules(
             factsDb,
             vectorDb,
             embeddings,
             openai,
-            { dryRun: false, model: reflectionCfg.model, fallbackModels: cfg.distill?.fallbackModels, geminiApiKey: cfg.distill?.apiKey },
+            { dryRun: false, model: pref[0], fallbackModels },
             api.logger,
           );
           return {
@@ -323,13 +330,16 @@ export function registerUtilityTools(
             details: { error: "reflection_disabled" },
           };
         }
+        const cronCfg = getCronModelConfig(cfg);
+        const pref = getLLMModelPreference(cronCfg, "default");
+        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
         try {
           const result = await runReflectionMeta(
             factsDb,
             vectorDb,
             embeddings,
             openai,
-            { dryRun: false, model: reflectionCfg.model, fallbackModels: cfg.distill?.fallbackModels, geminiApiKey: cfg.distill?.apiKey },
+            { dryRun: false, model: pref[0], fallbackModels },
             api.logger,
           );
           return {
