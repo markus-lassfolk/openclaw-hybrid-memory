@@ -27,7 +27,7 @@ export type RunReflectionFn = (
   embeddings: Embeddings,
   openai: OpenAI,
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
-  opts: { window: number; dryRun: boolean; model: string },
+  opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[]; geminiApiKey?: string },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }>;
 
@@ -36,7 +36,7 @@ export type RunReflectionRulesFn = (
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string },
+  opts: { dryRun: boolean; model: string; fallbackModels?: string[]; geminiApiKey?: string },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ rulesExtracted: number; rulesStored: number }>;
 
@@ -45,7 +45,7 @@ export type RunReflectionMetaFn = (
   vectorDb: VectorDB,
   embeddings: Embeddings,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string },
+  opts: { dryRun: boolean; model: string; fallbackModels?: string[]; geminiApiKey?: string },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
 ) => Promise<{ metaExtracted: number; metaStored: number }>;
 
@@ -232,7 +232,7 @@ export function registerUtilityTools(
             embeddings,
             openai,
             { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
-            { window, dryRun: false, model: reflectionCfg.model },
+            { window, dryRun: false, model: reflectionCfg.model, fallbackModels: cfg.distill?.fallbackModels, geminiApiKey: cfg.distill?.apiKey },
             api.logger,
           );
           return {
@@ -283,7 +283,7 @@ export function registerUtilityTools(
             vectorDb,
             embeddings,
             openai,
-            { dryRun: false, model: reflectionCfg.model },
+            { dryRun: false, model: reflectionCfg.model, fallbackModels: cfg.distill?.fallbackModels, geminiApiKey: cfg.distill?.apiKey },
             api.logger,
           );
           return {
@@ -329,7 +329,7 @@ export function registerUtilityTools(
             vectorDb,
             embeddings,
             openai,
-            { dryRun: false, model: reflectionCfg.model },
+            { dryRun: false, model: reflectionCfg.model, fallbackModels: cfg.distill?.fallbackModels, geminiApiKey: cfg.distill?.apiKey },
             api.logger,
           );
           return {

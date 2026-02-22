@@ -47,7 +47,7 @@ import type {
   VerifyCliSink,
 } from "./register.js";
 import type { SelfCorrectionRunResult } from "./types.js";
-import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, withLLMRetry, chatCompleteWithRetry } from "../services/chat.js";
+import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, chatCompleteWithRetry } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";

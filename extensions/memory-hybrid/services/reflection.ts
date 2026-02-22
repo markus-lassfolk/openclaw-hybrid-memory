@@ -44,6 +44,7 @@ export interface ReflectionOptions {
   model: string;
   verbose?: boolean;
   fallbackModels?: string[];
+  geminiApiKey?: string;
 }
 
 export interface ReflectionResult {
@@ -156,6 +157,7 @@ export async function runReflection(
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 1500,
       openai,
+      geminiApiKey: opts.geminiApiKey,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflection",
     });
@@ -319,6 +321,7 @@ export async function runReflectionRules(
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 800,
       openai,
+      geminiApiKey: opts.geminiApiKey,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-rules",
     });
@@ -472,6 +475,7 @@ export async function runReflectionMeta(
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 500,
       openai,
+      geminiApiKey: opts.geminiApiKey,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-meta",
     });
