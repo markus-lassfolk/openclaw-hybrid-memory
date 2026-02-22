@@ -46,6 +46,7 @@ import type {
   UpgradeCliResult,
   VerifyCliSink,
 } from "./register.js";
+import type { SelfCorrectionRunResult } from "./types.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
@@ -1176,7 +1177,7 @@ export async function runGenerateAutoSkillsForCli(
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean },
-): Promise<DirectiveExtractResult> {
+): Promise<DirectiveExtractResult & { stored?: number }> {
   const { factsDb, cfg } = ctx;
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
@@ -1192,6 +1193,7 @@ export async function runExtractDirectivesForCli(
   }
 
   // Store directives as facts if not dry-run
+  let stored = 0;
   if (!opts.dryRun) {
     try {
       for (const incident of result.incidents) {
@@ -1215,6 +1217,7 @@ export async function runExtractDirectivesForCli(
           source: `directive:${incident.sessionFile}`,
           confidence: incident.confidence,
         });
+        stored++;
       }
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
@@ -1222,7 +1225,7 @@ export async function runExtractDirectivesForCli(
     }
   }
 
-  return result;
+  return { ...result, stored };
 }
 
 /**
@@ -2100,17 +2103,6 @@ export function runSelfCorrectionExtractForCli(
     throw err;
   }
 }
-
-type SelfCorrectionRunResult = {
-  incidentsFound: number;
-  analysed: number;
-  autoFixed: number;
-  proposals: string[];
-  reportPath: string | null;
-  toolsSuggestions?: string[];
-  toolsApplied?: number;
-  error?: string;
-};
 
 /**
  * Run self-correction analysis and remediation
