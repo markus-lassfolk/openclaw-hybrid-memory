@@ -24,7 +24,7 @@ import { chatComplete } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
-import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { CLI_STORE_IMPORTANCE, getRestartPendingPath } from "../utils/constants.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { VAULT_POINTER_PREFIX, detectCredentialPatterns } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
@@ -55,11 +55,6 @@ export interface LifecycleContext {
   ) => Promise<MemoryEntry[]>;
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
-}
-
-/** Path to marker file written by config-mode/config-set; cleared when gateway loads plugin. */
-function getRestartPendingPath(): string {
-  return join(homedir(), ".openclaw", ".restart-pending.openclaw-hybrid-memory");
 }
 
 export function createLifecycleHooks(ctx: LifecycleContext) {

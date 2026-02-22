@@ -71,6 +71,8 @@ import { isValidCategory } from "../config.js";
 import {
   CLI_STORE_IMPORTANCE,
   BATCH_STORE_IMPORTANCE,
+  PLUGIN_ID,
+  getRestartPendingPath,
 } from "../utils/constants.js";
 
 // Shared cron job definitions used by install and verify --fix
@@ -138,7 +140,6 @@ export interface HandlerContext {
 }
 
 // Constants
-const PLUGIN_ID = "openclaw-hybrid-memory";
 const FULL_DISTILL_MAX_DAYS = 90;
 const INCREMENTAL_MIN_DAYS = 3;
 const SELF_CORRECTION_CAP = 5;
@@ -156,11 +157,6 @@ const DEFAULT_SELF_CORRECTION = {
   spawnThreshold: 15,
   spawnModel: "gemini",
 } as const;
-
-/** Path to marker file written by config-mode/config-set; cleared when gateway loads plugin. */
-function getRestartPendingPath(): string {
-  return join(homedir(), ".openclaw", ".restart-pending.openclaw-hybrid-memory");
-}
 
 /**
  * Store a memory via CLI
@@ -2120,9 +2116,6 @@ export async function runSelfCorrectionRunForCli(
   },
 ): Promise<SelfCorrectionRunResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, logger } = ctx;
-  if (!cfg.selfCorrection) {
-    return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null };
-  }
   const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
   const reportDir = join(workspaceRoot, "memory", "reports");

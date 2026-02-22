@@ -70,6 +70,8 @@ import {
   BATCH_THROTTLE_MS,
   SQLITE_BUSY_TIMEOUT_MS,
   SECONDS_PER_DAY,
+  PLUGIN_ID,
+  getRestartPendingPath,
 } from "./utils/constants.js";
 import {
   normalizeTextForDedupe,
@@ -224,13 +226,6 @@ let lastProgressiveIndexIds: string[] = [];
 // and tools will see the updated value (fixes pass-by-value bug from refactor).
 const currentAgentIdRef: { value: string | null } = { value: null };
 
-
-const PLUGIN_ID = "openclaw-hybrid-memory";
-
-/** Path to marker file written by config-mode/config-set; cleared when gateway loads plugin. */
-function getRestartPendingPath(): string {
-  return join(homedir(), ".openclaw", ".restart-pending.openclaw-hybrid-memory");
-}
 let restartPendingCleared = false;
 
 const memoryHybridPlugin = {

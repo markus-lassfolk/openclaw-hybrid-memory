@@ -2,6 +2,17 @@
  * Shared constants to avoid magic numbers across the plugin.
  */
 
+import { join } from "node:path";
+import { homedir } from "node:os";
+
+/** Plugin identifier used across the codebase. */
+export const PLUGIN_ID = "openclaw-hybrid-memory";
+
+/** Path to marker file written by config-mode/config-set; cleared when gateway loads plugin. */
+export function getRestartPendingPath(): string {
+  return join(homedir(), ".openclaw", ".restart-pending.openclaw-hybrid-memory");
+}
+
 /** Max characters for a single fact in reflection/consolidation prompts. */
 export const REFLECTION_MAX_FACT_LENGTH = 300;
 /** Max facts per category in reflection prompt. */
