@@ -52,7 +52,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
       const maxSessionTokens = Math.max(0, parseInt(opts.maxSessionTokens || "0") || 0);
-      const days = opts.days ? parseInt(opts.days, 10) : undefined;
+      const days = opts.days != null ? parseInt(opts.days, 10) : undefined;
       const result = await runDistill(
         {
           dryRun: !!opts.dryRun,
@@ -130,7 +130,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
     .option("--dry-run", "Show what would be stored without writing")
     .action(withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean }) => {
-      const days = opts.days ? parseInt(opts.days, 10) : undefined;
+      const days = opts.days != null ? parseInt(opts.days, 10) : undefined;
       const result = await runExtractProcedures({
         sessionDir: opts.dir,
         days: Number.isFinite(days) ? days : undefined,
