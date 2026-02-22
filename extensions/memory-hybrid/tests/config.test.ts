@@ -12,6 +12,7 @@ import {
   getDefaultCronModel,
   getCronModelConfig,
   getLLMModelPreference,
+  resolveReflectionModelAndFallbacks,
   type DecayClass,
   type HybridMemoryConfig,
 } from "../config.js";
@@ -692,6 +693,72 @@ describe("hybridConfigSchema.parse", () => {
     // reflection.model should NOT override Gemini when distill.apiKey is configured
     expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-2.0-flash"]);
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-2.0-flash-thinking-exp-01-21"]);
+  });
+
+  describe("resolveReflectionModelAndFallbacks", () => {
+    it("returns default tier from llm.default with fallbacks when multiple models", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { default: ["gemini-2.0-flash", "gpt-4o-mini"], heavy: ["gpt-4o"] },
+      });
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      expect(defaultModel).toBe("gemini-2.0-flash");
+      expect(fallbackModels).toEqual(["gpt-4o-mini"]);
+    });
+
+    it("returns heavy tier from llm.heavy with fallbacks when multiple models", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { default: ["gpt-4o-mini"], heavy: ["gpt-4o", "gpt-4o-mini"] },
+      });
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      expect(defaultModel).toBe("gpt-4o");
+      expect(fallbackModels).toEqual(["gpt-4o-mini"]);
+    });
+
+    it("when llm set and single model in tier, fallbackModels is undefined", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { default: ["gemini-2.0-flash"], heavy: ["gpt-4o"] },
+      });
+      const defaultTier = resolveReflectionModelAndFallbacks(cfg, "default");
+      expect(defaultTier.defaultModel).toBe("gemini-2.0-flash");
+      expect(defaultTier.fallbackModels).toBeUndefined();
+      const heavyTier = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      expect(heavyTier.defaultModel).toBe("gpt-4o");
+      expect(heavyTier.fallbackModels).toBeUndefined();
+    });
+
+    it("when no llm config, uses legacy single model and distill.fallbackModels for fallbacks", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        distill: { apiKey: "GEMINI_KEY_LONG_ENOUGH_12345", defaultModel: "gemini-custom", fallbackModels: ["gpt-4o-mini", "gpt-4o"] },
+      });
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      expect(defaultModel).toBe("gemini-custom");
+      expect(fallbackModels).toEqual(["gpt-4o-mini", "gpt-4o"]);
+    });
+
+    it("when no llm and no distill.fallbackModels, fallbackModels is undefined", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        distill: { apiKey: "GEMINI_KEY_LONG_ENOUGH_12345", defaultModel: "gemini-custom" },
+      });
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      expect(defaultModel).toBe("gemini-custom");
+      expect(fallbackModels).toBeUndefined();
+    });
+
+    it("empty preference list falls back to gpt-4o-mini (default) or gpt-4o (heavy)", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { default: [], heavy: [] },
+      });
+      const defaultTier = resolveReflectionModelAndFallbacks(cfg, "default");
+      expect(defaultTier.defaultModel).toBe("gpt-4o-mini");
+      const heavyTier = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      expect(heavyTier.defaultModel).toBe("gpt-4o");
+    });
   });
 
   it("parses optional selfCorrection config", () => {
