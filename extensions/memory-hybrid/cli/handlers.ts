@@ -1876,13 +1876,18 @@ export async function runIngestFilesForCli(
         decayClass: "stable",
         tags: fact.tags,
       });
-      await vectorDb.store({
-        text: fact.text,
-        vector,
-        importance: BATCH_STORE_IMPORTANCE,
-        category: fact.category,
-        id: entry.id,
-      });
+      try {
+        await vectorDb.store({
+          text: fact.text,
+          vector,
+          importance: BATCH_STORE_IMPORTANCE,
+          category: fact.category,
+          id: entry.id,
+        });
+      } catch (err) {
+        sink.warn(`memory-hybrid: ingest-files vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:vector-store" });
+      }
       stored++;
     } catch (err) {
       sink.warn(`memory-hybrid: ingest-files store failed for "${fact.text.slice(0, 40)}...": ${err}`);
@@ -2065,7 +2070,12 @@ export async function runDistillForCli(
         sourceDate: sourceDateSec(fact.source_date),
         tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
       });
-      await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
+      try {
+        await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
+      } catch (err) {
+        sink.warn(`memory-hybrid: distill vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:vector-store" });
+      }
       stored++;
       if (opts.verbose) sink.log(`  stored: [${fact.category}] ${fact.text.slice(0, 60)}...`);
     } catch (err) {
