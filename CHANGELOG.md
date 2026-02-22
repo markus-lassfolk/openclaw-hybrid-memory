@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.2.223] - 2026-02-22
+
+Patch: align CLI-context `fallbackModels` with `cfg.llm` so gateway-routed model config is respected (fixes inconsistent model selection between CLI reflection and other code paths).
+
+### Fixed
+
+- **CLI-context fallbackModels:** When `cfg.llm` is set, `runReflection`, `runReflectionRules`, and `runReflectionMeta` now use no legacy fallbacks, matching `handlers.ts` and `utility-tools.ts`. Previously they always fell back to `cfg.distill?.fallbackModels`.
+
+### Changed
+
+- **Version bump** — Release 2026.02.22 revision (npm `2026.2.223`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.2.222] - 2026-02-22
 
 Dependencies and tooling: better-sqlite3 ^12, direct Gemini REST API (drops @google/genai), `hybrid-mem version` command, cron/maintenance and Gemini fixes (fixes #72, #73, #80).
@@ -358,7 +372,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.222...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.223...HEAD
+[2026.2.223]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.223
 [2026.2.222]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.222
 [2026.2.221]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.221
 [2026.2.220]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.220
