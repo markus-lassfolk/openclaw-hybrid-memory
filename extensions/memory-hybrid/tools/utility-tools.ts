@@ -7,7 +7,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getLLMModelPreference } from "../config.js";
+import { resolveReflectionModelAndFallbacks } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
@@ -226,9 +226,7 @@ export function registerUtilityTools(
           90,
           Math.max(1, typeof params.window === "number" ? params.window : reflectionCfg.defaultWindow),
         );
-        const cronCfg = getCronModelConfig(cfg);
-        const pref = getLLMModelPreference(cronCfg, "default");
-        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
+        const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
         try {
           const result = await runReflection(
             factsDb,
@@ -236,7 +234,7 @@ export function registerUtilityTools(
             embeddings,
             openai,
             { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
-            { window, dryRun: false, model: pref[0], fallbackModels },
+            { window, dryRun: false, model: defaultModel, fallbackModels },
             api.logger,
           );
           return {
@@ -281,16 +279,14 @@ export function registerUtilityTools(
             details: { error: "reflection_disabled" },
           };
         }
-        const cronCfg = getCronModelConfig(cfg);
-        const pref = getLLMModelPreference(cronCfg, "default");
-        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
+        const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
         try {
           const result = await runReflectionRules(
             factsDb,
             vectorDb,
             embeddings,
             openai,
-            { dryRun: false, model: pref[0], fallbackModels },
+            { dryRun: false, model: defaultModel, fallbackModels },
             api.logger,
           );
           return {
@@ -330,16 +326,14 @@ export function registerUtilityTools(
             details: { error: "reflection_disabled" },
           };
         }
-        const cronCfg = getCronModelConfig(cfg);
-        const pref = getLLMModelPreference(cronCfg, "default");
-        const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
+        const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
         try {
           const result = await runReflectionMeta(
             factsDb,
             vectorDb,
             embeddings,
             openai,
-            { dryRun: false, model: pref[0], fallbackModels },
+            { dryRun: false, model: defaultModel, fallbackModels },
             api.logger,
           );
           return {

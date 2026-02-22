@@ -467,6 +467,21 @@ export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
   };
 }
 
+/**
+ * Resolve default model and fallback list for reflection/cron (default or heavy tier).
+ * Single place for getCronModelConfig + getLLMModelPreference + cfg.llm fallback logic.
+ */
+export function resolveReflectionModelAndFallbacks(
+  cfg: HybridMemoryConfig,
+  tier: CronModelTier,
+): { defaultModel: string; fallbackModels: string[] | undefined } {
+  const cronCfg = getCronModelConfig(cfg);
+  const pref = getLLMModelPreference(cronCfg, tier);
+  const defaultModel = pref[0] ?? (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
+  return { defaultModel, fallbackModels };
+}
+
 export type MemoryCategory = string;
 
 const DEFAULT_MODEL = "text-embedding-3-small";

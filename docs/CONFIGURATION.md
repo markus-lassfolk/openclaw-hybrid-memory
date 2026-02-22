@@ -416,7 +416,7 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 | `apiKey` | (none) | Legacy: raw Google API key or `env:VAR_NAME`. When using OpenClaw gateway routing, the plugin does not need a Google/Gemini API key here; the gateway handles provider keys. Prefer gateway + `llm.heavy`. |
 | `defaultModel` | — | Model used when `openclaw hybrid-mem distill` is run without `--model` and `llm` is not set. |
 
-**Batch size:** Long-context models (e.g. Gemini, names containing `thinking`) use larger batches (500k tokens); others default to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.
+**Batch size:** Long-context models (model name containing `gemini`) use larger batches (500k tokens); others default to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.
 
 ---
 
