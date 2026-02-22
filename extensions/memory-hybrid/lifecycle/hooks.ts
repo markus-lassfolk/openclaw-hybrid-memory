@@ -582,17 +582,33 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               })
               .join("\n");
             try {
-              const resp = await ctx.openai.chat.completions.create({
-                model: summarizeModel,
-                messages: [
-                  {
-                    role: "user",
-                    content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
-                  },
-                ],
-                temperature: 0,
-                max_tokens: 200,
-              });
+              // Retry logic for transient errors (rate limits, 5xx)
+              const maxRetries = 2;
+              let lastError: Error | undefined;
+              let resp;
+              for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                  resp = await ctx.openai.chat.completions.create({
+                    model: summarizeModel,
+                    messages: [
+                      {
+                        role: "user",
+                        content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
+                      },
+                    ],
+                    temperature: 0,
+                    max_tokens: 200,
+                  });
+                  break;
+                } catch (err) {
+                  lastError = err instanceof Error ? err : new Error(String(err));
+                  if (attempt < maxRetries) {
+                    const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
+                    await new Promise((r) => setTimeout(r, delay));
+                  }
+                }
+              }
+              if (!resp) throw lastError;
               const summary = (resp.choices[0]?.message?.content ?? "").trim();
               if (summary) {
                 memoryContext = summary;

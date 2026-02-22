@@ -79,12 +79,28 @@ Do not include any other text. If you see only one or two languages, return 1 or
 Samples:
 ${block}`;
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
-      max_tokens: 100,
-    });
+    // Retry logic for transient errors (rate limits, 5xx)
+    const maxRetries = 2;
+    let lastError: Error | undefined;
+    let resp;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        resp = await openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: 100,
+        });
+        break;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    if (!resp) throw lastError;
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const match = content.match(/\[[\s\S]*?\]/);
     if (!match) return [];
@@ -236,12 +252,28 @@ export async function generateIntentBasedLanguages(
   const prompt = buildIntentPrompt(toTranslate, englishPayload);
 
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 6000,
-    });
+    // Retry logic for transient errors (rate limits, 5xx)
+    const maxRetries = 2;
+    let lastError: Error | undefined;
+    let resp;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        resp = await openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          max_tokens: 6000,
+        });
+        break;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    if (!resp) throw lastError;
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -316,12 +348,28 @@ Each key must be one of: triggers, categoryDecision, categoryPreference, categor
 Each value must be an array of translated strings in the same order as the English list. Translate correctionSignals as natural phrases users say when correcting an AI (e.g. "that was wrong", "try again", "you misunderstood") in the target language.`;
 
   try {
-    const resp = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 4000,
-    });
+    // Retry logic for transient errors (rate limits, 5xx)
+    const maxRetries = 2;
+    let lastError: Error | undefined;
+    let resp;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        resp = await openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          max_tokens: 4000,
+        });
+        break;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    if (!resp) throw lastError;
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return {};

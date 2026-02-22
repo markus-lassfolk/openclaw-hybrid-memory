@@ -160,12 +160,28 @@ export async function runConsolidate(
     const prompt = fillPrompt(loadPrompt("consolidate"), { facts_list: factsList });
     let mergedText: string;
     try {
-      const resp = await openai.chat.completions.create({
-        model: opts.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: 300,
-      });
+      // Retry logic for transient errors (rate limits, 5xx)
+      const maxRetries = 2;
+      let lastError: Error | undefined;
+      let resp;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          resp = await openai.chat.completions.create({
+            model: opts.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            max_tokens: 300,
+          });
+          break;
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          if (attempt < maxRetries) {
+            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
+            await new Promise((r) => setTimeout(r, delay));
+          }
+        }
+      }
+      if (!resp) throw lastError;
       mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
