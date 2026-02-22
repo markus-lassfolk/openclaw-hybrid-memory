@@ -61,7 +61,8 @@ export function initializeDatabases(
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
   vectorDb.setLogger(api.logger);
   const openai = new OpenAI({ apiKey: cfg.embedding.apiKey });
-  const embeddings = new Embeddings(openai, cfg.embedding.model);
+  const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
+  const embeddings = new Embeddings(openai, embeddingModels);
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {

@@ -117,9 +117,19 @@ Embeddings are required. Typical setup:
 }
 ```
 
-The plugin uses this client for both **embeddings** and **chat** (when no separate gateway client is provided). So the same key/model can back vector search and, if you don’t set `llm`, the legacy default chat model. For best flexibility, use the OpenClaw gateway for chat and optional `llm` preference lists; keep `embedding` for vector search.
+**Optional preference list:** You can set **`embedding.models`** to an ordered list of embedding model names. The plugin tries the first model; if it fails (e.g. rate limit, provider down), it tries the next. All models in the list must produce the **same vector dimension** (e.g. 1536 for `text-embedding-3-small`); the first model in the list defines the dimension used for LanceDB. Example (same dimension):
 
-Supported embedding dimensions depend on `model` (e.g. `text-embedding-3-small` → 1536, `text-embedding-3-large` → 3072). See [CONFIGURATION.md](CONFIGURATION.md) for full options.
+```json
+"embedding": {
+  "apiKey": "sk-...",
+  "model": "text-embedding-3-small",
+  "models": ["text-embedding-3-small"]
+}
+```
+
+Supported dimensions: `text-embedding-3-small` → 1536, `text-embedding-3-large` → 3072. You cannot mix 1536- and 3072-dimension models in one list. When `models` is omitted, the plugin uses `model` only (no fallback list).
+
+The plugin uses this client for both **embeddings** and **chat** (when no separate gateway client is provided). For best flexibility, use the OpenClaw gateway for chat and optional `llm` preference lists; keep `embedding` for vector search.
 
 ---
 
@@ -127,7 +137,7 @@ Supported embedding dimensions depend on `model` (e.g. `text-embedding-3-small` 
 
 - **Prerequisites:** Embedding access (required); chat access (optional, for distillation/reflection/classify/etc.).
 - **Provider-agnostic:** All LLM calls go through the OpenClaw gateway; any gateway-supported provider works.
-- **Recommended:** Set **`llm.default`** and **`llm.heavy`** with ordered model lists and **`fallbackToDefault: true`** so the plugin can try alternatives when one model fails.
+- **Recommended:** Set **`llm.default`** and **`llm.heavy`** with ordered model lists and **`fallbackToDefault: true`** so the plugin can try alternatives when one model fails. Optionally set **`embedding.models`** (same-dimension list) for embedding fallback.
 - **Legacy:** Without `llm`, the plugin still uses `distill` / `claude` / `embedding` to choose a single model per tier.
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full config reference and [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for distillation-specific usage.
