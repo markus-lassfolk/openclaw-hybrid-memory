@@ -349,7 +349,7 @@ export async function runStoreForCli(
       if (similarFacts.length > 0) {
         try {
           const classification = await classifyMemoryOperation(
-            text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? "gpt-4o-mini", log,
+            text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), log,
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
@@ -1648,7 +1648,7 @@ export async function runExtractDailyForCli(
             try {
               const classification = await classifyMemoryOperation(
                 trimmed, extracted.entity, extracted.key, similarFacts,
-                openai, cfg.store.classifyModel ?? "gpt-4o-mini", sink,
+                openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), sink,
               );
               if (classification.action === "NOOP") continue;
               if (classification.action === "DELETE" && classification.targetId) {
@@ -2162,7 +2162,7 @@ export async function runDistillForCli(
   }
   const cronCfgDistill = getCronModelConfig(cfg);
   const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
-  const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? "gpt-4o";
+  const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? getDefaultCronModel(cronCfgDistill, "heavy");
   const distillFallbacks = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   const batches: string[] = [];
   let currentBatch = "";
@@ -2444,7 +2444,7 @@ export async function runSelfCorrectionRunForCli(
     incidents_json: JSON.stringify(incidents),
   });
   const heavyPref = getLLMModelPreference(getCronModelConfig(ctx.cfg), "heavy");
-  const model = opts.model ?? heavyPref[0] ?? "gpt-4o";
+  const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
   const scFallbackModels = opts.model ? [] : (heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])));
   let analysed: Array<{
     category: string;
