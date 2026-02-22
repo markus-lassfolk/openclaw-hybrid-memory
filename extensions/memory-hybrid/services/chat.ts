@@ -11,6 +11,12 @@ export function isGeminiModel(model: string): boolean {
   return m.includes("gemini") || m.startsWith("models/gemini");
 }
 
+/** Exported for tests. Returns true for Claude/Anthropic model names. */
+export function isAnthropicModel(model: string): boolean {
+  const m = model.toLowerCase();
+  return m.startsWith("claude-") || m.includes("anthropic/claude");
+}
+
 function resolveGeminiApiKey(configKey?: string): string | null {
   if (configKey && configKey.trim().length >= 10) {
     if (configKey.startsWith("env:")) {
@@ -32,6 +38,14 @@ export async function chatComplete(opts: {
 }): Promise<string> {
   const { model, content, temperature = 0.2, maxTokens } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
+
+  if (isAnthropicModel(model)) {
+    throw new Error(
+      `Anthropic/Claude model "${model}" cannot be used via the OpenAI SDK. ` +
+        `Set distill.apiKey (Gemini) or embedding.apiKey (OpenAI) as your LLM provider, ` +
+        `or remove claude.* from plugin config to avoid routing LLM calls to Claude.`,
+    );
+  }
 
   // This path runs when the requested model is Gemini (chosen by config / getDefaultCronModel etc.).
   // Retries below are for resilience (429/5xx), not provider preference — we stay model-agnostic.

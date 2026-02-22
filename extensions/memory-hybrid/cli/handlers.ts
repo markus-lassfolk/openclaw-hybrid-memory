@@ -102,7 +102,8 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
 function resolveCronJob(def: Record<string, unknown> & { modelTier?: "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
   const { modelTier, ...rest } = def;
   const tier = modelTier ?? "default";
-  const model = getCronModelAlias(pluginConfig, tier);
+  // Use getDefaultCronModel (returns actual API model names) not getCronModelAlias (returns aliases like "gemini", "sonnet" which are not valid model names).
+  const model = getDefaultCronModel(pluginConfig, tier);
   return { ...rest, model };
 }
 
