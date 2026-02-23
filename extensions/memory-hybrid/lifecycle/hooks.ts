@@ -238,7 +238,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const vectorStepAbort = new AbortController();
           try {
             const vectorStepPromise = (async (): Promise<SearchResult[]> => {
-              let textToEmbed = e.prompt;
+              let textToEmbed = e.prompt!; // Safe: checked above in if (!e.prompt...)
               if (ctx.cfg.search?.hydeEnabled) {
                 try {
                   const cronCfg = getCronModelConfig(ctx.cfg);
@@ -291,6 +291,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
             } finally {
               if (timeoutId !== undefined) clearTimeout(timeoutId);
+              // Prevent unhandled rejection if vectorStepPromise rejects after timeout
+              vectorStepPromise.catch((err) => {
+                if (!vectorStepAbort.signal.aborted) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "vector-step-post-timeout",
+                    subsystem: "auto-recall",
+                  });
+                }
+              });
             }
           } catch (err) {
             const isTimeout = err instanceof Error && err.message.includes("timed out");

@@ -95,8 +95,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Fires when all models in a tier fail due to missing provider API keys, so the AI
   // can relay the issue to the user in its response.
   api.on("before_prompt_build", () => {
+    if (!ctx.pendingLLMWarnings) return;
     const warnings = ctx.pendingLLMWarnings.drain();
-    if (warnings.length === 0) return {};
+    if (warnings.length === 0) return;
 
     // Wrap warnings in a stable, parseable block to prevent prompt pollution
     const wrappedWarnings = [

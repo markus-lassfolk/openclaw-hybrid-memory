@@ -188,7 +188,12 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
       type: b.type,
       // Strip message and data to prevent leaking user content
     })),
-    // NO: user, request, contexts.device, extra
+    // Preserve user.id and user.username for GlitchTip "Users Affected" and grouping
+    user: event.user ? {
+      id: event.user.id ? scrubString(String(event.user.id)) : undefined,
+      username: event.user.username ? scrubString(String(event.user.username)) : undefined,
+    } : undefined,
+    // NO: request, contexts.device, extra
   };
 
   return safe;

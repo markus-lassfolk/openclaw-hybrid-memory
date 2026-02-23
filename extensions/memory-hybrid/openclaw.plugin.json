@@ -549,7 +549,7 @@
           },
           "classifyModel": {
             "type": "string",
-            "description": "Model for classification (default: gpt-4o-mini)"
+            "description": "Model for classification (when unset, resolved dynamically at runtime)"
           }
         }
       },
