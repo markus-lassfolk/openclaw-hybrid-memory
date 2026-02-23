@@ -67,9 +67,9 @@ When you send a message, **before the agent sees it**, the plugin:
 - **Entity lookup** — if your prompt mentions a known entity (e.g. "user"), lookup facts for that entity are merged in.
 - **Summary injection** — long facts are injected as short summaries to save tokens.
 - **Graph traversal** — if graph memory is enabled, related facts are discovered via typed links (zero LLM cost).
-- **HyDE (Hypothetical Document Embeddings)** — when `search.hydeEnabled` is true, the plugin asks the LLM for a short “hypothetical answer” to your message, then embeds that instead of the raw message. The hypothetical text often sits closer in embedding space to stored facts, so vector search can return better matches. Adds one LLM call per turn and a bit of latency; see [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md#hyde-hypothetical-document-embeddings).
+- **HyDE (Hypothetical Document Embeddings)** — when `search.hydeEnabled` is true, the plugin asks the LLM for a short “hypothetical answer” to your message, then embeds that instead of the raw message. The hypothetical text often sits closer in embedding space to stored facts, so vector search can return better matches. Uses the **nano tier** model (e.g. `gemini-2.5-flash-lite` or `gpt-4.1-nano`) 2014 very cheap; see [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md#hyde-hypothetical-document-embeddings).
 
-**Cost per turn:** One embedding API call (~$0.00002 for `text-embedding-3-small`). No LLM calls on the hot path unless HyDE is enabled.
+**Cost per turn:** One embedding API call (~$0.00002 for `text-embedding-3-small`). One nano-tier LLM call if HyDE is enabled (~$0.0001 for `gemini-2.5-flash-lite` / `gpt-4.1-nano`).
 
 ---
 
@@ -123,7 +123,7 @@ These run inside the gateway process — no cron needed:
 | Job | Interval | What it does |
 |-----|----------|-------------|
 | **Prune** | Every 60 minutes | Hard-deletes expired facts; soft-decays confidence for aging facts |
-| **Auto-classify** | Every 24 hours (+ 5 min after startup) | Reclassifies "other" facts into proper categories via LLM |
+| **Auto-classify** | Every 24 hours (+ 5 min after startup) | Reclassifies "other" facts into proper categories via nano-tier LLM |
 | **Proposal prune** | Every 60 minutes | Removes expired persona proposals (if enabled) |
 | **WAL recovery** | On startup | Replays any uncommitted operations from the write-ahead log |
 
@@ -202,16 +202,19 @@ Background (automatic):
 
 ## Cost summary
 
-| Operation | Cost | When |
-|-----------|------|------|
-| Auto-recall (per turn) | ~$0.00002 | Every turn |
-| Auto-capture (per captured fact) | ~$0.00002 | When a fact is captured |
-| Auto-classify batch (20 facts) | ~$0.001 | Once per 24h |
-| Consolidation (per cluster) | ~$0.002 | On-demand (CLI) |
-| Reflection (per run) | ~$0.003 | On-demand (CLI) |
-| SQLite operations | Free | Always |
+| Operation | Cost | When | Model tier |
+|-----------|------|------|----------|
+| Auto-recall (per turn) | ~$0.00002 | Every turn | embedding only |
+| HyDE (per turn, if enabled) | ~$0.0001 | Every turn | **nano** |
+| Auto-capture (per captured fact) | ~$0.00002 | When a fact is captured | embedding only |
+| ClassifyBeforeWrite (per write, if enabled) | ~$0.0001 | On every memory write | **nano** |
+| Auto-classify batch (20 facts) | ~$0.0002–0.001 | Once per 24h | **nano** |
+| Reflection (per run) | ~$0.002 | On-demand (CLI) | default |
+| Consolidation (per cluster) | ~$0.002 | On-demand (CLI) | default |
+| Session distillation (per session) | ~$0.01–0.05 | On-demand / nightly cron | **heavy** |
+| SQLite operations | Free | Always | — |
 
-At typical usage (~50 turns/day), expect **~$0.003/day** for embeddings. Auto-classify adds ~$0.001/day when enabled. Total: roughly **$0.10–0.15/month**.
+With the nano tier (`gemini-2.5-flash-lite` or `gpt-4.1-nano`), per-message LLM costs drop 5–10× vs mid-tier models. At typical usage (~50 turns/day with HyDE and auto-classify): roughly **$0.10–0.20/month** total.
 
 ---
 

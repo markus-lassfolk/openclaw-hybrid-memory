@@ -121,37 +121,41 @@ Log location depends on your OpenClaw setup (often under `~/.openclaw/` or where
 
 ### 6. Provider cooldown / "All models failed"
 
-If scheduled jobs or verify show **"Provider X is in cooldown"** or **"All models failed"**, the gateway may be rate-limiting or temporarily refusing that provider. Chat and tool calls that use the same provider will then fail or time out, so the agent appears not to respond.
+If scheduled jobs or verify show **"Provider X is in cooldown"** or **"All models failed"**, one of the providers the plugin is configured to use is rate-limiting or returning errors. The plugin tries all models in the tier list in order — if all fail, the job errors.
 
 - Run `openclaw hybrid-mem verify` and check the "Scheduled jobs" section for recent errors.
-- In OpenClaw/gateway config, add a fallback model from another provider (e.g. OpenAI or OpenRouter) so the gateway can retry on cooldown.
-- Wait for the cooldown to clear, or temporarily use a different default model in your agent config.
+- Run `openclaw hybrid-mem verify --test-llm` to see which specific models are reachable.
+- Add models from a second or third provider to `llm.nano`, `llm.default`, and `llm.heavy` so the plugin can fall back when one provider is in cooldown.
+- Wait for the cooldown to clear (usually a few minutes for rate limits).
 
-**Plugin `llm` and HyDE:** The plugin uses `llm.default` (and optional `llm.fallbackModel`) for HyDE and other LLM calls. Put a stable provider first so when one is in cooldown, the next is tried:
-  - In plugin config set `llm.default` to an array with your preferred model first, e.g. `["google/gemini-2.5-flash", "anthropic/claude-opus-4-6"]`, and `llm.fallbackToDefault: true` (and optionally `llm.fallbackModel`) so the gateway can fall back.
-  - Or set `search.hydeModel` to a single model that is rarely rate-limited (e.g. `google/gemini-2.5-flash`), so HyDE does not depend on the default chain.
-  - To stop HyDE from using the failing provider at all, set `search.hydeEnabled: false` (recall still works with the raw prompt).
+**Per-tier model config:** The plugin makes direct API calls to provider endpoints and tries each model in the list in order. To configure fallback across providers:
+```json
+"llm": {
+  "nano":    ["google/gemini-2.5-flash-lite", "openai/gpt-4.1-nano", "anthropic/claude-haiku-4-5"],
+  "default": ["google/gemini-2.5-flash",      "anthropic/claude-sonnet-4-6", "openai/gpt-4.1"],
+  "heavy":   ["google/gemini-3.1-pro-preview", "anthropic/claude-opus-4-6",  "openai/o3"]
+}
+```
+Or set `search.hydeModel` to a single fast model (e.g. `google/gemini-2.5-flash-lite`) so HyDE does not depend on the full fallback chain. Set `search.hydeEnabled: false` to disable HyDE entirely.
 
 ### 7. "HyDE generation failed, using raw prompt" (500, timeout, or "Request was aborted")
 
-This usually means the LLM used for HyDE (query expansion) is failing—e.g. provider in cooldown, gateway 500, or the request timing out (you may see **"Request was aborted"** or **"Gateway/LLM timeout after 25000ms"**). The plugin falls back to the raw user prompt for vector search, so recall still works.
+This means the nano-tier LLM used for HyDE (query expansion) is failing — e.g. provider API error, missing API key, or timeout. The plugin falls back to the raw user prompt, so recall still works.
 
-- **Fix:** Use the same options as in [Provider cooldown](#6-provider-cooldown--all-models-failed): set `llm.default` so a working model (e.g. Gemini) is first, or set `search.hydeModel` to a specific model (e.g. `google/gemini-2.5-flash`), or set `search.hydeEnabled: false` to skip HyDE.
-- The plugin tries all models in `llm.default` (with retries) for HyDE before falling back to the raw prompt.
-- **Log noise:** Retries no longer log per-attempt warnings; you see at most one "HyDE generation failed" per turn. If the auto-recall vector step times out (30s), HyDE is aborted and you won’t get a separate "HyDE generation failed" for that turn (only "vector step timed out, using FTS-only recall").
-- **Check which models work:** Run `openclaw hybrid-mem verify --test-llm` (gateway must be running). Each configured default/heavy model is tested with a minimal completion; failures show the error (e.g. disallowed, timeout, 401).
+- **Fix:** Check which model is being used: `openclaw hybrid-mem verify` shows `search.hydeModel`. Run `openclaw hybrid-mem verify --test-llm` to confirm it is reachable.
+- Add fallback models to `llm.nano` or explicitly set `search.hydeModel` to a reliable model.
+- Set `search.hydeEnabled: false` to disable HyDE if you want zero per-turn LLM calls.
+- **Log noise:** You see at most one "HyDE generation failed" per turn. If the auto-recall vector step times out (30s), HyDE is aborted silently (only "vector step timed out, using FTS-only recall" appears).
 
-### 8. "400 invalid model ID" when using HyDE or verify --test-llm
+### 8. "400/404 model not found" from verify --test-llm
 
-The OpenClaw gateway only accepts **model IDs that are in its catalog or allowlist**. If you see **400 invalid model ID** (or "model not allowed"), the IDs in your plugin config (e.g. `llm.default`, `llm.heavy`, `search.hydeModel`) are not recognized by the gateway.
+The plugin calls provider APIs **directly** — no gateway allowlist is involved. If you see 400 or 404 errors:
 
-- **Fix:** Use the **exact model IDs** your gateway accepts:
-  1. Run **`openclaw models list`** (or **`openclaw models list --all`**) to see available models and their IDs (format is `provider/model`, e.g. `google/gemini-2.0-flash`, `anthropic/claude-sonnet-4-20250514`).
-  2. Set **`llm.default`** and **`llm.heavy`** in the plugin config to arrays of those IDs (e.g. `["google/gemini-2.0-flash", "anthropic/claude-sonnet-4-20250514"]`).
-  3. If your OpenClaw config has **`agents.defaults.models`** (allowlist), add the models you want the plugin to use to that allowlist so the gateway allows them for chat/completion.
-- See OpenClaw docs: [Model providers](https://docs.openclaw.ai/concepts/model-providers), [Models](https://docs.openclaw.ai/concepts/models).
-- **If 400 persists** even though `openclaw models list` shows the same IDs: the gateway’s chat-completions endpoint may validate models differently. Ensure the gateway is up to date and that `agents.defaults.models` (allowlist) includes every model you use in the plugin. - **Model ID format:** Use the same IDs as in `openclaw models list` (e.g. `google/gemini-2.5-flash`). The plugin passes the full `provider/model` id to the gateway.
-
+- **404 "model does not exist"** — the model ID is wrong or your API key does not have access to that model. Run `openclaw models list --all --provider <name>` to see available model IDs for your account.
+- **400 "invalid model ID"** — use `provider/model` format: `google/gemini-2.5-flash`, `openai/gpt-4.1-nano`, `anthropic/claude-haiku-4-5`.
+- **400 "unsupported parameter: temperature"** — OpenAI reasoning model (`o1`, `o3`, `o4-*`). The plugin automatically strips `temperature` for these; ensure you are running the latest plugin version.
+- **401 / authentication error** — check that `llm.providers.<provider>.apiKey` is set correctly in plugin config.
+- **No key configured** — verify shows `⚠️ skipped` for that model. Add the key to `llm.providers.<provider>.apiKey`.
 ---
 
 ## Temporarily disabling hybrid-memory for testing

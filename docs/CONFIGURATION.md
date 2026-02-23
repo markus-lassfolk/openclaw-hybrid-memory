@@ -66,9 +66,9 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 | Key | Default | Description |
 |-----|--------|-------------|
 | `store.classifyBeforeWrite` | `false` | When `true`, classify each new fact against similar existing facts (by embedding + entity/key) as ADD, UPDATE, DELETE, or NOOP before storing. Reduces duplicates and stale contradictions. Applies to auto-capture, `memory_store` tool, CLI `hybrid-mem store`, and `extract-daily`. |
-| `store.classifyModel` | `gpt-4o-mini` | Chat model used for the classification call (low cost). |
+| `store.classifyModel` | `llm.nano[0]` (e.g. `openai/gpt-4.1-nano`) | Chat model used for the classification call (low cost). |
 
-Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classifyModel": "gpt-4o-mini" }`
+Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classifyModel": "openai/gpt-4.1-nano" }`
 
 ### Auto-recall options
 
@@ -94,7 +94,7 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
     "summaryMaxChars": 80,
     "useSummaryInInjection": true,
     "summarizeWhenOverBudget": false,
-    "summarizeModel": "gpt-4o-mini",
+    "summarizeModel": "openai/gpt-4.1-nano",
     "progressiveMaxCandidates": 15,
     "progressiveIndexMaxTokens": 300,
     "progressiveGroupByCategory": false,
@@ -117,7 +117,7 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `summaryMaxChars` | `80` | Max chars for the summary |
 | `useSummaryInInjection` | `true` | Use summary in injection to save tokens |
 | `summarizeWhenOverBudget` | `false` | When token cap forces dropping memories, LLM-summarize all into 2-3 sentences |
-| `summarizeModel` | `gpt-4o-mini` | Model for summarize-when-over-budget |
+| `summarizeModel` | `llm.nano[0]` (e.g. `openai/gpt-4.1-nano`) | Model for summarize-when-over-budget |
 | `progressiveMaxCandidates` | `15` | Max memories in progressive index; used when `injectionFormat` is `progressive` or `progressive_hybrid` |
 | `progressiveIndexMaxTokens` | `300` when progressive | Token cap for the index block in progressive mode |
 | `progressiveGroupByCategory` | `false` | Group index lines by category for readability |
@@ -304,7 +304,7 @@ See [FEATURES.md](FEATURES.md) for how auto-classify works. Configuration:
         "config": {
           "autoClassify": {
             "enabled": true,
-            "model": "gpt-4o-mini",
+            "model": "openai/gpt-4.1-nano",
             "batchSize": 20
           }
         }
@@ -317,7 +317,7 @@ See [FEATURES.md](FEATURES.md) for how auto-classify works. Configuration:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `false` | Enable background auto-classify on startup + every 24h |
-| `model` | `"gpt-4o-mini"` | Any chat model your API key supports |
+| `model` | `"openai/gpt-4.1-nano"` | Any chat model your API key supports |
 | `batchSize` | `20` | Facts per LLM call |
 
 ---
@@ -334,7 +334,7 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
         "config": {
           "reflection": {
             "enabled": false,
-            "model": "gpt-4o-mini",
+            "model": "openai/gpt-4.1-nano",
             "defaultWindow": 14,
             "minObservations": 2
           }
@@ -348,17 +348,25 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `false` | Enable reflection layer (CLI and memory_reflect tool) |
-| `model` | `"gpt-4o-mini"` | LLM for reflection analysis |
+| `model` | `"openai/gpt-4.1-nano"` | LLM for reflection analysis |
 | `defaultWindow` | `14` | Time window in days for fact gathering |
 | `minObservations` | `2` | Minimum observations to support a pattern |
 
 ---
 
-## LLM routing and model preference
+## LLM model tiers and provider config
 
-All chat/completion calls (distillation, reflection, classify, consolidate, proposals, self-correction, ingest, HyDE, build-languages) go through the **OpenClaw gateway** (OpenAI-compatible API). You can use any provider the gateway supports. Optional **`llm`** config defines ordered model lists per tier and fallback behaviour.
+The plugin makes **direct API calls** to provider endpoints — it does not route through the OpenClaw gateway agent pipeline. Use the **`llm`** block to configure ordered model lists per tier and per-provider API keys.
 
-**Recommended:** set `llm` so the plugin tries your preferred models in order and falls back if one fails (e.g. no key, rate limit, outage). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for prerequisites and how each feature uses LLMs.
+See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provider-specific details (Anthropic headers, o-series quirks), and the recommended model matrix.
+
+**Three tiers:**
+
+| Tier | Used for | Recommended models |
+|------|----------|--------------------|
+| `nano` | autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize (runs every message) | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
+| `default` | reflection, language keywords, general analysis | `gemini-2.5-flash`, `claude-sonnet-4-6`, `gpt-4.1` |
+| `heavy` | distillation, self-correction, persona proposals | `gemini-3.1-pro-preview`, `claude-opus-4-6`, `o3` |
 
 ```json
 {
@@ -367,10 +375,12 @@ All chat/completion calls (distillation, reflection, classify, consolidate, prop
       "openclaw-hybrid-memory": {
         "config": {
           "llm": {
-            "default": ["gemini-2.0-flash", "claude-sonnet-4", "gpt-4o-mini"],
-            "heavy": ["gemini-2.0-flash-thinking", "claude-opus-4", "gpt-4o"],
-            "fallbackToDefault": true,
-            "fallbackModel": "gpt-4o-mini"
+            "nano":    ["google/gemini-2.5-flash-lite",    "openai/gpt-4.1-nano",         "anthropic/claude-haiku-4-5"],
+            "default": ["google/gemini-2.5-flash",          "anthropic/claude-sonnet-4-6", "openai/gpt-4.1"],
+            "heavy":   ["google/gemini-3.1-pro-preview",    "anthropic/claude-opus-4-6",   "openai/o3"],
+            "providers": {
+              "anthropic": { "apiKey": "sk-ant-..." }
+            }
           }
         }
       }
@@ -381,40 +391,34 @@ All chat/completion calls (distillation, reflection, classify, consolidate, prop
 
 | Key | Description |
 |-----|-------------|
-| `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages). First working model wins. Use **exact IDs** your gateway accepts (run `openclaw models list` or `openclaw models list --all`). |
-| `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). Same ID rules as `default`. |
+| `nano` | Ordered list for ultra-cheap nano-tier ops. Falls back to `default[0]` when unset. |
+| `default` | Ordered list for default-tier features (reflection, classify, ingest, HyDE, build-languages). First working model wins. |
+| `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
+| `providers` | Per-provider API keys and optional `baseURL`. Built-in: `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key). Any other OpenAI-compatible provider can be added here. |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
-| `fallbackModel` | Optional. When `fallbackToDefault` is true and this key is set, use this model as the last try (only added if not already in the `default`/`heavy` list); if omitted, no extra fallback beyond the tier list is applied. |
+| `fallbackModel` | Optional last-resort model when `fallbackToDefault` is true. |
 
-When `llm` is set, maintenance jobs and CLI commands use these lists. When `llm` is **not** set, the plugin uses **legacy** provider-based selection (see below).
+**Zero config:** When `llm` is not set, the plugin automatically derives tiers from `agents.defaults.model` (the list shown by `openclaw models list`). The verify output shows `(auto from agents.defaults.model)` when this is active.
+
+Run **`openclaw hybrid-mem verify`** to see effective models per tier and feature. Run **`openclaw hybrid-mem verify --test-llm`** to confirm each configured model is reachable.
 
 ---
 
 ## Session distillation (legacy: `distill`)
 
-Session distillation uses an LLM to extract durable facts from conversation logs. Prefer configuring models via **`llm`** (above); the **`distill`** block is optional and deprecated in favour of gateway + `llm`.
+Session distillation uses an LLM to extract durable facts from conversation logs. Prefer configuring models via **`llm.heavy`** (above); the **`distill`** block is legacy.
 
 ```json
-{
-  "plugins": {
-    "entries": {
-      "openclaw-hybrid-memory": {
-        "config": {
-          "distill": {
-            "apiKey": "YOUR_GOOGLE_API_KEY",
-            "defaultModel": "gemini-2.0-flash"
-          }
-        }
-      }
-    }
-  }
+"distill": {
+  "apiKey": "AIzaSy...",
+  "defaultModel": "google/gemini-3.1-pro-preview"
 }
 ```
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `apiKey` | (none) | Legacy: raw Google API key or `env:VAR_NAME`. When using OpenClaw gateway routing, the plugin does not need a Google/Gemini API key here; the gateway handles provider keys. Prefer gateway + `llm.heavy`. |
-| `defaultModel` | — | Model used when `openclaw hybrid-mem distill` is run without `--model` and `llm` is not set. |
+| `apiKey` | (none) | Legacy Google API key. Still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set. |
+| `defaultModel` | — | Model used when `openclaw hybrid-mem distill --model` is not specified and `llm` is not set. |
 
 **Batch size:** Long-context models (model name containing `gemini`) use larger batches (500k tokens); others default to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.
 
@@ -422,17 +426,15 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 ## Default model selection (when `llm` is not set)
 
-When **`llm`** is **not** configured, the plugin builds an **ordered list** from providers that have API keys, in preferred order: **Gemini → OpenAI → Claude**. The first working model wins; if one fails (e.g. rate limit, disallowed by gateway), the next in the list is tried.
+When **`llm`** is **not** configured *and* `agents.defaults.model` is also empty, the plugin falls back to legacy key-based detection:
 
 | Order | Provider | Condition | Default-tier model | Heavy-tier model |
 |-------|----------|-----------|---------------------|------------------|
-| 1 | **Gemini** | `distill.apiKey` set | `distill.defaultModel` or `gemini-2.0-flash` | same or `gemini-2.0-flash-thinking-exp-01-21` |
-| 2 | **OpenAI** | `embedding.apiKey` set | `gpt-4o-mini` | `gpt-4o` |
-| 3 | **Claude** | `claude.apiKey` set | `claude.defaultModel` or Claude Sonnet | Claude Opus |
+| 1 | **Gemini** | `distill.apiKey` set | `distill.defaultModel` or `google/gemini-2.5-flash` | `google/gemini-3.1-pro-preview` |
+| 2 | **OpenAI** | `embedding.apiKey` set | `openai/gpt-5.2` | `openai/gpt-5.2` |
+| 3 | **Claude** | `claude.apiKey` set | `claude.defaultModel` or `anthropic/claude-sonnet-4-6` | `anthropic/claude-opus-4-6` |
 
-Optional **`distill.fallbackModels`** (deprecated) and **`llm.fallbackModel`** (when set) are appended to this list so they are tried after the provider order. Run **`openclaw hybrid-mem verify`** to see the effective order for default and heavy tier and which providers have keys. Use **`openclaw hybrid-mem verify --test-llm`** to run a minimal completion against each configured model and report success or failure (requires the gateway to be running). If a model fails or is disallowed by the gateway, allow it in your OpenClaw gateway config or remove it from the list (by setting **`llm.default`** / **`llm.heavy`** explicitly).
-
-When you run **`openclaw hybrid-mem verify --fix`**, the plugin writes each optional job with a concrete `model` value resolved from this logic (existing jobs are not overwritten). **Self-correction:** Leave `selfCorrection.spawnModel` empty to use the same default; set it to a model string to override.
+In practice, the auto-derive from `agents.defaults.model` almost always applies first. **Self-correction:** Leave `selfCorrection.spawnModel` empty to use the heavy-tier default; set it to a specific model to override.
 
 ---
 
@@ -510,7 +512,7 @@ Opt-in HyDE generates a hypothetical answer before embedding for vector search. 
         "config": {
           "search": {
             "hydeEnabled": false,
-            "hydeModel": "gpt-4o-mini"
+            "hydeModel": "google/gemini-2.5-flash-lite"
           }
         }
       }
