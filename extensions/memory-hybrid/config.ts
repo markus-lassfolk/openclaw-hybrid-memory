@@ -21,7 +21,7 @@ export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
 
 export type AutoClassifyConfig = {
   enabled: boolean;
-  model: string;       // e.g. "gpt-4.1-nano", "gpt-4o-mini", or any chat model
+  model?: string;      // when unset, runtime uses getDefaultCronModel(cfg, "default")
   batchSize: number;   // facts per LLM call (default 20)
   /** When true, LLM can suggest new categories from "other" facts; labels with at least minFactsForNewCategory become real categories (default true) */
   suggestCategories?: boolean;
@@ -81,7 +81,7 @@ export type AutoRecallConfig = {
   summaryMaxChars: number;       // summary length when generated (default 80)
   useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
   summarizeWhenOverBudget: boolean;  // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
-  summarizeModel: string;        // model for summarize-when-over-budget (default gpt-4o-mini)
+  summarizeModel?: string;       // when unset, runtime uses getDefaultCronModel(cfg, "default")
   /** Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
   progressiveMaxCandidates?: number;
   /** Max tokens for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid). */
@@ -101,8 +101,8 @@ export type StoreConfig = {
   fuzzyDedupe: boolean;
   /** Classify incoming fact against existing similar facts (ADD/UPDATE/DELETE/NOOP) before storing (default: false) */
   classifyBeforeWrite?: boolean;
-  /** Model for classification (default: gpt-4o-mini; always set by config parse) */
-  classifyModel: string;
+  /** Model for classification; when unset, runtime uses getDefaultCronModel(cfg, "default") */
+  classifyModel?: string;
 };
 
 /** Write-Ahead Log (WAL) configuration for crash resilience */
@@ -151,8 +151,8 @@ export type GraphConfig = {
 /** Reflection / pattern synthesis from session history */
 export type ReflectionConfig = {
   enabled: boolean;
-  model: string;             // LLM for reflection (default: gpt-4o-mini)
-  defaultWindow: number;     // Time window in days (default: 14)
+  model?: string;            // when unset, runtime uses getDefaultCronModel(cfg, "default")
+  defaultWindow: number;      // Time window in days (default: 14)
   minObservations: number;   // Min observations to support a pattern (default: 2)
 };
 
@@ -405,7 +405,7 @@ function getDefaultCronModelLegacy(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
-  if (!pluginConfig) return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  if (!pluginConfig) return tier === "heavy" ? "sonnet" : "flash";
   if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
     const defaultModel = pluginConfig.distill.defaultModel?.trim();
     if (defaultModel) return defaultModel;
@@ -417,9 +417,9 @@ function getDefaultCronModelLegacy(
     return tier === "heavy" ? "claude-opus-4-20250514" : "claude-sonnet-4-20250514";
   }
   if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
-    return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+    return tier === "heavy" ? "sonnet" : "flash";
   }
-  return tier === "heavy" ? "gpt-4o" : "gpt-4o-mini";
+  return tier === "heavy" ? "sonnet" : "flash";
 }
 
 /**
@@ -452,12 +452,16 @@ export function getLLMModelPreference(
  * When llm.default/heavy are set, returns the first model in the preference list (gateway-routed).
  * Otherwise legacy: prefer provider the user has configured (Gemini > Claude > OpenAI) > fallback.
  */
+/** Gateway-safe last-resort model names when no llm.default/heavy or provider prefs are set */
+const DEFAULT_CRON_MODEL_FALLBACK = "flash";
+const HEAVY_CRON_MODEL_FALLBACK = "sonnet";
+
 export function getDefaultCronModel(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
   const preferred = getLLMModelPreference(pluginConfig, tier);
-  return preferred[0] ?? (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
+  return preferred[0] ?? (tier === "heavy" ? HEAVY_CRON_MODEL_FALLBACK : DEFAULT_CRON_MODEL_FALLBACK);
 }
 
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
@@ -481,7 +485,7 @@ export function resolveReflectionModelAndFallbacks(
 ): { defaultModel: string; fallbackModels: string[] | undefined } {
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, tier);
-  const defaultModel = pref[0] ?? (tier === "heavy" ? "gpt-4o" : "gpt-4o-mini");
+  const defaultModel = pref[0] ?? (tier === "heavy" ? HEAVY_CRON_MODEL_FALLBACK : DEFAULT_CRON_MODEL_FALLBACK);
   const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   return { defaultModel, fallbackModels };
 }
@@ -725,13 +729,11 @@ export const hybridConfigSchema = {
       setMemoryCategories(customCategories);
     }
 
-    // Parse autoClassify config
-    // Model default: cheapest available chat model. Use "gpt-4o-mini" as a
-    // safe default; users can override with any model their API key supports.
+    // Parse autoClassify config (model left undefined when not set — runtime uses getDefaultCronModel)
     const acCfg = cfg.autoClassify as Record<string, unknown> | undefined;
     const autoClassify: AutoClassifyConfig = {
       enabled: acCfg?.enabled === true,
-      model: typeof acCfg?.model === "string" ? acCfg.model : "gpt-4o-mini",
+      model: typeof acCfg?.model === "string" ? acCfg.model : undefined,
       batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
       suggestCategories: acCfg?.suggestCategories !== false,
       minFactsForNewCategory: typeof acCfg?.minFactsForNewCategory === "number" ? acCfg.minFactsForNewCategory : 10,
@@ -767,7 +769,7 @@ export const hybridConfigSchema = {
         typeof ar.summaryMaxChars === "number" && ar.summaryMaxChars > 0 ? Math.min(ar.summaryMaxChars, 500) : 80;
       const useSummaryInInjection = ar.useSummaryInInjection !== false;
       const summarizeWhenOverBudget = ar.summarizeWhenOverBudget === true;
-      const summarizeModel = typeof ar.summarizeModel === "string" ? ar.summarizeModel : "gpt-4o-mini";
+      const summarizeModel = typeof ar.summarizeModel === "string" ? ar.summarizeModel : undefined;
       const progressiveMaxCandidates =
         typeof ar.progressiveMaxCandidates === "number" && ar.progressiveMaxCandidates > 0
           ? Math.floor(ar.progressiveMaxCandidates)
@@ -843,7 +845,7 @@ export const hybridConfigSchema = {
         summaryMaxChars: 80,
         useSummaryInInjection: true,
         summarizeWhenOverBudget: false,
-        summarizeModel: "gpt-4o-mini",
+        summarizeModel: undefined,
         progressiveMaxCandidates: 15,
         progressiveIndexMaxTokens: undefined,
         progressiveGroupByCategory: false,
@@ -866,7 +868,7 @@ export const hybridConfigSchema = {
     const store: StoreConfig = {
       fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
       classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
-      classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : "gpt-4o-mini",
+      classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : undefined,
     };
 
     // Parse WAL config (enabled by default for crash resilience)
@@ -997,7 +999,7 @@ export const hybridConfigSchema = {
     const reflectionRaw = cfg.reflection as Record<string, unknown> | undefined;
     const reflection: ReflectionConfig = {
       enabled: reflectionRaw?.enabled === true,
-      model: typeof reflectionRaw?.model === "string" ? reflectionRaw.model : "gpt-4o-mini",
+      model: typeof reflectionRaw?.model === "string" ? reflectionRaw.model : undefined,
       defaultWindow: typeof reflectionRaw?.defaultWindow === "number" && reflectionRaw.defaultWindow > 0
         ? Math.min(90, Math.floor(reflectionRaw.defaultWindow))
         : 14,
