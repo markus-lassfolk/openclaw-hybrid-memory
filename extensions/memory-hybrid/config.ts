@@ -456,16 +456,12 @@ export function getLLMModelPreference(
  * When llm.default/heavy are set, returns the first model in the preference list (gateway-routed).
  * Otherwise legacy: prefer provider the user has configured (Gemini > Claude > OpenAI) > fallback.
  */
-/** Last-resort model names when llm list is empty; use valid OpenAI IDs so direct OpenAI client works when gateway is not running. */
-const DEFAULT_CRON_MODEL_FALLBACK = OPENAI_DEFAULT_CRON_MODEL;
-const HEAVY_CRON_MODEL_FALLBACK = OPENAI_HEAVY_CRON_MODEL;
-
 export function getDefaultCronModel(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
   const preferred = getLLMModelPreference(pluginConfig, tier);
-  return preferred[0] ?? (tier === "heavy" ? HEAVY_CRON_MODEL_FALLBACK : DEFAULT_CRON_MODEL_FALLBACK);
+  return preferred[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
 }
 
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
@@ -489,7 +485,7 @@ export function resolveReflectionModelAndFallbacks(
 ): { defaultModel: string; fallbackModels: string[] | undefined } {
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, tier);
-  const defaultModel = pref[0]; // getLLMModelPreference always returns at least one element
+  const defaultModel = pref[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
   const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   return { defaultModel, fallbackModels };
 }
