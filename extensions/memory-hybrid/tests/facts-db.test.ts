@@ -1535,3 +1535,133 @@ describe("FactsDB.findByIdPrefix", () => {
     expect(db.findByIdPrefix("0000")).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// New stats methods (Issue #96 fixes)
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.statsReflection", () => {
+  it("counts reflection-sourced patterns and rules correctly", () => {
+    // Add some reflection-sourced facts
+    db.store({
+      text: "Pattern from reflection analysis",
+      category: "pattern",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+    });
+    db.store({
+      text: "Another reflection pattern",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+    });
+    db.store({
+      text: "Rule from reflection",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+    });
+
+    // Add some non-reflection facts to ensure they're not counted
+    db.store({
+      text: "Pattern from conversation",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const stats = db.statsReflection();
+    expect(stats.reflectionPatternsCount).toBe(2);
+    expect(stats.reflectionRulesCount).toBe(1);
+  });
+
+  it("returns 0 when no reflection data exists", () => {
+    // Add some non-reflection data
+    db.store({
+      text: "Regular fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const stats = db.statsReflection();
+    expect(stats.reflectionPatternsCount).toBe(0);
+    expect(stats.reflectionRulesCount).toBe(0);
+  });
+});
+
+describe("FactsDB.selfCorrectionIncidentsCount", () => {
+  it("counts self-correction incidents correctly", () => {
+    // Add some self-correction facts
+    db.store({
+      text: "Self-correction incident detected",
+      category: "incident",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "self-correction",
+    });
+    db.store({
+      text: "Another self-correction",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "self-correction",
+    });
+
+    // Add some non-self-correction facts
+    db.store({
+      text: "Regular fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const count = db.selfCorrectionIncidentsCount();
+    expect(count).toBe(2);
+  });
+
+  it("returns 0 when no self-correction data exists", () => {
+    db.store({
+      text: "Regular fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const count = db.selfCorrectionIncidentsCount();
+    expect(count).toBe(0);
+  });
+});
+
+describe("FactsDB.languageKeywordsCount", () => {
+  it("returns 0 when language keywords file doesn't exist", () => {
+    // No language keywords file should exist in test environment
+    const count = db.languageKeywordsCount();
+    expect(count).toBe(0);
+  });
+});

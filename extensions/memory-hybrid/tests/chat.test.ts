@@ -9,10 +9,10 @@ import {
 } from "../services/chat.js";
 
 describe("distillBatchTokenLimit", () => {
-  it("returns 500_000 for Gemini models", () => {
-    expect(distillBatchTokenLimit("gemini-2.0-flash")).toBe(500_000);
-    expect(distillBatchTokenLimit("gemini-1.5-pro")).toBe(500_000);
-    expect(distillBatchTokenLimit("models/gemini-2.0-flash")).toBe(500_000);
+  it("returns 400_000 for Gemini models (conservative limit for fallback models)", () => {
+    expect(distillBatchTokenLimit("gemini-2.0-flash")).toBe(400_000);
+    expect(distillBatchTokenLimit("gemini-1.5-pro")).toBe(400_000);
+    expect(distillBatchTokenLimit("models/gemini-2.0-flash")).toBe(400_000);
   });
 
   it("returns 80_000 for non-Gemini models", () => {

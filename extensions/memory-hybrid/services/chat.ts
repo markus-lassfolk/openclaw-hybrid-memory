@@ -122,7 +122,9 @@ export async function chatComplete(opts: {
 }
 
 export function distillBatchTokenLimit(model: string): number {
-  return isLongContextModel(model) ? 500_000 : 80_000;
+  // Use conservative limits that work across all common fallback models
+  // o3 has 450k TPM limit, so we use 400k to be safe
+  return isLongContextModel(model) ? 400_000 : 80_000;
 }
 
 /** Max output tokens for distill/ingest LLM calls. Long-context models (e.g. gateway-routed Gemini) support 65k+; else 8k. */

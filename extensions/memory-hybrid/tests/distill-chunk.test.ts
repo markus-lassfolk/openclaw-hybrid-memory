@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { chunkSessionText, chunkTextByChars } from "../utils/text.js";
+import { distillBatchTokenLimit } from "../services/chat.js";
 
 describe("chunkSessionText", () => {
   it("returns single-element array when text fits in maxTokens", () => {
@@ -87,5 +88,28 @@ describe("chunkTextByChars", () => {
     const chunks = chunkTextByChars(text, 4, 2);
     expect(chunks[0][0]).toBe("a");
     expect(chunks[chunks.length - 1].slice(-1)).toBe("h");
+  });
+});
+
+// Test for Issue #97 fixes: conservative token limits to handle fallback models
+describe("distillBatchTokenLimit", () => {
+  it("uses conservative 400k limit for long-context models (down from 500k)", () => {
+    // Gemini should be treated as long-context
+    const geminiLimit = distillBatchTokenLimit("gemini-3-pro-preview");
+    expect(geminiLimit).toBe(400_000);
+
+    const geminiLimit2 = distillBatchTokenLimit("google/gemini-3.1-pro-preview");
+    expect(geminiLimit2).toBe(400_000);
+  });
+
+  it("uses 80k limit for non-long-context models", () => {
+    const claudeLimit = distillBatchTokenLimit("anthropic/claude-opus-4-6");
+    expect(claudeLimit).toBe(80_000);
+
+    const openaiLimit = distillBatchTokenLimit("openai/o3");
+    expect(openaiLimit).toBe(80_000);
+
+    const gptLimit = distillBatchTokenLimit("gpt-4o-mini");
+    expect(gptLimit).toBe(80_000);
   });
 });

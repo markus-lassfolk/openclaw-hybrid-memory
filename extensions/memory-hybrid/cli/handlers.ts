@@ -2277,13 +2277,29 @@ export async function runDistillForCli(
     try {
       const text = extractTextFromSessionJsonl(fp);
       if (!text.trim()) continue;
+      const textTokens = Math.ceil(text.length / 4);
       const chunks = chunkSessionText(text, maxSessionTokens);
-      for (let c = 0; c < chunks.length; c++) {
+      if (chunks.length > 1) {
+        sink.log(`memory-hybrid: distill: session too large (${textTokens} tokens), splitting into ${chunks.length} chunks`);
+      }
+
+      // Safety check: ensure chunks don't exceed conservative TPM limits
+      const safeLimit = 350_000; // Conservative limit for all models including o3 (450k TPM)
+      const validChunks = chunks.filter((chunk, idx) => {
+        const chunkTokens = Math.ceil(chunk.length / 4);
+        if (chunkTokens > safeLimit) {
+          sink.warn(`memory-hybrid: distill: chunk ${idx + 1} too large (${chunkTokens} tokens), skipping`);
+          return false;
+        }
+        return true;
+      });
+
+      for (let c = 0; c < validChunks.length; c++) {
         const header =
-          chunks.length === 1
+          validChunks.length === 1
             ? `\n--- SESSION: ${basename(fp)} ---\n\n`
-            : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${chunks.length}) ---\n\n`;
-        const block = header + chunks[c];
+            : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${validChunks.length}) ---\n\n`;
+        const block = header + validChunks[c];
         const blockTokens = Math.ceil(block.length / 4);
         if (currentBatch.length > 0 && (estimateTokens(currentBatch) + blockTokens > batchTokenLimit)) {
           batches.push(currentBatch);

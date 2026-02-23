@@ -3,7 +3,7 @@
  */
 
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -15,6 +15,7 @@ import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 
 export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
@@ -2438,19 +2439,64 @@ export class FactsDB {
     return this.backfillDecayClasses();
   }
 
-  /** Get reflection statistics - stub for future implementation */
+  /** Get reflection statistics */
   statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
-    return { reflectionPatternsCount: 0, reflectionRulesCount: 0 };
+    const patterns = (this.liveDb.prepare(
+      `SELECT COUNT(*) as c FROM facts WHERE category = 'pattern' AND source = 'reflection'`
+    ).get() as { c: number }).c;
+    const rules = (this.liveDb.prepare(
+      `SELECT COUNT(*) as c FROM facts WHERE category = 'rule' AND source = 'reflection'`
+    ).get() as { c: number }).c;
+    return { reflectionPatternsCount: patterns, reflectionRulesCount: rules };
   }
 
-  /** Get self-correction incidents count - stub for future implementation */
+  /** Get self-correction incidents count */
   selfCorrectionIncidentsCount(): number {
-    return 0;
+    const row = this.liveDb.prepare(
+      `SELECT COUNT(*) as c FROM facts WHERE source = 'self-correction'`
+    ).get() as { c: number };
+    return row.c;
   }
 
-  /** Get language keywords count - stub for future implementation */
+  /** Get language keywords count */
   languageKeywordsCount(): number {
-    return 0;
+    const filePath = getLanguageKeywordsFilePath();
+    if (!filePath || !existsSync(filePath)) return 0;
+
+    try {
+      const data = JSON.parse(readFileSync(filePath, "utf-8"));
+      let count = 0;
+
+      // Count translations
+      const translations = data.translations ?? {};
+      for (const lang of Object.values(translations)) {
+        for (const [key, val] of Object.entries(lang as Record<string, unknown>)) {
+          if (Array.isArray(val)) count += val.length;
+        }
+      }
+
+      // Count trigger structures
+      const triggerStructures = data.triggerStructures ?? {};
+      for (const val of Object.values(triggerStructures)) {
+        if (Array.isArray(val)) count += val.length;
+      }
+
+      // Count directive signals by category
+      const directiveSignals = data.directiveSignalsByCategory ?? {};
+      for (const val of Object.values(directiveSignals)) {
+        if (Array.isArray(val)) count += val.length;
+      }
+
+      // Count reinforcement categories
+      const reinforcementCategories = data.reinforcementCategories ?? {};
+      for (const val of Object.values(reinforcementCategories)) {
+        if (Array.isArray(val)) count += val.length;
+      }
+
+      return count;
+    } catch {
+      return 0;
+    }
   }
 
   /** Get statistics by source */
