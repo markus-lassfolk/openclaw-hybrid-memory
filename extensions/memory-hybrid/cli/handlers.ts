@@ -714,8 +714,8 @@ export async function runVerifyForCli(
   log("\n───── Advanced Features ─────");
   if (cfg.search) {
     log(`  search.hydeEnabled: ${bool(cfg.search.hydeEnabled)}`);
-    const effectiveHydeModel = cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default");
-    log(`  search.hydeModel: ${cfg.search.hydeModel != null ? cfg.search.hydeModel : `${effectiveHydeModel} (default tier)`}`);
+    const effectiveHydeModel = cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+    log(`  search.hydeModel: ${cfg.search.hydeModel != null ? cfg.search.hydeModel : `${effectiveHydeModel} (nano tier)`}`);
   }
   if (cfg.errorReporting) {
     log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
