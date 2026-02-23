@@ -800,15 +800,15 @@ describe("hybridConfigSchema.parse", () => {
       expect(fallbackModels).toBeUndefined();
     });
 
-    it("empty preference list falls back to gpt-4o-mini (default) or gpt-4o (heavy)", () => {
+    it("empty preference list falls back to gateway-safe default/heavy models", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,
         llm: { default: [], heavy: [] },
       });
       const defaultTier = resolveReflectionModelAndFallbacks(cfg, "default");
-      expect(defaultTier.defaultModel).toBe("gpt-4o-mini");
+      expect(defaultTier.defaultModel).toBe("google/gemini-2.5-flash");
       const heavyTier = resolveReflectionModelAndFallbacks(cfg, "heavy");
-      expect(heavyTier.defaultModel).toBe("gpt-4o");
+      expect(heavyTier.defaultModel).toBe("anthropic/claude-sonnet-4-6");
     });
   });
 

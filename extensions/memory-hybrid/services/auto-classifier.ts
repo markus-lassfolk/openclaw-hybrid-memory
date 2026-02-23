@@ -279,19 +279,25 @@ async function runClassifyForCli(
  * Run auto-classification on all "other" facts. Called on schedule or manually.
  * If opts.discoveredCategoriesPath and config.suggestCategories are set, runs category discovery first
  * (LLM groups "other" by free-form label; labels with ≥ minFactsForNewCategory become new categories).
+ * Model: use opts.model (e.g. from getDefaultCronModel) or config.model; one must be set.
  */
 async function runAutoClassify(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  opts?: { discoveredCategoriesPath?: string },
+  opts?: { discoveredCategoriesPath?: string; model?: string },
 ): Promise<{ reclassified: number; suggested: string[] }> {
+  const model = opts?.model ?? config.model;
+  if (!model) {
+    throw new Error("auto-classify model required: set autoClassify.model or pass opts.model (e.g. from getDefaultCronModel)");
+  }
+  const configWithModel = { ...config, model };
   const categories = getMemoryCategories();
 
   // Optionally discover new categories from "other" (free-form grouping; threshold not told to LLM)
   if (opts?.discoveredCategoriesPath && config.suggestCategories) {
-    await discoverCategoriesFromOther(factsDb, openai, config, logger, opts.discoveredCategoriesPath);
+    await discoverCategoriesFromOther(factsDb, openai, configWithModel, logger, opts.discoveredCategoriesPath);
   }
 
   // Get all "other" facts (after discovery some may have been reclassified)
@@ -311,7 +317,7 @@ async function runAutoClassify(
       text: e.text,
     }));
 
-    const results = await classifyBatch(openai, config.model, batch, categories);
+    const results = await classifyBatch(openai, model, batch, categories);
 
     for (const [id, newCat] of results) {
       factsDb.updateCategory(id, newCat);

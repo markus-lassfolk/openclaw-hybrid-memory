@@ -87,8 +87,8 @@
     },
     "autoRecall.summarizeModel": {
       "label": "Summarize model",
-      "placeholder": "gpt-4o-mini",
-      "help": "Model for summarize-when-over-budget (default gpt-4o-mini)"
+      "placeholder": "e.g. flash, sonnet",
+      "help": "Model for summarize-when-over-budget (when unset, resolved at runtime)"
     },
     "autoRecall.progressiveMaxCandidates": {
       "label": "Progressive max candidates",
@@ -136,8 +136,8 @@
     },
     "autoClassify.model": {
       "label": "Classify Model",
-      "placeholder": "gpt-4.1-nano",
-      "help": "Cheap/fast model for classification (e.g. gpt-4.1-nano, gpt-4o-mini)"
+      "placeholder": "e.g. flash, sonnet",
+      "help": "Cheap/fast model for classification (when unset, resolved at runtime)"
     },
     "autoClassify.suggestCategories": {
       "label": "Suggest categories",
@@ -157,8 +157,8 @@
     },
     "store.classifyModel": {
       "label": "Classification model",
-      "placeholder": "gpt-4o-mini",
-      "help": "Chat model for memory operation classification (default: gpt-4o-mini)"
+      "placeholder": "e.g. flash, sonnet",
+      "help": "Chat model for memory operation classification (when unset, resolved at runtime)"
     },
     "credentials.enabled": {
       "label": "Credentials",
@@ -325,8 +325,8 @@
     },
     "reflection.model": {
       "label": "Reflection model",
-      "placeholder": "gpt-4o-mini",
-      "help": "LLM for reflection analysis"
+      "placeholder": "e.g. flash, sonnet",
+      "help": "LLM for reflection analysis (when unset, resolved at runtime)"
     },
     "reflection.defaultWindow": {
       "label": "Reflection window (days)",
@@ -477,7 +477,7 @@
         "properties": {
           "fuzzyDedupe": { "type": "boolean" },
           "classifyBeforeWrite": { "type": "boolean", "description": "Classify incoming fact against similar facts (ADD/UPDATE/DELETE/NOOP) before storing" },
-          "classifyModel": { "type": "string", "description": "Model for classification (default: gpt-4o-mini)" }
+          "classifyModel": { "type": "string", "description": "Model for classification (when unset, resolved at runtime)" }
         }
       },
       "credentials": {
@@ -546,7 +546,7 @@
         "description": "Synthesize behavioral patterns from facts (memory_reflect, reflect-rules).",
         "properties": {
           "enabled": { "type": "boolean", "description": "Enable reflection layer (default: false)" },
-          "model": { "type": "string", "description": "LLM for reflection (default: gpt-4o-mini)" },
+          "model": { "type": "string", "description": "LLM for reflection (when unset, resolved at runtime)" },
           "defaultWindow": { "type": "number", "description": "Time window in days for fact gathering (default: 14)" },
           "minObservations": { "type": "number", "description": "Min observations to support a pattern (default: 2)" }
         }

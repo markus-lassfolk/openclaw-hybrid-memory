@@ -452,11 +452,11 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
             autoRecall: true,
             captureMaxChars: 5000,
             store: { fuzzyDedupe: false },
-            autoClassify: { enabled: true, model: "gpt-4o-mini", batchSize: 20 },
+            autoClassify: { enabled: true, batchSize: 20 },
             categories: [] as string[],
             credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
             languageKeywords: { autoBuild: true, weeklyIntervalDays: 7 },
-            reflection: { enabled: true, model: "gpt-4o-mini", defaultWindow: 14, minObservations: 2 },
+            reflection: { enabled: true, defaultWindow: 14, minObservations: 2 },
             selfCorrection: {
               semanticDedup: true,
               semanticDedupThreshold: 0.92,
