@@ -29,7 +29,7 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
  *  - `google/*`  → Google Gemini OpenAI-compat endpoint (distill.apiKey or llm.providers.google.apiKey)
  *  - `openai/*` or bare model (no `/`) → OpenAI (embedding.apiKey or llm.providers.openai.apiKey)
  *  - Other `provider/*` with explicit llm.providers config → custom endpoint
- *  - Unknown provider, no config → falls back to OpenAI client, logs a warning
+ *  - Unknown provider, no config → throws UnconfiguredProviderError
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): OpenAI {
   const clientCache = new Map<string, OpenAI>();
@@ -83,6 +83,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
     if (prefix === "openai") {
       const apiKey = providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey;
+      if (!apiKey) throw new UnconfiguredProviderError("openai", trimmed);
       const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
       const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
@@ -113,7 +114,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
       const apiKey = providerCfg.apiKey ?? "unused";
       const baseURL = providerCfg.baseURL;
-      return { client: getOrCreate(`custom:${prefix}`, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+      const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
+      return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
     }
 
 
@@ -122,7 +124,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   }
 
   /** o1, o3, o4-mini, o3-pro, etc. — reasoning models that reject temperature/top_p params */
-  const isReasoningModel = (bare: string) => /^o[0-9]/.test(bare.toLowerCase());
+  const isReasoningModel = (bare: string) => /^o[0-9]+(?:-[a-z]+)?$/.test(bare.toLowerCase());
   const requiresMaxCompletionTokens = (bare: string) => isReasoningModel(bare) || /^gpt-5/i.test(bare);
 
   /**

@@ -557,18 +557,17 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
   }
 
   // Legacy / built-in key fields
-  if (hasKey(pluginConfig.distill?.apiKey)) add("gemini");
+  if (hasKey(pluginConfig.distill?.apiKey)) add("google");
   if (hasKey(pluginConfig.embedding?.apiKey)) add("openai");
-  if (hasKey(pluginConfig.claude?.apiKey)) add("claude");
+  if (hasKey(pluginConfig.claude?.apiKey)) add("anthropic");
 
   // llm.providers map — any provider with an explicit apiKey
   const providers = pluginConfig.llm?.providers;
   if (providers && typeof providers === "object") {
     for (const [prefix, pCfg] of Object.entries(providers)) {
       if (pCfg && hasKey(pCfg.apiKey)) {
-        // Map known prefixes to friendly names; keep others as-is
-        const display = prefix === "google" ? "gemini" : prefix === "anthropic" ? "anthropic" : prefix;
-        add(display);
+        // Use provider prefixes consistently (google, openai, anthropic)
+        add(prefix);
       }
     }
   }

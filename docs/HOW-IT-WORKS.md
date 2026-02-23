@@ -67,7 +67,7 @@ When you send a message, **before the agent sees it**, the plugin:
 - **Entity lookup** — if your prompt mentions a known entity (e.g. "user"), lookup facts for that entity are merged in.
 - **Summary injection** — long facts are injected as short summaries to save tokens.
 - **Graph traversal** — if graph memory is enabled, related facts are discovered via typed links (zero LLM cost).
-- **HyDE (Hypothetical Document Embeddings)** — when `search.hydeEnabled` is true, the plugin asks the LLM for a short “hypothetical answer” to your message, then embeds that instead of the raw message. The hypothetical text often sits closer in embedding space to stored facts, so vector search can return better matches. Uses the **nano tier** model (e.g. `gemini-2.5-flash-lite` or `gpt-4.1-nano`) 2014 very cheap; see [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md#hyde-hypothetical-document-embeddings).
+- **HyDE (Hypothetical Document Embeddings)** — when `search.hydeEnabled` is true, the plugin asks the LLM for a short “hypothetical answer” to your message, then embeds that instead of the raw message. The hypothetical text often sits closer in embedding space to stored facts, so vector search can return better matches. Uses the **nano tier** model (e.g. `gemini-2.5-flash-lite` or `gpt-4.1-nano`) — very cheap; see [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md#hyde-hypothetical-document-embeddings).
 
 **Cost per turn:** One embedding API call (~$0.00002 for `text-embedding-3-small`). One nano-tier LLM call if HyDE is enabled (~$0.0001 for `gemini-2.5-flash-lite` / `gpt-4.1-nano`).
 

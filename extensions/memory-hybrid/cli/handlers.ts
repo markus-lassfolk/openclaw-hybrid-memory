@@ -783,6 +783,8 @@ export async function runVerifyForCli(
   if (opts.testLlm) {
     const { chatComplete, UnconfiguredProviderError } = await import("../services/chat.js");
     const WARN = "⚠️ ";
+    const OK = noEmoji ? "[OK]" : "✅";
+    const FAIL = noEmoji ? "[FAIL]" : "❌";
     const allModels = [...new Set([...nanoOrder, ...defaultOrder, ...heavyOrder])];
     const TEST_LLM_TIMEOUT_MS = 15_000;
     let anyUnconfigured = false;

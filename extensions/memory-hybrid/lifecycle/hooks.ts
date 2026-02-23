@@ -113,7 +113,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
         if (!e.prompt || e.prompt.length < 5) return;
 
-        api.logger.info?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
+        api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
 
         try {
           // Use configurable candidate pool for progressive disclosure
@@ -287,8 +287,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 reject(new Error(`auto-recall vector step timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
               }, VECTOR_STEP_TIMEOUT_MS);
             });
-            lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
-            if (timeoutId !== undefined) clearTimeout(timeoutId);
+            try {
+              lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
+            } finally {
+              if (timeoutId !== undefined) clearTimeout(timeoutId);
+            }
           } catch (err) {
             const isTimeout = err instanceof Error && err.message.includes("timed out");
             if (isTimeout) {

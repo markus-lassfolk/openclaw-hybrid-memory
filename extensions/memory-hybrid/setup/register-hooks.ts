@@ -97,7 +97,16 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   api.on("before_prompt_build", () => {
     const warnings = ctx.pendingLLMWarnings.drain();
     if (warnings.length === 0) return {};
-    return { prependContext: warnings.join("\n") };
+
+    // Wrap warnings in a stable, parseable block to prevent prompt pollution
+    const wrappedWarnings = [
+      "<llm-config-warning>",
+      ...warnings,
+      "Note: These configuration warnings will not repeat in this session.",
+      "</llm-config-warning>"
+    ].join("\n");
+
+    return { prependContext: wrappedWarnings };
   });
 
   // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
