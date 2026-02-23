@@ -400,12 +400,16 @@ export type CronModelConfig = {
   llm?: LLMConfig;
 };
 
+/** Valid OpenAI API model IDs used when only embedding (OpenAI) is configured or no config; avoids "model not found" when gateway is not running (direct OpenAI client). */
+const OPENAI_DEFAULT_CRON_MODEL = "gpt-4o-mini";
+const OPENAI_HEAVY_CRON_MODEL = "gpt-4o";
+
 /** Legacy single-model resolution (for backward compat when no llm config). Used only inside getLLMModelPreference when llm lists are empty. */
 function getDefaultCronModelLegacy(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
-  if (!pluginConfig) return tier === "heavy" ? "sonnet" : "flash";
+  if (!pluginConfig) return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
   if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
     const defaultModel = pluginConfig.distill.defaultModel?.trim();
     if (defaultModel) return defaultModel;
@@ -417,9 +421,9 @@ function getDefaultCronModelLegacy(
     return tier === "heavy" ? "claude-opus-4-20250514" : "claude-sonnet-4-20250514";
   }
   if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
-    return tier === "heavy" ? "sonnet" : "flash";
+    return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
   }
-  return tier === "heavy" ? "sonnet" : "flash";
+  return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
 }
 
 /**
@@ -452,9 +456,9 @@ export function getLLMModelPreference(
  * When llm.default/heavy are set, returns the first model in the preference list (gateway-routed).
  * Otherwise legacy: prefer provider the user has configured (Gemini > Claude > OpenAI) > fallback.
  */
-/** Gateway-safe last-resort model names when no llm.default/heavy or provider prefs are set */
-const DEFAULT_CRON_MODEL_FALLBACK = "flash";
-const HEAVY_CRON_MODEL_FALLBACK = "sonnet";
+/** Last-resort model names when llm list is empty; use valid OpenAI IDs so direct OpenAI client works when gateway is not running. */
+const DEFAULT_CRON_MODEL_FALLBACK = OPENAI_DEFAULT_CRON_MODEL;
+const HEAVY_CRON_MODEL_FALLBACK = OPENAI_HEAVY_CRON_MODEL;
 
 export function getDefaultCronModel(
   pluginConfig: CronModelConfig | undefined,
