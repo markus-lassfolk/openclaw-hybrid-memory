@@ -20,7 +20,7 @@ import { runBuildLanguageKeywords } from "../services/language-keywords-build.js
 import { runExport } from "../services/export-memory.js";
 import { mergeResults } from "../services/merge-results.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../config.js";
+import { getMemoryCategories, resolveReflectionModelAndFallbacks, getDefaultCronModel, getCronModelConfig } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
 import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -244,7 +244,7 @@ function buildCliContextServices(
       return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
     },
     runClassify: (opts) =>
-      runClassifyForCli(factsDb, openai, cfg.autoClassify, opts, discoveredPath, logSink, undefined),
+      runClassifyForCli(factsDb, openai, cfg.autoClassify, { ...opts, model: opts.model ?? cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default") }, discoveredPath, logSink, undefined),
     runCompaction: () =>
       Promise.resolve(
         factsDb.runCompaction({
@@ -258,7 +258,7 @@ function buildCliContextServices(
         factsDb.getFactsForConsolidation(300),
         openai,
         dirname(resolvedSqlitePath),
-        { model: opts.model ?? cfg.autoClassify.model, dryRun: opts.dryRun },
+        { model: opts.model ?? cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), dryRun: opts.dryRun },
       ),
     runExport: (opts) =>
       Promise.resolve(
