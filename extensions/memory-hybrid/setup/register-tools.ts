@@ -12,6 +12,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { Embeddings } from "../services/embeddings.js";
+import type { PendingLLMWarnings } from "../services/chat.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
@@ -38,6 +39,7 @@ export interface ToolsContext {
   proposalsDb: ProposalsDB | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
+  pendingLLMWarnings: PendingLLMWarnings;
   resolvedSqlitePath: string;
   timers: {
     proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -82,6 +84,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     proposalsDb,
     lastProgressiveIndexIds,
     currentAgentIdRef,
+    pendingLLMWarnings,
     resolvedSqlitePath,
     timers,
     buildToolScopeFilter,
@@ -95,7 +98,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef },
+    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),

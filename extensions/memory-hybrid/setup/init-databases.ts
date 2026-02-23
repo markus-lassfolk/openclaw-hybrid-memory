@@ -18,7 +18,6 @@ import { capturePluginError } from "../services/error-reporter.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 
 /**
@@ -34,6 +33,18 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): OpenAI {
   const clientCache = new Map<string, OpenAI>();
+  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
+  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayBaseUrl = gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535
+    ? `http://127.0.0.1:${gatewayPort}/v1`
+    : undefined;
+  if (gatewayPortRaw && (!gatewayPort || gatewayPort < 1 || gatewayPort > 65535)) {
+    api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`);
+  }
+  if (gatewayBaseUrl && !gatewayToken) {
+    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but OPENCLAW_GATEWAY_TOKEN is missing; gateway calls may fail if the gateway requires auth.");
+  }
 
   function getOrCreate(key: string, factory: () => OpenAI): OpenAI {
     if (!clientCache.has(key)) clientCache.set(key, factory());
@@ -41,6 +52,12 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   }
 
   function defaultOpenAIClient(): OpenAI {
+    if (gatewayBaseUrl) {
+      return getOrCreate(`openai:gateway:${gatewayBaseUrl}`, () => new OpenAI({
+        apiKey: gatewayToken ?? cfg.embedding.apiKey ?? "unused",
+        baseURL: gatewayBaseUrl,
+      }));
+    }
     return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey }));
   }
 
@@ -65,8 +82,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (prefix === "openai") {
-      const apiKey = providerCfg?.apiKey ?? cfg.embedding.apiKey;
-      const baseURL = providerCfg?.baseURL;
+      const apiKey = providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey;
+      const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
       const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
     }
@@ -74,8 +91,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (prefix === "anthropic") {
       const apiKey = providerCfg?.apiKey;
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
-      const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
-      // Anthropic's OpenAI-compatible endpoint uses Bearer auth + requires anthropic-version header
+      const baseURL = providerCfg?.baseURL;
+      if (!baseURL) {
+        throw new UnconfiguredProviderError(
+          "anthropic",
+          trimmed,
+          "Missing OpenAI-compatible baseURL for Anthropic. Set llm.providers.anthropic.baseURL (e.g. your gateway or OpenAI-compatible proxy)."
+        );
+      }
+      // Anthropic's OpenAI-compatible endpoints require anthropic-version header
       return {
         client: getOrCreate(`anthropic:${baseURL}`, () => new OpenAI({
           apiKey,
@@ -92,17 +116,6 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
       return { client: getOrCreate(`custom:${prefix}`, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
     }
 
-    // Auto-detect: check if this provider is configured in OpenClaw's models.providers
-    // (e.g. minimax, mistral, deepseek — any OpenAI-compatible provider the user set up in openclaw.json).
-    const openclawProviders = (api.config as Record<string, unknown>)?.models as Record<string, unknown> | undefined;
-    const openclawProviderCfg = (openclawProviders?.providers as Record<string, unknown> | undefined)?.[prefix] as Record<string, unknown> | undefined;
-    if (openclawProviderCfg?.apiKey && typeof openclawProviderCfg.apiKey === "string") {
-      const apiKey = openclawProviderCfg.apiKey;
-      const baseURL = (openclawProviderCfg.baseUrl ?? openclawProviderCfg.baseURL) as string | undefined;
-      if (baseURL) {
-        return { client: getOrCreate(`openclaw:${prefix}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
-      }
-    }
 
     // Unknown provider with no config — throw so callers can skip to the next model cleanly
     throw new UnconfiguredProviderError(prefix, trimmed);
@@ -110,6 +123,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   /** o1, o3, o4-mini, o3-pro, etc. — reasoning models that reject temperature/top_p params */
   const isReasoningModel = (bare: string) => /^o[0-9]/.test(bare.toLowerCase());
+  const requiresMaxCompletionTokens = (bare: string) => isReasoningModel(bare) || /^gpt-5/i.test(bare);
 
   /**
    * Newer OpenAI models (o-series, gpt-5+) use `max_completion_tokens` instead of `max_tokens`.
@@ -117,13 +131,16 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
    */
   function remapMaxTokensForOpenAI(body: Record<string, unknown>, bareModel: string): Record<string, unknown> {
     let result = body;
-    if ("max_tokens" in result && !("max_completion_tokens" in result)) {
+    if (requiresMaxCompletionTokens(bareModel) && "max_tokens" in result && !("max_completion_tokens" in result)) {
       const { max_tokens, ...rest } = result;
       result = { ...rest, max_completion_tokens: max_tokens };
     }
     if (isReasoningModel(bareModel)) {
       // Reasoning models only accept temperature=1 (the default); strip to avoid 400
       const { temperature, top_p, ...rest } = result as Record<string, unknown> & { temperature?: unknown; top_p?: unknown };
+      if (temperature !== undefined || top_p !== undefined) {
+        api.logger.debug?.(`memory-hybrid: stripped temperature/top_p for reasoning model ${bareModel}`);
+      }
       result = rest;
     }
     return result;

@@ -336,30 +336,6 @@
       "label": "Reflection min observations",
       "help": "Min observations to support a pattern (default 2)"
     },
-    "procedures.enabled": {
-      "label": "Procedural memory",
-      "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills"
-    },
-    "procedures.sessionsDir": {
-      "label": "Session directory",
-      "help": "Path to session JSONL files (default: ~/.openclaw/agents/main/sessions)"
-    },
-    "procedures.minSteps": {
-      "label": "Min steps",
-      "help": "Minimum tool steps to count as a procedure (default: 2)"
-    },
-    "procedures.validationThreshold": {
-      "label": "Validation threshold",
-      "help": "Success count before auto-generating a skill (default: 3)"
-    },
-    "procedures.skillTTLDays": {
-      "label": "Skill TTL (days)",
-      "help": "Procedure confidence TTL / revalidation window (default: 30)"
-    },
-    "procedures.skillsAutoPath": {
-      "label": "Auto-skills path",
-      "help": "Path for auto-generated skills (default: skills/auto)"
-    },
     "multiAgent.orchestratorId": {
       "label": "Orchestrator Agent ID",
       "placeholder": "main",
@@ -374,6 +350,629 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": true,
-    "description": "Plugin config; validated at runtime by plugin. Core allows any keys to avoid strict JSON Schema rejection."
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "essential",
+          "normal",
+          "expert",
+          "full"
+        ],
+        "description": "Configuration preset. See docs/CONFIGURATION-MODES.md."
+      },
+      "embedding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "text-embedding-3-small",
+              "text-embedding-3-large"
+            ]
+          }
+        },
+        "required": [
+          "apiKey"
+        ]
+      },
+      "lanceDbPath": {
+        "type": "string"
+      },
+      "sqlitePath": {
+        "type": "string"
+      },
+      "autoCapture": {
+        "type": "boolean"
+      },
+      "autoRecall": {
+        "oneOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "maxTokens": {
+                "type": "number"
+              },
+              "maxPerMemoryChars": {
+                "type": "number"
+              },
+              "injectionFormat": {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "short",
+                  "minimal",
+                  "progressive",
+                  "progressive_hybrid"
+                ]
+              },
+              "progressiveMaxCandidates": {
+                "type": "number"
+              },
+              "progressiveIndexMaxTokens": {
+                "type": "number"
+              },
+              "progressiveGroupByCategory": {
+                "type": "boolean"
+              },
+              "progressivePinnedRecallCount": {
+                "type": "number"
+              },
+              "limit": {
+                "type": "number"
+              },
+              "minScore": {
+                "type": "number"
+              },
+              "preferLongTerm": {
+                "type": "boolean"
+              },
+              "useImportanceRecency": {
+                "type": "boolean"
+              },
+              "entityLookup": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "maxFactsPerEntity": {
+                    "type": "number"
+                  }
+                }
+              },
+              "summaryThreshold": {
+                "type": "number"
+              },
+              "summaryMaxChars": {
+                "type": "number"
+              },
+              "useSummaryInInjection": {
+                "type": "boolean"
+              },
+              "summarizeWhenOverBudget": {
+                "type": "boolean"
+              },
+              "summarizeModel": {
+                "type": "string"
+              },
+              "authFailure": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Detect authentication failures and auto-inject credentials (default: true)"
+                  },
+                  "patterns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Additional regex patterns to detect auth failures (should NOT duplicate defaults)"
+                  },
+                  "maxRecallsPerTarget": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Max recalls per target per session; 0 = unlimited (default: 1)"
+                  },
+                  "includeVaultHints": {
+                    "type": "boolean",
+                    "description": "Inject hints even when credentials are in vault (default: true)"
+                  }
+                },
+                "description": "Auto-recall credentials on authentication failures"
+              }
+            }
+          }
+        ]
+      },
+      "captureMaxChars": {
+        "type": "number"
+      },
+      "categories": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Custom categories to add alongside defaults"
+      },
+      "autoClassify": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "batchSize": {
+            "type": "number"
+          },
+          "suggestCategories": {
+            "type": "boolean"
+          },
+          "minFactsForNewCategory": {
+            "type": "number"
+          }
+        }
+      },
+      "store": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fuzzyDedupe": {
+            "type": "boolean"
+          },
+          "classifyBeforeWrite": {
+            "type": "boolean",
+            "description": "Classify incoming fact against similar facts (ADD/UPDATE/DELETE/NOOP) before storing"
+          },
+          "classifyModel": {
+            "type": "string",
+            "description": "Model for classification (default: gpt-4o-mini)"
+          }
+        }
+      },
+      "credentials": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "store": {
+            "type": "string",
+            "enum": [
+              "sqlite"
+            ]
+          },
+          "encryptionKey": {
+            "type": "string",
+            "description": "Optional. When set (16+ chars or env:VAR), vault is encrypted. When unset, vault is plaintext; user may secure by other means (e.g. filesystem permissions)."
+          },
+          "autoDetect": {
+            "type": "boolean",
+            "description": "Detect credential patterns in conversation and prompt to store"
+          },
+          "autoCapture": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "toolCalls": {
+                "type": "boolean",
+                "description": "Scan tool call inputs for credential patterns and store in vault"
+              },
+              "logCaptures": {
+                "type": "boolean",
+                "description": "Emit info log on each capture (default: true)"
+              }
+            },
+            "description": "Auto-capture credentials from tool call inputs"
+          },
+          "expiryWarningDays": {
+            "type": "number",
+            "description": "Days before expiry to warn (default 7)"
+          }
+        },
+        "description": "Credential vault: enabled=true. Optionally set encryptionKey (or env:OPENCLAW_CRED_KEY) for encryption; omit for plaintext vault."
+      },
+      "errorReporting": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable error reporting (default: false, opt-in)"
+          },
+          "consent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Explicit user consent required (default: false)"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "community",
+              "self-hosted"
+            ],
+            "default": "community",
+            "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance."
+          },
+          "dsn": {
+            "type": "string",
+            "description": "Custom DSN for self-hosted mode. Community mode uses built-in endpoint."
+          },
+          "environment": {
+            "type": "string",
+            "default": "production",
+            "description": "Environment tag (default: production)"
+          },
+          "sampleRate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 1,
+            "description": "Sample rate 0–1 (default: 1.0)"
+          }
+        },
+        "required": [
+          "enabled",
+          "consent"
+        ],
+        "description": "Opt-in error reporting to GlitchTip/Sentry. See docs/ERROR-REPORTING.md."
+      },
+      "distill": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Gemini for session distillation (1M context). Optional; use env GOOGLE_API_KEY if not set.",
+        "properties": {
+          "apiKey": {
+            "type": "string",
+            "description": "Gemini/Google API key or env:VAR_NAME"
+          },
+          "defaultModel": {
+            "type": "string",
+            "description": "Default model for distill (recommended: gemini-3-pro-preview)"
+          },
+          "extractDirectives": {
+            "type": "boolean",
+            "description": "Enable directive extraction from sessions (default: true)"
+          },
+          "extractReinforcement": {
+            "type": "boolean",
+            "description": "Enable reinforcement extraction from sessions (default: true)"
+          },
+          "reinforcementBoost": {
+            "type": "number",
+            "description": "Reinforcement boost added to facts search score (default: 0.1)"
+          },
+          "reinforcementProcedureBoost": {
+            "type": "number",
+            "description": "Reinforcement boost for procedures search (default: 0.1)"
+          },
+          "reinforcementPromotionThreshold": {
+            "type": "number",
+            "description": "Reinforcements to trigger auto-promotion of procedures (default: 2)"
+          }
+        }
+      },
+      "languageKeywords": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Multi-language detection: auto-build .language-keywords.json from memory samples (triggers, categories, correction signals).",
+        "properties": {
+          "autoBuild": {
+            "type": "boolean",
+            "description": "When true, build once at startup if file missing, then weekly (default: true)"
+          },
+          "weeklyIntervalDays": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 30,
+            "description": "Days between auto-builds (default: 7)"
+          }
+        }
+      },
+      "reflection": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Synthesize behavioral patterns from facts (memory_reflect, reflect-rules).",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable reflection layer (default: false)"
+          },
+          "model": {
+            "type": "string",
+            "description": "LLM for reflection (default: gpt-4o-mini)"
+          },
+          "defaultWindow": {
+            "type": "number",
+            "description": "Time window in days for fact gathering (default: 14)"
+          },
+          "minObservations": {
+            "type": "number",
+            "description": "Min observations to support a pattern (default: 2)"
+          }
+        }
+      },
+      "wal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable Write-Ahead Log for crash resilience (default: true)"
+          },
+          "walPath": {
+            "type": "string",
+            "description": "Path to WAL file (default: same directory as SQLite DB)"
+          },
+          "maxAge": {
+            "type": "number",
+            "description": "Maximum age of WAL entries before considered stale in ms (default: 300000 = 5 minutes)"
+          }
+        },
+        "description": "Write-Ahead Log for crash resilience (enabled by default)"
+      },
+      "personaProposals": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable agent self-evolution via gated persona proposals (default: false)"
+          },
+          "allowedFiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "SOUL.md",
+                "IDENTITY.md",
+                "USER.md"
+              ]
+            },
+            "description": "Identity files that can be modified via proposals"
+          },
+          "maxProposalsPerWeek": {
+            "type": "number",
+            "description": "Max proposals per week to prevent spam (default: 5)"
+          },
+          "minConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Min confidence score for proposals (default: 0.7)"
+          },
+          "proposalTTLDays": {
+            "type": "number",
+            "description": "Days before proposals auto-expire (default: 30, 0 = never)"
+          },
+          "minSessionEvidence": {
+            "type": "number",
+            "description": "Min session evidence count (default: 10)"
+          }
+        },
+        "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
+      },
+      "graph": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable graph-based spreading activation for zero-LLM recall"
+          },
+          "autoLink": {
+            "type": "boolean",
+            "description": "Auto-create RELATED_TO links to similar facts when storing (default: false)"
+          },
+          "autoLinkMinScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Min similarity score for auto-linking (default: 0.7)"
+          },
+          "autoLinkLimit": {
+            "type": "number",
+            "description": "Max similar facts to link per storage (default: 3)"
+          },
+          "maxTraversalDepth": {
+            "type": "number",
+            "description": "Max hops for graph traversal in recall (default: 2)"
+          },
+          "useInRecall": {
+            "type": "boolean",
+            "description": "Enable graph traversal in memory_recall (default: true)"
+          }
+        },
+        "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
+      },
+      "procedures": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable procedural memory (default: true)"
+          },
+          "sessionsDir": {
+            "type": "string",
+            "description": "Session JSONL directory (default: ~/.openclaw/agents/main/sessions)"
+          },
+          "minSteps": {
+            "type": "number",
+            "description": "Min tool steps per procedure (default: 2)"
+          },
+          "validationThreshold": {
+            "type": "number",
+            "description": "Validations before auto-skill (default: 3)"
+          },
+          "skillTTLDays": {
+            "type": "number",
+            "description": "Procedure TTL days (default: 30)"
+          },
+          "skillsAutoPath": {
+            "type": "string",
+            "description": "Path for auto-generated skills (default: skills/auto)"
+          },
+          "requireApprovalForPromote": {
+            "type": "boolean",
+            "description": "Require human move to promote auto-skill (default: true)"
+          }
+        },
+        "description": "Procedural memory: auto-generated skills from learned patterns"
+      },
+      "selfCorrection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "semanticDedup": {
+            "type": "boolean",
+            "description": "Skip storing facts that are semantically similar to existing ones (default: true)"
+          },
+          "semanticDedupThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Similarity threshold for semantic dedup, 0-1 (default: 0.92)"
+          },
+          "toolsSection": {
+            "type": "string",
+            "description": "TOOLS.md section heading for new rules (default: Self-correction rules)"
+          },
+          "applyToolsByDefault": {
+            "type": "boolean",
+            "description": "When true (default), insert suggested TOOLS rules under toolsSection. Set false to only suggest (use --approve to apply). Use --no-apply-tools to skip applying for one run."
+          },
+          "autoRewriteTools": {
+            "type": "boolean",
+            "description": "When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (default: false)"
+          },
+          "analyzeViaSpawn": {
+            "type": "boolean",
+            "description": "When true and incidents > spawnThreshold, run Phase 2 via openclaw sessions spawn (Gemini, large context) (default: false)"
+          },
+          "spawnThreshold": {
+            "type": "number",
+            "description": "Use spawn for Phase 2 when incident count exceeds this (default: 15)"
+          },
+          "spawnModel": {
+            "type": "string",
+            "description": "Model for spawn when analyzeViaSpawn is true. Empty or unset = use provider default from config (Gemini/OpenAI/Claude, same as maintenance cron jobs)"
+          }
+        },
+        "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
+      },
+      "multiAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "orchestratorId": {
+            "type": "string",
+            "description": "Agent ID of the orchestrator (main agent). This agent sees all scopes. Default: 'main'."
+          },
+          "defaultStoreScope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "agent",
+              "auto"
+            ],
+            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+          }
+        },
+        "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults"
+      },
+      "memoryTiering": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable dynamic memory tiering hot/warm/cold (default: true in normal+ presets)"
+          },
+          "hotMaxTokens": {
+            "type": "number",
+            "description": "Max tokens for HOT tier at session start (default: 2000)"
+          },
+          "compactionOnSessionEnd": {
+            "type": "boolean",
+            "description": "Run compaction on agent_end (default: true)"
+          },
+          "inactivePreferenceDays": {
+            "type": "number",
+            "description": "Days without access to treat as inactive (default: 7)"
+          },
+          "hotMaxFacts": {
+            "type": "number",
+            "description": "Cap HOT tier facts when promoting (default: 50)"
+          }
+        },
+        "description": "Dynamic memory tiering: hot/warm/cold"
+      },
+      "ingest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Glob patterns relative to workspace (e.g. skills/**/*.md, TOOLS.md)"
+          },
+          "chunkSize": {
+            "type": "number",
+            "description": "Chunk size in chars for LLM extraction (default: 800)"
+          },
+          "overlap": {
+            "type": "number",
+            "description": "Overlap between chunks (default: 100)"
+          }
+        },
+        "description": "Ingest workspace markdown files as facts"
+      },
+      "search": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hydeEnabled": {
+            "type": "boolean",
+            "description": "Use HyDE query expansion for vector search (default: false)"
+          },
+          "hydeModel": {
+            "type": "string",
+            "description": "Model for HyDE generation (default: gpt-4o-mini)"
+          }
+        },
+        "description": "Search tweaks: HyDE query expansion"
+      }
+    },
+    "required": [
+      "embedding"
+    ]
   }
 }

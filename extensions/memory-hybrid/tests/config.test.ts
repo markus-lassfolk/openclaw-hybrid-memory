@@ -686,13 +686,13 @@ describe("hybridConfigSchema.parse", () => {
     const heavyList = getLLMModelPreference(cronCfg, "heavy");
     expect(defaultList).toHaveLength(1);
     expect(heavyList).toHaveLength(1);
-    expect(defaultList[0]).toBe("openai/gpt-5.2");
+    expect(defaultList[0]).toBe("openai/gpt-4.1-mini");
     expect(heavyList[0]).toBe("openai/gpt-5.2");
   });
 
   it("getLLMModelPreference when llm tier arrays are empty uses legacy (OpenClaw provider/model IDs)", () => {
     const cronCfg = { llm: { default: [], heavy: [] } };
-    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["openai/gpt-5.2"]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["openai/gpt-4.1-mini"]);
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["openai/gpt-5.2"]);
   });
 
@@ -701,7 +701,7 @@ describe("hybridConfigSchema.parse", () => {
       embedding: { apiKey: "sk-embed-key-that-is-long-enough" },
       distill: { apiKey: "GEMINI_API_KEY_LONG_ENOUGH_12345", defaultModel: "gemini-custom" },
     };
-    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-custom", "openai/gpt-5.2"]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gemini-custom", "openai/gpt-4.1-mini"]);
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gemini-custom", "openai/gpt-5.2"]);
   });
 
@@ -733,7 +733,7 @@ describe("hybridConfigSchema.parse", () => {
     const cronCfg = {
       embedding: { apiKey: "sk-embed-key-that-is-long-enough" },
     };
-    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["openai/gpt-5.2"]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["openai/gpt-4.1-mini"]);
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["openai/gpt-5.2"]);
   });
 
@@ -788,7 +788,8 @@ describe("hybridConfigSchema.parse", () => {
       });
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       expect(defaultModel).toBe("gemini-custom");
-      expect(fallbackModels).toEqual(["openai/gpt-5.2", "gpt-4o"]);
+      // Built-in OpenAI default (gpt-4.1-mini) is inserted before user-specified distill.fallbackModels
+      expect(fallbackModels).toEqual(["openai/gpt-4.1-mini", "openai/gpt-5.2", "gpt-4o"]);
     });
 
     it("when no llm and no distill.fallbackModels, fallbackModels is slice of built-in list (second provider)", () => {
@@ -798,7 +799,7 @@ describe("hybridConfigSchema.parse", () => {
       });
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       expect(defaultModel).toBe("gemini-custom");
-      expect(fallbackModels).toEqual(["openai/gpt-5.2"]);
+      expect(fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
     });
 
     it("empty preference list falls back to gateway-safe default/heavy models", () => {
@@ -807,7 +808,7 @@ describe("hybridConfigSchema.parse", () => {
         llm: { default: [], heavy: [] },
       });
       const defaultTier = resolveReflectionModelAndFallbacks(cfg, "default");
-      expect(defaultTier.defaultModel).toBe("openai/gpt-5.2");
+      expect(defaultTier.defaultModel).toBe("openai/gpt-4.1-mini");
       const heavyTier = resolveReflectionModelAndFallbacks(cfg, "heavy");
       expect(heavyTier.defaultModel).toBe("openai/gpt-5.2");
     });

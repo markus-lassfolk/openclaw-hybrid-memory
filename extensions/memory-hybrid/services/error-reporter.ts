@@ -113,9 +113,8 @@ export async function initErrorReporter(
   // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId).
   // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
   const botUuid = config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
-  const botName = config.botName ? config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "") : undefined;
+  const botName = config.botName ? scrubString(config.botName).slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "") : undefined;
   if (botUuid) {
-    Sentry.setUser({ id: botUuid, username: botName });
     Sentry.setTag("bot_id", botUuid);
   }
   if (botName) {
@@ -189,14 +188,7 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
       type: b.type,
       // Strip message and data to prevent leaking user content
     })),
-    // Preserve user context (id, username) so GlitchTip "Users Affected" and grouping work
-    user: event.user && typeof event.user === "object"
-      ? {
-          id: typeof event.user.id === "string" ? scrubString(event.user.id).slice(0, 64) : undefined,
-          username: typeof event.user.username === "string" ? scrubString(event.user.username).slice(0, 64) : undefined,
-        }
-      : undefined,
-    // NO: request, contexts.device, extra
+    // NO: user, request, contexts.device, extra
   };
 
   return safe;
