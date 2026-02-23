@@ -61,6 +61,7 @@ describe("chatComplete", () => {
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: "test" }],
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -74,6 +75,7 @@ describe("chatComplete", () => {
       expect.objectContaining({
         max_tokens: 8000,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -88,6 +90,7 @@ describe("chatComplete", () => {
       expect.objectContaining({
         max_tokens: 4000,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -107,6 +110,7 @@ describe("chatComplete", () => {
         messages: [{ role: "user", content: "test message" }],
         max_tokens: 65_536,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -120,9 +124,26 @@ describe("chatComplete", () => {
       expect.objectContaining({
         max_tokens: 65_536,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
+  it("passes full provider/model id to completions request (gateway expects provider/model)", async () => {
+    vi.mocked(mockOpenai.chat.completions.create).mockResolvedValue({
+      choices: [{ message: { content: "OK" } }],
+    } as any);
+    await chatComplete({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+    });
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "google/gemini-2.5-flash",
+      }),
+      expect.anything(),
+    );
+  });
 });
 
 describe("withLLMRetry", () => {

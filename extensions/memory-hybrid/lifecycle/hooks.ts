@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
-import { getDefaultCronModel, getCronModelConfig } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
@@ -21,7 +21,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatComplete } from "../services/chat.js";
+import { chatCompleteWithRetry } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
@@ -111,6 +111,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
 
         if (!e.prompt || e.prompt.length < 5) return;
+
+        api.logger.info?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
 
         try {
           // Use configurable candidate pool for progressive disclosure
@@ -231,53 +233,71 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
           });
           let lanceResults: SearchResult[] = [];
+          const VECTOR_STEP_TIMEOUT_MS = 30_000;
+          const vectorStepAbort = new AbortController();
           try {
-            let textToEmbed = e.prompt;
-            if (ctx.cfg.search?.hydeEnabled) {
-              try {
-                const hydeModel = ctx.cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default");
-                const hydeContent = await chatComplete({
-                  model: hydeModel,
-                  content: `Write a short factual statement (1-2 sentences) that answers: ${e.prompt}\n\nOutput only the statement, no preamble.`,
-                  temperature: 0.3,
-                  maxTokens: 150,
-                  openai: ctx.openai,
-                });
-                const hydeText = hydeContent.trim();
-                if (hydeText.length > 10) textToEmbed = hydeText;
-              } catch (err) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "hyde-generation",
-                  subsystem: "auto-recall",
-                });
-                api.logger.warn(`memory-hybrid: HyDE generation failed, using raw prompt: ${err}`);
+            const vectorStepPromise = (async (): Promise<SearchResult[]> => {
+              let textToEmbed = e.prompt;
+              if (ctx.cfg.search?.hydeEnabled) {
+                try {
+                  const cronCfg = getCronModelConfig(ctx.cfg);
+                  const pref = getLLMModelPreference(cronCfg, "nano");
+                  const hydeModel = ctx.cfg.search.hydeModel ?? pref[0];
+                  const fallbackModels = ctx.cfg.search.hydeModel ? [] : pref.slice(1);
+                  const hydeContent = await chatCompleteWithRetry({
+                    model: hydeModel,
+                    fallbackModels,
+                    content: `Write a short factual statement (1-2 sentences) that answers: ${e.prompt}\n\nOutput only the statement, no preamble.`,
+                    temperature: 0.3,
+                    maxTokens: 150,
+                    openai: ctx.openai,
+                    label: "HyDE",
+                    timeoutMs: 25_000,
+                    signal: vectorStepAbort.signal,
+                  });
+                  const hydeText = hydeContent.trim();
+                  if (hydeText.length > 10) textToEmbed = hydeText;
+                } catch (err) {
+                  if (!vectorStepAbort.signal.aborted) {
+                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      operation: "hyde-generation",
+                      subsystem: "auto-recall",
+                    });
+                    api.logger.warn(`memory-hybrid: HyDE generation failed, using raw prompt: ${err}`);
+                  }
+                }
               }
-            }
-            const vector = await ctx.embeddings.embed(textToEmbed);
-            lanceResults = await ctx.vectorDb.search(vector, limit * 2, minScore);
-            lanceResults = filterByScope(lanceResults, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
-            // Enrich lance results with full entry and apply dynamic salience
-            lanceResults = lanceResults.map((r) => {
-              const fullEntry = ctx.factsDb.getById(r.entry.id);
-              if (fullEntry) {
-                return {
-                  ...r,
-                  entry: fullEntry,
-                  score: computeDynamicSalience(r.score, fullEntry),
-                };
-              }
-              return r;
+              const vector = await ctx.embeddings.embed(textToEmbed);
+              let results = await ctx.vectorDb.search(vector, limit * 2, minScore);
+              results = filterByScope(results, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
+              return results.map((r) => {
+                const fullEntry = ctx.factsDb.getById(r.entry.id);
+                if (fullEntry) {
+                  return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
+                }
+                return r;
+              });
+            })();
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                vectorStepAbort.abort();
+                reject(new Error(`auto-recall vector step timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
+              }, VECTOR_STEP_TIMEOUT_MS);
             });
+            lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
           } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: 'auto-recall-vector-search',
-              subsystem: 'vector',
-              phase: 'runtime',
-              backend: 'lancedb',
-            });
-            api.logger.warn(
-              `memory-hybrid: vector recall failed: ${err}`,
-            );
+            const isTimeout = err instanceof Error && err.message.includes("timed out");
+            if (isTimeout) {
+              api.logger.warn?.(`memory-hybrid: ${err.message}, using FTS-only recall`);
+            } else {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: 'auto-recall-vector-search',
+                subsystem: 'vector',
+                phase: 'runtime',
+                backend: 'lancedb',
+              });
+              api.logger.warn(`memory-hybrid: vector recall failed: ${err}`);
+            }
           }
 
           let candidates = mergeResults(ftsResults, lanceResults, limit, ctx.factsDb);
@@ -585,7 +605,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const { withLLMRetry } = await import("../services/chat.js");
               const resp = await withLLMRetry(
                 () => ctx.openai.chat.completions.create({
-                  model: summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default"),
+                  model: summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
                   messages: [
                     {
                       role: "user",
@@ -822,10 +842,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             prependContext: `\n<credential-hint>\nA credential may have been shared in the previous exchange (${hintText}). Consider asking the user if they want to store it securely with credential_store.\n</credential-hint>\n`,
           };
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "credential-hint-read",
-            subsystem: "credentials",
-          });
+          // ENOENT: file missing (race after access() or optional file) — do not report to Sentry
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "credential-hint-read",
+              subsystem: "credentials",
+            });
+          }
           await unlink(pendingPath).catch(() => {});
         }
       });
@@ -948,7 +972,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 try {
                   const classification = await classifyMemoryOperation(
                     textToStore, extracted.entity, extracted.key, similarFacts,
-                    ctx.openai, ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default"), api.logger,
+                    ctx.openai, ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"), api.logger,
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
