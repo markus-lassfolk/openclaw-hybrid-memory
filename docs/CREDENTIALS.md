@@ -68,7 +68,7 @@ export OPENCLAW_CRED_KEY="your-secret-key-min-16-chars"
 - **encryptionKey** (optional): `env:VAR_NAME` (e.g. `env:OPENCLAW_CRED_KEY`) or a 16+ character secret. When set and valid, the vault is encrypted at rest. When omitted, the vault is plaintext.
 - **enabled**: Set to `true` to enable the vault; set to `false` to disable.
 - **autoDetect** (optional): When true, detects credential patterns in conversation and prompts the agent to offer storing them.
-- **autoCapture** (optional): Auto-capture credentials from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below).
+- **autoCapture** (optional): Auto-capture credentials from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below). You can set **requirePatternMatch** to `true` so that only values matching a known credential pattern (e.g. JWT, `sk-...`, `ghp_...`) are stored; narrative or value-only text is then rejected.
 - **expiryWarningDays** (optional): Days before expiry to warn (default: 7).
 
 ## API (Tools)
@@ -191,6 +191,20 @@ When `autoDetect` is enabled, the plugin scans conversation messages for pattern
 - SSH connection strings (`ssh user@host`)
 
 When detected, a hint is stored and injected at the start of the next turn, prompting the agent to offer storing the credential with `credential_store`.
+
+## Validation and cleanup
+
+Auto-captured credentials are validated before storage so that narrative text, debug notes, and descriptions are not stored as secrets:
+
+- **Value validation:** Values that look like natural language (e.g. sentences), paths, or long descriptions are rejected. Values that match a known pattern (JWT, `sk-...`, `ghp_...`, etc.) are accepted.
+- **Service name validation:** Service names longer than 50 characters or that look like sentences (many dash-separated tokens) are rejected. Hostnames (e.g. `api.example.com`) and URL-style names (e.g. `postgres://host/db`) are preserved; other names are normalized (e.g. `anthropic_api_key` → `anthropic`).
+- **Deduplication:** If the vault already has the same (service, type) with the same value, the store is skipped (no-op).
+
+To inspect and clean an existing vault:
+
+- **List:** `openclaw hybrid-mem credentials list` — lists all entries (service, type, url; no values).
+- **Audit:** `openclaw hybrid-mem credentials audit` — flags suspicious entries (e.g. natural language, long service names, duplicates). Use `--json` for machine-readable output.
+- **Prune:** `openclaw hybrid-mem credentials prune` — by default runs a dry-run showing what would be removed. Use `--yes` to actually remove flagged entries. Optionally use `--only-flags natural_language,service_too_long` to prune only those reasons.
 
 ## Expiry Warnings
 

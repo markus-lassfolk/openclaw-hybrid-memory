@@ -46,7 +46,7 @@ import type {
   UpgradeCliResult,
   VerifyCliSink,
 } from "./register.js";
-import type { SelfCorrectionRunResult } from "./types.js";
+import type { SelfCorrectionRunResult, CredentialsAuditResult, CredentialsPruneResult } from "./types.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, chatCompleteWithRetry } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
@@ -64,6 +64,7 @@ import { runReinforcementExtract, type ReinforcementExtractResult } from "../ser
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { shouldSkipCredentialStore, auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
@@ -269,8 +270,13 @@ export async function runStoreForCli(
   const value = opts.value ?? extracted.value ?? null;
 
   if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
-    const parsed = tryParseCredentialForVault(text, entity, key, value);
+    const parsed = tryParseCredentialForVault(text, entity, key, value, {
+      requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+    });
     if (parsed) {
+      if (shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue })) {
+        return { outcome: "credential_skipped_duplicate", service: parsed.service, type: parsed.type };
+      }
       // Step 1: Write to vault
       try {
         credentialsDb.store({
@@ -1646,20 +1652,26 @@ export async function runExtractDailyForCli(
       const extracted = extractStructuredFields(trimmed, category);
       if (isCredentialLike(trimmed, extracted.entity, extracted.key, extracted.value)) {
         if (cfg.credentials.enabled && credentialsDb) {
-          const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value);
+          const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value, {
+            requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+          });
           if (parsed) {
-            totalExtracted++;
-            if (!opts.dryRun) {
-              let storedInVault = false;
-              try {
-                credentialsDb.store({
-                  service: parsed.service,
-                  type: parsed.type as any,
-                  value: parsed.secretValue,
-                  url: parsed.url,
-                  notes: parsed.notes,
-                });
-                storedInVault = true;
+          totalExtracted++;
+          if (!opts.dryRun) {
+            const skipStore = shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue });
+            if (skipStore) {
+              continue;
+            }
+            let storedInVault = false;
+            try {
+              credentialsDb.store({
+                service: parsed.service,
+                type: parsed.type as any,
+                value: parsed.secretValue,
+                url: parsed.url,
+                notes: parsed.notes,
+              });
+              storedInVault = true;
                 const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
                 const pointerEntry = factsDb.store({
@@ -2357,9 +2369,14 @@ export async function runDistillForCli(
   for (const fact of allFacts) {
     const isCred = isCredentialLike(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
     if (isCred && cfg.credentials.enabled && credentialsDb) {
-      const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
+      const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
+        requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+      });
       if (parsed) {
         if (!opts.dryRun) {
+          if (shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue })) {
+            continue;
+          }
           let storedInVault = false;
           try {
             credentialsDb.store({ service: parsed.service, type: parsed.type as any, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
@@ -2463,6 +2480,68 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
     capturePluginError(err as Error, { subsystem: "cli", operation: "runMigrateToVaultForCli" });
     throw err;
   }
+}
+
+/**
+ * Audit credentials vault: list entries and flag suspicious ones (value/service heuristics).
+ */
+export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAuditResult {
+  const { credentialsDb } = ctx;
+  const entries: Array<{ service: string; type: string; url: string | null; flags: string[] }> = [];
+  if (!credentialsDb) return { entries, total: 0 };
+  const list = credentialsDb.list();
+  const valueByKey = new Map<string, string>();
+  for (const row of list) {
+    const entry = credentialsDb.get(row.service, row.type as CredentialType);
+    const value = entry?.value ?? "";
+    valueByKey.set(`${row.service}:${row.type}`, value);
+  }
+  const valueToEntries = new Map<string, Array<{ service: string; type: string }>>();
+  for (const row of list) {
+    const key = `${row.service}:${row.type}`;
+    const value = valueByKey.get(key) ?? "";
+    const flags = [...auditCredentialValue(value, row.type), ...auditServiceName(row.service)];
+    const normKey = `${normalizeServiceForDedup(row.service)}:${row.type}`;
+    if (!valueToEntries.has(value)) valueToEntries.set(value, []);
+    valueToEntries.get(value)!.push({ service: row.service, type: row.type });
+    entries.push({ service: row.service, type: row.type, url: row.url, flags });
+  }
+  for (const [, group] of valueToEntries) {
+    if (group.length > 1) {
+      for (const { service, type } of group) {
+        const e = entries.find((x) => x.service === service && x.type === type);
+        if (e && !e.flags.includes("duplicate_value")) e.flags.push("duplicate_value");
+      }
+    }
+  }
+  return { entries, total: entries.length };
+}
+
+/**
+ * Prune credentials vault: remove entries flagged by audit. Default dry-run; use --yes to apply.
+ */
+export function runCredentialsPruneForCli(
+  ctx: HandlerContext,
+  opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] },
+): CredentialsPruneResult {
+  const { credentialsDb } = ctx;
+  const removed: Array<{ service: string; type: string }> = [];
+  const apply = opts.yes === true && !opts.dryRun;
+  if (!credentialsDb) return { removed: 0, entries: [], dryRun: !apply };
+  const audit = runCredentialsAuditForCli(ctx);
+  const flagsToPrune = opts.onlyFlags && opts.onlyFlags.length > 0 ? new Set(opts.onlyFlags) : null;
+  for (const e of audit.entries) {
+    if (e.flags.length === 0) continue;
+    const match = !flagsToPrune || e.flags.some((f) => flagsToPrune.has(f));
+    if (!match) continue;
+    if (apply) {
+      credentialsDb.delete(e.service, e.type as CredentialType);
+      removed.push({ service: e.service, type: e.type });
+    } else {
+      removed.push({ service: e.service, type: e.type });
+    }
+  }
+  return { removed: removed.length, entries: removed, dryRun: !apply };
 }
 
 /**

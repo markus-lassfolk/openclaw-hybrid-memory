@@ -7,6 +7,7 @@
 import { getMemoryTriggerRegexes } from "../utils/language-keywords.js";
 import { CREDENTIAL_NOTES_MAX_CHARS } from "../utils/constants.js";
 import { truncateText } from "../utils/text.js";
+import { validateCredentialValue, validateAndNormalizeServiceName } from "./credential-validation.js";
 
 /** Memory triggers: English + dynamic languages from .language-keywords.json (see build-languages command). */
 export function getMemoryTriggers(): RegExp[] {
@@ -78,25 +79,40 @@ export function isCredentialLike(
 
 export const VAULT_POINTER_PREFIX = "vault:";
 
+/** Options for tryParseCredentialForVault (e.g. from config). */
+export type TryParseCredentialOptions = {
+  /** When true, return null unless extractCredentialMatch found a pattern (reject value-only). */
+  requirePatternMatch?: boolean;
+};
+
 /** Parse into vault entry when vault is enabled. Returns null if not credential-like or cannot derive service/secret. */
 export function tryParseCredentialForVault(
   text: string,
   entity?: string | null,
   key?: string | null,
   value?: string | null,
+  options?: TryParseCredentialOptions,
 ): { service: string; type: "token" | "password" | "api_key" | "ssh" | "bearer" | "other"; secretValue: string; url?: string; notes?: string } | null {
   if (!isCredentialLike(text, entity, key, value)) return null;
   const match = extractCredentialMatch(text);
+  if (options?.requirePatternMatch && !match) return null;
   const secretValue = (value && value.length >= 8 ? value : match?.secretValue) ?? null;
   if (!secretValue) return null;
   const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
+  const hasPatternMatch = !!match;
+  const valueValidation = validateCredentialValue(secretValue, typeFromPattern, hasPatternMatch);
+  if (!valueValidation.ok) return null;
+
   const service =
     (entity?.toLowerCase() === "credentials" ? key : null) ||
     key ||
     (entity && entity.toLowerCase() !== "credentials" ? entity : null) ||
     inferServiceFromText(text) ||
     "imported";
-  const serviceSlug = service.replace(/\s+/g, "-").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "imported";
+  const rawSlug = service.replace(/\s+/g, "-").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "imported";
+  const serviceSlug = validateAndNormalizeServiceName(rawSlug);
+  if (serviceSlug === null) return null;
+
   return {
     service: serviceSlug,
     type: typeFromPattern,
