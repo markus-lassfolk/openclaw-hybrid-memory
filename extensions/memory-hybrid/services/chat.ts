@@ -13,8 +13,10 @@ import { capturePluginError } from "./error-reporter.js";
 export class UnconfiguredProviderError extends Error {
   readonly provider: string;
   readonly model: string;
-  constructor(provider: string, model: string) {
-    super(`No API key configured for provider '${provider}' (model: ${model}). Set llm.providers.${provider}.apiKey in plugin config.`);
+  constructor(provider: string, model: string, detail?: string) {
+    const base = `Provider '${provider}' is not configured for model ${model}.`;
+    const hint = detail ?? `Set llm.providers.${provider}.apiKey in plugin config.`;
+    super(`${base} ${hint}`);
     this.name = "UnconfiguredProviderError";
     this.provider = provider;
     this.model = model;
@@ -23,26 +25,27 @@ export class UnconfiguredProviderError extends Error {
 
 /**
  * Pending user-visible LLM config warnings to inject into the next chat session.
- * Filled by chatCompleteWithRetry when all models fail due to missing provider keys.
- * Drained by the before_prompt_build hook in lifecycle/hooks.ts.
- * Uses a Set so the same warning is never duplicated across multiple failed calls.
+ * Scoped per plugin instance to avoid cross-agent leakage.
  */
-const _pendingLLMWarnings = new Set<string>();
+export type PendingLLMWarnings = {
+  add: (message: string) => void;
+  drain: () => string[];
+};
 
-/** Add a pending LLM config warning (idempotent — duplicates are ignored). */
-export function addPendingLLMWarning(message: string): void {
-  _pendingLLMWarnings.add(message);
-}
-
-/**
- * Drain and return all pending LLM config warnings.
- * Called by the before_prompt_build hook; clears the queue after reading.
- */
-export function drainPendingLLMWarnings(): string[] {
-  if (_pendingLLMWarnings.size === 0) return [];
-  const msgs = [..._pendingLLMWarnings];
-  _pendingLLMWarnings.clear();
-  return msgs;
+/** Create a per-instance pending LLM warning queue. */
+export function createPendingLLMWarnings(): PendingLLMWarnings {
+  const pending = new Set<string>();
+  return {
+    add(message: string) {
+      pending.add(message);
+    },
+    drain() {
+      if (pending.size === 0) return [];
+      const msgs = [...pending];
+      pending.clear();
+      return msgs;
+    },
+  };
 }
 
 /** True when model name suggests long-context (e.g. Gemini). Used only for token limits. Only "gemini" is matched; "thinking" is not, to avoid false positives with gateway aliases. */
@@ -216,8 +219,10 @@ export async function chatCompleteWithRetry(opts: {
   timeoutMs?: number;
   /** When aborted (e.g. parent step timeout), the request is cancelled and no fallback models are tried. */
   signal?: AbortSignal;
+  /** Optional per-instance warning queue for missing provider keys. */
+  pendingWarnings?: PendingLLMWarnings;
 }): Promise<string> {
-  const { fallbackModels = [], label: rawLabel, maxTokens, timeoutMs, signal, ...chatOpts } = opts;
+  const { fallbackModels = [], label: rawLabel, maxTokens, timeoutMs, signal, pendingWarnings, ...chatOpts } = opts;
   const label = rawLabel ?? "LLM call";
   const modelsToTry = [opts.model, ...fallbackModels];
 
@@ -266,7 +271,7 @@ export async function chatCompleteWithRetry(opts: {
     const unconfiguredProviders = [...new Set(
       modelsToTry.map(m => m.includes("/") ? m.split("/")[0] : "openai")
     )];
-    addPendingLLMWarning(
+    pendingWarnings?.add(
       `⚠️ Memory plugin: No LLM provider keys are configured for ${unconfiguredProviders.join(", ")}. ` +
       `Memory features (HyDE search, classification, distillation) are degraded. ` +
       `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`

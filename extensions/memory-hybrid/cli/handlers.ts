@@ -2738,6 +2738,7 @@ export async function runUpgradeForCli(
   ctx: HandlerContext,
   requestedVersion?: string,
 ): Promise<UpgradeCliResult> {
+  const { cfg, logger } = ctx;
   const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const { spawnSync } = await import("node:child_process");
   const version = requestedVersion?.trim() || "latest";
@@ -2776,13 +2777,13 @@ export async function runUpgradeForCli(
   // Ensure maintenance cron jobs exist (add missing, normalize existing; never re-enable disabled)
   try {
     const openclawDir = join(homedir(), ".openclaw");
-    const pluginConfig = getCronModelConfig(ctx.cfg);
+    const pluginConfig = getCronModelConfig(cfg);
     const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
       normalizeExisting: true,
       reEnableDisabled: false,
     });
     if (added.length > 0 || normalized.length > 0) {
-      ctx.logger?.info?.(`memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`);
+      logger?.info?.(`memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`);
     }
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:ensure-cron-jobs" });

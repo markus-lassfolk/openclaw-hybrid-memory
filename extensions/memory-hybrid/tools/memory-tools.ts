@@ -15,7 +15,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { Embeddings } from "../services/embeddings.js";
-import { chatCompleteWithRetry } from "../services/chat.js";
+import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
@@ -51,6 +51,7 @@ export interface PluginContext {
   credentialsDb: CredentialsDB | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
+  pendingLLMWarnings: PendingLLMWarnings;
 }
 
 /**
@@ -81,7 +82,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
 
   api.registerTool(
     {
@@ -320,6 +321,7 @@ export function registerMemoryTools(
                   openai,
                   label: "HyDE",
                   timeoutMs: 25_000,
+                  pendingWarnings: pendingLLMWarnings,
                 });
                 const hydeText = hydeContent.trim();
                 if (hydeText.length > 10) textToEmbed = hydeText;

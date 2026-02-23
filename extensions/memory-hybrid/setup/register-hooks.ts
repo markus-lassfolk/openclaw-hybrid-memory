@@ -17,7 +17,7 @@ import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
-import { drainPendingLLMWarnings } from "../services/chat.js";
+import type { PendingLLMWarnings } from "../services/chat.js";
 
 export interface HooksContext {
   factsDb: FactsDB;
@@ -42,6 +42,7 @@ export interface HooksContext {
   ) => Promise<MemoryEntry[]>;
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => import("../config.js").MemoryCategory;
+  pendingLLMWarnings: PendingLLMWarnings;
 }
 
 /**
@@ -68,6 +69,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       findSimilarByEmbedding: ctx.findSimilarByEmbedding,
       shouldCapture: ctx.shouldCapture,
       detectCategory: ctx.detectCategory,
+      pendingLLMWarnings: ctx.pendingLLMWarnings,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:context" });
@@ -93,7 +95,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Fires when all models in a tier fail due to missing provider API keys, so the AI
   // can relay the issue to the user in its response.
   api.on("before_prompt_build", () => {
-    const warnings = drainPendingLLMWarnings();
+    const warnings = ctx.pendingLLMWarnings.drain();
     if (warnings.length === 0) return {};
     return { prependContext: warnings.join("\n") };
   });

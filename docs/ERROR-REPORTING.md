@@ -45,10 +45,10 @@ Add the following to your `openclaw.json` (gateway config) or plugin config:
 | `dsn` | string | Yes (if enabled) | — | GlitchTip/Sentry Data Source Name |
 | `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging") |
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
-| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw’s runtime context (`api.context.agentId`) when available. |
+| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw’s runtime context (`api.context.agentId`) when available; there is no hostname fallback (to avoid PII leakage). |
 | `botName` | string | No | — | **Optional.** Friendly name for this bot (e.g. `Maeve`, `Doris`). Sent as a tag so reports show a readable name in GlitchTip. Max 64 characters. |
 
-At plugin init the reporter calls `Sentry.setUser({ id: botUuid, username: botName })` and `Sentry.setTag('bot_id', …)` / `Sentry.setTag('bot_name', …)`, so all subsequent errors carry the bot identity. This enables GlitchTip **Users Affected**, tag filtering (e.g. `bot_name:Doris`), and grouping by bot.
+At plugin init the reporter applies `bot_id` / `bot_name` **tags** only (no Sentry user context), so GlitchTip can filter and group errors by bot without transmitting user identity. Example tag filter: `bot_name:Doris`.
 
 ### Setting via config-set
 
@@ -292,6 +292,14 @@ If you're auditing this feature for security/privacy compliance, verify:
 2. Check firewall/proxy settings
 3. Verify the GlitchTip project exists and is active
 4. Check OpenClaw logs for Sentry initialization errors
+
+### "Subagent main failed" (or other Cursor/IDE errors) — nothing in GlitchTip
+
+**Cause:** The plugin’s error reporter runs only inside the **OpenClaw gateway process** when the plugin is loaded. It does **not** run in Cursor’s subagent processes (e.g. `mcp_task` / explore / shell agents). Those run in separate processes that never load this plugin, so they never call `capturePluginError()` and nothing is sent to GlitchTip.
+
+**What gets reported:** Only errors that occur in plugin code (tools, hooks, CLI, chat, DB init, etc.) **inside the gateway** and that are caught by a path that calls `capturePluginError()`.
+
+**What does not:** Cursor IDE subagent failures, timeouts, or crashes in other processes. For those, check Cursor’s own logs or output; they are outside this plugin’s scope.
 
 ### Too many errors being reported
 

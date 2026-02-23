@@ -21,7 +21,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry } from "../services/chat.js";
+import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
@@ -56,6 +56,7 @@ export interface LifecycleContext {
   ) => Promise<MemoryEntry[]>;
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
+  pendingLLMWarnings: PendingLLMWarnings;
 }
 
 export function createLifecycleHooks(ctx: LifecycleContext) {
@@ -254,6 +255,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     label: "HyDE",
                     timeoutMs: 25_000,
                     signal: vectorStepAbort.signal,
+                    pendingWarnings: ctx.pendingLLMWarnings,
                   });
                   const hydeText = hydeContent.trim();
                   if (hydeText.length > 10) textToEmbed = hydeText;
