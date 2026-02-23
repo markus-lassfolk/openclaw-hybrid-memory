@@ -731,18 +731,6 @@ export async function runVerifyForCli(
   const defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
   const heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
   const providersWithKeys = getProvidersWithKeys(cronCfgForVerify);
-  // Also include any providers configured in OpenClaw's models.providers (e.g. minimax, mistral)
-  // that have an apiKey — these are auto-detected by the LLM proxy.
-  const openclawModelProviders = (ctx.api?.config as Record<string, unknown> | undefined)?.models as Record<string, unknown> | undefined;
-  const openclawProviderMap = openclawModelProviders?.providers as Record<string, unknown> | undefined;
-  if (openclawProviderMap) {
-    for (const [name, provCfg] of Object.entries(openclawProviderMap)) {
-      const pc = provCfg as Record<string, unknown> | undefined;
-      if (pc?.apiKey && typeof pc.apiKey === "string" && pc.apiKey.length >= 10 && !providersWithKeys.includes(name)) {
-        providersWithKeys.push(name);
-      }
-    }
-  }
   const llmSource = cfg.llm?._source === "gateway" ? " (auto from agents.defaults.model)" : cfg.llm ? " (from plugin config)" : "";
   const nanoOrder = getLLMModelPreference(cronCfgForVerify, "nano");
   const hasExplicitNano = Array.isArray(cfg.llm?.nano) && (cfg.llm.nano as string[]).length > 0;
@@ -782,7 +770,7 @@ export async function runVerifyForCli(
 
   if (opts.testLlm) {
     const { chatComplete, UnconfiguredProviderError } = await import("../services/chat.js");
-    const WARN = "⚠️ ";
+    const WARN = noEmoji ? "[WARN] " : "⚠️ ";
     const OK = noEmoji ? "[OK]" : "✅";
     const FAIL = noEmoji ? "[FAIL]" : "❌";
     const allModels = [...new Set([...nanoOrder, ...defaultOrder, ...heavyOrder])];
@@ -2283,8 +2271,8 @@ export async function runDistillForCli(
         sink.log(`memory-hybrid: distill: session too large (${textTokens} tokens), splitting into ${chunks.length} chunks`);
       }
 
-      // Safety check: ensure chunks don't exceed conservative TPM limits
-      const safeLimit = 350_000; // Conservative limit for all models including o3 (450k TPM)
+      // Safety check: ensure chunks don't exceed model-specific batch limits
+      const safeLimit = batchTokenLimit; // Use model-specific limit instead of hardcoded 350k
       const validChunks = chunks.filter((chunk, idx) => {
         const chunkTokens = Math.ceil(chunk.length / 4);
         if (chunkTokens > safeLimit) {

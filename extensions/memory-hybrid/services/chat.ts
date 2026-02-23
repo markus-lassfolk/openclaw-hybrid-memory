@@ -99,7 +99,7 @@ export async function chatComplete(opts: {
     if (signal) signal.removeEventListener("abort", onAbort);
     const isAbort = err instanceof Error && err.name === "AbortError";
     const error = isAbort
-      ? new Error(`Gateway/LLM timeout after ${timeoutMs}ms (model: ${model})`)
+      ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
       : (err instanceof Error ? err : new Error(String(err)));
     // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
@@ -154,7 +154,7 @@ export class LLMRetryError extends Error {
  */
 export async function withLLMRetry<T>(
   fn: () => Promise<T>,
-  opts?: { maxRetries?: number; label?: string; signal?: AbortSignal },
+  opts?: { maxRetries?: number; signal?: AbortSignal },
 ): Promise<T> {
   const maxRetries = opts?.maxRetries ?? 3;
   let lastError: Error | undefined;
@@ -232,10 +232,17 @@ export async function chatCompleteWithRetry(opts: {
   let unconfiguredCount = 0;
 
   for (let i = 0; i < modelsToTry.length; i++) {
-    if (signal?.aborted) break;
+    if (signal?.aborted) {
+      const reason = (signal as AbortSignal).reason;
+      const abortError =
+        reason instanceof Error
+          ? reason
+          : new Error(reason != null ? String(reason) : "Aborted");
+      abortError.name = "AbortError";
+      throw abortError;
+    }
     const currentModel = modelsToTry[i];
     const isFallback = i > 0;
-    const attemptLabel = isFallback ? `${label} (fallback: ${currentModel})` : label;
     // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
     const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
 
@@ -249,7 +256,7 @@ export async function chatCompleteWithRetry(opts: {
             ...(timeoutMs != null && { timeoutMs }),
             signal,
           }),
-        { maxRetries: 3, label: attemptLabel, signal },
+        { maxRetries: 3, signal },
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
