@@ -163,7 +163,7 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     });
 
     const opts: StoreCliOpts = {
-      text: "Twilio API Key: sk-test-1234567890abcdefghijklmnopqrstuvwxyz",
+      text: "Twilio API Key: sk-test1234567890abcdefghijklmnopqrstuvwxyz",
       category: "technical",
     };
 

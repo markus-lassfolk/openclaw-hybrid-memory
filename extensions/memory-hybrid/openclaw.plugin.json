@@ -585,6 +585,10 @@
               "logCaptures": {
                 "type": "boolean",
                 "description": "Emit info log on each capture (default: true)"
+              },
+              "requirePatternMatch": {
+                "type": "boolean",
+                "description": "Only store when a credential pattern matched (reject value-only; default: false)"
               }
             },
             "description": "Auto-capture credentials from tool call inputs"

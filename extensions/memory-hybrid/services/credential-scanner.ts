@@ -9,6 +9,7 @@
 
 import type { CredentialType } from "../config.js";
 import { capturePluginError } from "./error-reporter.js";
+import { validateAndNormalizeServiceName, validateCredentialValue } from "./credential-validation.js";
 
 export type ToolCallCredential = {
   service: string;     // e.g., "ssh://user@host", "github", "api.example.com"
@@ -200,6 +201,11 @@ export function extractCredentialsFromToolCalls(text: string): ToolCallCredentia
         try {
           const cred = extract(match, text);
           if (!cred || cred.value.length < 4) continue;
+          const validatedService = validateAndNormalizeServiceName(cred.service);
+          if (validatedService === null) continue;
+          const valueOk = validateCredentialValue(cred.value, cred.type, true);
+          if (!valueOk.ok) continue;
+          cred.service = validatedService;
           const key = `${cred.service}:${cred.type}`;
           if (!seen.has(key)) {
             seen.add(key);

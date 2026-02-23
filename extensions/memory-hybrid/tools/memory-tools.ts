@@ -24,6 +24,7 @@ import {
   tryParseCredentialForVault,
   VAULT_POINTER_PREFIX,
 } from "../services/auto-capture.js";
+import { shouldSkipCredentialStore } from "../services/credential-validation.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import {
   getMemoryCategories,
@@ -670,7 +671,9 @@ export function registerMemoryTools(
         // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
         // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
         if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
-          const parsed = tryParseCredentialForVault(textToStore, entity, key, value);
+          const parsed = tryParseCredentialForVault(textToStore, entity, key, value, {
+            requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+          });
           if (parsed) {
             // Validate parsed credential before storing
             if (!parsed.service || parsed.service.length === 0 || parsed.service.length > 100) {
@@ -693,6 +696,12 @@ export function registerMemoryTools(
                   },
                 ],
                 details: { error: "empty_credential_value" },
+              };
+            }
+            if (shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue })) {
+              return {
+                content: [{ type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` }],
+                details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
               };
             }
             credentialsDb.store({
