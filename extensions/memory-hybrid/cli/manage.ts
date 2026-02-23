@@ -390,7 +390,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         });
         // vectorDb may be unavailable
       }
-      const breakdown = factsDb.statsBreakdown();
+      const breakdown = factsDb.statsBreakdownByTier();
       const expired = factsDb.countExpired();
 
       const extras = ctx.richStatsExtras;
