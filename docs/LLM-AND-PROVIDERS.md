@@ -8,10 +8,10 @@ nav_order: 4
 
 The hybrid-memory plugin uses **two kinds of model access**:
 
-1. **Embeddings** — to turn text into vectors for semantic search (auto-recall, dedup, ingest).
-2. **Chat/completion** — for distillation, reflection, classification, proposals, self-correction, HyDE, and other LLM-backed features.
+1. **Embeddings** — turn text into vectors for semantic search (auto-recall, dedup, ingest).
+2. **Chat/completion** — distillation, reflection, classification, HyDE, self-correction, and other LLM-backed features.
 
-All LLM calls are routed through the **OpenClaw gateway** (OpenAI-compatible API). You can use any provider the gateway supports: OpenAI, Google Gemini, Anthropic Claude, Groq, OpenRouter, local Ollama, etc. **The plugin does not read or require GOOGLE_API_KEY, GEMINI_API_KEY, or other provider keys**; the gateway handles keys and routing. Configure provider keys in OpenClaw/gateway config if needed.
+The plugin calls provider APIs **directly** using the API keys you configure — it does not route LLM calls through the OpenClaw gateway's agent pipeline. Embeddings always go directly to OpenAI.
 
 ---
 
@@ -19,43 +19,32 @@ All LLM calls are routed through the **OpenClaw gateway** (OpenAI-compatible API
 
 | Requirement | Purpose |
 |-------------|---------|
-| **Embedding access** | Required. You must configure an embedding model and a way for the gateway to call it (e.g. OpenAI key for `text-embedding-3-small`, or gateway-configured alternative). The plugin will not load without valid embedding config. |
-| **Chat/completion access** | Optional for basic memory (capture/recall). Required for: distillation, reflection, auto-classify, consolidate, persona proposals, self-correction, ingest-files, HyDE, build-languages. Any model the gateway can serve is fine. |
+| **Embedding access** | Required. An OpenAI API key and embedding model (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config. |
+| **Chat/completion access** | Optional for basic memory (capture/recall). Required for: distillation, reflection, auto-classify, HyDE, self-correction, ingest-files, proposals, build-languages. |
 
-So at minimum you need **one embedding-capable setup** (typically OpenAI or a gateway proxy). For full features you need **at least one chat model** available through the gateway. The plugin does not require a specific provider; it uses whatever models you configure and the gateway provides.
-
----
-
-## How the plugin uses LLMs
-
-### Embeddings (required)
-
-- **Where:** Auto-recall (embed the user prompt), auto-capture and tools (embed new facts), ingest, consolidate, reflection (embed patterns/rules), self-correction (semantic dedup).
-- **Config:** `embedding.model` (e.g. `text-embedding-3-small`) and an API key the gateway uses for that model. The plugin uses the **same OpenAI client as the gateway** for embeddings, so if the gateway is configured for a given embedding provider, embeddings go through it.
-- **Cost:** One embedding call per recall turn plus per stored fact / search; typically low.
-
-### Chat/completion (optional per feature)
-
-| Feature | Tier | What it does |
-|---------|------|---------------|
-| **Session distillation** | Heavy | Extracts facts from session JSONL; benefits from large context (e.g. 1M tokens). |
-| **Reflection / reflect-rules / reflect-meta** | Default | Synthesizes patterns and rules from facts. |
-| **Auto-classify** | Default | Reclassifies "other" facts into categories. |
-| **Consolidate** | Default | Merges near-duplicate facts (cluster + merge). |
-| **Persona proposals** | Heavy | Generates proposed identity file changes. |
-| **Self-correction (analyze, TOOLS rewrite)** | Heavy / default | Analyzes incidents, optionally rewrites TOOLS.md. |
-| **Ingest-files** | Default | Extracts facts from markdown. |
-| **HyDE (search)** | Default | Expands query into a hypothetical answer before embedding. |
-| **Build-languages** | Default | Detects languages and builds keyword file. |
-| **Store classify-before-write** | Default | ADD/UPDATE/DELETE/NOOP before storing. |
-
-**Tier** affects which model list is used when you configure **`llm`** (see below): `default` for most features, `heavy` for distillation, spawn, and persona proposals.
+For full features you need at least one chat provider configured. The plugin works with any OpenAI-compatible API.
 
 ---
 
-## Configuring models: `llm` (recommended)
+## How the plugin uses LLMs — tiers
 
-Use the **`llm`** block to give the plugin an ordered list of models per tier. The plugin tries the first model; if it fails (e.g. no key, 429, 5xx), it tries the next, and so on. This works with the OpenClaw gateway’s model routing and any provider the gateway supports.
+Every LLM feature belongs to one of three tiers. The tier determines which model list is tried first.
+
+| Tier | Features | Optimised for | Recommended models |
+|------|----------|---------------|-------------------|
+| **nano** | autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize | Cheapest — runs on **every** chat message or write | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
+| **default** | reflection, language keywords, general analysis | Balanced quality/cost | `gemini-2.5-flash`, `claude-sonnet-4-6`, `gpt-4.1` |
+| **heavy** | Session distillation, self-correction, persona proposals | Most capable; **long context critical** for distill | `gemini-3.1-pro-preview` (1024k), `claude-opus-4-6`, `o3` |
+
+When `llm.nano` is not configured, nano ops fall back to `llm.default[0]`.
+
+> **Why Gemini first for heavy?** Distillation processes entire session histories — up to 500k tokens. Google's Gemini Pro is currently the only model with 1024k context at the heavy tier, making it far more effective for distill than Claude Opus (195k) or OpenAI o3 (195k).
+
+---
+
+## Configuring models: `llm` block
+
+Set `llm.nano`, `llm.default`, and `llm.heavy` with ordered model lists. The plugin tries each in order; if one fails (no key, rate limit, 5xx), it tries the next.
 
 ```json
 {
@@ -64,13 +53,16 @@ Use the **`llm`** block to give the plugin an ordered list of models per tier. T
       "openclaw-hybrid-memory": {
         "config": {
           "embedding": {
-            "apiKey": "sk-...",
+            "apiKey": "sk-proj-...",
             "model": "text-embedding-3-small"
           },
           "llm": {
-            "default": ["gemini-2.0-flash", "claude-sonnet-4", "gpt-4o-mini"],
-            "heavy": ["gemini-2.0-flash-thinking", "claude-opus-4", "gpt-4o"],
-            "fallbackToDefault": true
+            "nano":    ["google/gemini-2.5-flash-lite",    "openai/gpt-4.1-nano",         "anthropic/claude-haiku-4-5"],
+            "default": ["google/gemini-2.5-flash",          "anthropic/claude-sonnet-4-6", "openai/gpt-4.1"],
+            "heavy":   ["google/gemini-3.1-pro-preview",    "anthropic/claude-opus-4-6",   "openai/o3"],
+            "providers": {
+              "anthropic": { "apiKey": "sk-ant-..." }
+            }
           }
         }
       }
@@ -81,63 +73,195 @@ Use the **`llm`** block to give the plugin an ordered list of models per tier. T
 
 | Key | Description |
 |-----|-------------|
-| `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages, etc.). First working model wins. |
-| `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). |
-| `fallbackToDefault` | If `true`, after trying all models in the list, try one more fallback model (see below). |
-| `fallbackModel` | Optional. When `fallbackToDefault` is true, this model is tried last — it is only added to the chain if not already present in the `default` or `heavy` list. Set to your **gateway default model** (e.g. from openclaw.yaml) for a provider-agnostic final fallback; omit to not add any extra fallback beyond the list. |
+| `nano` | Ordered list for ultra-cheap ops (autoClassify, HyDE, classifyBeforeWrite, summarize). Falls back to `default[0]` when unset. |
+| `default` | Ordered list for default-tier features (reflection, language keywords, general analysis). |
+| `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
+| `providers` | Per-provider API config. Keys are provider prefixes from model IDs (`google`, `openai`, `anthropic`, etc.). See [Provider keys](#provider-api-keys) below. |
+| `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
+| `fallbackModel` | Optional. Last-resort model tried when `fallbackToDefault` is true. |
 
-**Fallback behaviour:** For each LLM call the plugin (1) tries each model in the list in order, (2) on failure (no key, 401, 403, 5xx, etc.) tries the next, (3) if `fallbackToDefault` is true and `fallbackModel` is set and not already in the list, tries it last, (4) only then fails the request.
-
-When **`llm`** is set, maintenance jobs and CLI commands (distill, reflect, classify, etc.) use these lists. When **`llm`** is not set, the plugin falls back to **legacy** behaviour (see below).
+Use **exact `provider/model` IDs** as shown by `openclaw models list` (e.g. `google/gemini-2.5-flash`, `anthropic/claude-haiku-4-5`). Run `openclaw hybrid-mem verify --test-llm` to confirm all configured models reach their APIs.
 
 ---
 
-## Legacy model selection (when `llm` is not set)
+## Zero-config: auto-derive from OpenClaw
 
-If you do **not** configure `llm`, the plugin picks a single model per tier from what you have configured:
+When `llm` is **not configured** in the plugin, the plugin automatically derives model tiers from your OpenClaw `agents.defaults.model` (the same list shown by `openclaw models list`):
 
-| Priority | Condition | Model used (default tier) | Model used (heavy tier) |
-|----------|-----------|---------------------------|--------------------------|
-| 1 | `distill.apiKey` set | `distill.defaultModel` or `gemini-2.0-flash` | same or heavy default |
-| 2 | `claude.apiKey` set | `claude.defaultModel` or Claude Sonnet | Claude Opus |
-| 3 | `embedding.apiKey` set | `reflection.model` or `gpt-4o-mini` | `gpt-4o` |
+- **nano tier**: models with `nano`, `mini`, `haiku`, or `lite` in their name
+- **default tier**: all models, lighter first
+- **heavy tier**: all models, heavier first (`pro`, `opus`, `o3` etc. come first)
 
-The old **`distill`** block (`apiKey`, `defaultModel`, `fallbackModels`) is still supported but deprecated in favour of gateway + `llm`. Existing config keeps working.
+This means a freshly installed plugin works with whatever models you have configured in OpenClaw — no `llm` block required. The verify output shows `(auto from agents.defaults.model)` when this is in effect.
+
+---
+
+## Provider API keys
+
+Each provider in `llm.providers` can have:
+- `apiKey` — the API key for that provider
+- `baseURL` — the OpenAI-compatible base URL (only needed for providers without built-in defaults)
+
+### Built-in providers (no `baseURL` needed)
+
+| Provider prefix | Built-in endpoint | Key source |
+|-----------------|-------------------|------------|
+| `google` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `llm.providers.google.apiKey` or legacy `distill.apiKey` |
+| `openai` | `https://api.openai.com/v1` | `llm.providers.openai.apiKey` or `embedding.apiKey` |
+| `anthropic` | `https://api.anthropic.com/v1` | `llm.providers.anthropic.apiKey` (required; no fallback) |
+
+### Auto-detected providers
+
+Any provider you've already set up in OpenClaw's `models.providers` (e.g. MiniMax) is **automatically detected** — the plugin reads the API key and base URL from your `openclaw.json` with no extra plugin config needed. This means:
+
+```json
+// In openclaw.json (already there for MiniMax):
+"models": {
+  "providers": {
+    "minimax": {
+      "baseUrl": "https://api.minimax.io/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-cp-..."
+    }
+  }
+}
+```
+
+Then in your plugin config, just use the model ID:
+```json
+"llm": {
+  "nano": ["minimax/MiniMax-M2.5"]
+}
+```
+
+No `llm.providers.minimax` entry needed.
+
+### Any other OpenAI-compatible provider
+
+For providers not auto-detected, add them to `llm.providers`:
+
+```json
+"llm": {
+  "providers": {
+    "mistral": {
+      "apiKey": "your-mistral-key",
+      "baseURL": "https://api.mistral.ai/v1"
+    },
+    "deepseek": {
+      "apiKey": "your-deepseek-key",
+      "baseURL": "https://api.deepseek.com/v1"
+    }
+  }
+}
+```
+
+---
+
+## Provider-specific behaviours
+
+### Google Gemini
+- Uses the OpenAI-compatible Gemini endpoint; standard `temperature`, `max_tokens` apply.
+- Model IDs use the bare name (`gemini-2.5-flash`); the plugin strips the `google/` prefix automatically before calling the API.
+
+### Anthropic Claude
+- Uses Anthropic's `/v1/chat/completions` OpenAI-compatible endpoint.
+- **Requires** `llm.providers.anthropic.apiKey`. Authentication uses `Authorization: Bearer <key>`.
+- The plugin automatically adds the required `anthropic-version: 2023-06-01` header.
+
+### OpenAI (including o-series reasoning models)
+- Newer models (GPT-5+) require `max_completion_tokens` instead of `max_tokens`. The plugin remaps automatically.
+- Reasoning models (`o1`, `o3`, `o4-mini`, etc.) do not accept `temperature` or `top_p`. The plugin strips these parameters automatically for any model matching `o[0-9]*`.
+
+---
+
+## What happens when a provider key is missing
+
+If a model in `llm.nano`/`llm.default`/`llm.heavy` uses a provider with no configured API key, the plugin:
+1. **Skips it immediately** (no retry) and moves to the next model in the list.
+2. **Does not report it to error telemetry** (it's a config issue, not a runtime error).
+3. **Queues a user-visible warning** if *all* models fail due to missing keys — the AI agent will see it on the next chat turn and can relay the config guidance to the user.
+
+Run `openclaw hybrid-mem verify --test-llm` to see which models are reachable and which are skipped.
+
+---
+
+## Recommended model matrix
+
+| Tier | Google | Anthropic | OpenAI |
+|------|--------|-----------|--------|
+| **nano** | `gemini-2.5-flash-lite` | `claude-haiku-4-5` | `gpt-4.1-nano` |
+| **default** | `gemini-2.5-flash` | `claude-sonnet-4-6` | `gpt-4.1` |
+| **heavy** | `gemini-3.1-pro-preview` | `claude-opus-4-6` | `o3` |
+
+**Provider order rationale (Gemini → Anthropic → OpenAI):**
+- **Gemini first** — only provider with 1024k context at all tiers; Gemini Flash-Lite is the most cost-effective nano model; critical for distillation.
+- **Anthropic second** — haiku/sonnet/opus map cleanly to nano/default/heavy; strong quality.
+- **OpenAI third** — excellent fallback; `gpt-4.1-nano` is purpose-built for cheap classification; `o3` adds deep reasoning for heavy ops.
+
+**Excluded from the matrix:**
+- Live/streaming models (`gemini-live-*`), deep-research (`o3-deep-research`), code-only models (`codex-*`), o3-mini/o4-mini (reasoning despite "mini" name — expensive and don't accept `temperature`).
+
+---
+
+## Verify your configuration
+
+```bash
+openclaw hybrid-mem verify
+```
+Shows the effective model for each tier and each feature (with source annotation: "from llm.nano", "from llm.default", "auto from agents.defaults.model").
+
+```bash
+openclaw hybrid-mem verify --test-llm
+```
+Calls each configured model with a minimal prompt and reports ✅ reachable / ❌ failed / ⚠️ skipped (no key). Tests all three tiers.
 
 ---
 
 ## Embedding configuration
 
-Embeddings are required. Typical setup:
+Embeddings are required and always go directly to OpenAI.
 
 ```json
 "embedding": {
-  "apiKey": "sk-...",
+  "apiKey": "sk-proj-...",
   "model": "text-embedding-3-small"
 }
 ```
 
-**Optional preference list:** You can set **`embedding.models`** to an ordered list of embedding model names. The plugin tries the first model; if it fails (e.g. rate limit, provider down), it tries the next. All models in the list must produce the **same vector dimension** (e.g. 1536 for `text-embedding-3-small`); the first model in the list defines the dimension used for LanceDB. Example (same dimension):
+**Optional fallback list:** Set `embedding.models` to try multiple models in order on rate limit or failure. All models must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`).
 
 ```json
 "embedding": {
-  "apiKey": "sk-...",
+  "apiKey": "sk-proj-...",
   "model": "text-embedding-3-small",
   "models": ["text-embedding-3-small"]
 }
 ```
 
-Supported dimensions: `text-embedding-3-small` → 1536, `text-embedding-3-large` → 3072. You cannot mix 1536- and 3072-dimension models in one list. When `models` is omitted, the plugin uses `model` only (no fallback list).
+---
 
-The plugin uses this client for both **embeddings** and **chat** (when no separate gateway client is provided). For best flexibility, use the OpenClaw gateway for chat and optional `llm` preference lists; keep `embedding` for vector search.
+## Legacy: `distill` block
+
+The `distill` block (with `apiKey` for a Google key and `defaultModel`) is still supported but deprecated in favour of `llm` + `llm.providers.google.apiKey`. If both are set, `llm` takes precedence.
+
+```json
+"distill": {
+  "apiKey": "AIzaSy...",
+  "defaultModel": "google/gemini-3.1-pro-preview"
+}
+```
+
+The `distill.apiKey` is still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set.
 
 ---
 
 ## Summary
 
-- **Prerequisites:** Embedding access (required); chat access (optional, for distillation/reflection/classify/etc.).
-- **Provider-agnostic:** All LLM calls go through the OpenClaw gateway; any gateway-supported provider works.
-- **Recommended:** Set **`llm.default`** and **`llm.heavy`** with ordered model lists and **`fallbackToDefault: true`** so the plugin can try alternatives when one model fails. Optionally set **`embedding.models`** (same-dimension list) for embedding fallback.
-- **Legacy:** Without `llm`, the plugin still uses `distill` / `claude` / `embedding` to choose a single model per tier.
+- **Direct API calls** — the plugin calls provider APIs directly, not through the OpenClaw gateway agent pipeline.
+- **Three tiers** — `llm.nano` (cheap, high-frequency), `llm.default` (balanced), `llm.heavy` (capable, long-context).
+- **Zero config** — when `llm` is not set, tiers are auto-derived from `agents.defaults.model`.
+- **Any OpenAI-compatible provider** — configure via `llm.providers.<name>.{ apiKey, baseURL }` or via OpenClaw's `models.providers` (auto-detected).
+- **Built-in provider quirks handled** — Anthropic headers, o-series temperature stripping, GPT-5 max_completion_tokens remapping.
+- **Graceful degradation** — missing key = skip model + notify user; no crash.
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full config reference and [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for distillation-specific usage.
