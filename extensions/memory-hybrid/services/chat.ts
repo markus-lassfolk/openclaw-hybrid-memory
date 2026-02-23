@@ -76,7 +76,7 @@ export async function chatComplete(opts: {
   if (signal) {
     if (signal.aborted) {
       clearTimeout(timeoutId);
-      throw new Error("Request aborted");
+      throw new Error("Request was aborted");
     }
     signal.addEventListener("abort", onAbort);
   }

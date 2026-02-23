@@ -18,6 +18,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 
 /**
@@ -92,14 +93,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (prefix === "anthropic") {
       const apiKey = providerCfg?.apiKey;
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
-      const baseURL = providerCfg?.baseURL;
-      if (!baseURL) {
-        throw new UnconfiguredProviderError(
-          "anthropic",
-          trimmed,
-          "Missing OpenAI-compatible baseURL for Anthropic. Set llm.providers.anthropic.baseURL (e.g. your gateway or OpenAI-compatible proxy)."
-        );
-      }
+      const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
       return {
         client: getOrCreate(`anthropic:${baseURL}`, () => new OpenAI({

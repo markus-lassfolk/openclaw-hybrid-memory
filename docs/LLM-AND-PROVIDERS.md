@@ -110,31 +110,23 @@ Each provider in `llm.providers` can have:
 | `openai` | `https://api.openai.com/v1` | `llm.providers.openai.apiKey` or `embedding.apiKey` |
 | `anthropic` | `https://api.anthropic.com/v1` | `llm.providers.anthropic.apiKey` (required; no fallback) |
 
-### Auto-detected providers
+### Manual provider configuration required
 
-Any provider you've already set up in OpenClaw's `models.providers` (e.g. MiniMax) is **automatically detected** — the plugin reads the API key and base URL from your `openclaw.json` with no extra plugin config needed. This means:
+Providers must be configured in the plugin's `llm.providers` section. While OpenClaw's `models.providers` are shown in verify output for reference, they are not automatically used by the plugin's multi-provider proxy.
 
-```json
-// In openclaw.json (already there for MiniMax):
-"models": {
-  "providers": {
-    "minimax": {
-      "baseUrl": "https://api.minimax.io/v1",
-      "api": "openai-completions",
-      "apiKey": "sk-cp-..."
-    }
-  }
-}
-```
+For any provider beyond the built-ins, add them to `llm.providers`:
 
-Then in your plugin config, just use the model ID:
 ```json
 "llm": {
+  "providers": {
+    "minimax": {
+      "apiKey": "sk-cp-...",
+      "baseURL": "https://api.minimax.io/v1"
+    }
+  },
   "nano": ["minimax/MiniMax-M2.5"]
 }
 ```
-
-No `llm.providers.minimax` entry needed.
 
 ### Any other OpenAI-compatible provider
 

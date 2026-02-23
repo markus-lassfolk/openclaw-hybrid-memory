@@ -26,6 +26,12 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
+# Security warning: Bearer token over HTTP
+if [[ "$BASE" =~ ^https?:// && ! "$BASE" =~ ^https:// ]]; then
+  echo "WARNING: Using HTTP URL ($BASE) with Bearer token - auth token will be sent in cleartext!" >&2
+  echo "Consider using HTTPS: export GLITCHTIP_BASE_URL=https://your-domain.com" >&2
+fi
+
 # Sentry-style: /api/0/projects/{org}/{project}/issues/
 # Try numeric first (org=1, project=1), then org/1/project/1
 URL1="${BASE}/api/0/projects/${ORG}/${PROJECT}/issues/?query=&statsPeriod=14d"
