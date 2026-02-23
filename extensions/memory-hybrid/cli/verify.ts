@@ -7,7 +7,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { withExit, type Chainable } from "./shared.js";
 
 export type VerifyContext = {
-  runVerify: (opts: { fix: boolean; logFile?: string }, sink: VerifyCliSink) => Promise<void>;
+  runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
 };
 
@@ -19,12 +19,13 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
+    .option("--test-llm", "Test each configured LLM model with a minimal completion (requires gateway)")
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
-    .action(withExit(async (opts: { fix?: boolean; logFile?: string; noEmoji?: boolean }) => {
+    .action(withExit(async (opts: { fix?: boolean; logFile?: string; testLlm?: boolean; noEmoji?: boolean }) => {
       if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
       try {
         await runVerify(
-          { fix: !!opts.fix, logFile: opts.logFile },
+          { fix: !!opts.fix, logFile: opts.logFile, testLlm: !!opts.testLlm },
           { log: (s) => console.log(s), error: (s) => console.error(s) },
         );
       } catch (err) {

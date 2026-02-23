@@ -15,7 +15,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { Embeddings } from "../services/embeddings.js";
-import { chatComplete } from "../services/chat.js";
+import { chatCompleteWithRetry } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
@@ -31,8 +31,9 @@ import {
   type MemoryCategory,
   type DecayClass,
   type HybridMemoryConfig,
-  getDefaultCronModel,
   getCronModelConfig,
+  getDefaultCronModel,
+  getLLMModelPreference,
 } from "../config.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
@@ -306,13 +307,19 @@ export function registerMemoryTools(
             let textToEmbed = query;
             if (cfg.search?.hydeEnabled) {
               try {
-                const hydeModel = cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default");
-                const hydeContent = await chatComplete({
+                const cronCfg = getCronModelConfig(cfg);
+                const pref = getLLMModelPreference(cronCfg, "nano");
+                const hydeModel = cfg.search.hydeModel ?? pref[0];
+                const fallbackModels = cfg.search.hydeModel ? [] : pref.slice(1);
+                const hydeContent = await chatCompleteWithRetry({
                   model: hydeModel,
+                  fallbackModels,
                   content: `Write a short factual statement (1-2 sentences) that answers: ${query}\n\nOutput only the statement, no preamble.`,
                   temperature: 0.3,
                   maxTokens: 150,
                   openai,
+                  label: "HyDE",
+                  timeoutMs: 25_000,
                 });
                 const hydeText = hydeContent.trim();
                 if (hydeText.length > 10) textToEmbed = hydeText;
@@ -778,7 +785,7 @@ export function registerMemoryTools(
           }
           if (similarFacts.length > 0) {
             const classification = await classifyMemoryOperation(
-              textToStore, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), api.logger,
+              textToStore, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"), api.logger,
             );
 
             if (classification.action === "NOOP") {

@@ -17,6 +17,7 @@ import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
+import { drainPendingLLMWarnings } from "../services/chat.js";
 
 export interface HooksContext {
   factsDb: FactsDB;
@@ -87,6 +88,15 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:attach" });
     throw err;
   }
+
+  // Inject pending LLM config warnings into the agent's context once per occurrence.
+  // Fires when all models in a tier fail due to missing provider API keys, so the AI
+  // can relay the issue to the user in its response.
+  api.on("before_prompt_build", () => {
+    const warnings = drainPendingLLMWarnings();
+    if (warnings.length === 0) return {};
+    return { prependContext: warnings.join("\n") };
+  });
 
   // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
   // Mutates event.historyMessages in place so OpenClaw core uses the sanitized array.

@@ -381,8 +381,8 @@ All chat/completion calls (distillation, reflection, classify, consolidate, prop
 
 | Key | Description |
 |-----|-------------|
-| `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages). First working model wins. |
-| `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). |
+| `default` | Ordered list of models for default-tier features (reflection, classify, consolidate, ingest, HyDE, build-languages). First working model wins. Use **exact IDs** your gateway accepts (run `openclaw models list` or `openclaw models list --all`). |
+| `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction spawn). Same ID rules as `default`. |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
 | `fallbackModel` | Optional. When `fallbackToDefault` is true and this key is set, use this model as the last try (only added if not already in the `default`/`heavy` list); if omitted, no extra fallback beyond the tier list is applied. |
 
@@ -422,13 +422,15 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 ## Default model selection (when `llm` is not set)
 
-When **`llm`** is **not** configured, maintenance cron jobs and self-correction spawn use **legacy** provider-based selection:
+When **`llm`** is **not** configured, the plugin builds an **ordered list** from providers that have API keys, in preferred order: **Gemini → OpenAI → Claude**. The first working model wins; if one fails (e.g. rate limit, disallowed by gateway), the next in the list is tried.
 
-| Priority | Condition | Model used (default tier) | Model used (heavy tier) |
-|----------|-----------|----------------------------|--------------------------|
-| 1 | **Gemini** configured (`distill.apiKey` set) | `distill.defaultModel` or `gemini-2.0-flash` | same or heavy default |
-| 2 | **Claude** configured (`claude.apiKey` set) | `claude.defaultModel` or Claude Sonnet | Claude Opus |
-| 3 | **OpenAI** (embedding key set) | `reflection.model` or `gpt-4o-mini` | `gpt-4o` |
+| Order | Provider | Condition | Default-tier model | Heavy-tier model |
+|-------|----------|-----------|---------------------|------------------|
+| 1 | **Gemini** | `distill.apiKey` set | `distill.defaultModel` or `gemini-2.0-flash` | same or `gemini-2.0-flash-thinking-exp-01-21` |
+| 2 | **OpenAI** | `embedding.apiKey` set | `gpt-4o-mini` | `gpt-4o` |
+| 3 | **Claude** | `claude.apiKey` set | `claude.defaultModel` or Claude Sonnet | Claude Opus |
+
+Optional **`distill.fallbackModels`** (deprecated) and **`llm.fallbackModel`** (when set) are appended to this list so they are tried after the provider order. Run **`openclaw hybrid-mem verify`** to see the effective order for default and heavy tier and which providers have keys. Use **`openclaw hybrid-mem verify --test-llm`** to run a minimal completion against each configured model and report success or failure (requires the gateway to be running). If a model fails or is disallowed by the gateway, allow it in your OpenClaw gateway config or remove it from the list (by setting **`llm.default`** / **`llm.heavy`** explicitly).
 
 When you run **`openclaw hybrid-mem verify --fix`**, the plugin writes each optional job with a concrete `model` value resolved from this logic (existing jobs are not overwritten). **Self-correction:** Leave `selfCorrection.spawnModel` empty to use the same default; set it to a model string to override.
 

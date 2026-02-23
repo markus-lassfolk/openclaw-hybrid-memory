@@ -9,11 +9,149 @@ import { CredentialsDB } from "../backends/credentials-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { Embeddings } from "../services/embeddings.js";
-import { vectorDimsForModel, type HybridMemoryConfig, type CredentialType } from "../config.js";
+import { vectorDimsForModel, type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
+import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
+
+/** Known provider OpenAI-compatible base URLs. */
+const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
+const ANTHROPIC_VERSION_HEADER = "2023-06-01";
+
+/**
+ * Builds a multi-provider OpenAI-compatible proxy that routes each model to the correct provider API.
+ * All existing call sites use `openai.chat.completions.create({ model, ... })` unchanged — this
+ * proxy intercepts those calls and selects the right API endpoint + key based on the model prefix.
+ *
+ * Routing:
+ *  - `google/*`  → Google Gemini OpenAI-compat endpoint (distill.apiKey or llm.providers.google.apiKey)
+ *  - `openai/*` or bare model (no `/`) → OpenAI (embedding.apiKey or llm.providers.openai.apiKey)
+ *  - Other `provider/*` with explicit llm.providers config → custom endpoint
+ *  - Unknown provider, no config → falls back to OpenAI client, logs a warning
+ */
+function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): OpenAI {
+  const clientCache = new Map<string, OpenAI>();
+
+  function getOrCreate(key: string, factory: () => OpenAI): OpenAI {
+    if (!clientCache.has(key)) clientCache.set(key, factory());
+    return clientCache.get(key)!;
+  }
+
+  function defaultOpenAIClient(): OpenAI {
+    return getOrCreate("openai", () => new OpenAI({ apiKey: cfg.embedding.apiKey }));
+  }
+
+  function resolveClient(model: string): { client: OpenAI; bareModel: string } {
+    const trimmed = model.trim();
+    const slashIdx = trimmed.indexOf("/");
+
+    if (slashIdx <= 0) {
+      // Bare model name — use default OpenAI client
+      return { client: defaultOpenAIClient(), bareModel: trimmed };
+    }
+
+    const prefix = trimmed.slice(0, slashIdx).toLowerCase();
+    const bareModel = trimmed.slice(slashIdx + 1);
+    const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
+
+    if (prefix === "google") {
+      const apiKey = providerCfg?.apiKey ?? cfg.distill?.apiKey;
+      if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
+      const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
+      return { client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
+    }
+
+    if (prefix === "openai") {
+      const apiKey = providerCfg?.apiKey ?? cfg.embedding.apiKey;
+      const baseURL = providerCfg?.baseURL;
+      return { client: getOrCreate("openai", () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+    }
+
+    if (prefix === "anthropic") {
+      const apiKey = providerCfg?.apiKey;
+      if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
+      const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
+      // Anthropic's OpenAI-compatible endpoint uses Bearer auth + requires anthropic-version header
+      return {
+        client: getOrCreate(`anthropic:${baseURL}`, () => new OpenAI({
+          apiKey,
+          baseURL,
+          defaultHeaders: { "anthropic-version": ANTHROPIC_VERSION_HEADER },
+        })),
+        bareModel,
+      };
+    }
+
+    if (providerCfg?.apiKey || providerCfg?.baseURL) {
+      const apiKey = providerCfg.apiKey ?? "unused";
+      const baseURL = providerCfg.baseURL;
+      return { client: getOrCreate(`custom:${prefix}`, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+    }
+
+    // Auto-detect: check if this provider is configured in OpenClaw's models.providers
+    // (e.g. minimax, mistral, deepseek — any OpenAI-compatible provider the user set up in openclaw.json).
+    const openclawProviders = (api.config as Record<string, unknown>)?.models as Record<string, unknown> | undefined;
+    const openclawProviderCfg = (openclawProviders?.providers as Record<string, unknown> | undefined)?.[prefix] as Record<string, unknown> | undefined;
+    if (openclawProviderCfg?.apiKey && typeof openclawProviderCfg.apiKey === "string") {
+      const apiKey = openclawProviderCfg.apiKey;
+      const baseURL = (openclawProviderCfg.baseUrl ?? openclawProviderCfg.baseURL) as string | undefined;
+      if (baseURL) {
+        return { client: getOrCreate(`openclaw:${prefix}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
+      }
+    }
+
+    // Unknown provider with no config — throw so callers can skip to the next model cleanly
+    throw new UnconfiguredProviderError(prefix, trimmed);
+  }
+
+  /** o1, o3, o4-mini, o3-pro, etc. — reasoning models that reject temperature/top_p params */
+  const isReasoningModel = (bare: string) => /^o[0-9]/.test(bare.toLowerCase());
+
+  /**
+   * Newer OpenAI models (o-series, gpt-5+) use `max_completion_tokens` instead of `max_tokens`.
+   * Reasoning models (o1, o3, o4-*) also reject temperature/top_p — strip those params.
+   */
+  function remapMaxTokensForOpenAI(body: Record<string, unknown>, bareModel: string): Record<string, unknown> {
+    let result = body;
+    if ("max_tokens" in result && !("max_completion_tokens" in result)) {
+      const { max_tokens, ...rest } = result;
+      result = { ...rest, max_completion_tokens: max_tokens };
+    }
+    if (isReasoningModel(bareModel)) {
+      // Reasoning models only accept temperature=1 (the default); strip to avoid 400
+      const { temperature, top_p, ...rest } = result as Record<string, unknown> & { temperature?: unknown; top_p?: unknown };
+      result = rest;
+    }
+    return result;
+  }
+
+  // Proxy that intercepts chat.completions.create and routes to the right provider client.
+  // All other OpenAI methods (embeddings, etc.) are NOT proxied — embeddings use a separate client.
+  return new Proxy(new OpenAI({ apiKey: cfg.embedding.apiKey }), {
+    get(target, prop, receiver) {
+      if (prop === "chat") {
+        return {
+          completions: {
+            create(body: Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1]) {
+              const model: string = (body as { model?: string }).model ?? "";
+              const { client, bareModel } = resolveClient(model);
+              const prefix = model.trim().split("/")[0]?.toLowerCase();
+              const isOpenAI = prefix === "openai" || !model.includes("/");
+              const adjustedBody = isOpenAI
+                ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
+                : { ...(body as object), model: bareModel };
+              return client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
+            },
+          },
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as OpenAI;
+}
 
 export interface HealthStatus {
   embeddingsOk: boolean;
@@ -64,22 +202,58 @@ export function initializeDatabases(
   const openaiForEmbeddings = new OpenAI({ apiKey: cfg.embedding.apiKey });
   const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
   const embeddings = new Embeddings(openaiForEmbeddings, embeddingModels);
-  // Chat/LLM client uses gateway when available (embeddings never do)
-  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayPortNum = gatewayPortRaw !== undefined ? parseInt(gatewayPortRaw, 10) : NaN;
-  const gatewayPort = !Number.isNaN(gatewayPortNum) && gatewayPortNum >= 1 && gatewayPortNum <= 65535 ? gatewayPortNum : undefined;
-  if (gatewayPortRaw !== undefined && gatewayPort === undefined) {
-    api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT "${gatewayPortRaw}" is not a valid port (1-65535); gateway base URL not used`);
+
+  // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
+  // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
+  // model selection when the user has already set up their models in openclaw.json.
+  if (!cfg.llm) {
+    const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
+    const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
+    const modelCfg = agentDefaults?.model as Record<string, unknown> | undefined;
+    const primary = typeof modelCfg?.primary === "string" ? modelCfg.primary : undefined;
+    const fallbacks = Array.isArray(modelCfg?.fallbacks)
+      ? (modelCfg.fallbacks as unknown[]).filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+      : [];
+    const gatewayModels = [primary, ...fallbacks].filter((m): m is string => Boolean(m));
+
+    if (gatewayModels.length > 0) {
+      // Deduplicate while preserving order
+      const seen = new Set<string>();
+      const uniqueModels = gatewayModels.filter(m => { if (seen.has(m)) return false; seen.add(m); return true; });
+
+      // Heuristic tier split based on model name keywords.
+      // Nano:   nano, mini, haiku, lite, turbo-mini  — ultra-cheap for classify/HyDE/summarize
+      // Heavy:  pro, opus, o3, o1, large, ultra       — capable/expensive models
+      // Light:  flash, small                           — fast/cheap (but not nano-cheap)
+      // Medium: everything else (sonnet, gpt-4o, gpt-5, etc.)
+      const isNano  = (m: string) => /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase());
+      const isHeavy = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy/.test((m.split("/").pop() ?? m).toLowerCase());
+      const isLight = (m: string) => /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
+      const nano    = uniqueModels.filter(m => isNano(m) && !isHeavy(m));
+      const heavy   = uniqueModels.filter(m => isHeavy(m) && !isNano(m));
+      const light   = uniqueModels.filter(m => isLight(m) && !isNano(m) && !isHeavy(m));
+      const medium  = uniqueModels.filter(m => !isNano(m) && !isLight(m) && !isHeavy(m));
+
+      // default tier: light first, then medium, then heavy as fallbacks
+      const defaultTier = [...light, ...medium, ...heavy];
+      // heavy tier: heavy first (capable), then medium, then light as fallbacks
+      const heavyTier = [...heavy, ...medium, ...light];
+
+      cfg.llm = {
+        default: defaultTier.length > 0 ? defaultTier : uniqueModels,
+        heavy: heavyTier.length > 0 ? heavyTier : uniqueModels,
+        // nano tier: only set when nano/mini models exist in the gateway list
+        ...(nano.length > 0 ? { nano: [...nano, ...light, ...medium] } : {}),
+        _source: "gateway",
+      };
+      api.logger.info?.(`memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.join(", ")}${nano.length > 0 ? `; nano: ${nano.join(", ")}` : ""})`);
+    }
   }
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-  const gatewayBaseUrl = gatewayPort !== undefined ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
-  if (gatewayPort !== undefined && !gatewayToken) {
-    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT is set but OPENCLAW_GATEWAY_TOKEN is not — LLM requests to the gateway will be sent without authentication");
-  }
-  // When routing through gateway, use the gateway token for auth (not the OpenAI API key)
-  const openai = gatewayBaseUrl
-    ? new OpenAI({ apiKey: gatewayToken ?? "unused", baseURL: gatewayBaseUrl })
-    : new OpenAI({ apiKey: cfg.embedding.apiKey });
+  // Chat/LLM client: multi-provider proxy that routes each model to the correct API.
+  // google/* → Google Gemini OpenAI-compat API (uses distill.apiKey or llm.providers.google.apiKey)
+  // openai/* or bare names → OpenAI API (uses embedding.apiKey or llm.providers.openai.apiKey)
+  // Other providers → require llm.providers.<provider>.apiKey + optionally baseURL
+  const openai = buildMultiProviderOpenAI(cfg, api);
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {

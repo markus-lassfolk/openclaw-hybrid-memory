@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, type CronModelConfig } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "../services/embeddings.js";
@@ -228,6 +228,8 @@ export interface HandlerContext {
   logger: { info?: (m: string) => void; warn?: (m: string) => void };
   /** Category detection for extract-daily and similar; uses language keywords when set */
   detectCategory: (text: string) => MemoryCategory;
+  /** OpenClaw plugin API — used for verify to read gateway config (e.g. models.providers for MiniMax etc.) */
+  api?: import("openclaw/plugin-sdk").ClawdbotPluginApi;
 }
 
 // Constants
@@ -349,7 +351,7 @@ export async function runStoreForCli(
       if (similarFacts.length > 0) {
         try {
           const classification = await classifyMemoryOperation(
-            text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), log,
+            text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"), log,
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
@@ -559,10 +561,10 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
  */
 export async function runVerifyForCli(
   ctx: HandlerContext,
-  opts: { fix: boolean; logFile?: string },
+  opts: { fix: boolean; logFile?: string; testLlm?: boolean },
   sink: VerifyCliSink,
 ): Promise<void> {
-  const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath } = ctx;
+  const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai } = ctx;
   const log = sink.log;
   const err = sink.error ?? sink.log;
   const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
@@ -662,7 +664,7 @@ export async function runVerifyForCli(
   log("\n───── Core Features ─────");
   log(`  autoCapture: ${bool(cfg.autoCapture)}`);
   log(`  autoRecall: ${bool(cfg.autoRecall.enabled)}`);
-  log(`  autoClassify: ${cfg.autoClassify.enabled ? (cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default")) : "false"}`);
+  log(`  autoClassify: ${cfg.autoClassify.enabled ? (cfg.autoClassify.model ? cfg.autoClassify.model : `${getDefaultCronModel(getCronModelConfig(cfg), "nano")} (from llm.${cfg.llm?.nano ? "nano" : "default"})`) : "false"}`);
   log(`  autoClassify.suggestCategories: ${bool(cfg.autoClassify.suggestCategories !== false)}`);
   log(`  credentials: ${bool(cfg.credentials.enabled)}`);
 
@@ -686,7 +688,10 @@ export async function runVerifyForCli(
 
   log(`  procedures: ${bool(cfg.procedures.enabled)}`);
   log(`  procedures.requireApprovalForPromote: ${bool(cfg.procedures.requireApprovalForPromote)}`);
-  log(`  reflection: ${bool(cfg.reflection.enabled)}`);
+  const reflectionModelDisplay = cfg.reflection.enabled
+    ? ` (model: ${cfg.reflection.model ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`})`  // reflection uses default, not nano
+    : "";
+  log(`  reflection: ${bool(cfg.reflection.enabled)}${reflectionModelDisplay}`);
   log(`  wal: ${bool(cfg.wal.enabled)}`);
   log(`  languageKeywords.autoBuild: ${bool(cfg.languageKeywords.autoBuild)}`);
   log(`  personaProposals: ${bool(cfg.personaProposals.enabled)}`);
@@ -709,6 +714,8 @@ export async function runVerifyForCli(
   log("\n───── Advanced Features ─────");
   if (cfg.search) {
     log(`  search.hydeEnabled: ${bool(cfg.search.hydeEnabled)}`);
+    const effectiveHydeModel = cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default");
+    log(`  search.hydeModel: ${cfg.search.hydeModel != null ? cfg.search.hydeModel : `${effectiveHydeModel} (default tier)`}`);
   }
   if (cfg.errorReporting) {
     log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
@@ -717,6 +724,93 @@ export async function runVerifyForCli(
       if (cfg.errorReporting.dsn) log(`    dsn: ${cfg.errorReporting.dsn}`);
       if (cfg.errorReporting.botId) log(`    botId: ${cfg.errorReporting.botId}`);
       if (cfg.errorReporting.botName) log(`    botName: ${cfg.errorReporting.botName}`);
+    }
+  }
+
+  const cronCfgForVerify = getCronModelConfig(cfg);
+  const defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
+  const heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
+  const providersWithKeys = getProvidersWithKeys(cronCfgForVerify);
+  // Also include any providers configured in OpenClaw's models.providers (e.g. minimax, mistral)
+  // that have an apiKey — these are auto-detected by the LLM proxy.
+  const openclawModelProviders = (ctx.api?.config as Record<string, unknown> | undefined)?.models as Record<string, unknown> | undefined;
+  const openclawProviderMap = openclawModelProviders?.providers as Record<string, unknown> | undefined;
+  if (openclawProviderMap) {
+    for (const [name, provCfg] of Object.entries(openclawProviderMap)) {
+      const pc = provCfg as Record<string, unknown> | undefined;
+      if (pc?.apiKey && typeof pc.apiKey === "string" && pc.apiKey.length >= 10 && !providersWithKeys.includes(name)) {
+        providersWithKeys.push(name);
+      }
+    }
+  }
+  const llmSource = cfg.llm?._source === "gateway" ? " (auto from agents.defaults.model)" : cfg.llm ? " (from plugin config)" : "";
+  const nanoOrder = getLLMModelPreference(cronCfgForVerify, "nano");
+  const hasExplicitNano = Array.isArray(cfg.llm?.nano) && (cfg.llm.nano as string[]).length > 0;
+  const nanoSameAsDefault = nanoOrder[0] === defaultOrder[0];
+  log("\n───── LLM / Failover ─────");
+  const nanoDisplay = hasExplicitNano
+    ? nanoOrder.join(" → ")
+    : `${nanoOrder[0] ?? "none"}${nanoSameAsDefault ? " (from llm.default — no nano model found)" : ""}`;
+  log(`  nano tier (autoClassify, HyDE, classifyBeforeWrite, summarize): ${nanoDisplay}${llmSource}`);
+  log(`  default tier (reflection, general): ${defaultOrder.join(" → ")}${llmSource}`);
+  log(`  heavy tier (distill, self-correction): ${heavyOrder.join(" → ")}${llmSource}`);
+  log(`  providers with keys: ${providersWithKeys.length ? providersWithKeys.join(", ") : "none"}`);
+  if (defaultOrder.length > 1 || heavyOrder.length > 1) {
+    log(`  (if a model fails, the next in the list is tried)`);
+  }
+
+  // Cost advisory
+  const isHeavyModel = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy/.test((m.split("/").pop() ?? m).toLowerCase());
+  const isNanoModel  = (m: string) => /nano|\bmini\b|haiku|\blite\b/.test((m.split("/").pop() ?? m).toLowerCase());
+  const isLightModel = (m: string) => isNanoModel(m) || /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
+  const nanoPrimary = nanoOrder[0];
+  const defaultPrimary = defaultOrder[0];
+  const nanoIsHeavy = nanoPrimary ? isHeavyModel(nanoPrimary) : false;
+  const hasNanoModel = nanoOrder.some(isNanoModel);
+  const hasExplicitClassifyOverride = !!(cfg.autoClassify.model);
+  const hasExplicitHydeOverride = !!(cfg.search?.hydeModel);
+
+  if (nanoIsHeavy && !hasNanoModel && !hasExplicitClassifyOverride) {
+    log(`  ⚠️  No nano/mini model for lightweight ops — autoClassify, HyDE, and summarize`);
+    log(`     will use ${nanoPrimary} (a heavy model) for short, cheap tasks. This may increase costs.`);
+    log(`     Fix: add llm.nano in plugin config, or set autoClassify.model and search.hydeModel`);
+    log(`     explicitly. Good options: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*`);
+  } else if (!hasNanoModel && !hasExplicitClassifyOverride && defaultPrimary && !isLightModel(defaultPrimary)) {
+    log(`  ℹ️  Nano tier uses ${nanoPrimary ?? "default"}. For lower cost on classify/HyDE/summarize,`);
+    log(`     add llm.nano: ["openai/gpt-4.1-nano"] (OpenAI) or other nano/mini model to plugin config.`);
+  }
+
+  if (opts.testLlm) {
+    const { chatComplete, UnconfiguredProviderError } = await import("../services/chat.js");
+    const WARN = "⚠️ ";
+    const allModels = [...new Set([...nanoOrder, ...defaultOrder, ...heavyOrder])];
+    const TEST_LLM_TIMEOUT_MS = 15_000;
+    let anyUnconfigured = false;
+    log("\n  LLM reachability (--test-llm):");
+    for (const model of allModels) {
+      try {
+        await chatComplete({
+          model,
+          content: "Reply with exactly: OK",
+          temperature: 0,
+          maxTokens: 10,
+          openai,
+          timeoutMs: TEST_LLM_TIMEOUT_MS,
+        });
+        log(`    ${model}: ${OK}`);
+      } catch (e) {
+        if (e instanceof UnconfiguredProviderError) {
+          log(`    ${model}: ${WARN}skipped — ${e.message}`);
+          anyUnconfigured = true;
+        } else {
+          const msg = e instanceof Error ? e.message : String(e);
+          log(`    ${model}: ${FAIL} ${msg}`);
+        }
+      }
+    }
+    if (anyUnconfigured) {
+      log(`  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config.`);
+      log(`    Example: llm.providers.anthropic.apiKey = "sk-ant-..." (and optionally .baseURL for the endpoint).`);
     }
   }
 
@@ -1656,7 +1750,7 @@ export async function runExtractDailyForCli(
             try {
               const classification = await classifyMemoryOperation(
                 trimmed, extracted.entity, extracted.key, similarFacts,
-                openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), sink,
+                openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"), sink,
               );
               if (classification.action === "NOOP") continue;
               if (classification.action === "DELETE" && classification.targetId) {

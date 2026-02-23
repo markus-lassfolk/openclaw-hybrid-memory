@@ -291,7 +291,7 @@ export type HybridMemoryConfig = {
   procedures: ProceduresConfig;
   /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
-  /** Optional: LLM preference lists for gateway-routed chat (issue #87). When set, all LLM calls use openai client + this list. */
+  /** Optional: LLM preference lists and per-provider API config for direct chat calls (issue #87). */
   llm?: LLMConfig;
   /** Optional: Gemini for distill (1M context). apiKey/defaultModel deprecated in favor of llm + gateway. */
   distill?: {
@@ -375,24 +375,52 @@ export function isValidCategory(cat: string): boolean {
 }
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
-export type CronModelTier = "default" | "heavy";
+/** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
+export type CronModelTier = "default" | "heavy" | "nano";
 
-/** LLM model preference: ordered lists per tier, routed through OpenClaw gateway. */
+/**
+ * Per-provider API credentials for direct LLM calls (bypasses the gateway agent endpoint).
+ * Built-in defaults: google uses distill.apiKey + Gemini OpenAI-compat endpoint; openai uses embedding.apiKey.
+ */
+export type LLMProviderConfig = {
+  /** API key for this provider. Overrides built-in defaults (distill.apiKey for google, embedding.apiKey for openai). */
+  apiKey?: string;
+  /** OpenAI-compatible base URL. Overrides built-in defaults. */
+  baseURL?: string;
+};
+
+/** LLM model preference: ordered lists per tier with direct provider API calls. */
 export type LLMConfig = {
+  /** Internal: set to "gateway" when auto-derived from agents.defaults.model; undefined when from plugin config. */
+  _source?: "gateway";
   /** Ordered preference for default-tier LLM calls (first available wins). */
   default: string[];
   /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
   heavy: string[];
+  /**
+   * Optional: ordered model list for nano/ultra-light ops — autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize.
+   * These run on every chat message or write, so cheapness matters most.
+   * When not set, falls back to the default tier.
+   * Ideal models: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*.
+   */
+  nano?: string[];
   /** When true, if all preferred models fail, try the fallback model. */
   fallbackToDefault?: boolean;
-  /** When fallbackToDefault is true, this model is tried last. Set to your gateway default (e.g. from openclaw.yaml) for provider-agnostic fallback; omit to not add an extra fallback beyond the list. */
+  /** When fallbackToDefault is true, this model is tried last. */
   fallbackModel?: string;
+  /**
+   * Per-provider API config for direct LLM calls.
+   * Keys are provider prefixes as they appear in model IDs (e.g. "google", "openai", "anthropic").
+   * Built-in providers (google, openai) have defaults; others require explicit apiKey + baseURL.
+   * Example: { google: { apiKey: "AIzaSy..." }, anthropic: { apiKey: "sk-ant-...", baseURL: "https://api.anthropic.com/v1" } }
+   */
+  providers?: Record<string, LLMProviderConfig | undefined>;
 };
 
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
 export type CronModelConfig = {
   embedding?: { apiKey?: string };
-  distill?: { apiKey?: string; defaultModel?: string };
+  distill?: { apiKey?: string; defaultModel?: string; fallbackModels?: string[] };
   reflection?: { model?: string };
   /** Optional: when present, use for cron LLM (e.g. Claude). */
   claude?: { apiKey?: string; defaultModel?: string };
@@ -400,40 +428,103 @@ export type CronModelConfig = {
   llm?: LLMConfig;
 };
 
-/** Valid OpenAI API model IDs used when only embedding (OpenAI) is configured or no config; avoids "model not found" when gateway is not running (direct OpenAI client). */
-const OPENAI_DEFAULT_CRON_MODEL = "gpt-4o-mini";
-const OPENAI_HEAVY_CRON_MODEL = "gpt-4o";
+/**
+ * OpenClaw gateway expects provider/model IDs (e.g. openai/gpt-5.2, google/gemini-2.5-flash).
+ * These defaults match common gateway catalogs; use llm.default/heavy in config for your exact list.
+ */
+const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-5.2";
+const OPENAI_HEAVY_CRON_MODEL = "openai/gpt-5.2";
+const GEMINI_DEFAULT_MODEL = "google/gemini-2.5-flash";
+const GEMINI_HEAVY_MODEL = "google/gemini-3.1-pro-preview";
+const CLAUDE_DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
+const CLAUDE_HEAVY_MODEL = "anthropic/claude-opus-4-6";
 
-/** Legacy single-model resolution (for backward compat when no llm config). Used only inside getLLMModelPreference when llm lists are empty. */
+function hasKey(apiKey: string | undefined): boolean {
+  return typeof apiKey === "string" && apiKey.length >= 10;
+}
+
+/** Legacy single-model resolution (for backward compat when no llm config). Used only when no list is built. */
 function getDefaultCronModelLegacy(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
   if (!pluginConfig) return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
-  if (pluginConfig.distill?.apiKey && pluginConfig.distill.apiKey.length >= 10) {
-    const defaultModel = pluginConfig.distill.defaultModel?.trim();
+  if (hasKey(pluginConfig.distill?.apiKey)) {
+    const defaultModel = pluginConfig.distill?.defaultModel?.trim();
     if (defaultModel) return defaultModel;
-    return tier === "heavy" ? "gemini-2.0-flash-thinking-exp-01-21" : "gemini-2.0-flash";
+    return tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL;
   }
-  if (pluginConfig.claude?.apiKey && pluginConfig.claude.apiKey.length >= 10) {
-    const defaultModel = pluginConfig.claude.defaultModel?.trim();
+  if (hasKey(pluginConfig.claude?.apiKey)) {
+    const defaultModel = pluginConfig.claude?.defaultModel?.trim();
     if (defaultModel) return defaultModel;
-    return tier === "heavy" ? "claude-opus-4-20250514" : "claude-sonnet-4-20250514";
+    return tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL;
   }
-  if (pluginConfig.embedding?.apiKey && pluginConfig.embedding.apiKey.length >= 10) {
+  if (hasKey(pluginConfig.embedding?.apiKey)) {
     return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
   }
   return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
 }
 
 /**
- * Return ordered list of models to try for an LLM call (gateway fallback chain).
- * Uses llm.default / llm.heavy when configured; otherwise legacy single-model resolution.
+ * Preferred provider order for out-of-the-box failover: Research/Heavy favours Gemini (context), then OpenAI, then Claude.
+ * Uses OpenClaw-style provider/model IDs so the gateway accepts them. First working model wins at runtime.
+ */
+function getDefaultPreferredModelList(
+  pluginConfig: CronModelConfig | undefined,
+  tier: CronModelTier,
+): string[] {
+  if (!pluginConfig) {
+    return [tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL];
+  }
+  const list: string[] = [];
+  if (hasKey(pluginConfig.distill?.apiKey)) {
+    const m = pluginConfig.distill?.defaultModel?.trim();
+    list.push(m || (tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL));
+  }
+  if (hasKey(pluginConfig.embedding?.apiKey)) {
+    list.push(tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
+  }
+  if (hasKey(pluginConfig.claude?.apiKey)) {
+    const m = pluginConfig.claude?.defaultModel?.trim();
+    list.push(m || (tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL));
+  }
+  if (list.length === 0) {
+    list.push(getDefaultCronModelLegacy(pluginConfig, tier));
+  }
+  const distillFallbacks = pluginConfig.distill?.fallbackModels;
+  if (Array.isArray(distillFallbacks)) {
+    for (const m of distillFallbacks) {
+      const t = typeof m === "string" ? m.trim() : "";
+      if (t && !list.includes(t)) list.push(t);
+    }
+  }
+  const fallback = pluginConfig.llm?.fallbackModel?.trim();
+  if (fallback && !list.includes(fallback)) {
+    list.push(fallback);
+  }
+  return list;
+}
+
+/**
+ * Return ordered list of models to try for an LLM call.
+ * - "nano": ultra-cheap for autoClassify, HyDE, classifyBeforeWrite, summarize. Falls back to "default" if llm.nano is unset.
+ * - "default": HyDE, classify, reflection, general.
+ * - "heavy": distill, self-correction, spawn.
+ * First working model wins.
  */
 export function getLLMModelPreference(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string[] {
+  if (tier === "nano") {
+    const nanoList = pluginConfig?.llm?.nano;
+    if (Array.isArray(nanoList) && nanoList.length > 0) {
+      const trimmed = nanoList.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);
+      if (trimmed.length > 0) return trimmed;
+    }
+    // No nano list configured — fall back to default tier
+    return getLLMModelPreference(pluginConfig, "default");
+  }
   const list = tier === "heavy" ? pluginConfig?.llm?.heavy : pluginConfig?.llm?.default;
   if (Array.isArray(list) && list.length > 0) {
     const trimmed = list.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);
@@ -448,7 +539,41 @@ export function getLLMModelPreference(
       return trimmed;
     }
   }
-  return [getDefaultCronModelLegacy(pluginConfig, tier)];
+  return getDefaultPreferredModelList(pluginConfig, tier);
+}
+
+/**
+ * Report which providers have API keys (for verify/transparency).
+ * Checks both legacy key fields (distill.apiKey → gemini, embedding.apiKey → openai)
+ * and the new llm.providers map so all configured providers are shown.
+ */
+export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined): string[] {
+  if (!pluginConfig) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  function add(name: string) {
+    if (!seen.has(name)) { seen.add(name); out.push(name); }
+  }
+
+  // Legacy / built-in key fields
+  if (hasKey(pluginConfig.distill?.apiKey)) add("gemini");
+  if (hasKey(pluginConfig.embedding?.apiKey)) add("openai");
+  if (hasKey(pluginConfig.claude?.apiKey)) add("claude");
+
+  // llm.providers map — any provider with an explicit apiKey
+  const providers = pluginConfig.llm?.providers;
+  if (providers && typeof providers === "object") {
+    for (const [prefix, pCfg] of Object.entries(providers)) {
+      if (pCfg && hasKey(pCfg.apiKey)) {
+        // Map known prefixes to friendly names; keep others as-is
+        const display = prefix === "google" ? "gemini" : prefix === "anthropic" ? "anthropic" : prefix;
+        add(display);
+      }
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -651,7 +776,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoRewriteTools: false,
       analyzeViaSpawn: false,
     },
-    search: { hydeEnabled: true },
+    search: { hydeEnabled: true, hydeModel: "google/gemini-2.5-flash" },
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true },
   },
@@ -902,7 +1027,7 @@ export const hybridConfigSchema = {
       };
     }
 
-    // Parse credentials config (opt-in). Vault works with or without encryption; encryption is a user choice.
+    // Parse credentials config (opt-in). Vault works with or without encryption; encryption is never required.
     const credRaw = cfg.credentials as Record<string, unknown> | undefined;
     const explicitlyDisabled = credRaw?.enabled === false;
     const encKeyRaw = typeof credRaw?.encryptionKey === "string" ? credRaw.encryptionKey : "";
@@ -913,15 +1038,17 @@ export const hybridConfigSchema = {
       if (val && val.length >= 16) {
         encryptionKey = val;
       } else if (encKeyRaw.length > 0) {
-        // M3 FIX: env:VAR explicitly set but missing/too short → fail regardless of enabled flag
-        throw new Error(`Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or omit credentials.encryptionKey for an unencrypted vault. Run 'openclaw hybrid-mem verify --fix' for help.`);
+        // env:VAR set but missing or too short → use plaintext vault, do not block plugin load
+        console.warn(
+          `memory-hybrid: credentials.encryptionKey env var ${envVar} is not set or too short (min 16 chars). Using plaintext vault. Set the variable or omit credentials.encryptionKey.`,
+        );
       }
     } else if (encKeyRaw.length >= 16) {
       encryptionKey = encKeyRaw;
     } else if (encKeyRaw.length > 0) {
-      // H1 FIX: User set a short encryption key (1-15 chars) → fail regardless of enabled flag
-      throw new Error(
-        "credentials.encryptionKey must be at least 16 characters (or use env:VAR). Omit it for an unencrypted vault. Run 'openclaw hybrid-mem verify --fix' for help.",
+      // Short key (1-15 chars) → use plaintext vault, do not block plugin load
+      console.warn(
+        "memory-hybrid: credentials.encryptionKey must be at least 16 characters for encryption. Using plaintext vault. Omit it or set a 16+ char key (or env:VAR).",
       );
     }
     const hasValidKey = encryptionKey.length >= 16;
@@ -1205,17 +1332,36 @@ export const hybridConfigSchema = {
       trustToolScopeParams: multiAgentRaw?.trustToolScopeParams === true, // Default: false (secure by default)
     };
 
-    // Parse optional llm config (gateway-routed model preference, issue #87)
+    // Parse optional llm config (direct provider API calls, issue #87)
     const llmRaw = cfg.llm as Record<string, unknown> | undefined;
     const defaultList = llmRaw && Array.isArray(llmRaw.default) ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
     const heavyList = llmRaw && Array.isArray(llmRaw.heavy) ? (llmRaw.heavy as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
+    const llmProvidersRaw = llmRaw?.providers;
+    const llmProviders: Record<string, LLMProviderConfig | undefined> | undefined =
+      llmProvidersRaw && typeof llmProvidersRaw === "object" && !Array.isArray(llmProvidersRaw)
+        ? Object.fromEntries(
+            Object.entries(llmProvidersRaw as Record<string, unknown>).map(([k, v]) => {
+              if (!v || typeof v !== "object" || Array.isArray(v)) return [k, undefined];
+              const pv = v as Record<string, unknown>;
+              return [k.toLowerCase(), {
+                apiKey: typeof pv.apiKey === "string" && pv.apiKey.trim().length > 0 ? pv.apiKey.trim() : undefined,
+                baseURL: typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined,
+              } as LLMProviderConfig];
+            }),
+          )
+        : undefined;
+    const nanoList = llmRaw && Array.isArray(llmRaw.nano)
+      ? (llmRaw.nano as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : [];
     const llm: LLMConfig | undefined =
       defaultList.length > 0 || heavyList.length > 0
         ? {
             default: defaultList,
             heavy: heavyList,
+            ...(nanoList.length > 0 ? { nano: nanoList } : {}),
             fallbackToDefault: llmRaw?.fallbackToDefault === true,
             fallbackModel: typeof llmRaw?.fallbackModel === "string" && (llmRaw.fallbackModel as string).trim().length > 0 ? (llmRaw.fallbackModel as string).trim() : undefined,
+            providers: llmProviders,
           }
         : undefined;
 

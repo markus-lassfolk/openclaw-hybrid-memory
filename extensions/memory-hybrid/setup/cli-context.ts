@@ -285,6 +285,7 @@ export function registerHybridMemCliWithApi(
   const handlerCtx: HandlerContext = {
     ...ctx,
     logger: api.logger,
+    api,
   };
   const services = buildCliContextServices(ctx, api);
   api.registerCli(
