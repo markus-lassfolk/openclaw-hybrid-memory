@@ -147,6 +147,7 @@ export type HybridMemCliContext = {
   richStatsExtras?: {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
+    getProposalsAvailable: () => boolean;
     getWalPending: () => number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;

@@ -106,6 +106,7 @@ export type ManageContext = {
   richStatsExtras?: {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
+    getProposalsAvailable: () => boolean;
     getWalPending: () => number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
@@ -411,6 +412,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const uniqueInMemory = factsDb.uniqueMemoryCategories();
         const credentials = extras.getCredentialsCount();
         const proposalsPending = extras.getProposalsPending();
+        const proposalsAvailable = extras.getProposalsAvailable();
         const walPending = extras.getWalPending();
         const timestamps = extras.getLastRunTimestamps();
         const sizes = await extras.getStorageSizes();
@@ -428,7 +430,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`Total vectors (LanceDB): ${lanceCount}`);
         console.log(`Expired (prunable): ${expired}`);
         console.log("");
-        console.log(`Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted})`);
+        const proceduresNote = procedures === 0 ? " (run extract-procedures to populate)" : "";
+        console.log(`Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted})${proceduresNote}`);
         console.log(`Rules: ${rules}`);
         console.log(`Patterns: ${patterns}`);
         console.log(`Meta-patterns: ${metaPatterns}`);
@@ -439,7 +442,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log("");
         console.log(`Graph (links/entities): ${links}/${entities}`);
         console.log(`Credentials (vaulted): ${credentials}`);
-        console.log(`Proposals (pending): ${proposalsPending}`);
+        const proposalsLine = proposalsAvailable
+          ? `Proposals (pending): ${proposalsPending}${proposalsPending === 0 ? " (run generate-proposals to create)" : ""}`
+          : "Proposals (pending): — (persona proposals disabled)";
+        console.log(proposalsLine);
         console.log(`WAL (pending distill): ${walPending}`);
         console.log("");
         console.log(`Categories configured: ${categoriesConfigured.length} [${categoriesConfigured.slice(0, 3).join(", ")}...]`);
