@@ -401,8 +401,8 @@ export type CronModelConfig = {
 };
 
 /** Valid OpenAI API model IDs used when only embedding (OpenAI) is configured or no config; avoids "model not found" when gateway is not running (direct OpenAI client). */
-const OPENAI_DEFAULT_CRON_MODEL = "gpt-4o-mini";
-const OPENAI_HEAVY_CRON_MODEL = "gpt-4o";
+const OPENAI_DEFAULT_CRON_MODEL = "google/gemini-2.5-flash";
+const OPENAI_HEAVY_CRON_MODEL = "anthropic/claude-sonnet-4-6";
 
 /** Legacy single-model resolution (for backward compat when no llm config). Used only inside getLLMModelPreference when llm lists are empty. */
 function getDefaultCronModelLegacy(
