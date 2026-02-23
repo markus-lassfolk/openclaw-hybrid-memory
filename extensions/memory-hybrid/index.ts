@@ -179,6 +179,7 @@ let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
+let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
 const timers = {
@@ -242,6 +243,7 @@ const memoryHybridPlugin = {
     closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb });
     credentialsDb = null;
     proposalsDb = null;
+    pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
       cfg = hybridConfigSchema.parse(api.pluginConfig);
@@ -286,6 +288,7 @@ const memoryHybridPlugin = {
       proposalsDb,
       lastProgressiveIndexIds,
       currentAgentIdRef,
+      pendingLLMWarnings,
       resolvedSqlitePath,
       timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
       buildToolScopeFilter,
@@ -346,6 +349,7 @@ const memoryHybridPlugin = {
       findSimilarByEmbedding,
       shouldCapture,
       detectCategory,
+      pendingLLMWarnings,
     }, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:hooks" });
