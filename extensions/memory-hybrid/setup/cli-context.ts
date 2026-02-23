@@ -244,7 +244,7 @@ function buildCliContextServices(
       return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
     },
     runClassify: (opts) =>
-      runClassifyForCli(factsDb, openai, cfg.autoClassify, { ...opts, model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "default").defaultModel }, discoveredPath, logSink, undefined),
+      runClassifyForCli(factsDb, openai, cfg.autoClassify, { ...opts, model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel }, discoveredPath, logSink, undefined),
     runCompaction: () =>
       Promise.resolve(
         factsDb.runCompaction({

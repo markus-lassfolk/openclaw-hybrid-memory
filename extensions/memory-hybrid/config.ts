@@ -1038,17 +1038,17 @@ export const hybridConfigSchema = {
       if (val && val.length >= 16) {
         encryptionKey = val;
       } else if (encKeyRaw.length > 0) {
-        // env:VAR set but missing or too short → use plaintext vault, do not block plugin load
-        console.warn(
-          `memory-hybrid: credentials.encryptionKey env var ${envVar} is not set or too short (min 16 chars). Using plaintext vault. Set the variable or omit credentials.encryptionKey.`,
+        // env:VAR set but missing or too short → error (user explicitly configured encryption)
+        throw new Error(
+          `Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or omit credentials.encryptionKey to use plaintext vault.`,
         );
       }
     } else if (encKeyRaw.length >= 16) {
       encryptionKey = encKeyRaw;
     } else if (encKeyRaw.length > 0) {
-      // Short key (1-15 chars) → use plaintext vault, do not block plugin load
-      console.warn(
-        "memory-hybrid: credentials.encryptionKey must be at least 16 characters for encryption. Using plaintext vault. Omit it or set a 16+ char key (or env:VAR).",
+      // Short key (1-15 chars) → error (user explicitly configured encryption)
+      throw new Error(
+        "credentials.encryptionKey must be at least 16 characters for encryption. Omit it or set a 16+ char key (or env:VAR) to use plaintext vault.",
       );
     }
     const hasValidKey = encryptionKey.length >= 16;
