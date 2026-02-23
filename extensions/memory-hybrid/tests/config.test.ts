@@ -325,9 +325,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.store.classifyBeforeWrite).toBe(false);
   });
 
-  it("defaults store.classifyModel to gpt-4o-mini", () => {
+  it("defaults store.classifyModel to undefined", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.store.classifyModel).toBe("gpt-4o-mini");
+    expect(result.store.classifyModel).toBeUndefined();
   });
 
   it("respects store.classifyBeforeWrite and store.classifyModel when set", () => {
@@ -526,7 +526,7 @@ describe("hybridConfigSchema.parse", () => {
   it("autoClassify defaults to disabled", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.autoClassify.enabled).toBe(false);
-    expect(result.autoClassify.model).toBe("gpt-4o-mini");
+    expect(result.autoClassify.model).toBeUndefined();
     expect(result.autoClassify.batchSize).toBe(20);
   });
 
@@ -685,14 +685,14 @@ describe("hybridConfigSchema.parse", () => {
     const heavyList = getLLMModelPreference(cronCfg, "heavy");
     expect(defaultList).toHaveLength(1);
     expect(heavyList).toHaveLength(1);
-    expect(defaultList[0]).toBe("gpt-4o-mini");
-    expect(heavyList[0]).toBe("gpt-4o");
+    expect(defaultList[0]).toBe("flash");
+    expect(heavyList[0]).toBe("sonnet");
   });
 
   it("getLLMModelPreference when llm tier arrays are empty uses legacy", () => {
     const cronCfg = { llm: { default: [], heavy: [] } };
-    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gpt-4o-mini"]);
-    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["sonnet"]);
   });
 
   it("getLLMModelPreference legacy path: Gemini first (distill.apiKey set)", () => {
@@ -732,8 +732,8 @@ describe("hybridConfigSchema.parse", () => {
     const cronCfg = {
       embedding: { apiKey: "sk-embed-key-that-is-long-enough" },
     };
-    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["gpt-4o-mini"]);
-    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o"]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["flash"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["sonnet"]);
   });
 
   it("getLLMModelPreference legacy path: reflection.model does NOT override provider priority", () => {
@@ -800,15 +800,15 @@ describe("hybridConfigSchema.parse", () => {
       expect(fallbackModels).toBeUndefined();
     });
 
-    it("empty preference list falls back to gpt-4o-mini (default) or gpt-4o (heavy)", () => {
+    it("empty preference list falls back to flash (default) or sonnet (heavy)", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,
         llm: { default: [], heavy: [] },
       });
       const defaultTier = resolveReflectionModelAndFallbacks(cfg, "default");
-      expect(defaultTier.defaultModel).toBe("gpt-4o-mini");
+      expect(defaultTier.defaultModel).toBe("flash");
       const heavyTier = resolveReflectionModelAndFallbacks(cfg, "heavy");
-      expect(heavyTier.defaultModel).toBe("gpt-4o");
+      expect(heavyTier.defaultModel).toBe("sonnet");
     });
   });
 
