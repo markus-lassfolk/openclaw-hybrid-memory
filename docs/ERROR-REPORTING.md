@@ -45,7 +45,7 @@ Add the following to your `openclaw.json` (gateway config) or plugin config:
 | `dsn` | string | Yes (if enabled) | — | GlitchTip/Sentry Data Source Name |
 | `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging") |
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
-| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw’s runtime context (`api.context.agentId`) when available, then hostname. |
+| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw’s runtime context (`api.context.agentId`) when available. |
 | `botName` | string | No | — | **Optional.** Friendly name for this bot (e.g. `Maeve`, `Doris`). Sent as a tag so reports show a readable name in GlitchTip. Max 64 characters. |
 
 At plugin init the reporter calls `Sentry.setUser({ id: botUuid, username: botName })` and `Sentry.setTag('bot_id', …)` / `Sentry.setTag('bot_name', …)`, so all subsequent errors carry the bot identity. This enables GlitchTip **Users Affected**, tag filtering (e.g. `bot_name:Doris`), and grouping by bot.

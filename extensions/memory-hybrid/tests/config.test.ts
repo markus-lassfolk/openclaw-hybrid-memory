@@ -806,9 +806,9 @@ describe("hybridConfigSchema.parse", () => {
         llm: { default: [], heavy: [] },
       });
       const defaultTier = resolveReflectionModelAndFallbacks(cfg, "default");
-      expect(defaultTier.defaultModel).toBe("google/gemini-2.5-flash");
+      expect(defaultTier.defaultModel).toBe("gpt-4o-mini");
       const heavyTier = resolveReflectionModelAndFallbacks(cfg, "heavy");
-      expect(heavyTier.defaultModel).toBe("anthropic/claude-sonnet-4-6");
+      expect(heavyTier.defaultModel).toBe("gpt-4o");
     });
   });
 
