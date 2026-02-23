@@ -776,6 +776,9 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoRewriteTools: false,
       analyzeViaSpawn: false,
     },
+    // NOTE: Presets should NOT hardcode specific models (e.g., hydeModel).
+    // Model selection is handled dynamically via the tiered fallback system (nano/default/heavy)
+    // based on which providers/API keys are available. Hardcoding breaks users without that provider.
     search: { hydeEnabled: true },
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true },
