@@ -41,7 +41,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   }
 
   function defaultOpenAIClient(): OpenAI {
-    return getOrCreate("openai", () => new OpenAI({ apiKey: cfg.embedding.apiKey }));
+    return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey }));
   }
 
   function resolveClient(model: string): { client: OpenAI; bareModel: string } {
@@ -67,7 +67,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (prefix === "openai") {
       const apiKey = providerCfg?.apiKey ?? cfg.embedding.apiKey;
       const baseURL = providerCfg?.baseURL;
-      return { client: getOrCreate("openai", () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+      const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
+      return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
     }
 
     if (prefix === "anthropic") {

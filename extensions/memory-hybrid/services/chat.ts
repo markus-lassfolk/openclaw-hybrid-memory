@@ -158,6 +158,10 @@ export async function withLLMRetry<T>(
       return await fn();
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // Don't retry UnconfiguredProviderError — missing API keys won't be fixed by retrying
+      if (lastError instanceof UnconfiguredProviderError) {
+        throw lastError;
+      }
       if (attempt === maxRetries || opts?.signal?.aborted) {
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
@@ -241,7 +245,9 @@ export async function chatCompleteWithRetry(opts: {
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      const isUnconfigured = err instanceof UnconfiguredProviderError;
+      // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
+      const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
+        (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted && !isUnconfigured) {
         console.warn(

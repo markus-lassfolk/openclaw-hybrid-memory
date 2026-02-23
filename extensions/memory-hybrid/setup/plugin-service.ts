@@ -232,7 +232,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         const CLASSIFY_INTERVAL = 24 * 60 * 60_000; // 24 hours
         const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
 
-        const classifyModel = cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default");
+        const classifyModel = cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
         // Run once shortly after startup (5 min delay to let things settle)
         timers.classifyStartupTimeout.value = setTimeout(async () => {
           try {
