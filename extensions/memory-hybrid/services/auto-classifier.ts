@@ -231,13 +231,15 @@ function createProgressReporter(
 async function runClassifyForCli(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
   opts: { dryRun: boolean; limit: number; model?: string },
   discoveredPath: string,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   progressReporter?: ClassifyProgressReporter,
 ): Promise<{ reclassified: number; total: number; breakdown?: Record<string, number> }> {
-  const classifyModel = opts.model || config.model;
+  // Callers (CLI, plugin-service) must pass opts.model or config.model so one is set
+  const classifyModel = opts.model ?? config.model;
+  if (!classifyModel) throw new Error("classify model required: set autoClassify.model or pass --model");
   const categories = getMemoryCategories();
   let others = factsDb.getByCategory("other").slice(0, opts.limit);
   if (others.length === 0) {

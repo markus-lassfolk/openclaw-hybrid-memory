@@ -8,6 +8,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
+import { getDefaultCronModel, getCronModelConfig } from "../config.js";
 import type OpenAI from "openai";
 import {
   initErrorReporter,
@@ -231,11 +232,13 @@ export function createPluginService(ctx: PluginServiceContext) {
         const CLASSIFY_INTERVAL = 24 * 60 * 60_000; // 24 hours
         const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
 
+        const classifyModel = cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default");
         // Run once shortly after startup (5 min delay to let things settle)
         timers.classifyStartupTimeout.value = setTimeout(async () => {
           try {
             await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
               discoveredCategoriesPath: discoveredPath,
+              model: classifyModel,
             });
           } catch (err) {
             api.logger.warn(`memory-hybrid: startup auto-classify failed: ${err}`);
@@ -250,6 +253,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           try {
             await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
               discoveredCategoriesPath: discoveredPath,
+              model: classifyModel,
             });
           } catch (err) {
             api.logger.warn(`memory-hybrid: daily auto-classify failed: ${err}`);
@@ -261,7 +265,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         }, CLASSIFY_INTERVAL);
 
         api.logger.info(
-          `memory-hybrid: auto-classify enabled (model: ${cfg.autoClassify.model}, interval: 24h, batch: ${cfg.autoClassify.batchSize})`,
+          `memory-hybrid: auto-classify enabled (model: ${classifyModel}, interval: 24h, batch: ${cfg.autoClassify.batchSize})`,
         );
       }
 
@@ -275,7 +279,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               facts,
               openai,
               dirname(resolvedSqlitePath),
-              { model: cfg.autoClassify.model, dryRun: false },
+              { model: cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), dryRun: false },
             );
             if (result.ok && result.languagesAdded > 0) {
               api.logger.info(

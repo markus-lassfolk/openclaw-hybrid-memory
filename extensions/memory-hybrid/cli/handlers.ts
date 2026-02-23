@@ -349,7 +349,7 @@ export async function runStoreForCli(
       if (similarFacts.length > 0) {
         try {
           const classification = await classifyMemoryOperation(
-            text, entity, key, similarFacts, openai, cfg.store.classifyModel, log,
+            text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), log,
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
@@ -662,7 +662,7 @@ export async function runVerifyForCli(
   log("\n───── Core Features ─────");
   log(`  autoCapture: ${bool(cfg.autoCapture)}`);
   log(`  autoRecall: ${bool(cfg.autoRecall.enabled)}`);
-  log(`  autoClassify: ${cfg.autoClassify.enabled ? cfg.autoClassify.model : "false"}`);
+  log(`  autoClassify: ${cfg.autoClassify.enabled ? (cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default")) : "false"}`);
   log(`  autoClassify.suggestCategories: ${bool(cfg.autoClassify.suggestCategories !== false)}`);
   log(`  credentials: ${bool(cfg.credentials.enabled)}`);
 
@@ -1650,7 +1650,7 @@ export async function runExtractDailyForCli(
             try {
               const classification = await classifyMemoryOperation(
                 trimmed, extracted.entity, extracted.key, similarFacts,
-                openai, cfg.store.classifyModel, sink,
+                openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), sink,
               );
               if (classification.action === "NOOP") continue;
               if (classification.action === "DELETE" && classification.targetId) {
