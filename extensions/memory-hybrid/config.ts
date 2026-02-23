@@ -489,7 +489,7 @@ export function resolveReflectionModelAndFallbacks(
 ): { defaultModel: string; fallbackModels: string[] | undefined } {
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, tier);
-  const defaultModel = pref[0] ?? (tier === "heavy" ? HEAVY_CRON_MODEL_FALLBACK : DEFAULT_CRON_MODEL_FALLBACK);
+  const defaultModel = pref[0]; // getLLMModelPreference always returns at least one element
   const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
   return { defaultModel, fallbackModels };
 }
