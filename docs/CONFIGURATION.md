@@ -431,7 +431,7 @@ When **`llm`** is **not** configured *and* `agents.defaults.model` is also empty
 | Order | Provider | Condition | Default-tier model | Heavy-tier model |
 |-------|----------|-----------|---------------------|------------------|
 | 1 | **Gemini** | `distill.apiKey` set | `distill.defaultModel` or `google/gemini-2.5-flash` | `google/gemini-3.1-pro-preview` |
-| 2 | **OpenAI** | `embedding.apiKey` set | `openai/gpt-5.2` | `openai/gpt-5.2` |
+| 2 | **OpenAI** | `embedding.apiKey` set | `openai/gpt-4.1-mini` | `openai/gpt-5.2` |
 | 3 | **Claude** | `claude.apiKey` set | `claude.defaultModel` or `anthropic/claude-sonnet-4-6` | `anthropic/claude-opus-4-6` |
 
 In practice, the auto-derive from `agents.defaults.model` almost always applies first. **Self-correction:** Leave `selfCorrection.spawnModel` empty to use the heavy-tier default; set it to a specific model to override.

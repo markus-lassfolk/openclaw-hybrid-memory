@@ -2441,21 +2441,20 @@ export class FactsDB {
 
   /** Get reflection statistics */
   statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
-    const patterns = (this.liveDb.prepare(
+    const patterns = this.liveDb.prepare(
       `SELECT COUNT(*) as c FROM facts WHERE category = 'pattern' AND source = 'reflection'`
-    ).get() as { c: number }).c;
-    const rules = (this.liveDb.prepare(
+    ).pluck().get() as number;
+    const rules = this.liveDb.prepare(
       `SELECT COUNT(*) as c FROM facts WHERE category = 'rule' AND source = 'reflection'`
-    ).get() as { c: number }).c;
+    ).pluck().get() as number;
     return { reflectionPatternsCount: patterns, reflectionRulesCount: rules };
   }
 
   /** Get self-correction incidents count */
   selfCorrectionIncidentsCount(): number {
-    const row = this.liveDb.prepare(
+    return this.liveDb.prepare(
       `SELECT COUNT(*) as c FROM facts WHERE source = 'self-correction'`
-    ).get() as { c: number };
-    return row.c;
+    ).pluck().get() as number;
   }
 
   /** Get language keywords count */

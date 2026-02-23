@@ -252,7 +252,7 @@ The `distill.apiKey` is still used as a fallback key for `google/*` models when 
 - **Direct API calls** — the plugin calls provider APIs directly, not through the OpenClaw gateway agent pipeline.
 - **Three tiers** — `llm.nano` (cheap, high-frequency), `llm.default` (balanced), `llm.heavy` (capable, long-context).
 - **Zero config** — when `llm` is not set, tiers are auto-derived from `agents.defaults.model`.
-- **Any OpenAI-compatible provider** — configure via `llm.providers.<name>.{ apiKey, baseURL }` or via OpenClaw's `models.providers` (auto-detected).
+- **Any OpenAI-compatible provider** — configure via `llm.providers.<name>.{ apiKey, baseURL }` (with legacy `distill.apiKey` / `embedding.apiKey` fallbacks as noted above).
 - **Built-in provider quirks handled** — Anthropic headers, o-series temperature stripping, GPT-5 max_completion_tokens remapping.
 - **Graceful degradation** — missing key = skip model + notify user; no crash.
 
