@@ -21,7 +21,7 @@ export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
 
 export type AutoClassifyConfig = {
   enabled: boolean;
-  model?: string;      // when unset, runtime uses getDefaultCronModel(cfg, "default")
+  model?: string;      // when unset, runtime uses getDefaultCronModel(cfg, "nano")
   batchSize: number;   // facts per LLM call (default 20)
   /** When true, LLM can suggest new categories from "other" facts; labels with at least minFactsForNewCategory become real categories (default true) */
   suggestCategories?: boolean;
@@ -81,7 +81,7 @@ export type AutoRecallConfig = {
   summaryMaxChars: number;       // summary length when generated (default 80)
   useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
   summarizeWhenOverBudget: boolean;  // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
-  summarizeModel?: string;       // when unset, runtime uses getDefaultCronModel(cfg, "default")
+  summarizeModel?: string;       // when unset, runtime uses getDefaultCronModel(cfg, "nano")
   /** Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
   progressiveMaxCandidates?: number;
   /** Max tokens for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid). */
@@ -101,7 +101,7 @@ export type StoreConfig = {
   fuzzyDedupe: boolean;
   /** Classify incoming fact against existing similar facts (ADD/UPDATE/DELETE/NOOP) before storing (default: false) */
   classifyBeforeWrite?: boolean;
-  /** Model for classification; when unset, runtime uses getDefaultCronModel(cfg, "default") */
+  /** Model for classification; when unset, runtime uses getDefaultCronModel(cfg, "nano") */
   classifyModel?: string;
 };
 
@@ -1347,7 +1347,7 @@ export const hybridConfigSchema = {
       ? (llmRaw.nano as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
       : [];
     const llm: LLMConfig | undefined =
-      defaultList.length > 0 || heavyList.length > 0
+      defaultList.length > 0 || heavyList.length > 0 || nanoList.length > 0 || llmProviders !== undefined
         ? {
             default: defaultList,
             heavy: heavyList,

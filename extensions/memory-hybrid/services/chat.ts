@@ -98,7 +98,7 @@ export async function chatComplete(opts: {
     const error = isAbort
       ? new Error(`Gateway/LLM timeout after ${timeoutMs}ms (model: ${model})`)
       : (err instanceof Error ? err : new Error(String(err)));
-    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx) to avoid GlitchTip noise
+    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
@@ -106,7 +106,8 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim());
-    if (!isTransient) {
+    const isConfigError = err instanceof UnconfiguredProviderError;
+    if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
         operation: "chatComplete",
