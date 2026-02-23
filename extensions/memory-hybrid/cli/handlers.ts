@@ -1063,7 +1063,7 @@ export async function runVerifyForCli(
         const cronStorePath = join(cronDir, "jobs.json");
 
         try {
-          const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(ctx.cfg), {
+          const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(cfg), {
             normalizeExisting: true,
             reEnableDisabled: false,
           });
@@ -2463,7 +2463,7 @@ export async function runSelfCorrectionRunForCli(
       const { tmpdir: osTmp } = await import("node:os");
       const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
       writeFileSync(promptPath, prompt, "utf-8");
-      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(ctx.cfg), "heavy"));
+      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "heavy"));
       const r = spawnSync(
         "openclaw",
         ["sessions", "spawn", "--model", spawnModel, "--message", "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.", "--attach", promptPath],

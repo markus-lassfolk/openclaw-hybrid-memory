@@ -73,6 +73,9 @@ export function initializeDatabases(
   }
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
   const gatewayBaseUrl = gatewayPort !== undefined ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+  if (gatewayPort !== undefined && !gatewayToken) {
+    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT is set but OPENCLAW_GATEWAY_TOKEN is not — LLM requests to the gateway will be sent without authentication");
+  }
   // When routing through gateway, use the gateway token for auth (not the OpenAI API key)
   const openai = gatewayBaseUrl
     ? new OpenAI({ apiKey: gatewayToken ?? "unused", baseURL: gatewayBaseUrl })

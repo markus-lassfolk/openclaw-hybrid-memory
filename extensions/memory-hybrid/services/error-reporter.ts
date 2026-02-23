@@ -11,7 +11,6 @@
  * - Rate limiting: 60s dedup window for same error fingerprint
  */
 
-import { hostname } from "node:os";
 import type * as SentryType from "@sentry/node";
 
 export interface ErrorReporterConfig {
@@ -111,12 +110,17 @@ export async function initErrorReporter(
     },
   });
 
-  // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId), then hostname
-  const botUuid = config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined) || hostname();
-  const botName = config.botName ? config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "") : "unknown";
-  Sentry.setUser({ id: botUuid, username: botName });
-  Sentry.setTag("bot_id", botUuid);
-  Sentry.setTag("bot_name", botName);
+  // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId).
+  // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
+  const botUuid = config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
+  const botName = config.botName ? config.botName.slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "") : undefined;
+  if (botUuid) {
+    Sentry.setUser({ id: botUuid, username: botName });
+    Sentry.setTag("bot_id", botUuid);
+  }
+  if (botName) {
+    Sentry.setTag("bot_name", botName);
+  }
 
   initialized = true;
   const dsnHost = resolvedDsn.split('@')[1] || '***';
