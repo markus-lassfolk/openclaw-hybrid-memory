@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.02.230] - 2026-02-23
+
+Feature and fix release: multi-provider LLM proxy (nano/default/heavy tiers), embeddings direct to OpenAI, error-reporting bot identity, config/model fallbacks, stats and distill improvements, and PR #93 review fixes (fixes #91, #92, #94, #95).
+
+### Added
+
+- **Multi-provider LLM proxy:** Configurable `llm.nano`, `llm.default`, and `llm.heavy` with ordered model lists and per-provider API keys. Chat/completion uses the gateway or direct provider APIs by tier; nano for cheap ops (autoClassify, HyDE, classifyBeforeWrite), default for reflection/language-keywords, heavy for distillation and persona proposals.
+- **Error reporting bot identity:** Optional `errorReporting.botId` and `errorReporting.botName` for GlitchTip/Sentry tags; config-set and docs (ERROR-REPORTING.md) updated.
+- **Stats:** Real queries for reflection, self-correction, language-keywords, and tier counts (no placeholder zeros).
+- **Distill:** Chunking for oversized sessions (overlapping windows) instead of truncation when exceeding `--max-session-tokens`.
+
+### Fixed
+
+- **Embeddings:** Requests go direct to OpenAI; gateway is no longer used for `/v1/embeddings` (fixes GlitchTip #11 405 errors, #91).
+- **HyDE and cron fallbacks:** HyDE uses `llm.default`; all runtime model fallbacks use `getDefaultCronModel()` — no hardcoded gpt-4o/gpt-4o-mini (#92).
+- **Config:** `getDefaultCronModel()` fallbacks for all model fields; valid OpenAI model IDs when only embedding is configured (#94).
+- **Error reporting:** Schema accepts `botId`/`botName`; no hostname leak when `botId` not set (#95).
+- **Crashes:** Missing `pendingLLMWarnings` causing crash; gateway baseURL routing for chat OpenAI client restored.
+- **Model/config:** Encryption key validation, timeout cleanup, model tier costs, HyDE fallback; UnconfiguredProviderError detection; model tier for auto-classify; OpenAI client cache key; credentials encryption validation.
+- **Proposals:** Stronger proposal-generation prompt (template awareness, identity scoping, additive-first); improved error logging.
+- **Deploy snippet:** Removed hardcoded models.
+
+### Changed
+
+- **Docs:** LLM-AND-PROVIDERS.md and related docs aligned with multi-provider proxy and three-tier architecture; ERROR-REPORTING.md for bot identity and config-set; TROUBLESHOOTING expanded.
+- **Version bump** — Release 2026.02.23 (npm `2026.02.230`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.2.223] - 2026-02-22
 
 Patch: align CLI-context `fallbackModels` with `cfg.llm` so gateway-routed model config is respected (fixes inconsistent model selection between CLI reflection and other code paths).
@@ -372,7 +401,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.2.223...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.02.230...HEAD
+[2026.02.230]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.230
 [2026.2.223]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.223
 [2026.2.222]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.222
 [2026.2.221]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.221
