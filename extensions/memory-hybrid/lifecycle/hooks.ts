@@ -278,13 +278,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 return r;
               });
             })();
+            let timeoutId: NodeJS.Timeout | undefined;
             const timeoutPromise = new Promise<never>((_, reject) => {
-              setTimeout(() => {
+              timeoutId = setTimeout(() => {
                 vectorStepAbort.abort();
                 reject(new Error(`auto-recall vector step timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
               }, VECTOR_STEP_TIMEOUT_MS);
             });
             lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
           } catch (err) {
             const isTimeout = err instanceof Error && err.message.includes("timed out");
             if (isTimeout) {

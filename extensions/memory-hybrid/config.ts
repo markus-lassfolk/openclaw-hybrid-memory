@@ -432,7 +432,7 @@ export type CronModelConfig = {
  * OpenClaw gateway expects provider/model IDs (e.g. openai/gpt-5.2, google/gemini-2.5-flash).
  * These defaults match common gateway catalogs; use llm.default/heavy in config for your exact list.
  */
-const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-5.2";
+const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-4.1-mini";
 const OPENAI_HEAVY_CRON_MODEL = "openai/gpt-5.2";
 const GEMINI_DEFAULT_MODEL = "google/gemini-2.5-flash";
 const GEMINI_HEAVY_MODEL = "google/gemini-3.1-pro-preview";
@@ -776,7 +776,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoRewriteTools: false,
       analyzeViaSpawn: false,
     },
-    search: { hydeEnabled: true, hydeModel: "google/gemini-2.5-flash" },
+    search: { hydeEnabled: true },
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true },
   },
@@ -1037,19 +1037,9 @@ export const hybridConfigSchema = {
       const val = process.env[envVar];
       if (val && val.length >= 16) {
         encryptionKey = val;
-      } else if (encKeyRaw.length > 0) {
-        // env:VAR set but missing or too short → error (user explicitly configured encryption)
-        throw new Error(
-          `Credentials encryption key env var ${envVar} is not set or too short (min 16 chars). Set the variable or omit credentials.encryptionKey to use plaintext vault.`,
-        );
       }
     } else if (encKeyRaw.length >= 16) {
       encryptionKey = encKeyRaw;
-    } else if (encKeyRaw.length > 0) {
-      // Short key (1-15 chars) → error (user explicitly configured encryption)
-      throw new Error(
-        "credentials.encryptionKey must be at least 16 characters for encryption. Omit it or set a 16+ char key (or env:VAR) to use plaintext vault.",
-      );
     }
     const hasValidKey = encryptionKey.length >= 16;
     const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
