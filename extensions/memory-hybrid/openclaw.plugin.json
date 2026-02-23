@@ -206,14 +206,14 @@
       "help": "Fraction of errors to report 0–1 (default: 1.0)"
     },
     "errorReporting.botId": {
-      "label": "Error reporting bot ID",
+      "label": "Error reporting bot ID (UUID)",
       "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-      "help": "Optional UUID for this bot instance; sent as tag so GlitchTip can group errors by bot. Omit to not tag by bot."
+      "help": "Set this bot's UUID to include it in error reports (GlitchTip groups by bot). Use config-set errorReporting.botId <uuid>. Clear or omit to not send bot ID."
     },
     "errorReporting.botName": {
       "label": "Error reporting friendly name",
       "placeholder": "Maeve",
-      "help": "Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag so reports show a readable name in GlitchTip."
+      "help": "Friendly name for this bot (e.g. Maeve, Doris); shown in GlitchTip reports. Use config-set errorReporting.botName \"Doris\"."
     },
     "wal.enabled": {
       "label": "Write-Ahead Log",
@@ -644,6 +644,17 @@
           "hotMaxFacts": { "type": "number", "description": "Cap HOT tier facts when promoting (default: 50)" }
         },
         "description": "Dynamic memory tiering: hot/warm/cold"
+      },
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "default": { "type": "array", "items": { "type": "string" }, "description": "Ordered preference for default-tier LLM (first available wins). Use config-set llm.default '[\"model-id\"]' or set in JSON." },
+          "heavy": { "type": "array", "items": { "type": "string" }, "description": "Ordered preference for heavy-tier LLM (e.g. distill, spawn)" },
+          "fallbackToDefault": { "type": "boolean", "description": "If all preferred models fail, try fallbackModel" },
+          "fallbackModel": { "type": "string", "description": "Last-resort model when fallbackToDefault is true (e.g. gateway default)" }
+        },
+        "description": "Gateway-routed LLM model preference (issue #87). When set, overrides provider-based resolution. config-set llm.default / llm.heavy require JSON arrays."
       },
       "ingest": {
         "type": "object",
