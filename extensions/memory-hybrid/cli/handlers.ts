@@ -712,6 +712,12 @@ export async function runVerifyForCli(
   }
   if (cfg.errorReporting) {
     log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
+    if (cfg.errorReporting.enabled) {
+      log(`    mode: ${cfg.errorReporting.mode ?? "community"}`);
+      if (cfg.errorReporting.dsn) log(`    dsn: ${cfg.errorReporting.dsn}`);
+      if (cfg.errorReporting.botId) log(`    botId: ${cfg.errorReporting.botId}`);
+      if (cfg.errorReporting.botName) log(`    botName: ${cfg.errorReporting.botName}`);
+    }
   }
 
   log("\n───── Ingestion & Distillation ─────");
@@ -2825,12 +2831,22 @@ export function runConfigSetForCli(
   key: string,
   value: string,
 ): ConfigCliResult {
-  if (!key.trim()) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled, store.fuzzyDedupe)" };
+  if (!key.trim()) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled, store.fuzzyDedupe, errorReporting.botName, errorReporting.botId)" };
   const k = key.trim();
   const openclawDir = join(homedir(), ".openclaw");
   const configPath = join(openclawDir, "openclaw.json");
   const out = getPluginConfigFromFile(configPath);
   if ("error" in out) return { ok: false, error: out.error };
+  // When setting any errorReporting.* key, ensure errorReporting object exists and has required enabled/consent so schema validates
+  if (k.startsWith("errorReporting.")) {
+    let er = out.config.errorReporting as Record<string, unknown> | undefined;
+    if (typeof er !== "object" || er === null) {
+      er = { enabled: false, consent: false };
+      out.config.errorReporting = er;
+    }
+    if (!("enabled" in er)) (er as Record<string, unknown>).enabled = false;
+    if (!("consent" in er)) (er as Record<string, unknown>).consent = false;
+  }
   // credentials must stay an object (schema); "config-set credentials true" → credentials.enabled = true
   if (k === "credentials" && !k.includes(".")) {
     const boolVal = value === "true" || value === "enabled";
