@@ -37,7 +37,11 @@ describe("VectorDB reference-counted lifecycle (issue #106)", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "vector-db-refcount-test-"));
     db = new VectorDB(join(tmpDir, "lance"), VECTOR_DIM);
     // Seed one row so search tests have data to find.
+    // Wrap in open()/removeSession() to match the intended usage pattern (every caller
+    // registers a session before using the DB) and exercise the refcount lifecycle.
+    db.open();
     await db.store({ text: "seed fact", vector: [0.1, 0.2, 0.3], importance: 0.7, category: "fact" });
+    db.removeSession();
   });
 
   afterEach(() => {
@@ -87,6 +91,7 @@ describe("VectorDB reference-counted lifecycle (issue #106)", () => {
     db.open(); // session A started
 
     // Simulate a premature gateway stop() while the session is still active.
+    // close() is the force-close path (gateway shutdown): it resets sessionCount to 0.
     db.close();
 
     // ensureInitialized() must auto-reconnect; the store must not throw.
@@ -99,15 +104,17 @@ describe("VectorDB reference-counted lifecycle (issue #106)", () => {
     expect(typeof id).toBe("string");
     expect(id.length).toBeGreaterThan(0);
 
-    // Cleanup: release the open session that was left open by the scenario.
-    // The force-close already reset sessionCount to 0, so removeSession is a no-op.
-    db.removeSession();
+    // No removeSession() here: close() already reset sessionCount to 0 and closed the DB.
+    // Calling removeSession() with sessionCount=0 would trigger the underflow warning and
+    // an unnecessary _doClose(). The afterEach close() handles final cleanup.
   });
 
   it("lazy reconnect — search returns real results after premature close()", async () => {
     db.open();
 
-    db.close(); // premature force-close
+    // Simulate a premature gateway stop() while the session is still active.
+    // close() is the force-close path: it resets sessionCount to 0.
+    db.close();
 
     // Should auto-reconnect and find the seed fact stored in beforeEach.
     const results = await db.search([0.1, 0.2, 0.3], 5, 0);
@@ -115,7 +122,8 @@ describe("VectorDB reference-counted lifecycle (issue #106)", () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].entry.text).toBe("seed fact");
 
-    db.removeSession();
+    // No removeSession() here: close() already reset sessionCount to 0.
+    // The afterEach close() handles final cleanup.
   });
 
   it("open() resets closed flag so the next operation reconnects", async () => {
@@ -171,7 +179,7 @@ describe("credentials-pending.json missing file handling (issue #10)", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "cred-pending-test-"));
     const pendingPath = join(tmpDir, "credentials-pending.json");
 
-    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => {});
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
 
     try {
       // Replicate the try/catch guard from hooks.ts before_agent_start: when the file

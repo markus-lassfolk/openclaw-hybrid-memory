@@ -1308,7 +1308,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   credentials
     .command("list")
     .description("List credentials in vault (service, type, url only — no values). One entry per (service, type); repeated stores overwrite.")
-    .option("--service <pattern>", "Filter by service name (case-insensitive substring match)")
+    .option("--service <pattern>", "Filter by service name (case-insensitive substring match). Note: partial patterns match all services containing the string — e.g. 'git' matches 'github' and 'gitea'. Use quotes for multi-word patterns.")
     .action(withExit(async (opts?: { service?: string }) => {
       let list = runCredentialsList();
       if (list.length === 0) {
@@ -1323,7 +1323,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.log(`No credentials matching service "${pattern}".`);
           return;
         }
-        console.log(`Credentials matching "${pattern}" (${list.length}):`);
+        console.log(`Credentials matching "${pattern}" (case-insensitive substring, ${list.length} result${list.length === 1 ? "" : "s"}):`);
       } else {
         console.log(`Credentials (${list.length}):`);
       }
@@ -1334,11 +1334,12 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
   credentials
     .command("get")
-    .description("Retrieve a credential value by service name. Use --type to disambiguate when multiple types exist.")
+    .description("Retrieve a credential value by service name. Omit --type to get the most recently updated credential for the service, or use --type to disambiguate when multiple types exist.")
     .requiredOption("--service <name>", "Service name (e.g. 'unifi', 'github')")
-    .option("--type <type>", "Credential type (token, password, api_key, ssh, bearer, other). Omit to get the most recently updated entry for the service.")
-    .option("--value-only", "Print only the secret value (for piping); no metadata.")
-    .action(withExit(async (opts: { service: string; type?: string; valueOnly?: boolean }) => {
+    .option("--type <type>", "Credential type (token, password, api_key, ssh, bearer, other). Omit to get the most recently updated entry for the service, or when you don't know which type is stored.")
+    .option("--value-only", "Print only the secret value (for piping); no metadata. Warning: value is printed in plaintext.")
+    .option("--show-value", "Reveal the secret value in the default (metadata) output. Without this flag the value is masked for safety.")
+    .action(withExit(async (opts: { service: string; type?: string; valueOnly?: boolean; showValue?: boolean }) => {
       const entry = runCredentialsGet({ service: opts.service, type: opts.type });
       if (!entry) {
         console.error(`No credential found for service "${opts.service}"${opts.type ? ` (type: ${opts.type})` : ""}.`);
@@ -1351,7 +1352,11 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }
       console.log(`service: ${entry.service}`);
       console.log(`type: ${entry.type}`);
-      console.log(`value: ${entry.value}`);
+      if (opts.showValue) {
+        console.log(`value: ${entry.value}`);
+      } else {
+        console.log(`value: *** (use --show-value to reveal, or --value-only to pipe)`);
+      }
       if (entry.url) console.log(`url: ${entry.url}`);
       if (entry.notes) console.log(`notes: ${entry.notes}`);
     }));
