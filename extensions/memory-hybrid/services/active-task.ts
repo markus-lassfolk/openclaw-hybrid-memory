@@ -431,7 +431,7 @@ export function buildStaleWarningInjection(
   // ── Stale task warnings ──────────────────────────────────────────────────
   if (staleTasks.length > 0) {
     const header = `⚠️ STALE ACTIVE TASKS (not updated in >${thresholdDisplay}):`;
-    if (maxChars && usedChars + header.length > maxChars) return "";
+    if (maxChars != null && usedChars + header.length > maxChars) return "";
     lines.push(header);
     usedChars += header.length + 1;
 
@@ -445,13 +445,13 @@ export function buildStaleWarningInjection(
       const nextPart = task.next ? `, Next: ${task.next}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;
       const blockSize = line1.length + line2.length + 2;
-      if (maxChars && usedChars + blockSize > maxChars) break;
+      if (maxChars != null && usedChars + blockSize > maxChars) break;
       lines.push(line1);
       lines.push(line2);
       usedChars += blockSize;
     }
     const footer = "Consider: check subagent status, resume, or mark complete.";
-    if (!maxChars || usedChars + footer.length <= maxChars) {
+    if (maxChars == null || usedChars + footer.length <= maxChars) {
       lines.push(footer);
       usedChars += footer.length + 1;
     }
@@ -462,7 +462,7 @@ export function buildStaleWarningInjection(
     const separator = lines.length > 0 ? "\n" : "";
     const header = "💡 In-progress tasks with subagents — verify they are still running:";
     const headerSize = separator.length + header.length + 1;
-    if (maxChars && usedChars + headerSize > maxChars) {
+    if (maxChars != null && usedChars + headerSize > maxChars) {
       return lines.join("\n");
     }
     if (lines.length > 0) lines.push("");
@@ -471,12 +471,12 @@ export function buildStaleWarningInjection(
 
     for (const task of inProgressWithSubagent) {
       const line = `- [${task.label}]: ${task.description} (subagent: ${task.subagent})`;
-      if (maxChars && usedChars + line.length + 1 > maxChars) break;
+      if (maxChars != null && usedChars + line.length + 1 > maxChars) break;
       lines.push(line);
       usedChars += line.length + 1;
     }
     const footer = "Hint: use `subagents list` to check if these subagents are still active.";
-    if (!maxChars || usedChars + footer.length <= maxChars) {
+    if (maxChars == null || usedChars + footer.length <= maxChars) {
       lines.push(footer);
     }
   }
@@ -504,8 +504,13 @@ export async function flushCompletedTaskToMemory(
   let existing = "";
   try {
     existing = await readFile(filePath, "utf-8");
-  } catch {
-    // File doesn't exist yet — that's fine
+  } catch (err) {
+    // Only swallow "file not found" — rethrow permission errors, malformed reads, etc.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      existing = "";
+    } else {
+      throw err;
+    }
   }
 
   const summary = [
