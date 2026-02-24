@@ -49,6 +49,7 @@ export type ManageContext = {
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
+  runCredentialsGet: (opts: { service: string; type?: string }) => { service: string; type: string; value: string; url: string | null; notes: string | null } | null;
   runCredentialsAudit: () => CredentialsAuditResult;
   runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
@@ -149,6 +150,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runIngestFiles,
     runMigrateToVault,
     runCredentialsList,
+    runCredentialsGet,
     runCredentialsAudit,
     runCredentialsPrune,
     runUpgrade,
@@ -1305,17 +1307,53 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
   credentials
     .command("list")
-    .description("List credentials in vault (service, type, url only — no values)")
-    .action(withExit(async () => {
-      const list = runCredentialsList();
+    .description("List credentials in vault (service, type, url only — no values). One entry per (service, type); repeated stores overwrite.")
+    .option("--service <pattern>", "Filter by service name (case-insensitive substring match)")
+    .action(withExit(async (opts?: { service?: string }) => {
+      let list = runCredentialsList();
       if (list.length === 0) {
         console.log("No credentials in vault.");
         return;
       }
-      console.log(`Credentials (${list.length}):`);
+      const pattern = opts?.service?.trim();
+      if (pattern) {
+        const lower = pattern.toLowerCase();
+        list = list.filter((e) => e.service.toLowerCase().includes(lower));
+        if (list.length === 0) {
+          console.log(`No credentials matching service "${pattern}".`);
+          return;
+        }
+        console.log(`Credentials matching "${pattern}" (${list.length}):`);
+      } else {
+        console.log(`Credentials (${list.length}):`);
+      }
       for (const e of list) {
         console.log(`  ${e.service} (${e.type})${e.url ? ` — ${e.url}` : ""}`);
       }
+    }));
+
+  credentials
+    .command("get")
+    .description("Retrieve a credential value by service name. Use --type to disambiguate when multiple types exist.")
+    .requiredOption("--service <name>", "Service name (e.g. 'unifi', 'github')")
+    .option("--type <type>", "Credential type (token, password, api_key, ssh, bearer, other). Omit to get the most recently updated entry for the service.")
+    .option("--value-only", "Print only the secret value (for piping); no metadata.")
+    .action(withExit(async (opts: { service: string; type?: string; valueOnly?: boolean }) => {
+      const entry = runCredentialsGet({ service: opts.service, type: opts.type });
+      if (!entry) {
+        console.error(`No credential found for service "${opts.service}"${opts.type ? ` (type: ${opts.type})` : ""}.`);
+        process.exitCode = 1;
+        return;
+      }
+      if (opts.valueOnly) {
+        console.log(entry.value);
+        return;
+      }
+      console.log(`service: ${entry.service}`);
+      console.log(`type: ${entry.type}`);
+      console.log(`value: ${entry.value}`);
+      if (entry.url) console.log(`url: ${entry.url}`);
+      if (entry.notes) console.log(`notes: ${entry.notes}`);
     }));
 
   credentials

@@ -2544,6 +2544,28 @@ export function runCredentialsListForCli(ctx: HandlerContext): Array<{ service: 
 }
 
 /**
+ * Get a single credential value by service (and optional type). Used by the `credentials get` CLI command.
+ * Returns null if vault is disabled or no matching entry exists.
+ */
+export function runCredentialsGetForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type?: string },
+): { service: string; type: string; value: string; url: string | null; notes: string | null } | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  const type = opts.type as CredentialType | undefined;
+  const entry = credentialsDb.get(opts.service.trim(), type);
+  if (!entry) return null;
+  return {
+    service: entry.service,
+    type: entry.type,
+    value: entry.value,
+    url: entry.url ?? null,
+    notes: entry.notes ?? null,
+  };
+}
+
+/**
  * Prune credentials vault: remove entries flagged by audit. Default dry-run; use --yes to apply.
  */
 export function runCredentialsPruneForCli(
