@@ -149,23 +149,6 @@ export function normalizeServiceForDedup(serviceSlug: string): string {
   return SERVICE_NORMALIZE_MAP[key] ?? key;
 }
 
-/** Minimal credentials DB interface for dedup check (avoids importing CredentialsDB). */
-export type CredentialsDbLike = {
-  get(service: string, type?: "token" | "password" | "api_key" | "ssh" | "bearer" | "other"): { value: string } | null;
-};
-
-/**
- * Return true if the vault already has the same (service, type) with the same value (no-op store).
- * Use before store in auto-capture paths to avoid redundant writes.
- */
-export function shouldSkipCredentialStore(
-  db: CredentialsDbLike,
-  entry: { service: string; type: "token" | "password" | "api_key" | "ssh" | "bearer" | "other"; value: string },
-): boolean {
-  const existing = db.get(entry.service, entry.type);
-  return existing !== null && existing.value === entry.value;
-}
-
 /**
  * Return audit flags for a credential value (for CLI audit). Uses same heuristics as validateCredentialValue.
  */

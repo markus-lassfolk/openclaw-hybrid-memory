@@ -10,11 +10,9 @@ import {
   auditCredentialValue,
   auditServiceName,
   normalizeServiceForDedup,
-  shouldSkipCredentialStore,
   CREDENTIAL_SERVICE_MAX_LENGTH,
   MIN_CREDENTIAL_VALUE_LENGTH,
   MAX_SERVICE_NAME_LENGTH,
-  type CredentialsDbLike,
 } from "../services/credential-validation.js";
 
 describe("exported constants", () => {
@@ -178,24 +176,3 @@ describe("tryParseCredentialForVault — P2 hasPatternMatch bypass", () => {
   });
 });
 
-describe("shouldSkipCredentialStore", () => {
-  it("returns true when same service+type+value exists", () => {
-    const db: CredentialsDbLike = {
-      get: (service: string, type?: "token" | "password" | "api_key" | "ssh" | "bearer" | "other") =>
-        service === "api" && type === "api_key" ? { value: "same-secret" } : null,
-    };
-    expect(shouldSkipCredentialStore(db, { service: "api", type: "api_key", value: "same-secret" })).toBe(true);
-  });
-
-  it("returns false when value differs", () => {
-    const db: CredentialsDbLike = {
-      get: () => ({ value: "old-secret" }),
-    };
-    expect(shouldSkipCredentialStore(db, { service: "api", type: "api_key", value: "new-secret" })).toBe(false);
-  });
-
-  it("returns false when no existing entry", () => {
-    const db: CredentialsDbLike = { get: () => null };
-    expect(shouldSkipCredentialStore(db, { service: "api", type: "api_key", value: "secret" })).toBe(false);
-  });
-});
