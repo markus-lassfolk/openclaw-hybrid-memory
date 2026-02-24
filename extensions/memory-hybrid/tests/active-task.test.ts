@@ -12,6 +12,7 @@ import {
   serializeActiveTaskFile,
   detectStaleTasks,
   buildActiveTaskInjection,
+  buildStaleWarningInjection,
   upsertTask,
   completeTask,
   flushCompletedTaskToMemory,
@@ -239,14 +240,14 @@ describe("serializeActiveTaskFile", () => {
 // ---------------------------------------------------------------------------
 
 describe("detectStaleTasks", () => {
-  it("flags tasks not updated in >staleHours", () => {
+  it("flags tasks not updated within the stale threshold", () => {
     const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
     const freshTime = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
     const tasks = [
       makeEntry({ label: "stale", updated: staleTime }),
       makeEntry({ label: "fresh", updated: freshTime }),
     ];
-    const result = detectStaleTasks(tasks, 24);
+    const result = detectStaleTasks(tasks, 1440);
     expect(result[0].stale).toBe(true);
     expect(result[1].stale).toBe(false);
   });
@@ -254,18 +255,18 @@ describe("detectStaleTasks", () => {
   it("does not flag tasks updated recently", () => {
     const freshTime = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
     const tasks = [makeEntry({ updated: freshTime })];
-    const result = detectStaleTasks(tasks, 24);
+    const result = detectStaleTasks(tasks, 1440);
     expect(result[0].stale).toBe(false);
   });
 
   it("handles invalid updated timestamp gracefully", () => {
     const tasks = [makeEntry({ updated: "not-a-date" })];
-    const result = detectStaleTasks(tasks, 24);
+    const result = detectStaleTasks(tasks, 1440);
     expect(result[0].stale).toBe(false);
   });
 
   it("returns empty array for empty input", () => {
-    expect(detectStaleTasks([], 24)).toEqual([]);
+    expect(detectStaleTasks([], 1440)).toEqual([]);
   });
 });
 
@@ -331,6 +332,163 @@ describe("buildActiveTaskInjection", () => {
       const result = buildActiveTaskInjection(tasks, 500);
       expect(result).toContain(status);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stale warning injection builder tests
+// ---------------------------------------------------------------------------
+
+describe("buildStaleWarningInjection", () => {
+  const THRESHOLD_MINUTES = 1440; // 24h
+
+  it("returns empty string when no stale tasks and no in-progress subagents", () => {
+    const tasks = [
+      makeEntry({ label: "fresh", stale: false }),
+      makeEntry({ label: "done", status: "Done", stale: false }),
+    ];
+    expect(buildStaleWarningInjection(tasks, THRESHOLD_MINUTES)).toBe("");
+  });
+
+  it("returns empty string for empty task list", () => {
+    expect(buildStaleWarningInjection([], THRESHOLD_MINUTES)).toBe("");
+  });
+
+  it("generates warning for stale tasks", () => {
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const tasks = [
+      makeEntry({
+        label: "forge-99",
+        description: "Implement heartbeat hook",
+        status: "In progress",
+        updated: staleTime,
+        stale: true,
+      }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result).toContain("⚠️ STALE ACTIVE TASKS");
+    // 1440 min = 1 day → formatDuration renders "1d"
+    expect(result).toContain(">1d");
+    expect(result).toContain("[forge-99]");
+    expect(result).toContain("Implement heartbeat hook");
+    expect(result).toContain("Status: In progress");
+    expect(result).toContain("Consider:");
+  });
+
+  it("includes hours-ago elapsed time in warning", () => {
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const tasks = [makeEntry({ stale: true, updated: staleTime })];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    // Should show approximately 48h ago (allow ±1h for test timing)
+    expect(result).toMatch(/4[78]h ago/);
+  });
+
+  it("includes 'Next' step when present", () => {
+    const tasks = [
+      makeEntry({
+        stale: true,
+        next: "Deploy the hotfix",
+        updated: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result).toContain("Deploy the hotfix");
+    expect(result).toContain("Next:");
+  });
+
+  it("omits 'Next' part when not set", () => {
+    const tasks = [
+      makeEntry({
+        stale: true,
+        next: undefined,
+        updated: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result).not.toContain("Next:");
+  });
+
+  it("generates subagent hint for in-progress tasks with subagent", () => {
+    const tasks = [
+      makeEntry({
+        label: "agent-task",
+        description: "Run analysis",
+        status: "In progress",
+        subagent: "forge-session-abc123",
+        stale: false,
+      }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result).toContain("💡");
+    expect(result).toContain("forge-session-abc123");
+    expect(result).toContain("subagents list");
+  });
+
+  it("does not generate subagent hint for non-in-progress tasks", () => {
+    const tasks = [
+      makeEntry({ status: "Waiting", subagent: "forge-session-xyz", stale: false }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    // No stale, no in-progress-with-subagent → empty
+    expect(result).toBe("");
+  });
+
+  it("generates both stale warning and subagent hint when applicable", () => {
+    const staleTime = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    const tasks = [
+      makeEntry({
+        label: "stale-task",
+        description: "Stale without subagent",
+        status: "Stalled",
+        updated: staleTime,
+        stale: true,
+      }),
+      makeEntry({
+        label: "agent-task",
+        description: "Active subagent",
+        status: "In progress",
+        subagent: "forge-session-xyz",
+        stale: false,
+      }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result).toContain("⚠️ STALE ACTIVE TASKS");
+    expect(result).toContain("[stale-task]");
+    expect(result).toContain("💡");
+    expect(result).toContain("forge-session-xyz");
+  });
+
+  it("displays threshold using human-friendly format", () => {
+    const tasks = [
+      makeEntry({
+        stale: true,
+        updated: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      }),
+    ];
+    // 90 minutes → "1h30m"
+    const result90m = buildStaleWarningInjection(tasks, 90);
+    expect(result90m).toContain(">1h30m");
+
+    // 1440 minutes → "1d" (formatDuration: 1440/1440 = 1 day, 0 hours, 0 min)
+    const result24h = buildStaleWarningInjection(tasks, 1440);
+    expect(result24h).toContain(">1d");
+
+    // 2880 minutes → "2d"
+    const result2d = buildStaleWarningInjection(tasks, 2880);
+    expect(result2d).toContain(">2d");
+  });
+
+  it("generates warning for multiple stale tasks", () => {
+    const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const tasks = [
+      makeEntry({ label: "stale-a", stale: true, updated: staleTime }),
+      makeEntry({ label: "stale-b", stale: true, updated: staleTime }),
+      makeEntry({ label: "fresh", stale: false }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result).toContain("[stale-a]");
+    expect(result).toContain("[stale-b]");
+    expect(result).not.toContain("[fresh]");
   });
 });
 
@@ -414,7 +572,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
   });
 
   it("returns null when file does not exist", async () => {
-    const result = await readActiveTaskFile(join(tmpDir, "ACTIVE-TASK.md"), 24);
+    const result = await readActiveTaskFile(join(tmpDir, "ACTIVE-TASK.md"), 1440);
     expect(result).toBeNull();
   });
 
@@ -425,7 +583,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
       [makeEntry({ label: "test-task" })],
       [],
     );
-    const result = await readActiveTaskFile(filePath, 24);
+    const result = await readActiveTaskFile(filePath, 1440);
     expect(result).not.toBeNull();
     expect(result!.active).toHaveLength(1);
     expect(result!.active[0].label).toBe("test-task");
@@ -438,7 +596,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
     ];
     const completed = [makeEntry({ label: "old-task", status: "Done" })];
     await writeActiveTaskFile(filePath, active, completed);
-    const result = await readActiveTaskFile(filePath, 24);
+    const result = await readActiveTaskFile(filePath, 1440);
     expect(result!.active).toHaveLength(1);
     expect(result!.active[0].branch).toBe("feature/test");
     expect(result!.active[0].next).toBe("Run tests");
@@ -449,7 +607,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
   it("creates parent directories as needed", async () => {
     const filePath = join(tmpDir, "deep", "nested", "ACTIVE-TASK.md");
     await writeActiveTaskFile(filePath, [makeEntry()], []);
-    const result = await readActiveTaskFile(filePath, 24);
+    const result = await readActiveTaskFile(filePath, 1440);
     expect(result).not.toBeNull();
   });
 
@@ -461,7 +619,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
       [makeEntry({ updated: staleTime })],
       [],
     );
-    const result = await readActiveTaskFile(filePath, 24);
+    const result = await readActiveTaskFile(filePath, 1440);
     expect(result!.active[0].stale).toBe(true);
   });
 });
@@ -534,7 +692,7 @@ describe("runActiveTaskList", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-cli-"));
     ctx = {
       activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
-      staleHours: 24,
+      staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
     };
@@ -589,7 +747,7 @@ describe("runActiveTaskStale", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-stale-"));
     ctx = {
       activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
-      staleHours: 24,
+      staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
     };
@@ -630,7 +788,7 @@ describe("runActiveTaskComplete", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-complete-"));
     ctx = {
       activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
-      staleHours: 24,
+      staleMinutes: 1440,
       flushOnComplete: true,
       memoryDir: join(tmpDir, "memory"),
     };
@@ -664,7 +822,7 @@ describe("runActiveTaskComplete", () => {
     const result = await runActiveTaskComplete(ctx, "target-task");
     expect(result.ok).toBe(true);
 
-    const updated = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    const updated = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
     expect(updated!.active).toHaveLength(1);
     expect(updated!.active[0].label).toBe("other-task");
     expect(updated!.completed).toHaveLength(1);
@@ -700,7 +858,7 @@ describe("runActiveTaskAdd", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-add-"));
     ctx = {
       activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
-      staleHours: 24,
+      staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
     };
@@ -719,7 +877,7 @@ describe("runActiveTaskAdd", () => {
     const ok = result as { ok: true; label: string; upserted: boolean };
     expect(ok.upserted).toBe(false);
 
-    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
     expect(taskFile!.active).toHaveLength(1);
     expect(taskFile!.active[0].label).toBe("new-task");
   });
@@ -733,7 +891,7 @@ describe("runActiveTaskAdd", () => {
       next: "Deploy",
       status: "Waiting",
     });
-    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
     const task = taskFile!.active[0];
     expect(task.branch).toBe("fix/something");
     expect(task.subagent).toBe("forge-session");
@@ -756,7 +914,7 @@ describe("runActiveTaskAdd", () => {
     const ok = result as { ok: true; label: string; upserted: boolean };
     expect(ok.upserted).toBe(true);
 
-    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
     expect(taskFile!.active).toHaveLength(1);
     expect(taskFile!.active[0].description).toBe("Updated description");
     expect(taskFile!.active[0].next).toBe("new next");
@@ -768,7 +926,7 @@ describe("runActiveTaskAdd", () => {
       description: "Task with bad status",
       status: "InvalidStatus",
     });
-    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
     expect(taskFile!.active[0].status).toBe("In progress");
   });
 });
