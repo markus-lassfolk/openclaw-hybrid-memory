@@ -34,6 +34,19 @@ export class VectorDB {
   }
 
   private async ensureInitialized(): Promise<void> {
+    // Await any in-flight init before inspecting state. Without this guard, a caller that
+    // arrives while doInitialize() is already running (e.g. close() was called mid-init and
+    // nulled initPromise before this caller checked it) would start a second concurrent
+    // doInitialize() — resulting in duplicate connections and a potential connection leak.
+    if (this.initPromise) {
+      try {
+        await this.initPromise;
+      } catch {
+        // The catch handler inside the promise chain already cleared initPromise on failure;
+        // fall through so we can attempt a fresh init below.
+      }
+    }
+
     // Auto-reconnect: if closed (e.g., stop() called while async operations are in-flight during
     // a deferred SIGUSR1 restart, or register() called again on hot-reload), reset state and
     // reconnect. Mirrors the FactsDB/CredentialsDB liveDb() pattern for post-restart recovery.
@@ -41,7 +54,12 @@ export class VectorDB {
       this.logWarn("memory-hybrid: VectorDB was closed; reconnecting...");
       this.closed = false;
       this.table = null;
-      this.db = null;
+      // Close any connection that may have been set by a concurrent in-flight doInitialize()
+      // that completed after close() ran, to avoid leaking the underlying file handle.
+      if (this.db) {
+        try { this.db.close(); } catch { /* ignore */ }
+        this.db = null;
+      }
       this.initPromise = null;
     }
     if (this.table) return;
@@ -224,6 +242,8 @@ export class VectorDB {
       this.db.close();
     }
     this.db = null;
-    this.initPromise = null;
+    // Intentionally NOT clearing initPromise here. If doInitialize() is in-flight, the
+    // next ensureInitialized() call will await it before resetting state — preventing a
+    // second concurrent doInitialize() and the associated connection leak / race condition.
   }
 }
