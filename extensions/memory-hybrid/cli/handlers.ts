@@ -2490,24 +2490,15 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
   const { credentialsDb } = ctx;
   const entries: Array<{ service: string; type: string; url: string | null; flags: string[] }> = [];
   if (!credentialsDb) return { entries, total: 0 };
-  const list = credentialsDb.list();
-  const valueByKey = new Map<string, string>();
-  const updatedByKey = new Map<string, number>();
-  for (const row of list) {
-    const entry = credentialsDb.get(row.service, row.type as CredentialType);
-    const key = `${row.service}:${row.type}`;
-    valueByKey.set(key, entry?.value ?? "");
-    updatedByKey.set(key, entry?.updated ?? 0);
-  }
+  const list = credentialsDb.listAll();
   // Group entries by canonical value and by normalized service name so we can flag
   // older duplicates in each group. Each item carries its `updated` timestamp so we
   // can sort newest-first and keep only group[0] (the newest) un-flagged.
   const valueToEntries = new Map<string, Array<{ service: string; type: string; updated: number }>>();
   const normKeyToEntries = new Map<string, Array<{ service: string; type: string; updated: number }>>();
   for (const row of list) {
-    const key = `${row.service}:${row.type}`;
-    const value = valueByKey.get(key) ?? "";
-    const updated = updatedByKey.get(key) ?? 0;
+    const value = row.value;
+    const updated = row.updated;
     const flags = [...auditCredentialValue(value, row.type), ...auditServiceName(row.service)];
     const normKey = `${normalizeServiceForDedup(row.service)}:${row.type}`;
     if (!valueToEntries.has(value)) valueToEntries.set(value, []);
