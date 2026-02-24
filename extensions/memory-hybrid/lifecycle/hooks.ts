@@ -7,7 +7,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
@@ -82,7 +82,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   // Resolve active task file path against workspace root (same logic as CLI context)
   const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
-  const resolvedActiveTaskPath = ctx.cfg.activeTask.filePath.startsWith("/")
+  const resolvedActiveTaskPath = isAbsolute(ctx.cfg.activeTask.filePath)
     ? ctx.cfg.activeTask.filePath
     : join(workspaceRoot, ctx.cfg.activeTask.filePath);
 

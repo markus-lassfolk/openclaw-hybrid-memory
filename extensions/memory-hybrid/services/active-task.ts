@@ -185,11 +185,13 @@ export function parseActiveTaskFile(content: string): ActiveTaskFile {
       continue;
     }
 
-    // Task headers (h3)
+    // Task headers (h3) — only within Active Tasks / Completed sections
     if (trimmed.startsWith("### ")) {
       flushTask();
-      currentHeader = trimmed;
-      currentLines = [];
+      if (inSection !== "other") {
+        currentHeader = trimmed;
+        currentLines = [];
+      }
       continue;
     }
 
@@ -292,8 +294,10 @@ export async function readActiveTaskFile(
     // Apply stale detection to active tasks
     parsed.active = detectStaleTasks(parsed.active, staleMinutes);
     return parsed;
-  } catch {
-    return null;
+  } catch (err) {
+    // Only swallow "file not found" — rethrow permission errors, malformed reads, etc.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
   }
 }
 
@@ -380,6 +384,9 @@ export function buildActiveTaskInjection(
     lines.push(block);
     used += block.length + 1;
   }
+
+  // If no tasks fit within the budget, return nothing rather than an empty wrapper
+  if (lines.length === 2) return "";
 
   lines.push("</active-tasks>");
   return lines.join("\n");

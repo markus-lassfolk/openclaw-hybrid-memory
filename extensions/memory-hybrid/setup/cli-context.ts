@@ -4,7 +4,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import type { ActiveTaskContext } from "../cli/active-tasks.js";
 import { parseDuration } from "../utils/duration.js";
@@ -100,7 +100,9 @@ Commands by category:
   Plugin lifecycle
     upgrade [version]    Upgrade to version or latest
     uninstall            Remove plugin (--clean-all, --leave-config)
+`;
 
+const HYBRID_MEM_HELP_ACTIVE_TASKS = `
   Working memory
     active-tasks                   List active tasks from ACTIVE-TASK.md
     active-tasks complete <label>  Mark task as Done and flush to memory log
@@ -580,8 +582,8 @@ function buildListCommands(ctx: HandlerContext, api: ClawdbotPluginApi): NonNull
 function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContext {
   const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const { activeTask } = handlerCtx.cfg;
-  // Resolve relative paths against workspace root
-  const activeTaskFilePath = activeTask.filePath.startsWith("/")
+  // Resolve relative paths against workspace root (use isAbsolute for cross-platform support)
+  const activeTaskFilePath = isAbsolute(activeTask.filePath)
     ? activeTask.filePath
     : join(workspaceRoot, activeTask.filePath);
   const memoryDir = join(workspaceRoot, "memory");
@@ -672,6 +674,9 @@ export function registerCliWithHelp(
     throw err;
   }
   if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
-    (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", HYBRID_MEM_HELP_GROUPED);
+    const helpText = ctx.activeTask
+      ? HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS
+      : HYBRID_MEM_HELP_GROUPED;
+    (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", helpText);
   }
 }

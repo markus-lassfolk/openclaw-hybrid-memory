@@ -185,8 +185,22 @@ export async function runActiveTaskAdd(
     updated: now,
   };
 
-  const updated = upsertTask(existingActive, entry);
-  await writeActiveTaskFile(ctx.activeTaskFilePath, updated, existingCompleted);
+  if (status === "Done") {
+    // Route to completed list — remove from active, append to completed
+    const updatedActive = existingActive.filter((t) => t.label !== opts.label);
+    const updatedCompleted = [...existingCompleted, entry];
+    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, updatedCompleted);
+    if (ctx.flushOnComplete) {
+      try {
+        await flushCompletedTaskToMemory(entry, ctx.memoryDir);
+      } catch {
+        // Non-fatal
+      }
+    }
+  } else {
+    const updatedActive = upsertTask(existingActive, entry);
+    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, existingCompleted);
+  }
 
   return { ok: true, label: opts.label, upserted: wasExisting };
 }
@@ -199,11 +213,11 @@ export function registerActiveTaskCommands(
   mem: Chainable,
   ctx: ActiveTaskContext,
 ): void {
-  // `hybrid-mem active-tasks` — list
-  mem
+  // Parent command: `hybrid-mem active-tasks` — lists tasks by default
+  const activeTasks = mem
     .command("active-tasks")
     .description(
-      "List active tasks from ACTIVE-TASK.md working memory. Subcommands: complete <label>, stale, add",
+      "Working memory: manage active tasks in ACTIVE-TASK.md. Subcommands: complete, stale, add",
     )
     .action(async () => {
       const result = await runActiveTaskList(ctx);
@@ -231,8 +245,8 @@ export function registerActiveTaskCommands(
     });
 
   // `hybrid-mem active-tasks complete <label>`
-  mem
-    .command("active-tasks complete <label>")
+  activeTasks
+    .command("complete <label>")
     .description("Mark an active task as Done and flush summary to memory log")
     .action(async (label: string) => {
       const result = await runActiveTaskComplete(ctx, label);
@@ -248,8 +262,8 @@ export function registerActiveTaskCommands(
     });
 
   // `hybrid-mem active-tasks stale`
-  mem
-    .command("active-tasks stale")
+  activeTasks
+    .command("stale")
     .description(`Show tasks not updated in >${formatDuration(ctx.staleMinutes)}`)
     .action(async () => {
       const result = await runActiveTaskStale(ctx);
@@ -266,8 +280,8 @@ export function registerActiveTaskCommands(
     });
 
   // `hybrid-mem active-tasks add <label> <description>`
-  mem
-    .command("active-tasks add <label> <description>")
+  activeTasks
+    .command("add <label> <description>")
     .description("Add or update a task in ACTIVE-TASK.md")
     .option("--branch <branch>", "Git branch")
     .option("--status <status>", "Task status (In progress|Waiting|Stalled|Failed|Done)")
