@@ -2485,12 +2485,6 @@ export function runCredentialsAuditForCli(
 
   try {
     const entries = credentialsDb.listAll();
-    // Detect duplicates: track (service, type) pairs
-    const seen = new Map<string, number>();
-    for (const entry of entries) {
-      const key = `${entry.service}:${entry.type}`;
-      seen.set(key, (seen.get(key) ?? 0) + 1);
-    }
 
     for (const entry of entries) {
       const reasons: string[] = [];
@@ -2512,12 +2506,6 @@ export function runCredentialsAuditForCli(
         }
       }
 
-      // Check for duplicate service+type
-      const key = `${entry.service}:${entry.type}`;
-      if ((seen.get(key) ?? 0) > 1) {
-        reasons.push("duplicate service+type entry");
-      }
-
       if (reasons.length > 0) {
         flagged.push({ service: entry.service, type: entry.type, reason: reasons.join("; ") });
       }
@@ -2529,20 +2517,14 @@ export function runCredentialsAuditForCli(
 
   let removed = 0;
   if (opts.fix && flagged.length > 0) {
-    // Remove duplicates only once (avoid double-delete)
-    const deleted = new Set<string>();
     for (const entry of flagged) {
-      const key = `${entry.service}:${entry.type}`;
-      if (!deleted.has(key)) {
-        try {
-          const ok = credentialsDb.delete(entry.service, entry.type as import("../config.js").CredentialType);
-          if (ok) {
-            removed++;
-            deleted.add(key);
-          }
-        } catch (err) {
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runCredentialsAuditForCli:delete" });
+      try {
+        const ok = credentialsDb.delete(entry.service, entry.type as import("../config.js").CredentialType);
+        if (ok) {
+          removed++;
         }
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runCredentialsAuditForCli:delete" });
       }
     }
   }
