@@ -112,7 +112,7 @@ export function validateAndNormalizeServiceName(serviceSlug: string): string | n
 
   if (trimmed.includes("://")) {
     if (trimmed.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
-    return trimmed;
+    return trimmed.toLowerCase();
   }
   if (trimmed.includes(".")) {
     if (trimmed.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
@@ -145,7 +145,7 @@ export function normalizeServiceForDedup(serviceSlug: string): string {
     const lower = serviceSlug.toLowerCase();
     return SERVICE_NORMALIZE_MAP[lower] ?? lower;
   }
-  const key = serviceSlug.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "");
+  const key = serviceSlug.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "") || "imported";
   return SERVICE_NORMALIZE_MAP[key] ?? key;
 }
 

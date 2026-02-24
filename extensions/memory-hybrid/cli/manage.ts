@@ -48,6 +48,7 @@ export type ManageContext = {
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
   runCredentialsAudit: () => CredentialsAuditResult;
   runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
@@ -147,6 +148,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runBackfill,
     runIngestFiles,
     runMigrateToVault,
+    runCredentialsList,
     runCredentialsAudit,
     runCredentialsPrune,
     runUpgrade,
@@ -1299,13 +1301,13 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("list")
     .description("List credentials in vault (service, type, url only — no values)")
     .action(withExit(async () => {
-      const audit = runCredentialsAudit();
-      if (audit.total === 0) {
+      const list = runCredentialsList();
+      if (list.length === 0) {
         console.log("No credentials in vault.");
         return;
       }
-      console.log(`Credentials (${audit.total}):`);
-      for (const e of audit.entries) {
+      console.log(`Credentials (${list.length}):`);
+      for (const e of list) {
         console.log(`  ${e.service} (${e.type})${e.url ? ` — ${e.url}` : ""}`);
       }
     }));
