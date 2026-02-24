@@ -245,12 +245,6 @@ export class VectorDB {
     this.sessionCount++;
     if (this.closed) {
       this.closed = false;
-      this.table = null;
-      if (this.db) {
-        try { this.db.close(); } catch { /* ignore */ }
-        this.db = null;
-      }
-      this.initPromise = null;
     }
   }
 
