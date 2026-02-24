@@ -4,8 +4,10 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
+import type { ActiveTaskContext } from "../cli/active-tasks.js";
+import { parseDuration } from "../utils/duration.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { registerHybridMemCli, type HybridMemCliContext } from "../cli/register.js";
 import type { HandlerContext } from "../cli/handlers.js";
@@ -100,6 +102,14 @@ Commands by category:
     uninstall            Remove plugin (--clean-all, --leave-config)
 `;
 
+const HYBRID_MEM_HELP_ACTIVE_TASKS = `
+  Working memory
+    active-tasks                   List active tasks from ACTIVE-TASK.md
+    active-tasks complete <label>  Mark task as Done and flush to memory log
+    active-tasks stale             Show tasks not updated within staleThreshold
+    active-tasks add <label> <desc>  Add or update a task entry
+`;
+
 export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem",
   "hybrid-mem run-all",
@@ -147,6 +157,10 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem scope prune-session",
   "hybrid-mem scope promote",
   "hybrid-mem uninstall",
+  "hybrid-mem active-tasks",
+  "hybrid-mem active-tasks complete",
+  "hybrid-mem active-tasks stale",
+  "hybrid-mem active-tasks add",
 ] as const;
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
@@ -562,6 +576,26 @@ function buildListCommands(ctx: HandlerContext, api: ClawdbotPluginApi): NonNull
 }
 
 /**
+ * Build the ActiveTaskContext from the handler context.
+ * Resolves file paths against the workspace root.
+ */
+function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContext {
+  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const { activeTask } = handlerCtx.cfg;
+  // Resolve relative paths against workspace root (use isAbsolute for cross-platform support)
+  const activeTaskFilePath = isAbsolute(activeTask.filePath)
+    ? activeTask.filePath
+    : join(workspaceRoot, activeTask.filePath);
+  const memoryDir = join(workspaceRoot, "memory");
+  return {
+    activeTaskFilePath,
+    staleMinutes: parseDuration(activeTask.staleThreshold),
+    flushOnComplete: activeTask.flushOnComplete,
+    memoryDir,
+  };
+}
+
+/**
  * Build the full CLI context passed to registerHybridMemCli.
  * Uses handlers from cli/handlers.ts and services for reflection/consolidation/export etc.
  */
@@ -621,6 +655,9 @@ export function createHybridMemCliContext(
     resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
     resolvePath: (file: string) => api.resolvePath(file),
     runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
+    activeTask: handlerCtx.cfg.activeTask.enabled
+      ? buildActiveTaskCliContext(handlerCtx)
+      : undefined,
   };
 }
 
@@ -637,6 +674,9 @@ export function registerCliWithHelp(
     throw err;
   }
   if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
-    (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", HYBRID_MEM_HELP_GROUPED);
+    const helpText = ctx.activeTask
+      ? HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS
+      : HYBRID_MEM_HELP_GROUPED;
+    (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", helpText);
   }
 }

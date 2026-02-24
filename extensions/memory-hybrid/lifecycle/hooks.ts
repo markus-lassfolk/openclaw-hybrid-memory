@@ -7,7 +7,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
@@ -32,6 +32,17 @@ import { classifyMemoryOperation } from "../services/classification.js";
 import { detectAuthFailure, buildCredentialQuery, formatCredentialHint, DEFAULT_AUTH_FAILURE_PATTERNS, type AuthFailurePattern } from "../services/auth-failure-detect.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
+import {
+  readActiveTaskFile,
+  buildActiveTaskInjection,
+  buildStaleWarningInjection,
+  writeActiveTaskFile,
+  upsertTask,
+  completeTask,
+  flushCompletedTaskToMemory,
+  type ActiveTaskEntry,
+} from "../services/active-task.js";
+import { parseDuration } from "../utils/duration.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -68,6 +79,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   // Track auth failures per target per session to avoid spam
   const authFailureRecallsThisSession = new Map<string, number>();
+
+  // Resolve active task file path against workspace root (same logic as CLI context)
+  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const resolvedActiveTaskPath = isAbsolute(ctx.cfg.activeTask.filePath)
+    ? ctx.cfg.activeTask.filePath
+    : join(workspaceRoot, ctx.cfg.activeTask.filePath);
 
   const onAgentStart = (api: ClawdbotPluginApi) => {
     // Agent detection must run independently of autoRecall
@@ -672,6 +689,168 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             subsystem: "auto-recall",
           });
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
+        }
+      });
+    }
+
+    // Active task working memory injection — if ACTIVE-TASK.md exists with non-Done tasks,
+    // inject a compact summary into the system prompt so the agent knows what was in flight.
+    // When staleWarning.enabled, also surface stale-task warnings and subagent hints.
+    if (ctx.cfg.activeTask.enabled) {
+      api.on("before_agent_start", async () => {
+        try {
+          const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
+          const taskFile = await readActiveTaskFile(
+            resolvedActiveTaskPath,
+            staleMinutes,
+          );
+          if (!taskFile || taskFile.active.length === 0) return undefined;
+
+          const injection = buildActiveTaskInjection(
+            taskFile.active,
+            ctx.cfg.activeTask.injectionBudget,
+          );
+
+          // Build stale warning block (empty string when nothing to report)
+          // Apply remaining budget after accounting for active task injection
+          let staleWarningBlock = "";
+          if (ctx.cfg.activeTask.staleWarning.enabled) {
+            const injectionChars = injection.length;
+            const budgetChars = ctx.cfg.activeTask.injectionBudget * 4;
+            const remainingChars = Math.max(0, budgetChars - injectionChars);
+            staleWarningBlock = buildStaleWarningInjection(
+              taskFile.active,
+              staleMinutes,
+              remainingChars,
+            );
+          }
+
+          if (!injection && !staleWarningBlock) return undefined;
+
+          const context = [
+            injection,
+            staleWarningBlock,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+
+          const staleCount = taskFile.active.filter((t) => t.stale).length;
+          api.logger.info?.(
+            `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md` +
+            (staleCount > 0 ? ` (${staleCount} stale)` : ""),
+          );
+          return { prependContext: context + "\n\n" };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "active-task-injection",
+            subsystem: "active-task",
+          });
+          api.logger.warn(`memory-hybrid: active task injection failed: ${err}`);
+        }
+      });
+    }
+
+    // Auto-checkpoint: write ACTIVE-TASK.md on subagent spawn/complete events
+    if (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.autoCheckpoint) {
+      // Subagent spawned → auto-create/update task entry
+      api.on("subagent_start", async (event: unknown) => {
+        try {
+          const ev = event as {
+            sessionKey?: string;
+            label?: string;
+            task?: string;
+            agentId?: string;
+          };
+          const label = ev.label ?? ev.sessionKey ?? `subagent-${Date.now()}`;
+          const description = ev.task ?? `Subagent task (session: ${ev.sessionKey ?? "unknown"})`;
+          const taskFile = await readActiveTaskFile(
+            resolvedActiveTaskPath,
+            parseDuration(ctx.cfg.activeTask.staleThreshold),
+          );
+          const now = new Date().toISOString();
+          const existingActive = taskFile?.active ?? [];
+          const existingCompleted = taskFile?.completed ?? [];
+          const existing = existingActive.find((t) => t.label === label);
+          const entry: ActiveTaskEntry = {
+            label,
+            description,
+            status: "In progress",
+            subagent: ev.sessionKey,
+            started: existing?.started ?? now,
+            updated: now,
+          };
+          const updated = upsertTask(existingActive, entry);
+          await writeActiveTaskFile(resolvedActiveTaskPath, updated, existingCompleted);
+          api.logger.info?.(
+            `memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`,
+          );
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "active-task-subagent-start",
+            subsystem: "active-task",
+          });
+          api.logger.debug?.(`memory-hybrid: active task auto-checkpoint on subagent_start failed: ${err}`);
+        }
+      });
+
+      // Subagent completed → auto-update task status
+      api.on("subagent_end", async (event: unknown) => {
+        try {
+          const ev = event as {
+            sessionKey?: string;
+            label?: string;
+            success?: boolean;
+            error?: string;
+          };
+          const label = ev.label ?? ev.sessionKey;
+          if (!label) return;
+
+          const taskFile = await readActiveTaskFile(
+            resolvedActiveTaskPath,
+            parseDuration(ctx.cfg.activeTask.staleThreshold),
+          );
+          if (!taskFile) return;
+
+          const existingTask = taskFile.active.find((t) => t.label === label);
+          if (!existingTask) return; // Task not tracked — skip
+
+          const now = new Date().toISOString();
+          const newStatus = ev.success === false ? "Failed" : "Done";
+
+          if (newStatus === "Done") {
+            const { updated, completed } = completeTask(taskFile.active, label);
+            if (completed) {
+              await writeActiveTaskFile(
+                resolvedActiveTaskPath,
+                updated,
+                [...taskFile.completed, completed],
+              );
+              if (ctx.cfg.activeTask.flushOnComplete) {
+                const memoryDir = join(workspaceRoot, "memory");
+                await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
+              }
+            }
+          } else {
+            // Failed — update status
+            const updatedEntry: ActiveTaskEntry = {
+              ...existingTask,
+              status: "Failed",
+              updated: now,
+              next: ev.error ? `Fix: ${ev.error.slice(0, 100)}` : existingTask.next,
+            };
+            const updated = upsertTask(taskFile.active, updatedEntry);
+            await writeActiveTaskFile(resolvedActiveTaskPath, updated, taskFile.completed);
+          }
+
+          api.logger.info?.(
+            `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
+          );
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "active-task-subagent-end",
+            subsystem: "active-task",
+          });
+          api.logger.debug?.(`memory-hybrid: active task auto-checkpoint on subagent_end failed: ${err}`);
         }
       });
     }

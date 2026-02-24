@@ -13,6 +13,7 @@ import { parseSourceDate } from "../utils/dates.js";
 import { registerVerifyCommands, type VerifyContext } from "./verify.js";
 import { registerDistillCommands, type DistillContext } from "./distill.js";
 import { registerManageCommands, type ManageContext } from "./manage.js";
+import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type {
   FindDuplicatesResult,
@@ -69,6 +70,7 @@ export type {
   UninstallCliResult,
   ConfigCliResult,
 };
+export type { ActiveTaskContext };
 
 export type HybridMemCliContext = {
   factsDb: FactsDB;
@@ -170,6 +172,8 @@ export type HybridMemCliContext = {
   tieringEnabled: boolean;
   resolvedSqlitePath?: string;
   resolvePath?: (file: string) => string;
+  /** Active task working memory context (required when activeTask.enabled = true) */
+  activeTask?: ActiveTaskContext;
 };
 
 /** Chainable command type (Commander-style). */
@@ -219,5 +223,14 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:manage" });
     throw err;
+  }
+
+  if (ctx.activeTask) {
+    try {
+      registerActiveTaskCommands(mem, ctx.activeTask);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:active-tasks" });
+      throw err;
+    }
   }
 }
