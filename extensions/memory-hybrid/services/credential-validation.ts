@@ -49,8 +49,9 @@ export function validateCredentialValue(
     if (looksLikeNaturalLanguage(trimmed)) return { ok: false, reason: "natural_language" };
     if (looksLikePath(trimmed)) return { ok: false, reason: "path" };
     if (looksLikeDescription(trimmed)) return { ok: false, reason: "description" };
-    if (trimmed.length < 8) return { ok: false, reason: "value_too_short" };
   }
+
+  if (trimmed.length < 8) return { ok: false, reason: "value_too_short" };
 
   return { ok: true };
 }
