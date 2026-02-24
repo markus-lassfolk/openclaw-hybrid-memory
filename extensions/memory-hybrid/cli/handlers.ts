@@ -2497,6 +2497,7 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
     valueByKey.set(`${row.service}:${row.type}`, value);
   }
   const valueToEntries = new Map<string, Array<{ service: string; type: string }>>();
+  const normKeyToEntries = new Map<string, Array<{ service: string; type: string }>>();
   for (const row of list) {
     const key = `${row.service}:${row.type}`;
     const value = valueByKey.get(key) ?? "";
@@ -2504,6 +2505,8 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
     const normKey = `${normalizeServiceForDedup(row.service)}:${row.type}`;
     if (!valueToEntries.has(value)) valueToEntries.set(value, []);
     valueToEntries.get(value)!.push({ service: row.service, type: row.type });
+    if (!normKeyToEntries.has(normKey)) normKeyToEntries.set(normKey, []);
+    normKeyToEntries.get(normKey)!.push({ service: row.service, type: row.type });
     entries.push({ service: row.service, type: row.type, url: row.url, flags });
   }
   for (const [, group] of valueToEntries) {
@@ -2511,6 +2514,14 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
       for (const { service, type } of group) {
         const e = entries.find((x) => x.service === service && x.type === type);
         if (e && !e.flags.includes("duplicate_value")) e.flags.push("duplicate_value");
+      }
+    }
+  }
+  for (const [, group] of normKeyToEntries) {
+    if (group.length > 1) {
+      for (const { service, type } of group) {
+        const e = entries.find((x) => x.service === service && x.type === type);
+        if (e && !e.flags.includes("duplicate_normalized_service")) e.flags.push("duplicate_normalized_service");
       }
     }
   }
