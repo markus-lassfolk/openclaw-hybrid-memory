@@ -24,7 +24,6 @@ import {
   tryParseCredentialForVault,
   VAULT_POINTER_PREFIX,
 } from "../services/auto-capture.js";
-import { shouldSkipCredentialStore } from "../services/credential-validation.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import {
   getMemoryCategories,
@@ -698,19 +697,19 @@ export function registerMemoryTools(
                 details: { error: "empty_credential_value" },
               };
             }
-            if (shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue })) {
-              return {
-                content: [{ type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` }],
-                details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
-              };
-            }
-            credentialsDb.store({
+            const stored = credentialsDb.storeIfNew({
               service: parsed.service,
               type: parsed.type,
               value: parsed.secretValue,
               url: parsed.url,
               notes: parsed.notes,
             });
+            if (!stored) {
+              return {
+                content: [{ type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` }],
+                details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
+              };
+            }
             const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
             const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
             const pointerEntry = factsDb.store({

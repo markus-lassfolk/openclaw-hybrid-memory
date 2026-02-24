@@ -31,7 +31,6 @@ import { VAULT_POINTER_PREFIX, detectCredentialPatterns } from "../services/auto
 import { classifyMemoryOperation } from "../services/classification.js";
 import { detectAuthFailure, buildCredentialQuery, formatCredentialHint, DEFAULT_AUTH_FAILURE_PATTERNS, type AuthFailurePattern } from "../services/auth-failure-detect.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
-import { shouldSkipCredentialStore } from "../services/credential-validation.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 
 export interface LifecycleContext {
@@ -1200,18 +1199,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const creds = extractCredentialsFromToolCalls(argsToScan || args);
               for (const cred of creds) {
                 if (ctx.credentialsDb) {
-                  const skipped = shouldSkipCredentialStore(ctx.credentialsDb, { service: cred.service, type: cred.type, value: cred.value });
-                  if (!skipped) {
-                    ctx.credentialsDb.store({
-                      service: cred.service,
-                      type: cred.type,
-                      value: cred.value,
-                      url: cred.url,
-                      notes: cred.notes,
-                    });
-                    if (logCaptures) {
-                      api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
-                    }
+                  const stored = ctx.credentialsDb.storeIfNew({
+                    service: cred.service,
+                    type: cred.type,
+                    value: cred.value,
+                    url: cred.url,
+                    notes: cred.notes,
+                  });
+                  if (stored && logCaptures) {
+                    api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
                   }
                 } else {
                   // Memory-only: store as fact (no vault)

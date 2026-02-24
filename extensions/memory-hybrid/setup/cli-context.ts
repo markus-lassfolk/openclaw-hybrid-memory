@@ -592,6 +592,7 @@ export function createHybridMemCliContext(
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
     runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
+    runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
     runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),
     runCredentialsPrune: (opts) => handlers.runCredentialsPruneForCli(handlerCtx, opts),
     runUninstall: (opts) => Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),

@@ -64,7 +64,7 @@ import { runReinforcementExtract, type ReinforcementExtractResult } from "../ser
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
-import { shouldSkipCredentialStore, auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
+import { auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
@@ -274,18 +274,18 @@ export async function runStoreForCli(
       requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
     });
     if (parsed) {
-      if (shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue })) {
-        return { outcome: "credential_skipped_duplicate", service: parsed.service, type: parsed.type };
-      }
-      // Step 1: Write to vault
+      // Step 1: Write to vault (use storeIfNew to avoid overwriting user-managed credentials)
       try {
-        credentialsDb.store({
+        const stored = credentialsDb.storeIfNew({
           service: parsed.service,
           type: parsed.type as any,
           value: parsed.secretValue,
           url: parsed.url,
           notes: parsed.notes,
         });
+        if (!stored) {
+          return { outcome: "credential_skipped_duplicate", service: parsed.service, type: parsed.type };
+        }
       } catch (err) {
         capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-vault-store" });
         return { outcome: "credential_vault_error" };
@@ -1658,19 +1658,18 @@ export async function runExtractDailyForCli(
           if (parsed) {
           totalExtracted++;
           if (!opts.dryRun) {
-            const skipStore = shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue });
-            if (skipStore) {
-              continue;
-            }
             let storedInVault = false;
             try {
-              credentialsDb.store({
+              const stored = credentialsDb.storeIfNew({
                 service: parsed.service,
                 type: parsed.type as any,
                 value: parsed.secretValue,
                 url: parsed.url,
                 notes: parsed.notes,
               });
+              if (!stored) {
+                continue;
+              }
               storedInVault = true;
                 const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
@@ -2374,12 +2373,12 @@ export async function runDistillForCli(
       });
       if (parsed) {
         if (!opts.dryRun) {
-          if (shouldSkipCredentialStore(credentialsDb, { service: parsed.service, type: parsed.type, value: parsed.secretValue })) {
-            continue;
-          }
           let storedInVault = false;
           try {
-            credentialsDb.store({ service: parsed.service, type: parsed.type as any, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
+            const storeResult = credentialsDb.storeIfNew({ service: parsed.service, type: parsed.type as any, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
+            if (!storeResult) {
+              continue;
+            }
             storedInVault = true;
             const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
             const entry = factsDb.store({
@@ -2539,6 +2538,16 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
     }
   }
   return { entries, total: entries.length };
+}
+
+/**
+ * List credentials metadata (service, type, url) without decryption.
+ * Used by the `credentials list` CLI command.
+ */
+export function runCredentialsListForCli(ctx: HandlerContext): Array<{ service: string; type: string; url: string | null }> {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return [];
+  return credentialsDb.list();
 }
 
 /**
