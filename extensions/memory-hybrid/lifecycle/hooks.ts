@@ -1444,7 +1444,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     // Decrement VectorDB refcount on session end. Uses removeSession() instead of close() so the
     // shared singleton stays open while other concurrent sessions are still active (fixes issue #106).
-    // Registered last to ensure all other agent_end handlers complete their DB operations first.
+    // Registered last so all agent_end handlers that use vectorDb (auto-capture, credential
+    // auto-detect, tool-call credential) run first; otherwise the last session would close the DB
+    // before they run, causing an unnecessary close-reconnect cycle and DB left open with refcount zero.
     api.on("agent_end", () => {
       ctx.vectorDb.removeSession();
     });

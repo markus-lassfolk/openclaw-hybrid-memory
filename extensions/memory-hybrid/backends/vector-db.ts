@@ -250,7 +250,12 @@ export class VectorDB {
         try { this.db.close(); } catch { /* ignore */ }
         this.db = null;
       }
-      this.initPromise = null;
+      // Keep initPromise until prior initialization settles. Do not clear here: _doClose()
+      // deliberately preserves an in-flight initialization promise so ensureInitialized() can
+      // await it and avoid a second concurrent doInitialize(). If we cleared here, a new
+      // session calling open() before that promise resolves would drop the guard and the
+      // next operation could start another initialization in parallel, recreating the
+      // connection leak/race this class was previously hardened against.
     }
   }
 
