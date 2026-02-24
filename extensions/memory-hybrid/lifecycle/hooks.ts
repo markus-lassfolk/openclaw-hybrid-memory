@@ -760,16 +760,17 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             parseDuration(ctx.cfg.activeTask.staleThreshold),
           );
           const now = new Date().toISOString();
+          const existingActive = taskFile?.active ?? [];
+          const existingCompleted = taskFile?.completed ?? [];
+          const existing = existingActive.find((t) => t.label === label);
           const entry: ActiveTaskEntry = {
             label,
             description,
             status: "In progress",
             subagent: ev.sessionKey,
-            started: now,
+            started: existing?.started ?? now,
             updated: now,
           };
-          const existingActive = taskFile?.active ?? [];
-          const existingCompleted = taskFile?.completed ?? [];
           const updated = upsertTask(existingActive, entry);
           await writeActiveTaskFile(resolvedActiveTaskPath, updated, existingCompleted);
           api.logger.info?.(
