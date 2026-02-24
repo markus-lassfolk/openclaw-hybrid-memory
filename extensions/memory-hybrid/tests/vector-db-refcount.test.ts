@@ -1,9 +1,10 @@
 /**
  * Tests for VectorDB reference-counted singleton lifecycle (issue #106).
  *
- * Problem: VectorDB is a shared singleton. When ANY session called close() during
- * teardown, all subsequent sessions failed with "VectorDB is closed" because
- * ensureInitialized() had no reconnect path.
+ * Problem: VectorDB is a shared singleton. When any session called close() during
+ * teardown, the DB was force-closed and all other concurrent sessions saw
+ * "VectorDB is closed" — i.e. premature close of the shared singleton while
+ * other sessions were still active.
  *
  * Fix: open() increments a refcount; removeSession() decrements it and only
  * actually closes the DB when refcount reaches 0. close() is reserved for
@@ -12,12 +13,13 @@
  * Also verifies credentials-pending.json ENOENT handling (issue #10).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 const { VectorDB } = _testing;
 
@@ -165,22 +167,28 @@ describe("VectorDB reference-counted lifecycle (issue #106)", () => {
 // ---------------------------------------------------------------------------
 
 describe("credentials-pending.json missing file handling (issue #10)", () => {
-  it("access() on a non-existent credentials-pending.json throws ENOENT", async () => {
+  it("access() on a non-existent credentials-pending.json throws ENOENT and does not report to Sentry", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "cred-pending-test-"));
     const pendingPath = join(tmpDir, "credentials-pending.json");
 
-    // Replicate the try/catch guard from hooks.ts before_agent_start handler.
-    // If the file is missing, access() should throw, the catch returns early,
-    // and capturePluginError() must NOT be called (no Sentry noise).
-    let returnedEarly = false;
-    try {
-      await access(pendingPath);
-    } catch {
-      returnedEarly = true; // ENOENT caught — return early, normal case
-    }
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => {});
 
-    expect(returnedEarly).toBe(true);
-    rmSync(tmpDir, { recursive: true, force: true });
+    try {
+      // Replicate the try/catch guard from hooks.ts before_agent_start: when the file
+      // is missing, access() throws, we return early, and we must NOT call capturePluginError.
+      let returnedEarly = false;
+      try {
+        await access(pendingPath);
+      } catch {
+        returnedEarly = true; // ENOENT caught — return early, normal case (no Sentry)
+      }
+
+      expect(returnedEarly).toBe(true);
+      expect(captureSpy).not.toHaveBeenCalled();
+    } finally {
+      captureSpy.mockRestore();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("reads and parses credentials-pending.json when the file exists", async () => {
