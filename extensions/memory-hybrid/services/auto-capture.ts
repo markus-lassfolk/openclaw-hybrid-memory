@@ -96,10 +96,16 @@ export function tryParseCredentialForVault(
   if (!isCredentialLike(text, entity, key, value)) return null;
   const match = extractCredentialMatch(text);
   if (options?.requirePatternMatch && !match) return null;
-  const secretValue = (value && value.length >= 8 ? value : match?.secretValue) ?? null;
+  // Prefer the explicit value parameter (structured extraction) over the pattern match.
+  const secretFromParam = value && value.length >= 8 ? value : null;
+  const secretValue = (secretFromParam ?? match?.secretValue) ?? null;
   if (!secretValue) return null;
   const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
-  const hasPatternMatch = !!match;
+  // hasPatternMatch is only true when secretValue ITSELF came from the regex match.
+  // If the value came from the structured `value` param, hasPatternMatch=false so that
+  // natural-language and path checks always run, preventing narrative text from being
+  // stored even when the surrounding text contained a known credential pattern.
+  const hasPatternMatch = secretFromParam === null && !!match;
   const valueValidation = validateCredentialValue(secretValue, typeFromPattern, hasPatternMatch);
   if (!valueValidation.ok) return null;
 
