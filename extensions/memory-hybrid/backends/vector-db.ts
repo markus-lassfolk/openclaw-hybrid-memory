@@ -17,6 +17,7 @@ export class VectorDB {
   private table: lancedb.Table | null = null;
   private initPromise: Promise<void> | null = null;
   private closed = false;
+  private sessionCount = 0;
   private logger: VectorDBLogger | null = null;
 
   constructor(
@@ -235,7 +236,38 @@ export class VectorDB {
     return Promise.resolve();
   }
 
-  close(): void {
+  /**
+   * Increment the session refcount. Called when an agent session begins using this VectorDB.
+   * If the DB was previously closed (e.g. by a premature stop()), resets the closed flag so
+   * the next operation auto-reconnects via ensureInitialized().
+   */
+  open(): void {
+    this.sessionCount++;
+    if (this.closed) {
+      this.closed = false;
+      this.table = null;
+      if (this.db) {
+        try { this.db.close(); } catch { /* ignore */ }
+        this.db = null;
+      }
+      this.initPromise = null;
+    }
+  }
+
+  /**
+   * Decrement the session refcount. Called when an agent session ends.
+   * Only actually closes the underlying DB when the refcount reaches zero.
+   * Use this in session teardown hooks instead of close() to prevent premature
+   * shutdown of a shared singleton while other sessions are still active.
+   */
+  removeSession(): void {
+    this.sessionCount = Math.max(0, this.sessionCount - 1);
+    if (this.sessionCount <= 0) {
+      this._doClose();
+    }
+  }
+
+  private _doClose(): void {
     this.closed = true;
     this.table = null;
     if (this.db) {
@@ -245,5 +277,16 @@ export class VectorDB {
     // Intentionally NOT clearing initPromise here. If doInitialize() is in-flight, the
     // next ensureInitialized() call will await it before resetting state — preventing a
     // second concurrent doInitialize() and the associated connection leak / race condition.
+  }
+
+  /**
+   * Force-close the VectorDB regardless of active session count.
+   * Should only be called from gateway shutdown (service stop()).
+   * Active sessions will auto-reconnect via ensureInitialized() if they call any method
+   * after this (lazy reconnect safety net).
+   */
+  close(): void {
+    this.sessionCount = 0;
+    this._doClose();
   }
 }
