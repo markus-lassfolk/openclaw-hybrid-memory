@@ -1415,7 +1415,15 @@ export const hybridConfigSchema = {
       activeTaskRaw.staleHours > 0
     ) {
       // Backward compat: convert legacy staleHours number → "Xh" string.
-      resolvedStaleThreshold = `${activeTaskRaw.staleHours}h`;
+      const converted = `${activeTaskRaw.staleHours}h`;
+      try {
+        parseDuration(converted);
+      } catch (err: unknown) {
+        throw new Error(
+          `activeTask.staleHours is invalid: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      resolvedStaleThreshold = converted;
     }
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
