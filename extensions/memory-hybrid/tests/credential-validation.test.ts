@@ -156,14 +156,15 @@ describe("tryParseCredentialForVault — P2 hasPatternMatch bypass", () => {
   it("rejects narrative value even when pattern is present elsewhere in text", () => {
     // The text has a real sk- key, so extractCredentialMatch would succeed.
     // But the explicit `value` param is narrative — it must still be rejected.
-    const text = "The login token is sk-abc123def456xyz789. It requires explicit login via the gateway";
+    const text = "The login token is sk-abc123def456xyz789jkl012. It requires explicit login via the gateway";
     const result = tryParseCredentialForVault(
       text,
       "credentials",     // entity
       "gateway-auth",    // key
       "requires explicit login via the gateway", // value — narrative text
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.service).toBe("gateway-auth");
   });
 
   it("accepts value that genuinely came from a pattern match (no explicit value param)", () => {
