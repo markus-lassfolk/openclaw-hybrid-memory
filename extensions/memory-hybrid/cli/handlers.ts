@@ -717,6 +717,16 @@ export async function runVerifyForCli(
   log(`  autoRecall.entityLookup: ${bool(cfg.autoRecall.entityLookup.enabled)}`);
   log(`  autoRecall.authFailure (reactive recall): ${bool(cfg.autoRecall.authFailure.enabled)}`);
 
+  log(`  activeTask (ACTIVE-TASK.md): ${bool(cfg.activeTask.enabled)}`);
+  if (cfg.activeTask.enabled) {
+    log(`    filePath: ${cfg.activeTask.filePath}`);
+    log(`    staleThreshold: ${cfg.activeTask.staleThreshold}`);
+    log(`    injectionBudget: ${cfg.activeTask.injectionBudget}`);
+    log(`    autoCheckpoint: ${bool(cfg.activeTask.autoCheckpoint)}`);
+    log(`    flushOnComplete: ${bool(cfg.activeTask.flushOnComplete)}`);
+    log(`    staleWarning: ${bool(cfg.activeTask.staleWarning.enabled)}`);
+  }
+
   log("\n───── Advanced Features ─────");
   if (cfg.search) {
     log(`  search.hydeEnabled: ${bool(cfg.search.hydeEnabled)}`);

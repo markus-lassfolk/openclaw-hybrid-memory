@@ -22,7 +22,7 @@ import { runBuildLanguageKeywords } from "../services/language-keywords-build.js
 import { runExport } from "../services/export-memory.js";
 import { mergeResults } from "../services/merge-results.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../config.js";
+import { getMemoryCategories, getDefaultCronModel, getCronModelConfig, resolveReflectionModelAndFallbacks } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
 import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -639,9 +639,15 @@ export function createHybridMemCliContext(
     runReflection: services.runReflection,
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
-    reflectionConfig: handlerCtx.cfg.reflection,
+    reflectionConfig: {
+      ...handlerCtx.cfg.reflection,
+      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),
+    },
     runClassify: services.runClassify,
-    autoClassifyConfig: handlerCtx.cfg.autoClassify,
+    autoClassifyConfig: {
+      ...handlerCtx.cfg.autoClassify,
+      model: handlerCtx.cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "nano"),
+    },
     runCompaction: services.runCompaction,
     runBuildLanguageKeywords: services.runBuildLanguageKeywords,
     runSelfCorrectionExtract: (opts) => Promise.resolve(handlers.runSelfCorrectionExtractForCli(handlerCtx, opts)),
