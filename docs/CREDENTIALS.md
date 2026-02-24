@@ -200,9 +200,12 @@ Auto-captured credentials are validated before storage so that narrative text, d
 - **Service name validation:** Service names longer than 50 characters or that look like sentences (many dash-separated tokens) are rejected. Hostnames (e.g. `api.example.com`) and URL-style names (e.g. `postgres://host/db`) are preserved; other names are normalized (e.g. `anthropic_api_key` → `anthropic`).
 - **Deduplication:** If the vault already has the same (service, type) with the same value, the store is skipped (no-op).
 
+The vault stores **one entry per (service, type)**. If you store the same service+type again (e.g. UniFi API key multiple times), the previous value is overwritten — you will only ever see one row per (service, type) in the list.
+
 To inspect and clean an existing vault:
 
-- **List:** `openclaw hybrid-mem credentials list` — lists all entries (service, type, url; no values).
+- **List:** `openclaw hybrid-mem credentials list` — lists all entries (service, type, url; no values). Use `--service <pattern>` to filter by service name (case-insensitive substring, e.g. `--service unifi` to find unifi, unifi-controller, etc.).
+- **Get:** `openclaw hybrid-mem credentials get --service <name>` — retrieve the secret value for a service. Use `--type <type>` when multiple credential types exist for that service (e.g. `--type api_key`). Use `--value-only` to print only the value (for scripting or piping).
 - **Audit:** `openclaw hybrid-mem credentials audit` — flags suspicious entries (e.g. natural language, long service names, duplicates). Use `--json` for machine-readable output.
 - **Prune:** `openclaw hybrid-mem credentials prune` — by default runs a dry-run showing what would be removed. Use `--yes` to actually remove flagged entries. Optionally use `--only-flags natural_language,service_too_long` to prune only those reasons.
 
