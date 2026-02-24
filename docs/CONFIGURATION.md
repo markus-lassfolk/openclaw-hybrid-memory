@@ -274,24 +274,6 @@ When a session nears auto-compaction, the model gets a chance to save important 
 
 ---
 
-## Pruning (optional)
-
-```json
-{
-  "agents": {
-    "defaults": {
-      "pruning": {
-        "ttl": "30m"
-      }
-    }
-  }
-}
-```
-
-Prunes stale tool results from context. Add if you see prompts growing too large.
-
----
-
 ## Auto-classify
 
 See [FEATURES.md](FEATURES.md) for how auto-classify works. Configuration:
