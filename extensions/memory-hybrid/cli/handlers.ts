@@ -2511,7 +2511,8 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
   }
   for (const [, group] of valueToEntries) {
     if (group.length > 1) {
-      for (const { service, type } of group) {
+      for (let i = 1; i < group.length; i++) {
+        const { service, type } = group[i];
         const e = entries.find((x) => x.service === service && x.type === type);
         if (e && !e.flags.includes("duplicate_value")) e.flags.push("duplicate_value");
       }
@@ -2519,7 +2520,8 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
   }
   for (const [, group] of normKeyToEntries) {
     if (group.length > 1) {
-      for (const { service, type } of group) {
+      for (let i = 1; i < group.length; i++) {
+        const { service, type } = group[i];
         const e = entries.find((x) => x.service === service && x.type === type);
         if (e && !e.flags.includes("duplicate_normalized_service")) e.flags.push("duplicate_normalized_service");
       }
