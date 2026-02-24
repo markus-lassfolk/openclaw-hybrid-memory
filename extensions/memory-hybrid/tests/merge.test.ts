@@ -1,3 +1,28 @@
+/**
+ * merge.test.ts — Unit tests for the RRF merge pipeline.
+ *
+ * ## Coverage
+ *
+ * ### mergeResults
+ * - RRF scoring: verifies that facts appearing in both SQLite and LanceDB results score
+ *   higher than facts appearing in only one list (the core RRF property).
+ * - Deduplication by ID: same fact ID from both backends collapses to one result; SQLite wins.
+ * - Deduplication by text (case-insensitive): identical text from both backends collapses to
+ *   one result.
+ * - Superseded filtering: facts whose text matches `SupersededProvider.getSupersededTexts()`
+ *   are excluded from the merged output.
+ * - Limit enforcement: output length never exceeds the requested `limit`.
+ * - Tie-breaking: when RRF scores are equal, newer facts (sourceDate > createdAt) win; within
+ *   the same timestamp, SQLite results are preferred over LanceDB.
+ * - RRF score passthrough: returned `score` field contains the RRF value, not the raw
+ *   backend score.
+ * - Optional k parameter: lower k increases the score gap between ranks; higher k flattens it.
+ * - Empty-input handling: both inputs empty, or one empty, returns sensible results.
+ *
+ * ### filterByScope
+ * - No-op when scopeFilter is absent or empty.
+ * - Removes results that `getById` returns `null` for under the given scope.
+ */
 import { describe, it, expect } from "vitest";
 import { _testing } from "../index.js";
 import { mergeResults as mergeResultsModule, RRF_K_DEFAULT } from "../services/merge-results.js";

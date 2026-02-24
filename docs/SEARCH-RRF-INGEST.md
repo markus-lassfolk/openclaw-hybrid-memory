@@ -16,6 +16,51 @@ nav_order: 14
 
 ## Reciprocal Rank Fusion (RRF)
 
+RRF is the core search improvement in this release. It replaces a naive score-based merge with a
+rank-based algorithm that correctly combines BM25 keyword scores and cosine similarity scores —
+two metrics that are otherwise not comparable.
+
+### Search pipeline
+
+```
+                         ┌──────────────────────────┐
+                         │         query            │
+                         └───────────┬──────────────┘
+                                     │
+               ┌─────────────────────┴─────────────────────┐
+               ▼                                           ▼
+   ┌───────────────────────┐               ┌───────────────────────┐
+   │  SQLite FTS5 (BM25)   │               │  LanceDB (cosine sim) │
+   │  keyword search       │               │  vector search        │
+   └───────────┬───────────┘               └───────────┬───────────┘
+               │                                       │
+               └─────────────────┬─────────────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │    RRF score merge       │
+                    │  score = Σ 1/(k + rank) │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Dedup (ID + text)       │
+                    │  SQLite wins ties        │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Superseded filter       │
+                    │  (via SupersededProvider)│
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Scope filter            │
+                    │  (user/agent/session)    │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │        results           │
+                    └─────────────────────────┘
+```
+
 ### Problem
 
 The previous merge logic combined SQLite BM25 scores and LanceDB cosine similarity by sorting on raw `score`. Those metrics are on incompatible scales (e.g. BM25 ~8.5 vs cosine ~0.82), so mixing them produced poor ranking.
@@ -35,13 +80,43 @@ Facts that rank well in **both** keyword and semantic search get higher RRF scor
 
 RRF is always on. No config change required. The constant `k=60` is standard in IR literature.
 
-### Optional: Custom k
+### Deduplication strategy
 
-The merge function accepts an optional `k` via internal API. Higher `k` reduces the penalty for lower ranks; lower `k` increases the boost for top-ranked results. Default 60 works well in practice.
+Before RRF scores are computed, results from both backends are deduplicated using two passes:
+
+1. **ID-based dedup** — If the same fact ID appears in both SQLite and LanceDB results, only the first occurrence is kept. SQLite results are processed first, so SQLite wins when both backends return the same fact.
+
+2. **Text-based dedup (case-insensitive)** — If two results have identical text (ignoring case), only the first occurrence is kept. Again, SQLite is processed first, so it wins ties.
+
+3. **Superseded text filtering** — Before dedup, results whose text appears in `SupersededProvider.getSupersededTexts()` are discarded. This prevents old, replaced facts from surfacing even when they still match semantically. The `SupersededProvider` is an optional interface backed by `FactsDB`; if it is not provided, no superseded filtering is applied.
+
+This means SQLite (BM25) results have priority in dedup, but both backends still contribute to the RRF score calculation. A fact that only appears in LanceDB results will have its LanceDB rank contribute to its RRF score normally.
+
+### RRF k-parameter tuning
+
+The `k` constant controls how sensitive RRF is to rank differences between results.
+
+**What k controls:**
+Each result's RRF contribution is `1 / (k + rank)`. The constant `k` sets a floor that dampens the advantage of top-ranked results. With `k=60`, the difference between rank 1 and rank 2 is small (`1/61` vs `1/62`). With `k=1`, rank 1 dominates (`1/2` vs `1/3`).
+
+**Symptoms of k too high (e.g. k > 120):**
+- All results score very similarly — ranking feels flat.
+- Top keyword hits and top vector hits are not clearly distinguished from mid-list results.
+- You see marginally relevant facts competing equally with highly relevant ones.
+
+**Symptoms of k too low (e.g. k < 10):**
+- Top-ranked results dominate aggressively.
+- Long-tail results (ranked 5+) are effectively buried, even when they appear in both lists.
+- Results that appear in only one backend but rank #1 there may score higher than results appearing in both backends but at rank 3.
+
+**When to change k:**
+For most users: **never**. The default `k=60` is well-established in the information retrieval literature and works well across a wide range of query types and corpus sizes. Consider tuning only if you have a large corpus (>10 000 facts) and have measured ranking quality systematically. The `k` parameter is exposed via the internal `MergeOptions` API; it is not surfaced in user config.
 
 ### Impact
 
-Benchmarks (e.g. r/openclaw) showed ~+32% recall when moving from naive score merge to RRF on a 50-query test set.
+Internal benchmarks showed a significant improvement in recall when moving from naive score merge to RRF. The benchmark compared raw recall@10 on a fixed test set of queries against known-relevant facts; exact methodology and corpus details are not published. Treat the improvement as qualitative — the ranking quality difference is clearly observable in practice.
+
+> **Note:** The "+32% recall" figure previously cited here has been removed. We don't have sufficient details about the original benchmark methodology to cite it with confidence.
 
 ---
 
@@ -109,7 +184,7 @@ Indexing a `skills/` folder can give ~+10% recall in benchmarks by making capabi
 
 ### Overview
 
-HyDE generates a short “hypothetical answer” to the user query before embedding. The embedding of that hypothetical text is used for vector search instead of the raw query. This can improve recall because hypothetical answers are closer in embedding space to actual stored facts.
+HyDE generates a short "hypothetical answer" to the user query before embedding. The embedding of that hypothetical text is used for vector search instead of the raw query. This can improve recall because hypothetical answers are closer in embedding space to actual stored facts.
 
 ### Config
 
@@ -146,4 +221,4 @@ HyDE is off by default. Enable when the recall gain justifies the extra cost.
 ## References
 
 - Cormack, Clarke, Buettcher (2009): Reciprocal Rank Fusion
-- r/openclaw: “How I built a memory system that actually works”
+- r/openclaw: "How I built a memory system that actually works"

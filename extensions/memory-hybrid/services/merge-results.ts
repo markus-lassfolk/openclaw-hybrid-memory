@@ -23,7 +23,19 @@ export interface MergeOptions {
   k?: number;
 }
 
-/** Filter LanceDB results by scope. Uses getById(id, { scopeFilter }) — returns null when not in scope. */
+/**
+ * Filter LanceDB results by scope.
+ *
+ * Delegates to `getById(id, { scopeFilter })`, which returns `null` when the fact
+ * is outside the requested scope. This allows the caller to reuse the existing
+ * SQLite scope-query logic without duplicating it here.
+ *
+ * @param results - LanceDB results to filter.
+ * @param getById - Lookup function; returns `null` when the fact is out of scope.
+ * @param scopeFilter - Scope constraints (userId / agentId / sessionId). Pass `null`
+ *   or `undefined` (or an empty object) to skip filtering entirely.
+ * @returns The subset of `results` that are within the requested scope.
+ */
 export function filterByScope<T extends SearchResult>(
   results: T[],
   getById: (id: string, opts?: { scopeFilter?: ScopeFilter | null }) => unknown,
@@ -35,6 +47,29 @@ export function filterByScope<T extends SearchResult>(
   return results.filter((r) => getById(r.entry.id, { scopeFilter }) != null);
 }
 
+/**
+ * Merge SQLite FTS5 and LanceDB vector search results using Reciprocal Rank Fusion (RRF).
+ *
+ * ## Algorithm
+ * 1. Sort each backend's results by their native score (BM25 or cosine).
+ * 2. Assign 1-based ranks within each list.
+ * 3. Deduplicate across backends (ID first, then case-insensitive text). SQLite is processed
+ *    first, so SQLite wins when both backends return the same fact.
+ * 4. Filter out facts whose text appears in `factsDb.getSupersededTexts()`.
+ * 5. For each remaining fact, compute `rrf_score = Σ 1/(k + rank)` over all lists it appears in.
+ * 6. Sort by `rrf_score` descending; break ties by recency (sourceDate or createdAt), then
+ *    by backend (sqlite > lancedb).
+ * 7. Return the top `limit` results with `score` replaced by the RRF score.
+ *
+ * @param sqliteResults - Results from SQLite FTS5 BM25 search (already scope-filtered).
+ * @param lanceResults  - Results from LanceDB cosine search (pre-filtered by scope via
+ *   `filterByScope` before calling this function).
+ * @param limit         - Maximum number of results to return.
+ * @param factsDb       - Optional provider of superseded fact texts. When provided, any result
+ *   whose text (lowercased) is in `getSupersededTexts()` is excluded from the output.
+ * @param options       - Optional RRF tuning: `{ k }` (default `RRF_K_DEFAULT = 60`).
+ * @returns Up to `limit` merged results sorted by RRF score descending.
+ */
 export function mergeResults(
   sqliteResults: SearchResult[],
   lanceResults: SearchResult[],
