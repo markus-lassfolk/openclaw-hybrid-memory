@@ -90,6 +90,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Agent detection must run independently of autoRecall
     // to support multi-agent scoping even when autoRecall is disabled
     api.on("before_agent_start", async (event: unknown) => {
+      // Increment VectorDB refcount so a concurrent session teardown does not prematurely
+      // close the shared singleton while this session is still active (fixes issue #106).
+      ctx.vectorDb.open();
+
       if (!restartPendingCleared && existsSync(getRestartPendingPath())) {
         restartPendingCleared = true; // Set flag before unlink to prevent race
         try {
@@ -1052,6 +1056,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
+    // Decrement VectorDB refcount on session end. Uses removeSession() instead of close() so the
+    // shared singleton stays open while other concurrent sessions are still active (fixes issue #106).
+    api.on("agent_end", () => {
+      ctx.vectorDb.removeSession();
+    });
+
     // Clear auth failure dedup map on session end
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       api.on("agent_end", async () => {
