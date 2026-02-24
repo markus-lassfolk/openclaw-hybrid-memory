@@ -674,29 +674,6 @@ export function registerMemoryTools(
             requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
           });
           if (parsed) {
-            // Validate parsed credential before storing
-            if (!parsed.service || parsed.service.length === 0 || parsed.service.length > 100) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Invalid credential: service name must be 1-100 characters.`,
-                  },
-                ],
-                details: { error: "invalid_service_name" },
-              };
-            }
-            if (!parsed.secretValue || parsed.secretValue.length === 0) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Invalid credential: secret value cannot be empty.`,
-                  },
-                ],
-                details: { error: "empty_credential_value" },
-              };
-            }
             const stored = credentialsDb.storeIfNew({
               service: parsed.service,
               type: parsed.type,
