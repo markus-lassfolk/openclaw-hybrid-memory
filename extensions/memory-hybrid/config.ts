@@ -226,6 +226,8 @@ export type CredentialAutoCaptureConfig = {
   patterns?: "builtin";
   /** Emit info-level log on each capture (default: true) */
   logCaptures?: boolean;
+  /** When true, only store when a credential pattern matched (reject value-only extraction). Default false. */
+  requirePatternMatch?: boolean;
 };
 
 /** Opt-in credentials: structured, encrypted storage for API keys, tokens, etc. */
@@ -1018,6 +1020,7 @@ export const hybridConfigSchema = {
             toolCalls: autoCaptureRaw.toolCalls === true,
             patterns: "builtin",
             logCaptures: autoCaptureRaw.logCaptures !== false,
+            requirePatternMatch: autoCaptureRaw.requirePatternMatch === true,
           }
         : undefined;
       return {

@@ -1199,13 +1199,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const creds = extractCredentialsFromToolCalls(argsToScan || args);
               for (const cred of creds) {
                 if (ctx.credentialsDb) {
-                  ctx.credentialsDb.store({
+                  const stored = ctx.credentialsDb.storeIfNew({
                     service: cred.service,
                     type: cred.type,
                     value: cred.value,
                     url: cred.url,
                     notes: cred.notes,
                   });
+                  if (stored && logCaptures) {
+                    api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
+                  }
                 } else {
                   // Memory-only: store as fact (no vault)
                   const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}.`;
@@ -1238,9 +1241,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     });
                     api.logger.warn(`memory-hybrid: vector store for credential fact failed: ${err}`);
                   }
-                }
-                if (logCaptures) {
-                  api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
+                  if (logCaptures) {
+                    api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
+                  }
                 }
               }
             }

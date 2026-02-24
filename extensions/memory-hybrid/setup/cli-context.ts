@@ -311,6 +311,7 @@ function buildRichStatsExtras(
     getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
     getProposalsPending: () =>
       proposalsDb ? proposalsDb.list({ status: "pending" }).length : 0,
+    getProposalsAvailable: () => !!proposalsDb,
     getWalPending: () => (wal ? wal.getValidEntries().length : 0),
     getLastRunTimestamps: () => {
       const out: { distill?: string; reflect?: string; compact?: string } = {};
@@ -591,6 +592,9 @@ export function createHybridMemCliContext(
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
     runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
+    runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
+    runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),
+    runCredentialsPrune: (opts) => handlers.runCredentialsPruneForCli(handlerCtx, opts),
     runUninstall: (opts) => Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),
     runUpgrade: (v?) => handlers.runUpgradeForCli(handlerCtx, v),
     runConfigMode: (mode) => Promise.resolve(handlers.runConfigModeForCli(handlerCtx, mode)),

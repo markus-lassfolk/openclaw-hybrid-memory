@@ -7,6 +7,7 @@
 import { getMemoryTriggerRegexes } from "../utils/language-keywords.js";
 import { CREDENTIAL_NOTES_MAX_CHARS } from "../utils/constants.js";
 import { truncateText } from "../utils/text.js";
+import { validateCredentialValue, validateAndNormalizeServiceName } from "./credential-validation.js";
 
 /** Memory triggers: English + dynamic languages from .language-keywords.json (see build-languages command). */
 export function getMemoryTriggers(): RegExp[] {
@@ -78,25 +79,50 @@ export function isCredentialLike(
 
 export const VAULT_POINTER_PREFIX = "vault:";
 
+/** Options for tryParseCredentialForVault (e.g. from config). */
+export type TryParseCredentialOptions = {
+  /** When true, return null unless extractCredentialMatch found a pattern (reject value-only). */
+  requirePatternMatch?: boolean;
+};
+
 /** Parse into vault entry when vault is enabled. Returns null if not credential-like or cannot derive service/secret. */
 export function tryParseCredentialForVault(
   text: string,
   entity?: string | null,
   key?: string | null,
   value?: string | null,
+  options?: TryParseCredentialOptions,
 ): { service: string; type: "token" | "password" | "api_key" | "ssh" | "bearer" | "other"; secretValue: string; url?: string; notes?: string } | null {
   if (!isCredentialLike(text, entity, key, value)) return null;
   const match = extractCredentialMatch(text);
-  const secretValue = (value && value.length >= 8 ? value : match?.secretValue) ?? null;
+  if (options?.requirePatternMatch && !match) return null;
+  // Prefer the secret extracted from a regex pattern match over the structured value param.
+  // This prevents a narrative/metadata value (e.g. "requires explicit login via the gateway")
+  // from being stored as a credential even when a real token was also detected in the text.
+  // If a match exists, it IS the credential — use its value.
+  // Only fall back to the structured value param when no pattern matched.
+  const secretFromMatch = match?.secretValue ?? null;
+  const secretFromParam = value && value.length >= 8 ? value : null;
+  const secretValue = (secretFromMatch ?? secretFromParam) ?? null;
   if (!secretValue) return null;
   const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
+  // hasPatternMatch is only true when secretValue ITSELF came from the regex match.
+  // When value came from the structured param, hasPatternMatch=false so that
+  // natural-language and path checks always run, preventing narrative text from being
+  // stored even when the surrounding text contained a known credential pattern.
+  const hasPatternMatch = secretFromMatch !== null;
+  const valueValidation = validateCredentialValue(secretValue, typeFromPattern, hasPatternMatch);
+  if (!valueValidation.ok) return null;
+
   const service =
     (entity?.toLowerCase() === "credentials" ? key : null) ||
     key ||
     (entity && entity.toLowerCase() !== "credentials" ? entity : null) ||
     inferServiceFromText(text) ||
     "imported";
-  const serviceSlug = service.replace(/\s+/g, "-").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "imported";
+  const serviceSlug = validateAndNormalizeServiceName(service);
+  if (serviceSlug === null) return null;
+
   return {
     service: serviceSlug,
     type: typeFromPattern,

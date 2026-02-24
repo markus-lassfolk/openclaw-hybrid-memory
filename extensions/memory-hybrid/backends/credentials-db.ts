@@ -298,6 +298,105 @@ export class CredentialsDB {
     this.password = null;
   }
 
+  /**
+   * Store only if no entry exists for this service+type.
+   * Returns the stored entry on success, or null if an entry already existed (skipped).
+   * Use this for auto-capture to avoid overwriting user-managed credentials.
+   *
+   * Uses a single `INSERT … ON CONFLICT(service, type) DO NOTHING` statement so the
+   * check-and-insert is atomic — no TOCTOU race between concurrent writers.
+   *
+   * Also treats underscore ↔ hyphen variants as equivalent (e.g. `openai_api` and
+   * `openai-api`) so that migration from the pre-normalisation naming convention does
+   * not create duplicate vault entries on subsequent auto-capture runs.
+   */
+  storeIfNew(entry: {
+    service: string;
+    type: CredentialType;
+    value: string;
+    url?: string;
+    notes?: string;
+    expires?: number | null;
+  }): CredentialEntry | null {
+    // Check for a legacy cross-variant (underscore ↔ hyphen) before inserting so we
+    // don't create a parallel entry alongside an existing differently-named one.
+    const legacyVariant = entry.service.includes("_")
+      ? entry.service.replace(/_/g, "-")
+      : entry.service.replace(/-/g, "_");
+    if (legacyVariant !== entry.service && this.exists(legacyVariant, entry.type)) {
+      return null;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const stored = this.encrypted
+      ? encryptValue(entry.value, this.key)
+      : Buffer.from(entry.value, "utf8");
+    const result = this.liveDb
+      .prepare(
+        `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(service, type) DO NOTHING`,
+      )
+      .run(
+        entry.service,
+        entry.type,
+        stored,
+        entry.url ?? null,
+        entry.notes ?? null,
+        now,
+        now,
+        entry.expires ?? null,
+      );
+    if (result.changes === 0) {
+      // A credential already exists for this service+type; do not overwrite it.
+      return null;
+    }
+    return {
+      service: entry.service,
+      type: entry.type,
+      value: "[redacted]",
+      url: entry.url ?? null,
+      notes: entry.notes ?? null,
+      created: now,
+      updated: now,
+      expires: entry.expires ?? null,
+    };
+  }
+
+  /** Returns true if an entry already exists for the given service (and optional type). */
+  exists(service: string, type?: CredentialType): boolean {
+    if (type) {
+      const row = this.liveDb.prepare("SELECT 1 FROM credentials WHERE service = ? AND type = ? LIMIT 1").get(service, type);
+      return !!row;
+    }
+    const row = this.liveDb.prepare("SELECT 1 FROM credentials WHERE service = ? LIMIT 1").get(service);
+    return !!row;
+  }
+
+  /**
+   * List all credentials with decrypted values.
+   * Use sparingly (decrypts every value). Primarily for audit operations.
+   */
+  listAll(): CredentialEntry[] {
+    const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const buf = row.value as Buffer;
+      const value = this.encrypted
+        ? decryptValue(buf, this.key)
+        : buf.toString("utf8");
+      return {
+        service: row.service as string,
+        type: (row.type as string) as CredentialType,
+        value,
+        url: (row.url as string) ?? null,
+        notes: (row.notes as string) ?? null,
+        created: row.created as number,
+        updated: row.updated as number,
+        expires: (row.expires as number) ?? null,
+      };
+    });
+  }
+
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
     const rows = this.liveDb.prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type").all() as Array<{
       service: string;

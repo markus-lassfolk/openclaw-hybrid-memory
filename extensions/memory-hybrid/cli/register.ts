@@ -35,6 +35,8 @@ import type {
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
   MigrateToVaultResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
   UpgradeCliResult,
   UninstallCliResult,
   ConfigCliResult,
@@ -61,6 +63,8 @@ export type {
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
   MigrateToVaultResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
   UpgradeCliResult,
   UninstallCliResult,
   ConfigCliResult,
@@ -87,6 +91,9 @@ export type HybridMemCliContext = {
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
+  runCredentialsAudit: () => CredentialsAuditResult;
+  runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -147,6 +154,7 @@ export type HybridMemCliContext = {
   richStatsExtras?: {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
+    getProposalsAvailable: () => boolean;
     getWalPending: () => number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
