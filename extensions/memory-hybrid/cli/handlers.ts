@@ -1656,21 +1656,21 @@ export async function runExtractDailyForCli(
             requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
           });
           if (parsed) {
-          totalExtracted++;
-          if (!opts.dryRun) {
-            let storedInVault = false;
-            try {
-              const stored = credentialsDb.storeIfNew({
-                service: parsed.service,
-                type: parsed.type as any,
-                value: parsed.secretValue,
-                url: parsed.url,
-                notes: parsed.notes,
-              });
-              if (!stored) {
-                continue;
-              }
-              storedInVault = true;
+            totalExtracted++;
+            if (!opts.dryRun) {
+              let storedInVault = false;
+              try {
+                const stored = credentialsDb.storeIfNew({
+                  service: parsed.service,
+                  type: parsed.type as any,
+                  value: parsed.secretValue,
+                  url: parsed.url,
+                  notes: parsed.notes,
+                });
+                if (!stored) {
+                  continue;
+                }
+                storedInVault = true;
                 const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
                 const pointerEntry = factsDb.store({
@@ -1706,8 +1706,10 @@ export async function runExtractDailyForCli(
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-store" });
               }
             }
+            // Skip normal fact-storage path — this line has been handled as a credential.
             continue;
           }
+          // isCredentialLike but vault parse failed — skip this line entirely.
           continue;
         }
       }

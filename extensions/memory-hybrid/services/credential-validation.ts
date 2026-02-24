@@ -172,7 +172,10 @@ export function auditCredentialValue(value: string, type: string): string[] {
 export function auditServiceName(service: string): string[] {
   const flags: string[] = [];
   if (service.length > CREDENTIAL_SERVICE_MAX_LENGTH) flags.push("service_too_long");
-  if (!service.includes("://")) {
+  // Skip the dash-token heuristic for URL-style names and hostname-style names.
+  // Both forms are valid multi-segment identifiers: hostnames like `my-api.example.com`
+  // can legitimately contain many dashes and should not be flagged as sentence-like.
+  if (!service.includes("://") && !service.includes(".")) {
     const tokens = service.split("-").filter(Boolean);
     if (tokens.length > CREDENTIAL_SERVICE_MAX_TOKENS) flags.push("service_sentence_like");
   }

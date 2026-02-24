@@ -901,8 +901,14 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log("Duplicate fact (skipped).");
       } else if (res.outcome === "credential") {
         console.log(`Credential stored: ${res.service} (${res.type}), id=${res.id}`);
+      } else if (res.outcome === "credential_skipped_duplicate") {
+        console.log(`Credential already in vault (skipped): ${res.service} (${res.type})`);
       } else if (res.outcome === "credential_parse_error") {
         console.log("Credential parse error (skipped).");
+      } else if (res.outcome === "credential_vault_error") {
+        console.log("Credential vault error — could not write to secure vault (skipped).");
+      } else if (res.outcome === "credential_db_error") {
+        console.log("Credential pointer error — vault entry written but pointer storage failed (skipped).");
       } else if (res.outcome === "noop") {
         console.log(`No-op: ${res.reason}`);
       } else if (res.outcome === "retracted") {
