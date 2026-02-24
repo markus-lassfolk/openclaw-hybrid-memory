@@ -80,6 +80,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   // Track auth failures per target per session to avoid spam
   const authFailureRecallsThisSession = new Map<string, number>();
 
+  // Resolve active task file path against workspace root (same logic as CLI context)
+  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const resolvedActiveTaskPath = ctx.cfg.activeTask.filePath.startsWith("/")
+    ? ctx.cfg.activeTask.filePath
+    : join(workspaceRoot, ctx.cfg.activeTask.filePath);
+
   const onAgentStart = (api: ClawdbotPluginApi) => {
     // Agent detection must run independently of autoRecall
     // to support multi-agent scoping even when autoRecall is disabled
@@ -695,7 +701,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         try {
           const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
           const taskFile = await readActiveTaskFile(
-            ctx.cfg.activeTask.filePath,
+            resolvedActiveTaskPath,
             staleMinutes,
           );
           if (!taskFile || taskFile.active.length === 0) return undefined;
@@ -750,7 +756,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const label = ev.label ?? ev.sessionKey ?? `subagent-${Date.now()}`;
           const description = ev.task ?? `Subagent task (session: ${ev.sessionKey ?? "unknown"})`;
           const taskFile = await readActiveTaskFile(
-            ctx.cfg.activeTask.filePath,
+            resolvedActiveTaskPath,
             parseDuration(ctx.cfg.activeTask.staleThreshold),
           );
           const now = new Date().toISOString();
@@ -765,7 +771,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const existingActive = taskFile?.active ?? [];
           const existingCompleted = taskFile?.completed ?? [];
           const updated = upsertTask(existingActive, entry);
-          await writeActiveTaskFile(ctx.cfg.activeTask.filePath, updated, existingCompleted);
+          await writeActiveTaskFile(resolvedActiveTaskPath, updated, existingCompleted);
           api.logger.info?.(
             `memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`,
           );
@@ -791,7 +797,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (!label) return;
 
           const taskFile = await readActiveTaskFile(
-            ctx.cfg.activeTask.filePath,
+            resolvedActiveTaskPath,
             parseDuration(ctx.cfg.activeTask.staleThreshold),
           );
           if (!taskFile) return;
@@ -806,14 +812,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             const { updated, completed } = completeTask(taskFile.active, label);
             if (completed) {
               await writeActiveTaskFile(
-                ctx.cfg.activeTask.filePath,
+                resolvedActiveTaskPath,
                 updated,
                 [...taskFile.completed, completed],
               );
               if (ctx.cfg.activeTask.flushOnComplete) {
-                const workspaceRoot =
-                  process.env.OPENCLAW_WORKSPACE ??
-                  join(homedir(), ".openclaw", "workspace");
                 const memoryDir = join(workspaceRoot, "memory");
                 await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
               }
@@ -827,7 +830,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               next: ev.error ? `Fix: ${ev.error.slice(0, 100)}` : existingTask.next,
             };
             const updated = upsertTask(taskFile.active, updatedEntry);
-            await writeActiveTaskFile(ctx.cfg.activeTask.filePath, updated, taskFile.completed);
+            await writeActiveTaskFile(resolvedActiveTaskPath, updated, taskFile.completed);
           }
 
           api.logger.info?.(
