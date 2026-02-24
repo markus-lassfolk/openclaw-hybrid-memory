@@ -181,6 +181,7 @@ export async function runActiveTaskAdd(
     branch: opts.branch ?? existing?.branch,
     subagent: opts.subagent ?? existing?.subagent,
     next: opts.next ?? existing?.next,
+    stashCommit: existing?.stashCommit,
     started: existing?.started ?? now,
     updated: now,
   };
