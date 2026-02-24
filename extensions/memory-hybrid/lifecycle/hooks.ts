@@ -1447,7 +1447,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Registered last so all agent_end handlers that use vectorDb (auto-capture, credential
     // auto-detect, tool-call credential) run first; otherwise the last session would close the DB
     // before they run, causing an unnecessary close-reconnect cycle and DB left open with refcount zero.
-    api.on("agent_end", () => {
+    // OpenClaw's event emitter awaits each handler in registration order, so being registered last
+    // guarantees this fires only after the async handlers above have fully resolved.
+    api.on("agent_end", async () => {
       ctx.vectorDb.removeSession();
     });
   };
