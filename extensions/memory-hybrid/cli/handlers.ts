@@ -498,6 +498,9 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
             prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
           },
         },
+        // NOTE: agents.defaults.pruning is intentionally NOT included here.
+        // OpenClaw core does not recognize this key; it has no effect and only causes confusion.
+        // Memory pruning is handled internally by the plugin (every 60 min) via the memory_prune tool.
       },
     },
   };
