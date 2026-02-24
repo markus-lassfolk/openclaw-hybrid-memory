@@ -109,8 +109,7 @@ export function tryParseCredentialForVault(
     (entity && entity.toLowerCase() !== "credentials" ? entity : null) ||
     inferServiceFromText(text) ||
     "imported";
-  const rawSlug = service.replace(/\s+/g, "-").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "imported";
-  const serviceSlug = validateAndNormalizeServiceName(rawSlug);
+  const serviceSlug = validateAndNormalizeServiceName(service);
   if (serviceSlug === null) return null;
 
   return {
