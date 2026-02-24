@@ -43,9 +43,24 @@ export function rejectCredentialValue(value: string): string | null {
   if (/^[/~]/.test(trimmed)) {
     return "value looks like a file path";
   }
-  // Bare URL without embedded auth or query params
-  if (/^https?:\/\/[^\s@?#]+$/i.test(trimmed)) {
-    return "value looks like a bare URL without auth token";
+  // Bare HTTP(S) URL without embedded auth or query params (no "@", no query string with "=" sign)
+  if (/^https?:\/\//i.test(trimmed)) {
+    const hasAt = trimmed.includes("@");
+    let hasQueryWithEquals = false;
+    const queryStart = trimmed.indexOf("?");
+    if (queryStart !== -1) {
+      const fragmentStart = trimmed.indexOf("#", queryStart);
+      const query = trimmed.slice(
+        queryStart + 1,
+        fragmentStart === -1 ? undefined : fragmentStart
+      );
+      if (query.includes("=")) {
+        hasQueryWithEquals = true;
+      }
+    }
+    if (!hasAt && !hasQueryWithEquals) {
+      return "value looks like a bare URL without auth token";
+    }
   }
   // Natural language: long text with multiple whitespace tokens and no credential-typical chars
   const spaceTokens = (trimmed.match(/\s+/g) ?? []).length;

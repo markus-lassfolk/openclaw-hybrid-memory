@@ -272,9 +272,11 @@ export async function runStoreForCli(
   if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
     const parsed = tryParseCredentialForVault(text, entity, key, value);
     if (parsed) {
-      // Step 1: Write to vault
+      // Step 1: Write to vault (skip if the credential already exists to avoid overwriting
+      // user-managed entries; auto-capture should never clobber manually stored credentials).
+      let vaultStored: ReturnType<typeof credentialsDb.storeIfNew>;
       try {
-        credentialsDb.store({
+        vaultStored = credentialsDb.storeIfNew({
           service: parsed.service,
           type: parsed.type as any,
           value: parsed.secretValue,
@@ -284,6 +286,10 @@ export async function runStoreForCli(
       } catch (err) {
         capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-vault-store" });
         return { outcome: "credential_vault_error" };
+      }
+      // Credential already existed in the vault — no overwrite, no new pointer needed.
+      if (vaultStored === null) {
+        return { outcome: "duplicate" };
       }
 
       // Step 2: Write pointer to factsDb
@@ -1653,14 +1659,14 @@ export async function runExtractDailyForCli(
             if (!opts.dryRun) {
               let storedInVault = false;
               try {
-                credentialsDb.store({
+                const vaultResult = credentialsDb.storeIfNew({
                   service: parsed.service,
                   type: parsed.type as any,
                   value: parsed.secretValue,
                   url: parsed.url,
                   notes: parsed.notes,
                 });
-                storedInVault = true;
+                storedInVault = vaultResult !== null;
                 const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
                 const pointerEntry = factsDb.store({
@@ -2363,8 +2369,8 @@ export async function runDistillForCli(
         if (!opts.dryRun) {
           let storedInVault = false;
           try {
-            credentialsDb.store({ service: parsed.service, type: parsed.type as any, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
-            storedInVault = true;
+            const vaultResult = credentialsDb.storeIfNew({ service: parsed.service, type: parsed.type as any, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
+            storedInVault = vaultResult !== null;
             const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
             const entry = factsDb.store({
               text: pointerText,

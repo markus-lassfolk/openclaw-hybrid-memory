@@ -91,9 +91,9 @@ describe("runStoreForCli credential happy path", () => {
 
 describe("runStoreForCli vault write failure", () => {
   it("returns credential_vault_error when vault write fails", async () => {
-    // Mock vault store to throw
-    const originalStore = credentialsDb.store.bind(credentialsDb);
-    credentialsDb.store = vi.fn().mockImplementation(() => {
+    // Auto-capture now uses storeIfNew (not store) so mock that method instead.
+    const originalStoreIfNew = credentialsDb.storeIfNew.bind(credentialsDb);
+    credentialsDb.storeIfNew = vi.fn().mockImplementation(() => {
       throw new Error("Vault storage failed");
     });
 
@@ -111,7 +111,7 @@ describe("runStoreForCli vault write failure", () => {
     expect(allFacts.length).toBe(0);
 
     // Restore
-    credentialsDb.store = originalStore;
+    credentialsDb.storeIfNew = originalStoreIfNew;
   });
 });
 

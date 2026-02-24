@@ -7,7 +7,7 @@
 import { getMemoryTriggerRegexes } from "../utils/language-keywords.js";
 import { CREDENTIAL_NOTES_MAX_CHARS } from "../utils/constants.js";
 import { truncateText } from "../utils/text.js";
-import { rejectCredentialValue, normalizeServiceName } from "./credential-scanner.js";
+import { rejectCredentialValue, normalizeServiceName, MIN_CREDENTIAL_VALUE_LENGTH } from "./credential-scanner.js";
 
 /** Memory triggers: English + dynamic languages from .language-keywords.json (see build-languages command). */
 export function getMemoryTriggers(): RegExp[] {
@@ -88,7 +88,7 @@ export function tryParseCredentialForVault(
 ): { service: string; type: "token" | "password" | "api_key" | "ssh" | "bearer" | "other"; secretValue: string; url?: string; notes?: string } | null {
   if (!isCredentialLike(text, entity, key, value)) return null;
   const match = extractCredentialMatch(text);
-  const secretValue = (value && value.length >= 8 ? value : match?.secretValue) ?? null;
+  const secretValue = (value && value.length >= MIN_CREDENTIAL_VALUE_LENGTH ? value : match?.secretValue) ?? null;
   if (!secretValue) return null;
 
   // Validate the secret value — reject natural language, file paths, bare URLs, short values
@@ -103,8 +103,12 @@ export function tryParseCredentialForVault(
     inferServiceFromText(text) ||
     "imported";
 
-  // Validate and normalize service name — reject sentences, excessively long names
-  const serviceSlug = normalizeServiceName(rawService) ?? normalizeServiceName(inferServiceFromText(text)) ?? "imported";
+  // Validate and normalize service name — reject sentences, excessively long names.
+  // If neither the raw name nor the text-inferred name yields a valid slug, reject the
+  // entry entirely. Falling back to "imported" would allow multiple distinct credentials
+  // to overwrite each other under the same key, causing silent data loss.
+  const serviceSlug = normalizeServiceName(rawService) ?? normalizeServiceName(inferServiceFromText(text));
+  if (!serviceSlug) return null;
 
   return {
     service: serviceSlug,
