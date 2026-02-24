@@ -49,7 +49,7 @@ export function rejectCredentialValue(value: string): string | null {
   }
   // Natural language: long text with multiple whitespace tokens and no credential-typical chars
   const spaceTokens = (trimmed.match(/\s+/g) ?? []).length;
-  const hasCredChars = /[=+/\-_@]/.test(trimmed);
+  const hasCredChars = /[=+/_@]/.test(trimmed);
   if (trimmed.length > 50 && spaceTokens > 3 && !hasCredChars) {
     return "value looks like natural language text (long, many spaces, no credential chars)";
   }
