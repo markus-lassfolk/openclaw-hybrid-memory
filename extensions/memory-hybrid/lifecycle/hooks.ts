@@ -712,9 +712,17 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           );
 
           // Build stale warning block (empty string when nothing to report)
+          // Apply remaining budget after accounting for active task injection
           let staleWarningBlock = "";
           if (ctx.cfg.activeTask.staleWarning.enabled) {
-            staleWarningBlock = buildStaleWarningInjection(taskFile.active, staleMinutes);
+            const injectionChars = injection.length;
+            const budgetChars = ctx.cfg.activeTask.injectionBudget * 4;
+            const remainingChars = Math.max(0, budgetChars - injectionChars);
+            staleWarningBlock = buildStaleWarningInjection(
+              taskFile.active,
+              staleMinutes,
+              remainingChars,
+            );
           }
 
           if (!injection && !staleWarningBlock) return undefined;

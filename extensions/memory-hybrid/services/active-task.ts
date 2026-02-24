@@ -409,10 +409,12 @@ export function buildActiveTaskInjection(
  *
  * @param tasks     Active tasks (must have `stale` already computed by `detectStaleTasks`).
  * @param staleMinutes Threshold used for the warning label (e.g. 1440 → shows ">24h").
+ * @param maxChars Optional character budget cap (approximate — 4 chars ≈ 1 token). If provided, truncates output.
  */
 export function buildStaleWarningInjection(
   tasks: ActiveTaskEntry[],
   staleMinutes: number,
+  maxChars?: number,
 ): string {
   const staleTasks = tasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
@@ -424,33 +426,59 @@ export function buildStaleWarningInjection(
 
   const lines: string[] = [];
   const thresholdDisplay = formatDuration(staleMinutes);
+  let usedChars = 0;
 
   // ── Stale task warnings ──────────────────────────────────────────────────
   if (staleTasks.length > 0) {
-    lines.push(`⚠️ STALE ACTIVE TASKS (not updated in >${thresholdDisplay}):`);
+    const header = `⚠️ STALE ACTIVE TASKS (not updated in >${thresholdDisplay}):`;
+    if (maxChars && usedChars + header.length > maxChars) return "";
+    lines.push(header);
+    usedChars += header.length + 1;
+
     const now = Date.now();
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
       const hoursAgo = isNaN(updatedMs)
         ? "?"
         : Math.floor((now - updatedMs) / (60 * 60 * 1000));
-      lines.push(
-        `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`,
-      );
+      const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
       const nextPart = task.next ? `, Next: ${task.next}` : "";
-      lines.push(`  Status: ${task.status}${nextPart}`);
+      const line2 = `  Status: ${task.status}${nextPart}`;
+      const blockSize = line1.length + line2.length + 2;
+      if (maxChars && usedChars + blockSize > maxChars) break;
+      lines.push(line1);
+      lines.push(line2);
+      usedChars += blockSize;
     }
-    lines.push("Consider: check subagent status, resume, or mark complete.");
+    const footer = "Consider: check subagent status, resume, or mark complete.";
+    if (!maxChars || usedChars + footer.length <= maxChars) {
+      lines.push(footer);
+      usedChars += footer.length + 1;
+    }
   }
 
   // ── Subagent hint ────────────────────────────────────────────────────────
   if (inProgressWithSubagent.length > 0) {
-    if (lines.length > 0) lines.push("");
-    lines.push("💡 In-progress tasks with subagents — verify they are still running:");
-    for (const task of inProgressWithSubagent) {
-      lines.push(`- [${task.label}]: ${task.description} (subagent: ${task.subagent})`);
+    const separator = lines.length > 0 ? "\n" : "";
+    const header = "💡 In-progress tasks with subagents — verify they are still running:";
+    const headerSize = separator.length + header.length + 1;
+    if (maxChars && usedChars + headerSize > maxChars) {
+      return lines.join("\n");
     }
-    lines.push("Hint: use `subagents list` to check if these subagents are still active.");
+    if (lines.length > 0) lines.push("");
+    lines.push(header);
+    usedChars += headerSize;
+
+    for (const task of inProgressWithSubagent) {
+      const line = `- [${task.label}]: ${task.description} (subagent: ${task.subagent})`;
+      if (maxChars && usedChars + line.length + 1 > maxChars) break;
+      lines.push(line);
+      usedChars += line.length + 1;
+    }
+    const footer = "Hint: use `subagents list` to check if these subagents are still active.";
+    if (!maxChars || usedChars + footer.length <= maxChars) {
+      lines.push(footer);
+    }
   }
 
   return lines.join("\n");
