@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseDuration } from "./utils/duration.js";
 
 export const DECAY_CLASSES = [
   "permanent",
@@ -324,8 +325,37 @@ export type HybridMemoryConfig = {
   multiAgent: MultiAgentConfig;
   /** Optional: error reporting to GlitchTip/Sentry (opt-in, default: disabled) */
   errorReporting?: ErrorReportingConfig;
+  /** Active task working memory — ACTIVE-TASK.md persistence and session injection (default: enabled) */
+  activeTask: ActiveTaskConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
+};
+
+/** Active task working memory: ACTIVE-TASK.md persistence and session injection */
+export type ActiveTaskConfig = {
+  /** Enable active task working memory (default: true) */
+  enabled: boolean;
+  /** Path to ACTIVE-TASK.md (default: "ACTIVE-TASK.md" in workspace root) */
+  filePath: string;
+  /** Auto-write task entries on subagent spawn/complete events (default: true) */
+  autoCheckpoint: boolean;
+  /** Max tokens for session-start injection (default: 500) */
+  injectionBudget: number;
+  /**
+   * Duration before flagging a task as stale. Supports human-friendly strings:
+   * "24h", "1d", "1d12h30m", "45m", or a plain integer (treated as minutes).
+   * Default: "24h".
+   *
+   * Legacy `staleHours: number` is automatically converted on config load.
+   */
+  staleThreshold: string;
+  /** Flush task summary to memory/YYYY-MM-DD.md on completion (default: true) */
+  flushOnComplete: boolean;
+  /** Stale-task warning injection at session start */
+  staleWarning: {
+    /** Inject stale task warnings into context on before_agent_start (default: true) */
+    enabled: boolean;
+  };
 };
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
@@ -1360,6 +1390,61 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
+    // Parse active task working memory config
+    const activeTaskRaw = cfg.activeTask as Record<string, unknown> | undefined;
+
+    // Resolve staleThreshold — support both new string format and legacy staleHours number.
+    // Priority: staleThreshold string > staleHours number > default "24h".
+    let resolvedStaleThreshold = "24h";
+    if (
+      typeof activeTaskRaw?.staleThreshold === "string" &&
+      activeTaskRaw.staleThreshold.trim().length > 0
+    ) {
+      // Validate the string at parse time so misconfigured values fail early.
+
+      try {
+        parseDuration(activeTaskRaw.staleThreshold.trim());
+      } catch (err: unknown) {
+        throw new Error(
+          `activeTask.staleThreshold is invalid: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      resolvedStaleThreshold = activeTaskRaw.staleThreshold.trim();
+    } else if (
+      typeof activeTaskRaw?.staleHours === "number" &&
+      activeTaskRaw.staleHours > 0
+    ) {
+      // Backward compat: convert legacy staleHours number → "Xh" string.
+      const converted = `${activeTaskRaw.staleHours}h`;
+      try {
+        parseDuration(converted);
+      } catch (err: unknown) {
+        throw new Error(
+          `activeTask.staleHours is invalid: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      resolvedStaleThreshold = converted;
+    }
+
+    const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
+    const activeTask: ActiveTaskConfig = {
+      enabled: activeTaskRaw?.enabled !== false,
+      filePath:
+        typeof activeTaskRaw?.filePath === "string" && activeTaskRaw.filePath.trim().length > 0
+          ? activeTaskRaw.filePath.trim()
+          : "ACTIVE-TASK.md",
+      autoCheckpoint: activeTaskRaw?.autoCheckpoint !== false,
+      injectionBudget:
+        typeof activeTaskRaw?.injectionBudget === "number" && activeTaskRaw.injectionBudget > 0
+          ? Math.floor(activeTaskRaw.injectionBudget)
+          : 500,
+      staleThreshold: resolvedStaleThreshold,
+      flushOnComplete: activeTaskRaw?.flushOnComplete !== false,
+      staleWarning: {
+        enabled: staleWarningRaw?.enabled !== false, // default: true
+      },
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -1392,6 +1477,7 @@ export const hybridConfigSchema = {
       selfCorrection,
       multiAgent,
       errorReporting,
+      activeTask,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
