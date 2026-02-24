@@ -298,6 +298,57 @@ export class CredentialsDB {
     this.password = null;
   }
 
+  /** Returns true if an entry already exists for the given service (and optional type). */
+  exists(service: string, type?: CredentialType): boolean {
+    if (type) {
+      const row = this.liveDb.prepare("SELECT 1 FROM credentials WHERE service = ? AND type = ? LIMIT 1").get(service, type);
+      return !!row;
+    }
+    const row = this.liveDb.prepare("SELECT 1 FROM credentials WHERE service = ? LIMIT 1").get(service);
+    return !!row;
+  }
+
+  /**
+   * Store only if no entry exists for this service+type.
+   * Returns the stored entry on success, or null if an entry already existed (skipped).
+   * Use this for auto-capture to avoid overwriting user-managed credentials.
+   */
+  storeIfNew(entry: {
+    service: string;
+    type: CredentialType;
+    value: string;
+    url?: string;
+    notes?: string;
+    expires?: number | null;
+  }): CredentialEntry | null {
+    if (this.exists(entry.service, entry.type)) return null;
+    return this.store(entry);
+  }
+
+  /**
+   * List all credentials with decrypted values.
+   * Use sparingly (decrypts every value). Primarily for audit operations.
+   */
+  listAll(): CredentialEntry[] {
+    const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const buf = row.value as Buffer;
+      const value = this.encrypted
+        ? decryptValue(buf, this.key)
+        : buf.toString("utf8");
+      return {
+        service: row.service as string,
+        type: (row.type as string) as CredentialType,
+        value,
+        url: (row.url as string) ?? null,
+        notes: (row.notes as string) ?? null,
+        created: row.created as number,
+        updated: row.updated as number,
+        expires: (row.expires as number) ?? null,
+      };
+    });
+  }
+
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
     const rows = this.liveDb.prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type").all() as Array<{
       service: string;

@@ -46,7 +46,7 @@ import type {
   UpgradeCliResult,
   VerifyCliSink,
 } from "./register.js";
-import type { SelfCorrectionRunResult } from "./types.js";
+import type { SelfCorrectionRunResult, CredentialsAuditResult } from "./types.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, chatCompleteWithRetry } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
@@ -64,6 +64,7 @@ import { runReinforcementExtract, type ReinforcementExtractResult } from "../ser
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { rejectCredentialValue, normalizeServiceName, MAX_SERVICE_NAME_LENGTH } from "../services/credential-scanner.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
@@ -2463,6 +2464,90 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
     capturePluginError(err as Error, { subsystem: "cli", operation: "runMigrateToVaultForCli" });
     throw err;
   }
+}
+
+/**
+ * Audit credential vault for suspicious entries.
+ * Flags entries with invalid values (natural language, file paths, bare URLs, too short)
+ * or invalid service names (too long, looks like a sentence).
+ * When opts.fix is true, removes flagged entries.
+ */
+export function runCredentialsAuditForCli(
+  ctx: HandlerContext,
+  opts: { fix: boolean },
+): CredentialsAuditResult {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) {
+    return { flagged: [], removed: 0 };
+  }
+
+  const flagged: CredentialsAuditResult["flagged"] = [];
+
+  try {
+    const entries = credentialsDb.listAll();
+    // Detect duplicates: track (service, type) pairs
+    const seen = new Map<string, number>();
+    for (const entry of entries) {
+      const key = `${entry.service}:${entry.type}`;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+
+    for (const entry of entries) {
+      const reasons: string[] = [];
+
+      // Check value
+      const valueReject = rejectCredentialValue(entry.value);
+      if (valueReject) reasons.push(valueReject);
+
+      // Check service name length and sentence-like structure
+      if (entry.service.length > MAX_SERVICE_NAME_LENGTH) {
+        reasons.push(`service name too long (${entry.service.length} > ${MAX_SERVICE_NAME_LENGTH})`);
+      } else {
+        // Check if service name has spaces (looks like plain text, not a slug)
+        const wordCount = entry.service.trim().split(/\s+/).length;
+        if (wordCount >= 4) {
+          reasons.push("service name looks like a sentence (4+ words)");
+        } else if (/\s/.test(entry.service)) {
+          reasons.push("service name contains spaces (should be kebab-case)");
+        }
+      }
+
+      // Check for duplicate service+type
+      const key = `${entry.service}:${entry.type}`;
+      if ((seen.get(key) ?? 0) > 1) {
+        reasons.push("duplicate service+type entry");
+      }
+
+      if (reasons.length > 0) {
+        flagged.push({ service: entry.service, type: entry.type, reason: reasons.join("; ") });
+      }
+    }
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runCredentialsAuditForCli:scan" });
+    throw err;
+  }
+
+  let removed = 0;
+  if (opts.fix && flagged.length > 0) {
+    // Remove duplicates only once (avoid double-delete)
+    const deleted = new Set<string>();
+    for (const entry of flagged) {
+      const key = `${entry.service}:${entry.type}`;
+      if (!deleted.has(key)) {
+        try {
+          const ok = credentialsDb.delete(entry.service, entry.type as import("../config.js").CredentialType);
+          if (ok) {
+            removed++;
+            deleted.add(key);
+          }
+        } catch (err) {
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runCredentialsAuditForCli:delete" });
+        }
+      }
+    }
+  }
+
+  return { flagged, removed };
 }
 
 /**

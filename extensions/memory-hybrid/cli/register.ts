@@ -38,6 +38,7 @@ import type {
   UpgradeCliResult,
   UninstallCliResult,
   ConfigCliResult,
+  CredentialsAuditResult,
 } from "./types.js";
 
 export type {
@@ -64,6 +65,7 @@ export type {
   UpgradeCliResult,
   UninstallCliResult,
   ConfigCliResult,
+  CredentialsAuditResult,
 };
 
 export type HybridMemCliContext = {
@@ -87,6 +89,7 @@ export type HybridMemCliContext = {
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runCredentialsAudit?: (opts: { fix: boolean }) => Promise<CredentialsAuditResult>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;

@@ -7,6 +7,7 @@
 import { getMemoryTriggerRegexes } from "../utils/language-keywords.js";
 import { CREDENTIAL_NOTES_MAX_CHARS } from "../utils/constants.js";
 import { truncateText } from "../utils/text.js";
+import { rejectCredentialValue, normalizeServiceName } from "./credential-scanner.js";
 
 /** Memory triggers: English + dynamic languages from .language-keywords.json (see build-languages command). */
 export function getMemoryTriggers(): RegExp[] {
@@ -89,14 +90,22 @@ export function tryParseCredentialForVault(
   const match = extractCredentialMatch(text);
   const secretValue = (value && value.length >= 8 ? value : match?.secretValue) ?? null;
   if (!secretValue) return null;
+
+  // Validate the secret value — reject natural language, file paths, bare URLs, short values
+  const rejectionReason = rejectCredentialValue(secretValue);
+  if (rejectionReason) return null;
+
   const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
-  const service =
+  const rawService =
     (entity?.toLowerCase() === "credentials" ? key : null) ||
     key ||
     (entity && entity.toLowerCase() !== "credentials" ? entity : null) ||
     inferServiceFromText(text) ||
     "imported";
-  const serviceSlug = service.replace(/\s+/g, "-").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "imported";
+
+  // Validate and normalize service name — reject sentences, excessively long names
+  const serviceSlug = normalizeServiceName(rawService) ?? normalizeServiceName(inferServiceFromText(text)) ?? "imported";
+
   return {
     service: serviceSlug,
     type: typeFromPattern,

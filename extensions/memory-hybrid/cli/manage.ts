@@ -21,6 +21,7 @@ import type {
   UpgradeCliResult,
   UninstallCliResult,
   ConfigCliResult,
+  CredentialsAuditResult,
 } from "./types.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
@@ -46,6 +47,7 @@ export type ManageContext = {
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runCredentialsAudit?: (opts: { fix: boolean }) => Promise<CredentialsAuditResult>;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -142,6 +144,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runBackfill,
     runIngestFiles,
     runMigrateToVault,
+    runCredentialsAudit,
     runUninstall,
     runUpgrade,
     runConfigMode,
@@ -1281,6 +1284,35 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.error(`Errors during migration: ${res.errors.join(", ")}`);
       }
       console.log(`Migrated ${res.migrated} credentials (${res.skipped} skipped).`);
+    }));
+
+  credentials
+    .command("audit")
+    .description("Audit vault for suspicious entries (natural language values, oversized service names, duplicates). Use --fix to auto-remove flagged entries.")
+    .option("--fix", "Automatically remove all flagged entries")
+    .action(withExit(async (opts?: { fix?: boolean }) => {
+      if (!runCredentialsAudit) {
+        console.log("Credentials audit not available (vault disabled or not configured).");
+        return;
+      }
+      let res;
+      try {
+        res = await runCredentialsAudit({ fix: !!opts?.fix });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "credentials-audit" });
+        throw err;
+      }
+      if (res.flagged.length === 0) {
+        console.log("Vault audit complete: no suspicious entries found.");
+        return;
+      }
+      console.log(`Vault audit: ${res.flagged.length} suspicious entries found${opts?.fix ? `, ${res.removed} removed` : " (use --fix to remove)"}:`);
+      for (const entry of res.flagged) {
+        console.log(`  [${entry.service}] (${entry.type}): ${entry.reason}`);
+      }
+      if (!opts?.fix) {
+        console.log("\nRun with --fix to automatically remove all flagged entries.");
+      }
     }));
 
   const scope = mem.command("scope").description("Manage memory scopes (global, user, agent, session)");

@@ -88,6 +88,16 @@ export type SelfCorrectionRunResult = {
 };
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
+export type CredentialsAuditFlaggedEntry = {
+  service: string;
+  type: string;
+  reason: string;
+};
+export type CredentialsAuditResult = {
+  flagged: CredentialsAuditFlaggedEntry[];
+  removed: number;
+};
+
 export type UpgradeCliResult =
   | { ok: true; version: string; pluginDir: string }
   | { ok: false; error: string };

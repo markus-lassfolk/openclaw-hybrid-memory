@@ -18,6 +18,71 @@ export type ToolCallCredential = {
   notes?: string;      // Auto-generated notes
 };
 
+/** Minimum length for a credential value to be considered valid. */
+export const MIN_CREDENTIAL_VALUE_LENGTH = 8;
+
+/** Maximum length for a vault service name. */
+export const MAX_SERVICE_NAME_LENGTH = 50;
+
+/**
+ * Validate a credential value before storing it in the vault.
+ * Returns a rejection reason string if the value should be discarded, or null if valid.
+ *
+ * Rejects:
+ *  - Values shorter than MIN_CREDENTIAL_VALUE_LENGTH
+ *  - File paths (starts with / or ~)
+ *  - Bare URLs with no auth token (no @, no query string with = sign)
+ *  - Natural-language sentences (>50 chars, >3 spaces, no credential-typical chars)
+ */
+export function rejectCredentialValue(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length < MIN_CREDENTIAL_VALUE_LENGTH) {
+    return `value too short (${trimmed.length} chars, min ${MIN_CREDENTIAL_VALUE_LENGTH})`;
+  }
+  // File path
+  if (/^[/~]/.test(trimmed)) {
+    return "value looks like a file path";
+  }
+  // Bare URL without embedded auth or query params
+  if (/^https?:\/\/[^\s@?#]+$/.test(trimmed)) {
+    return "value looks like a bare URL without auth token";
+  }
+  // Natural language: long text with multiple whitespace tokens and no credential-typical chars
+  const spaceTokens = (trimmed.match(/\s+/g) ?? []).length;
+  const hasCredChars = /[=+/\-_@]/.test(trimmed);
+  if (trimmed.length > 50 && spaceTokens > 3 && !hasCredChars) {
+    return "value looks like natural language text (long, many spaces, no credential chars)";
+  }
+  return null;
+}
+
+/**
+ * Validate and normalize a credential service name to lowercase kebab-case.
+ * Returns null if the name is invalid (too long, looks like a sentence, or too short after normalization).
+ *
+ * Rules:
+ *  - Reject names longer than MAX_SERVICE_NAME_LENGTH
+ *  - Reject names that look like full sentences (4+ space-separated words)
+ *  - Normalize: lowercase, spaces/underscores → hyphens, strip non-[a-z0-9:/-]
+ */
+export function normalizeServiceName(name: string): string | null {
+  if (!name || name.length > MAX_SERVICE_NAME_LENGTH) {
+    return null;
+  }
+  // Reject service names that look like full sentences (4 or more words)
+  const wordCount = name.trim().split(/\s+/).length;
+  if (wordCount >= 4) {
+    return null;
+  }
+  const normalized = name
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9:/-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized.length >= 2 ? normalized : null;
+}
+
 /**
  * Extract hostname from URL using URL constructor, with fallback regex.
  * Validates hostname to prevent injection of arbitrary strings.
@@ -199,7 +264,11 @@ export function extractCredentialsFromToolCalls(text: string): ToolCallCredentia
       for (const match of text.matchAll(globalRegex)) {
         try {
           const cred = extract(match, text);
-          if (!cred || cred.value.length < 4) continue;
+          if (!cred) continue;
+          // Central value validation (replaces the old `length < 4` check).
+          // Scanner-generated service names are already structured (ssh://user@host, api.example.com),
+          // so we validate value only here; user-provided names are normalized in auto-capture.ts.
+          if (rejectCredentialValue(cred.value)) continue;
           const key = `${cred.service}:${cred.type}`;
           if (!seen.has(key)) {
             seen.add(key);
