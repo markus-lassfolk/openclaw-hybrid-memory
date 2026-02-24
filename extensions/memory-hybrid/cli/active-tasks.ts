@@ -4,12 +4,13 @@
  * Commands registered:
  *   hybrid-mem active-tasks              — list active tasks
  *   hybrid-mem active-tasks complete <label>  — mark done and flush to memory log
- *   hybrid-mem active-tasks stale        — show tasks not updated in >staleHours
+ *   hybrid-mem active-tasks stale        — show tasks not updated in >staleThreshold
  *   hybrid-mem active-tasks add <label> <description>  — add/update a task
  */
 
 import { join } from "node:path";
 import { dirname } from "node:path";
+import { formatDuration } from "../utils/duration.js";
 import {
   readActiveTaskFile,
   writeActiveTaskFile,
@@ -32,8 +33,8 @@ import type { Chainable } from "./shared.js";
 export type ActiveTaskContext = {
   /** Absolute path to ACTIVE-TASK.md */
   activeTaskFilePath: string;
-  /** Hours before a task is considered stale */
-  staleHours: number;
+  /** Minutes before a task is considered stale (parsed from staleThreshold) */
+  staleMinutes: number;
   /** Flush on complete: true = append to memory/YYYY-MM-DD.md */
   flushOnComplete: boolean;
   /** Memory directory (for flush). Usually workspace/memory */
@@ -48,7 +49,7 @@ export type ActiveTaskContext = {
 export async function runActiveTaskList(
   ctx: ActiveTaskContext,
 ): Promise<ActiveTaskListResult> {
-  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleHours);
+  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
     return {
       tasks: [],
@@ -79,11 +80,11 @@ export async function runActiveTaskList(
   };
 }
 
-/** Show tasks that are stale (not updated in >staleHours) */
+/** Show tasks that are stale (not updated within the configured staleThreshold) */
 export async function runActiveTaskStale(
   ctx: ActiveTaskContext,
 ): Promise<ActiveTaskStaleResult> {
-  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleHours);
+  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
     return { tasks: [], total: 0, filePath: ctx.activeTaskFilePath };
   }
@@ -115,7 +116,7 @@ export async function runActiveTaskComplete(
   ctx: ActiveTaskContext,
   label: string,
 ): Promise<ActiveTaskCompleteResult> {
-  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleHours);
+  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
     return { ok: false, error: `ACTIVE-TASK.md not found at ${ctx.activeTaskFilePath}` };
   }
@@ -158,7 +159,7 @@ export async function runActiveTaskAdd(
     next?: string;
   },
 ): Promise<ActiveTaskAddResult> {
-  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleHours);
+  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   const existingActive = taskFile?.active ?? [];
   const existingCompleted = taskFile?.completed ?? [];
   const wasExisting = existingActive.some((t) => t.label === opts.label);
@@ -249,7 +250,7 @@ export function registerActiveTaskCommands(
   // `hybrid-mem active-tasks stale`
   mem
     .command("active-tasks stale")
-    .description(`Show tasks not updated in >${ctx.staleHours}h`)
+    .description(`Show tasks not updated in >${formatDuration(ctx.staleMinutes)}`)
     .action(async () => {
       const result = await runActiveTaskStale(ctx);
       if (result.total === 0) {

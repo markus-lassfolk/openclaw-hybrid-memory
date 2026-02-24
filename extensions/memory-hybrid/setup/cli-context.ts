@@ -7,6 +7,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ActiveTaskContext } from "../cli/active-tasks.js";
+import { parseDuration } from "../utils/duration.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { registerHybridMemCli, type HybridMemCliContext } from "../cli/register.js";
 import type { HandlerContext } from "../cli/handlers.js";
@@ -103,7 +104,7 @@ Commands by category:
   Working memory
     active-tasks                   List active tasks from ACTIVE-TASK.md
     active-tasks complete <label>  Mark task as Done and flush to memory log
-    active-tasks stale             Show tasks not updated in >staleHours
+    active-tasks stale             Show tasks not updated within staleThreshold
     active-tasks add <label> <desc>  Add or update a task entry
 `;
 
@@ -586,7 +587,7 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
   const memoryDir = join(workspaceRoot, "memory");
   return {
     activeTaskFilePath,
-    staleHours: activeTask.staleHours,
+    staleMinutes: parseDuration(activeTask.staleThreshold),
     flushOnComplete: activeTask.flushOnComplete,
     memoryDir,
   };

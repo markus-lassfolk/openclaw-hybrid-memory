@@ -23,6 +23,7 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { formatDuration } from "../utils/duration.js";
 
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = [
@@ -62,7 +63,7 @@ export interface ActiveTaskEntry {
   started: string;
   /** ISO-8601 timestamp when task was last updated */
   updated: string;
-  /** Whether task is flagged as stale (not updated in >staleHours) */
+  /** Whether task is flagged as stale (not updated within staleThreshold) */
   stale?: boolean;
 }
 
@@ -254,15 +255,15 @@ export function serializeActiveTaskFile(
 // ---------------------------------------------------------------------------
 
 /**
- * Flag tasks that have not been updated in more than `staleHours` hours.
+ * Flag tasks that have not been updated in more than `staleMinutes` minutes.
  * Returns new array with `stale` property set.
  */
 export function detectStaleTasks(
   tasks: ActiveTaskEntry[],
-  staleHours: number,
+  staleMinutes: number,
 ): ActiveTaskEntry[] {
   const now = Date.now();
-  const staleMs = staleHours * 60 * 60 * 1000;
+  const staleMs = staleMinutes * 60 * 1000;
   return tasks.map((t) => {
     const updatedMs = new Date(t.updated).getTime();
     const isStale = !isNaN(updatedMs) && now - updatedMs > staleMs;
@@ -274,17 +275,22 @@ export function detectStaleTasks(
 // File I/O
 // ---------------------------------------------------------------------------
 
-/** Read and parse ACTIVE-TASK.md from disk. Returns null if file doesn't exist. */
+/**
+ * Read and parse ACTIVE-TASK.md from disk. Returns null if file doesn't exist.
+ *
+ * @param filePath - Absolute path to ACTIVE-TASK.md
+ * @param staleMinutes - Minutes before a task is considered stale (default: 1440 = 24h)
+ */
 export async function readActiveTaskFile(
   filePath: string,
-  staleHours = 24,
+  staleMinutes = 1440,
 ): Promise<ActiveTaskFile | null> {
   if (!existsSync(filePath)) return null;
   try {
     const content = await readFile(filePath, "utf-8");
     const parsed = parseActiveTaskFile(content);
     // Apply stale detection to active tasks
-    parsed.active = detectStaleTasks(parsed.active, staleHours);
+    parsed.active = detectStaleTasks(parsed.active, staleMinutes);
     return parsed;
   } catch {
     return null;
@@ -376,6 +382,70 @@ export function buildActiveTaskInjection(
   }
 
   lines.push("</active-tasks>");
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Stale warning injection builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a stale-task warning block to prepend to the agent context.
+ *
+ * Surfaces two kinds of information:
+ * 1. Tasks where `stale === true` (flagged by `detectStaleTasks`) — shown with elapsed time.
+ * 2. Any "In progress" task that has a `subagent` field — hints the agent to verify the subagent
+ *    is still running via `subagents list`.
+ *
+ * Returns an empty string when there is nothing to report, so the caller can
+ * skip injection entirely.
+ *
+ * @param tasks     Active tasks (must have `stale` already computed by `detectStaleTasks`).
+ * @param staleMinutes Threshold used for the warning label (e.g. 1440 → shows ">24h").
+ */
+export function buildStaleWarningInjection(
+  tasks: ActiveTaskEntry[],
+  staleMinutes: number,
+): string {
+  const staleTasks = tasks.filter((t) => t.stale);
+  // Hint for any "In progress" task with a subagent — regardless of staleness.
+  const inProgressWithSubagent = tasks.filter(
+    (t) => t.status === "In progress" && t.subagent,
+  );
+
+  if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return "";
+
+  const lines: string[] = [];
+  const thresholdDisplay = formatDuration(staleMinutes);
+
+  // ── Stale task warnings ──────────────────────────────────────────────────
+  if (staleTasks.length > 0) {
+    lines.push(`⚠️ STALE ACTIVE TASKS (not updated in >${thresholdDisplay}):`);
+    const now = Date.now();
+    for (const task of staleTasks) {
+      const updatedMs = new Date(task.updated).getTime();
+      const hoursAgo = isNaN(updatedMs)
+        ? "?"
+        : Math.floor((now - updatedMs) / (60 * 60 * 1000));
+      lines.push(
+        `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`,
+      );
+      const nextPart = task.next ? `, Next: ${task.next}` : "";
+      lines.push(`  Status: ${task.status}${nextPart}`);
+    }
+    lines.push("Consider: check subagent status, resume, or mark complete.");
+  }
+
+  // ── Subagent hint ────────────────────────────────────────────────────────
+  if (inProgressWithSubagent.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("💡 In-progress tasks with subagents — verify they are still running:");
+    for (const task of inProgressWithSubagent) {
+      lines.push(`- [${task.label}]: ${task.description} (subagent: ${task.subagent})`);
+    }
+    lines.push("Hint: use `subagents list` to check if these subagents are still active.");
+  }
+
   return lines.join("\n");
 }
 

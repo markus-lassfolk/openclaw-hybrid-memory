@@ -35,12 +35,14 @@ import { capturePluginError, addOperationBreadcrumb } from "../services/error-re
 import {
   readActiveTaskFile,
   buildActiveTaskInjection,
+  buildStaleWarningInjection,
   writeActiveTaskFile,
   upsertTask,
   completeTask,
   flushCompletedTaskToMemory,
   type ActiveTaskEntry,
 } from "../services/active-task.js";
+import { parseDuration } from "../utils/duration.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -687,12 +689,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     // Active task working memory injection — if ACTIVE-TASK.md exists with non-Done tasks,
     // inject a compact summary into the system prompt so the agent knows what was in flight.
+    // When staleWarning.enabled, also surface stale-task warnings and subagent hints.
     if (ctx.cfg.activeTask.enabled) {
       api.on("before_agent_start", async () => {
         try {
+          const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
           const taskFile = await readActiveTaskFile(
             ctx.cfg.activeTask.filePath,
-            ctx.cfg.activeTask.staleHours,
+            staleMinutes,
           );
           if (!taskFile || taskFile.active.length === 0) return undefined;
 
@@ -700,12 +704,28 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             taskFile.active,
             ctx.cfg.activeTask.injectionBudget,
           );
-          if (!injection) return undefined;
 
+          // Build stale warning block (empty string when nothing to report)
+          let staleWarningBlock = "";
+          if (ctx.cfg.activeTask.staleWarning.enabled) {
+            staleWarningBlock = buildStaleWarningInjection(taskFile.active, staleMinutes);
+          }
+
+          if (!injection && !staleWarningBlock) return undefined;
+
+          const context = [
+            injection,
+            staleWarningBlock,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+
+          const staleCount = taskFile.active.filter((t) => t.stale).length;
           api.logger.info?.(
-            `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md`,
+            `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md` +
+            (staleCount > 0 ? ` (${staleCount} stale)` : ""),
           );
-          return { prependContext: injection + "\n\n" };
+          return { prependContext: context + "\n\n" };
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "active-task-injection",
@@ -731,7 +751,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const description = ev.task ?? `Subagent task (session: ${ev.sessionKey ?? "unknown"})`;
           const taskFile = await readActiveTaskFile(
             ctx.cfg.activeTask.filePath,
-            ctx.cfg.activeTask.staleHours,
+            parseDuration(ctx.cfg.activeTask.staleThreshold),
           );
           const now = new Date().toISOString();
           const entry: ActiveTaskEntry = {
@@ -772,7 +792,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           const taskFile = await readActiveTaskFile(
             ctx.cfg.activeTask.filePath,
-            ctx.cfg.activeTask.staleHours,
+            parseDuration(ctx.cfg.activeTask.staleThreshold),
           );
           if (!taskFile) return;
 
