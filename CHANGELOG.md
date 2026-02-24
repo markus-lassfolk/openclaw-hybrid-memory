@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.02.240] - 2026-02-24
+
+Feature and fix release: active-task working memory for multi-step tasks (#99, #104), VectorDB auto-reconnect after close (#103), credentials hardening and audit/prune/dedup CLI (#98), stats zero-hints clarification (#101), and related fixes.
+
+### Added
+
+- **Active-task working memory:** ACTIVE-TASK.md doc, heartbeat stale warnings, duration parser, `staleThreshold` config, stashCommit preservation, injection budget checks, file path resolved against workspace root, original task start time in subagent_start; legacy `staleHours` rejects fractional values (closes #99, #104).
+- **Credentials:** Hardened auto-capture validation; audit, prune, and dedup CLI (#98); duplicate normalized service detection; `storeIfNew` for auto-capture; lowercase URLs and empty-string fallback; list optimization; `runCredentialsList` in CLI context.
+
+### Fixed
+
+- **VectorDB:** Auto-reconnect after `close()` so concurrent ops no longer see "VectorDB is closed"; guard against concurrent `doInitialize()` during close (#103).
+- **Stats:** Clarify zero procedures/proposals with hints when persona-proposals (or procedures) are disabled (#101).
+- **Credentials:** Validation (minimum length, hostnames/URLs); dedup/validation bugs; N+1 in audit fixed via `listAll()`; P2 regression test (sk-key, assertion).
+- **Cleanup:** Remove unreachable post-parse credential validation; remove dead code (`shouldSkipCredentialStore`, `CredentialsDbLike`); add `runCredentialsList` to `HybridMemCliContext`; address Copilot review threads.
+
+### Changed
+
+- **Docs:** Improved RRF search documentation and inline comments.
+- **Version bump** — Release 2026.02.24 (npm `2026.02.240`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.02.230] - 2026-02-23
 
 Feature and fix release: multi-provider LLM proxy (nano/default/heavy tiers), embeddings direct to OpenAI, error-reporting bot identity, config/model fallbacks, stats and distill improvements, and PR #93 review fixes (fixes #91, #92, #94, #95).
