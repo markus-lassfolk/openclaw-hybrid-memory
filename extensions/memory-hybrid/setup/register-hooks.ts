@@ -94,7 +94,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Inject pending LLM config warnings into the agent's context once per occurrence.
   // Fires when all models in a tier fail due to missing provider API keys, so the AI
   // can relay the issue to the user in its response.
-  api.on("before_prompt_build", () => {
+  api.on("before_prompt_build", (): void | { prependContext: string } => {
     if (!ctx.pendingLLMWarnings) return;
     const warnings = ctx.pendingLLMWarnings.drain();
     if (warnings.length === 0) return;
