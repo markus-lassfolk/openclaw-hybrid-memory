@@ -44,7 +44,7 @@ export function rejectCredentialValue(value: string): string | null {
     return "value looks like a file path";
   }
   // Bare URL without embedded auth or query params
-  if (/^https?:\/\/[^\s@?#]+$/.test(trimmed)) {
+  if (/^https?:\/\/[^\s@?#]+$/i.test(trimmed)) {
     return "value looks like a bare URL without auth token";
   }
   // Natural language: long text with multiple whitespace tokens and no credential-typical chars

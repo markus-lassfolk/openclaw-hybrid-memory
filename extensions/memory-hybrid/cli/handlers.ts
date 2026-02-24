@@ -64,7 +64,7 @@ import { runReinforcementExtract, type ReinforcementExtractResult } from "../ser
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
-import { rejectCredentialValue, normalizeServiceName, MAX_SERVICE_NAME_LENGTH } from "../services/credential-scanner.js";
+import { rejectCredentialValue, MAX_SERVICE_NAME_LENGTH } from "../services/credential-scanner.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
