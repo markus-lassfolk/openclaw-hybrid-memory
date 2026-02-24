@@ -34,7 +34,16 @@ export class VectorDB {
   }
 
   private async ensureInitialized(): Promise<void> {
-    if (this.closed) throw new Error("VectorDB is closed");
+    // Auto-reconnect: if closed (e.g., stop() called while async operations are in-flight during
+    // a deferred SIGUSR1 restart, or register() called again on hot-reload), reset state and
+    // reconnect. Mirrors the FactsDB/CredentialsDB liveDb() pattern for post-restart recovery.
+    if (this.closed) {
+      this.logWarn("memory-hybrid: VectorDB was closed; reconnecting...");
+      this.closed = false;
+      this.table = null;
+      this.db = null;
+      this.initPromise = null;
+    }
     if (this.table) return;
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.doInitialize().catch((err) => {

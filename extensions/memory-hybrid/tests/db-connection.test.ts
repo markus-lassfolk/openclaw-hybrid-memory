@@ -1,9 +1,12 @@
 /**
- * Verifies that FactsDB and CredentialsDB use the liveDb getter for all
- * database operations, so that after the underlying connection is closed
- * (e.g. by SIGUSR1 graceful restart) the next call reopens and succeeds.
- * If code used this.db directly instead of this.liveDb, the next call would
- * throw "The database connection is not open".
+ * Verifies that FactsDB, CredentialsDB, and VectorDB auto-reconnect after their
+ * underlying connection is closed (e.g. by stop()/SIGUSR1 graceful restart).
+ *
+ * FactsDB/CredentialsDB use the liveDb getter to reopen SQLite connections.
+ * VectorDB uses auto-reconnect logic in ensureInitialized() to reopen LanceDB.
+ *
+ * Without this, callers would get "The database connection is not open" (SQLite)
+ * or "VectorDB is closed" (LanceDB) on the next call after a restart.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -12,7 +15,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 
-const { FactsDB, CredentialsDB } = _testing;
+const { FactsDB, CredentialsDB, VectorDB } = _testing;
 
 const TEST_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests-32chars";
 
@@ -166,5 +169,69 @@ describe("CredentialsDB uses live connection (no stale this.db)", () => {
     closeInternalConnection(db);
     expect(db.delete("test", "api_key")).toBe(true);
     expect(db.get("test", "api_key")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VectorDB: must auto-reconnect after close() (e.g., stop()/SIGUSR1 restart)
+// ---------------------------------------------------------------------------
+
+describe("VectorDB auto-reconnects after close()", () => {
+  let tmpDir: string;
+  let db: InstanceType<typeof VectorDB>;
+  const VECTOR_DIM = 3; // tiny vectors for speed
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-db-reconnect-test-"));
+    db = new VectorDB(join(tmpDir, "lance"), VECTOR_DIM);
+    // Initialize by storing one vector
+    await db.store({ text: "initial fact", vector: [0.1, 0.2, 0.3], importance: 0.7, category: "fact" });
+  });
+
+  afterEach(async () => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("store succeeds after close()", async () => {
+    db.close();
+    // Should auto-reconnect and succeed, not throw "VectorDB is closed"
+    const id = await db.store({ text: "post-close fact", vector: [0.4, 0.5, 0.6], importance: 0.8, category: "technical" });
+    expect(id).toBeDefined();
+    expect(typeof id).toBe("string");
+  });
+
+  it("search succeeds after close()", async () => {
+    db.close();
+    // Should auto-reconnect and return results (or empty), not throw
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(Array.isArray(results)).toBe(true);
+  });
+
+  it("hasDuplicate succeeds after close()", async () => {
+    db.close();
+    // Should auto-reconnect and return a boolean, not throw
+    const isDup = await db.hasDuplicate([0.1, 0.2, 0.3]);
+    expect(typeof isDup).toBe("boolean");
+  });
+
+  it("count succeeds after close()", async () => {
+    db.close();
+    // Should auto-reconnect and return a count, not throw
+    const n = await db.count();
+    expect(typeof n).toBe("number");
+  });
+
+  it("multiple operations after close() all succeed", async () => {
+    db.close();
+    // Simulate multiple concurrent calls (e.g., 3-4 agents retrying after restart)
+    const [id1, id2, results] = await Promise.all([
+      db.store({ text: "agent1 fact", vector: [0.1, 0.2, 0.3], importance: 0.7, category: "fact" }),
+      db.store({ text: "agent2 fact", vector: [0.4, 0.5, 0.6], importance: 0.7, category: "fact" }),
+      db.search([0.1, 0.2, 0.3], 3, 0),
+    ]);
+    expect(id1).toBeDefined();
+    expect(id2).toBeDefined();
+    expect(Array.isArray(results)).toBe(true);
   });
 });
