@@ -670,38 +670,23 @@ export function registerMemoryTools(
         // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
         // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
         if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
-          const parsed = tryParseCredentialForVault(textToStore, entity, key, value);
+          const parsed = tryParseCredentialForVault(textToStore, entity, key, value, {
+            requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+          });
           if (parsed) {
-            // Validate parsed credential before storing
-            if (!parsed.service || parsed.service.length === 0 || parsed.service.length > 100) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Invalid credential: service name must be 1-100 characters.`,
-                  },
-                ],
-                details: { error: "invalid_service_name" },
-              };
-            }
-            if (!parsed.secretValue || parsed.secretValue.length === 0) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Invalid credential: secret value cannot be empty.`,
-                  },
-                ],
-                details: { error: "empty_credential_value" },
-              };
-            }
-            credentialsDb.store({
+            const stored = credentialsDb.storeIfNew({
               service: parsed.service,
               type: parsed.type,
               value: parsed.secretValue,
               url: parsed.url,
               notes: parsed.notes,
             });
+            if (!stored) {
+              return {
+                content: [{ type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` }],
+                details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
+              };
+            }
             const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
             const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
             const pointerEntry = factsDb.store({

@@ -91,9 +91,9 @@ describe("runStoreForCli credential happy path", () => {
 
 describe("runStoreForCli vault write failure", () => {
   it("returns credential_vault_error when vault write fails", async () => {
-    // Mock vault store to throw
-    const originalStore = credentialsDb.store.bind(credentialsDb);
-    credentialsDb.store = vi.fn().mockImplementation(() => {
+    // Mock vault storeIfNew to throw
+    const originalStoreIfNew = credentialsDb.storeIfNew.bind(credentialsDb);
+    credentialsDb.storeIfNew = vi.fn().mockImplementation(() => {
       throw new Error("Vault storage failed");
     });
 
@@ -111,7 +111,7 @@ describe("runStoreForCli vault write failure", () => {
     expect(allFacts.length).toBe(0);
 
     // Restore
-    credentialsDb.store = originalStore;
+    credentialsDb.storeIfNew = originalStoreIfNew;
   });
 });
 
@@ -163,7 +163,7 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     });
 
     const opts: StoreCliOpts = {
-      text: "Twilio API Key: sk-test-1234567890abcdefghijklmnopqrstuvwxyz",
+      text: "Twilio API Key: sk-test1234567890abcdefghijklmnopqrstuvwxyz",
       category: "technical",
     };
 
@@ -180,6 +180,52 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     // Restore
     factsDb.store = originalFactsStore;
     credentialsDb.delete = originalDelete;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Duplicate skip: same (service, type, value) already in vault
+// ---------------------------------------------------------------------------
+
+describe("runStoreForCli credential_skipped_duplicate", () => {
+  it("returns credential_skipped_duplicate when vault already has identical credential", async () => {
+    const opts: StoreCliOpts = {
+      text: "OpenAI API Key: sk-testAbCdEfGh1234IjKlMnOpQrSt",
+      category: "technical",
+    };
+
+    // First store — should succeed
+    const first: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(first.outcome).toBe("credential");
+
+    // Second store of the identical text — vault already has this (service, type, value)
+    const second: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(second.outcome).toBe("credential_skipped_duplicate");
+    if (second.outcome === "credential_skipped_duplicate") {
+      expect(second.service).toBe("openai");
+      expect(second.type).toBe("api_key");
+    }
+
+    // Vault should still have exactly one entry (not a duplicate)
+    const vaultList = credentialsDb.list();
+    expect(vaultList.length).toBe(1);
+  });
+
+  it("does not create a second pointer in factsDb on duplicate skip", async () => {
+    const opts: StoreCliOpts = {
+      text: "GitHub Token: ghp_test1234567890abcdefghijklmnopqrstuvwxy",
+      category: "technical",
+    };
+
+    await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    // Attempt a second store of the same credential
+    const second: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(second.outcome).toBe("credential_skipped_duplicate");
+
+    // Only one pointer entry should exist in factsDb
+    const allFacts = factsDb.getAll();
+    const pointerFacts = allFacts.filter((f: any) => f.value?.startsWith("vault:"));
+    expect(pointerFacts.length).toBe(1);
   });
 });
 

@@ -27,6 +27,7 @@ export type StoreCliOpts = {
 export type StoreCliResult =
   | { outcome: "duplicate" }
   | { outcome: "credential"; id: string; service: string; type: string }
+  | { outcome: "credential_skipped_duplicate"; service: string; type: string }
   | { outcome: "credential_parse_error" }
   | { outcome: "credential_vault_error" }
   | { outcome: "credential_db_error" }
@@ -87,6 +88,17 @@ export type SelfCorrectionRunResult = {
   error?: string;
 };
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
+
+export type CredentialsAuditEntry = {
+  service: string;
+  type: string;
+  url: string | null;
+  flags: string[];
+};
+
+export type CredentialsAuditResult = { entries: CredentialsAuditEntry[]; total: number };
+
+export type CredentialsPruneResult = { removed: number; entries: Array<{ service: string; type: string }>; dryRun: boolean };
 
 export type UpgradeCliResult =
   | { ok: true; version: string; pluginDir: string }

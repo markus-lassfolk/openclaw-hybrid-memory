@@ -18,6 +18,8 @@ import type {
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
   MigrateToVaultResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
   UpgradeCliResult,
   UninstallCliResult,
   ConfigCliResult,
@@ -46,6 +48,9 @@ export type ManageContext = {
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
+  runCredentialsAudit: () => CredentialsAuditResult;
+  runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -106,6 +111,7 @@ export type ManageContext = {
   richStatsExtras?: {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
+    getProposalsAvailable: () => boolean;
     getWalPending: () => number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
@@ -142,8 +148,11 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runBackfill,
     runIngestFiles,
     runMigrateToVault,
-    runUninstall,
+    runCredentialsList,
+    runCredentialsAudit,
+    runCredentialsPrune,
     runUpgrade,
+    runUninstall,
     runConfigMode,
     runConfigSet,
     runConfigSetHelp,
@@ -411,6 +420,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const uniqueInMemory = factsDb.uniqueMemoryCategories();
         const credentials = extras.getCredentialsCount();
         const proposalsPending = extras.getProposalsPending();
+        const proposalsAvailable = extras.getProposalsAvailable();
         const walPending = extras.getWalPending();
         const timestamps = extras.getLastRunTimestamps();
         const sizes = await extras.getStorageSizes();
@@ -428,7 +438,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`Total vectors (LanceDB): ${lanceCount}`);
         console.log(`Expired (prunable): ${expired}`);
         console.log("");
-        console.log(`Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted})`);
+        const proceduresNote = procedures === 0 ? " (run extract-procedures to populate)" : "";
+        console.log(`Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted})${proceduresNote}`);
         console.log(`Rules: ${rules}`);
         console.log(`Patterns: ${patterns}`);
         console.log(`Meta-patterns: ${metaPatterns}`);
@@ -439,7 +450,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log("");
         console.log(`Graph (links/entities): ${links}/${entities}`);
         console.log(`Credentials (vaulted): ${credentials}`);
-        console.log(`Proposals (pending): ${proposalsPending}`);
+        const proposalsLine = proposalsAvailable
+          ? `Proposals (pending): ${proposalsPending}${proposalsPending === 0 ? " (run generate-proposals to create)" : ""}`
+          : "Proposals (pending): — (persona proposals disabled)";
+        console.log(proposalsLine);
         console.log(`WAL (pending distill): ${walPending}`);
         console.log("");
         console.log(`Categories configured: ${categoriesConfigured.length} [${categoriesConfigured.slice(0, 3).join(", ")}...]`);
@@ -887,8 +901,14 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log("Duplicate fact (skipped).");
       } else if (res.outcome === "credential") {
         console.log(`Credential stored: ${res.service} (${res.type}), id=${res.id}`);
+      } else if (res.outcome === "credential_skipped_duplicate") {
+        console.log(`Credential already in vault (skipped): ${res.service} (${res.type})`);
       } else if (res.outcome === "credential_parse_error") {
         console.log("Credential parse error (skipped).");
+      } else if (res.outcome === "credential_vault_error") {
+        console.log("Credential vault error — could not write to secure vault (skipped).");
+      } else if (res.outcome === "credential_db_error") {
+        console.log("Credential pointer error — vault entry written but pointer storage failed (skipped).");
       } else if (res.outcome === "noop") {
         console.log(`No-op: ${res.reason}`);
       } else if (res.outcome === "retracted") {
@@ -1281,6 +1301,68 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.error(`Errors during migration: ${res.errors.join(", ")}`);
       }
       console.log(`Migrated ${res.migrated} credentials (${res.skipped} skipped).`);
+    }));
+
+  credentials
+    .command("list")
+    .description("List credentials in vault (service, type, url only — no values)")
+    .action(withExit(async () => {
+      const list = runCredentialsList();
+      if (list.length === 0) {
+        console.log("No credentials in vault.");
+        return;
+      }
+      console.log(`Credentials (${list.length}):`);
+      for (const e of list) {
+        console.log(`  ${e.service} (${e.type})${e.url ? ` — ${e.url}` : ""}`);
+      }
+    }));
+
+  credentials
+    .command("audit")
+    .description("Audit vault: flag suspicious entries (natural language, long service names, duplicates)")
+    .option("--json", "Output as JSON")
+    .action(withExit(async (opts?: { json?: boolean }) => {
+      const audit = runCredentialsAudit();
+      if (opts?.json) {
+        console.log(JSON.stringify({ total: audit.total, entries: audit.entries }, null, 2));
+        return;
+      }
+      if (audit.total === 0) {
+        console.log("No credentials in vault.");
+        return;
+      }
+      const suspicious = audit.entries.filter((e) => e.flags.length > 0);
+      console.log(`Audit: ${audit.total} total, ${suspicious.length} suspicious.`);
+      for (const e of audit.entries) {
+        const flagStr = e.flags.length > 0 ? ` [${e.flags.join(", ")}]` : "";
+        console.log(`  ${e.service} (${e.type})${flagStr}`);
+      }
+    }));
+
+  credentials
+    .command("prune")
+    .description("Remove suspicious credential entries (default: dry-run; use --yes to apply)")
+    .option("--dry-run", "Only list what would be removed (default)")
+    .option("--yes", "Actually remove flagged entries")
+    .option("--only-flags <reasons>", "Comma-separated flags to prune (e.g. natural_language,service_too_long)")
+    .action(withExit(async (opts?: { dryRun?: boolean; yes?: boolean; onlyFlags?: string }) => {
+      const yes = opts?.yes === true;
+      const dryRun = yes ? false : (opts?.dryRun !== false);
+      const onlyFlags = opts?.onlyFlags ? opts.onlyFlags.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      const res = runCredentialsPrune({ dryRun, yes, onlyFlags });
+      if (res.removed === 0) {
+        console.log(res.dryRun ? "No suspicious entries to prune (dry-run)." : "No entries removed.");
+        return;
+      }
+      if (res.dryRun) {
+        console.log(`Would remove ${res.removed} entries (run with --yes to apply):`);
+        for (const e of res.entries) {
+          console.log(`  ${e.service} (${e.type})`);
+        }
+      } else {
+        console.log(`Removed ${res.removed} entries.`);
+      }
     }));
 
   const scope = mem.command("scope").description("Manage memory scopes (global, user, agent, session)");
