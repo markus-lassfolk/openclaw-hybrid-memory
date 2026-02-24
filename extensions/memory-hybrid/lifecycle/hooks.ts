@@ -1056,12 +1056,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
-    // Decrement VectorDB refcount on session end. Uses removeSession() instead of close() so the
-    // shared singleton stays open while other concurrent sessions are still active (fixes issue #106).
-    api.on("agent_end", () => {
-      ctx.vectorDb.removeSession();
-    });
-
     // Clear auth failure dedup map on session end
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       api.on("agent_end", async () => {
@@ -1447,6 +1441,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
       });
     }
+
+    // Decrement VectorDB refcount on session end. Uses removeSession() instead of close() so the
+    // shared singleton stays open while other concurrent sessions are still active (fixes issue #106).
+    // Registered last to ensure all other agent_end handlers complete their DB operations first.
+    api.on("agent_end", () => {
+      ctx.vectorDb.removeSession();
+    });
   };
 
   return { onAgentStart, onAgentEnd };

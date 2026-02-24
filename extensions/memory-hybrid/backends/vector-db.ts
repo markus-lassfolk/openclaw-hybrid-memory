@@ -271,7 +271,7 @@ export class VectorDB {
     this.closed = true;
     this.table = null;
     if (this.db) {
-      this.db.close();
+      try { this.db.close(); } catch { /* ignore */ }
     }
     this.db = null;
     // Intentionally NOT clearing initPromise here. If doInitialize() is in-flight, the
