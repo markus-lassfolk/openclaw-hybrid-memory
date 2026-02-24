@@ -3075,6 +3075,30 @@ export function runConfigSetForCli(
     if (!("enabled" in er)) (er as Record<string, unknown>).enabled = false;
     if (!("consent" in er)) (er as Record<string, unknown>).consent = false;
   }
+  // errorReporting must stay an object (schema); "config-set errorReporting true" → errorReporting.enabled + consent = true
+  if (k === "errorReporting" && !k.includes(".")) {
+    const boolVal = value === "true" || value === "enabled";
+    let er = out.config.errorReporting as Record<string, unknown> | undefined;
+    if (typeof er !== "object" || er === null) er = { enabled: false, consent: false };
+    (er as Record<string, unknown>).enabled = boolVal;
+    (er as Record<string, unknown>).consent = boolVal;
+    out.config.errorReporting = er;
+    const written = (er as Record<string, unknown>).enabled;
+    try {
+      hybridConfigSchema.parse(out.config);
+    } catch (schemaErr: unknown) {
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-errorReporting" });
+      return { ok: false, error: `Invalid config value: ${schemaErr}` };
+    }
+    try {
+      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+      writeFileSync(getRestartPendingPath(), "", "utf-8");
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-errorReporting" });
+      return { ok: false, error: `Could not write config: ${e}` };
+    }
+    return { ok: true, configPath, message: `Set errorReporting.enabled and errorReporting.consent = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+  }
   // credentials must stay an object (schema); "config-set credentials true" → credentials.enabled = true
   if (k === "credentials" && !k.includes(".")) {
     const boolVal = value === "true" || value === "enabled";
