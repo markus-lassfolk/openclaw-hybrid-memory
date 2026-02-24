@@ -324,8 +324,26 @@ export type HybridMemoryConfig = {
   multiAgent: MultiAgentConfig;
   /** Optional: error reporting to GlitchTip/Sentry (opt-in, default: disabled) */
   errorReporting?: ErrorReportingConfig;
+  /** Active task working memory — ACTIVE-TASK.md persistence and session injection (default: enabled) */
+  activeTask: ActiveTaskConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
+};
+
+/** Active task working memory: ACTIVE-TASK.md persistence and session injection */
+export type ActiveTaskConfig = {
+  /** Enable active task working memory (default: true) */
+  enabled: boolean;
+  /** Path to ACTIVE-TASK.md (default: "ACTIVE-TASK.md" in workspace root) */
+  filePath: string;
+  /** Auto-write task entries on subagent spawn/complete events (default: true) */
+  autoCheckpoint: boolean;
+  /** Max tokens for session-start injection (default: 500) */
+  injectionBudget: number;
+  /** Hours before flagging a task as stale (default: 24) */
+  staleHours: number;
+  /** Flush task summary to memory/YYYY-MM-DD.md on completion (default: true) */
+  flushOnComplete: boolean;
 };
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
@@ -1360,6 +1378,23 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
+    // Parse active task working memory config
+    const activeTaskRaw = cfg.activeTask as Record<string, unknown> | undefined;
+    const activeTask: ActiveTaskConfig = {
+      enabled: activeTaskRaw?.enabled !== false,
+      filePath: typeof activeTaskRaw?.filePath === "string" && activeTaskRaw.filePath.trim().length > 0
+        ? activeTaskRaw.filePath.trim()
+        : "ACTIVE-TASK.md",
+      autoCheckpoint: activeTaskRaw?.autoCheckpoint !== false,
+      injectionBudget: typeof activeTaskRaw?.injectionBudget === "number" && activeTaskRaw.injectionBudget > 0
+        ? Math.floor(activeTaskRaw.injectionBudget)
+        : 500,
+      staleHours: typeof activeTaskRaw?.staleHours === "number" && activeTaskRaw.staleHours > 0
+        ? activeTaskRaw.staleHours
+        : 24,
+      flushOnComplete: activeTaskRaw?.flushOnComplete !== false,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -1392,6 +1427,7 @@ export const hybridConfigSchema = {
       selfCorrection,
       multiAgent,
       errorReporting,
+      activeTask,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

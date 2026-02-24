@@ -1,0 +1,808 @@
+/**
+ * Tests for ACTIVE-TASK.md working memory service and CLI commands.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import {
+  parseActiveTaskFile,
+  serializeTaskEntry,
+  serializeActiveTaskFile,
+  detectStaleTasks,
+  buildActiveTaskInjection,
+  upsertTask,
+  completeTask,
+  flushCompletedTaskToMemory,
+  readActiveTaskFile,
+  writeActiveTaskFile,
+  ACTIVE_TASK_STATUSES,
+  type ActiveTaskEntry,
+} from "../services/active-task.js";
+import {
+  runActiveTaskList,
+  runActiveTaskComplete,
+  runActiveTaskStale,
+  runActiveTaskAdd,
+  type ActiveTaskContext,
+} from "../cli/active-tasks.js";
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+const SAMPLE_ACTIVE_TASK_MD = `# ACTIVE-TASK.md — Working Memory
+
+## Active Tasks
+
+### [forge-99]: Implement ACTIVE-TASK.md working memory
+- **Branch:** feature/active-task-working-memory-99
+- **Status:** In progress
+- **Subagent:** forge-subagent-abc123
+- **Next:** Write tests and verify TypeScript
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T15:00:00.000Z
+
+### [deploy-prod]: Deploy hotfix to production
+- **Branch:** fix/hotfix-v2
+- **Status:** Waiting
+- **Next:** Wait for CI to pass
+- **Started:** 2026-02-23T08:00:00.000Z
+- **Updated:** 2026-02-23T09:00:00.000Z
+
+## Completed
+
+### [old-task]: Some old task
+- **Status:** Done
+- **Started:** 2026-02-20T10:00:00.000Z
+- **Updated:** 2026-02-20T18:00:00.000Z
+`;
+
+const EMPTY_ACTIVE_TASK_MD = `# ACTIVE-TASK.md — Working Memory
+
+## Active Tasks
+
+_No active tasks._
+`;
+
+function makeEntry(overrides: Partial<ActiveTaskEntry> = {}): ActiveTaskEntry {
+  return {
+    label: "test-task",
+    description: "A test task",
+    status: "In progress",
+    started: "2026-02-24T10:00:00.000Z",
+    updated: "2026-02-24T15:00:00.000Z",
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Parser tests
+// ---------------------------------------------------------------------------
+
+describe("parseActiveTaskFile", () => {
+  it("parses active tasks from markdown", () => {
+    const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
+    expect(result.active).toHaveLength(2);
+    expect(result.completed).toHaveLength(1);
+  });
+
+  it("parses all fields correctly", () => {
+    const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
+    const task = result.active[0];
+    expect(task.label).toBe("forge-99");
+    expect(task.description).toBe("Implement ACTIVE-TASK.md working memory");
+    expect(task.branch).toBe("feature/active-task-working-memory-99");
+    expect(task.status).toBe("In progress");
+    expect(task.subagent).toBe("forge-subagent-abc123");
+    expect(task.next).toBe("Write tests and verify TypeScript");
+    expect(task.started).toBe("2026-02-24T10:00:00.000Z");
+    expect(task.updated).toBe("2026-02-24T15:00:00.000Z");
+  });
+
+  it("parses second task with partial fields", () => {
+    const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
+    const task = result.active[1];
+    expect(task.label).toBe("deploy-prod");
+    expect(task.status).toBe("Waiting");
+    expect(task.branch).toBe("fix/hotfix-v2");
+    expect(task.subagent).toBeUndefined();
+    expect(task.next).toBe("Wait for CI to pass");
+  });
+
+  it("moves Done tasks to completed section", () => {
+    const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0].label).toBe("old-task");
+  });
+
+  it("handles empty active tasks section", () => {
+    const result = parseActiveTaskFile(EMPTY_ACTIVE_TASK_MD);
+    expect(result.active).toHaveLength(0);
+    expect(result.completed).toHaveLength(0);
+  });
+
+  it("handles completely empty string", () => {
+    const result = parseActiveTaskFile("");
+    expect(result.active).toHaveLength(0);
+    expect(result.completed).toHaveLength(0);
+  });
+
+  it("handles all valid statuses", () => {
+    for (const status of ACTIVE_TASK_STATUSES) {
+      const md = `## Active Tasks\n\n### [test]: Test task\n- **Status:** ${status}\n- **Started:** 2026-01-01T00:00:00.000Z\n- **Updated:** 2026-01-01T00:00:00.000Z\n`;
+      const result = parseActiveTaskFile(md);
+      if (status === "Done") {
+        expect(result.completed).toHaveLength(1);
+        expect(result.active).toHaveLength(0);
+      } else {
+        expect(result.active).toHaveLength(1);
+        expect(result.active[0].status).toBe(status);
+      }
+    }
+  });
+
+  it("preserves raw content", () => {
+    const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
+    expect(result.raw).toBe(SAMPLE_ACTIVE_TASK_MD);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Serialization tests
+// ---------------------------------------------------------------------------
+
+describe("serializeTaskEntry", () => {
+  it("serializes a full entry with all fields", () => {
+    const entry: ActiveTaskEntry = {
+      label: "forge-99",
+      description: "Implement working memory",
+      branch: "feature/active-task-99",
+      status: "In progress",
+      stashCommit: "forge-99-wip",
+      subagent: "session-abc",
+      next: "Write tests",
+      started: "2026-02-24T10:00:00.000Z",
+      updated: "2026-02-24T15:00:00.000Z",
+    };
+    const result = serializeTaskEntry(entry);
+    expect(result).toContain("### [forge-99]: Implement working memory");
+    expect(result).toContain("**Branch:** feature/active-task-99");
+    expect(result).toContain("**Status:** In progress");
+    expect(result).toContain("**Stash/Commit:** forge-99-wip");
+    expect(result).toContain("**Subagent:** session-abc");
+    expect(result).toContain("**Next:** Write tests");
+    expect(result).toContain("**Started:** 2026-02-24T10:00:00.000Z");
+    expect(result).toContain("**Updated:** 2026-02-24T15:00:00.000Z");
+  });
+
+  it("omits optional fields when not set", () => {
+    const entry = makeEntry();
+    const result = serializeTaskEntry(entry);
+    expect(result).not.toContain("**Branch:**");
+    expect(result).not.toContain("**Stash/Commit:**");
+    expect(result).not.toContain("**Subagent:**");
+    expect(result).not.toContain("**Next:**");
+  });
+
+  it("produces parseable output (round-trip)", () => {
+    const entry: ActiveTaskEntry = {
+      label: "rt-test",
+      description: "Round-trip test task",
+      branch: "fix/something",
+      status: "Waiting",
+      subagent: "forge-session-xyz",
+      next: "Verify something",
+      started: "2026-02-24T10:00:00.000Z",
+      updated: "2026-02-24T15:00:00.000Z",
+    };
+    const serialized = serializeTaskEntry(entry);
+    const md = `## Active Tasks\n\n${serialized}\n`;
+    const parsed = parseActiveTaskFile(md);
+    expect(parsed.active).toHaveLength(1);
+    expect(parsed.active[0].label).toBe("rt-test");
+    expect(parsed.active[0].description).toBe("Round-trip test task");
+    expect(parsed.active[0].branch).toBe("fix/something");
+    expect(parsed.active[0].status).toBe("Waiting");
+    expect(parsed.active[0].subagent).toBe("forge-session-xyz");
+    expect(parsed.active[0].next).toBe("Verify something");
+  });
+});
+
+describe("serializeActiveTaskFile", () => {
+  it("generates valid markdown with active and completed sections", () => {
+    const active = [makeEntry({ label: "task-a", status: "In progress" })];
+    const completed = [makeEntry({ label: "task-b", status: "Done" })];
+    const result = serializeActiveTaskFile(active, completed);
+    expect(result).toContain("## Active Tasks");
+    expect(result).toContain("## Completed");
+    expect(result).toContain("[task-a]");
+    expect(result).toContain("[task-b]");
+  });
+
+  it("shows placeholder when no active tasks", () => {
+    const result = serializeActiveTaskFile([], []);
+    expect(result).toContain("_No active tasks._");
+    expect(result).not.toContain("## Completed");
+  });
+
+  it("omits completed section when empty", () => {
+    const active = [makeEntry()];
+    const result = serializeActiveTaskFile(active, []);
+    expect(result).not.toContain("## Completed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stale detection tests
+// ---------------------------------------------------------------------------
+
+describe("detectStaleTasks", () => {
+  it("flags tasks not updated in >staleHours", () => {
+    const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const freshTime = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+    const tasks = [
+      makeEntry({ label: "stale", updated: staleTime }),
+      makeEntry({ label: "fresh", updated: freshTime }),
+    ];
+    const result = detectStaleTasks(tasks, 24);
+    expect(result[0].stale).toBe(true);
+    expect(result[1].stale).toBe(false);
+  });
+
+  it("does not flag tasks updated recently", () => {
+    const freshTime = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+    const tasks = [makeEntry({ updated: freshTime })];
+    const result = detectStaleTasks(tasks, 24);
+    expect(result[0].stale).toBe(false);
+  });
+
+  it("handles invalid updated timestamp gracefully", () => {
+    const tasks = [makeEntry({ updated: "not-a-date" })];
+    const result = detectStaleTasks(tasks, 24);
+    expect(result[0].stale).toBe(false);
+  });
+
+  it("returns empty array for empty input", () => {
+    expect(detectStaleTasks([], 24)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Injection builder tests
+// ---------------------------------------------------------------------------
+
+describe("buildActiveTaskInjection", () => {
+  it("returns empty string when no active tasks", () => {
+    const result = buildActiveTaskInjection([], 500);
+    expect(result).toBe("");
+  });
+
+  it("returns empty string when all tasks are Done", () => {
+    const tasks = [makeEntry({ status: "Done" })];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result).toBe("");
+  });
+
+  it("includes task label, description, and status", () => {
+    const tasks = [makeEntry({ label: "my-task", description: "Fix the bug", status: "In progress" })];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result).toContain("my-task");
+    expect(result).toContain("Fix the bug");
+    expect(result).toContain("In progress");
+    expect(result).toContain("<active-tasks>");
+    expect(result).toContain("</active-tasks>");
+  });
+
+  it("includes next step when present", () => {
+    const tasks = [makeEntry({ next: "Deploy the fix" })];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result).toContain("Deploy the fix");
+  });
+
+  it("includes stale flag for stale tasks", () => {
+    const tasks = [makeEntry({ stale: true })];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result).toContain("STALE");
+  });
+
+  it("caps injection to budget (approximate)", () => {
+    // Create many tasks that would exceed budget
+    const tasks = Array.from({ length: 20 }, (_, i) =>
+      makeEntry({
+        label: `task-${i}`,
+        description: "A very long description that takes up lots of space and tokens in the injection block",
+        next: "Do something very specific and detailed about this particular task",
+        status: "In progress",
+      }),
+    );
+    const result = buildActiveTaskInjection(tasks, 100); // Very tight budget
+    // Should not include all 20 tasks
+    const taskMatches = result.match(/\[task-/g)?.length ?? 0;
+    expect(taskMatches).toBeLessThan(20);
+    expect(result.length).toBeLessThan(100 * 4 + 200); // Approximately within budget
+  });
+
+  it("handles all non-Done statuses", () => {
+    const activeStatuses = ["In progress", "Waiting", "Stalled", "Failed"] as const;
+    for (const status of activeStatuses) {
+      const tasks = [makeEntry({ status })];
+      const result = buildActiveTaskInjection(tasks, 500);
+      expect(result).toContain(status);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task mutation tests
+// ---------------------------------------------------------------------------
+
+describe("upsertTask", () => {
+  it("appends new task when label not found", () => {
+    const existing = [makeEntry({ label: "existing" })];
+    const result = upsertTask(existing, makeEntry({ label: "new-task" }));
+    expect(result).toHaveLength(2);
+    expect(result[1].label).toBe("new-task");
+  });
+
+  it("updates existing task when label matches", () => {
+    const existing = [makeEntry({ label: "task", status: "In progress", next: "original" })];
+    const result = upsertTask(existing, makeEntry({ label: "task", status: "Waiting", next: "updated" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].status).toBe("Waiting");
+    expect(result[0].next).toBe("updated");
+  });
+
+  it("updates the 'updated' timestamp on upsert", () => {
+    const before = new Date().toISOString();
+    const existing = [makeEntry({ label: "task", updated: "2020-01-01T00:00:00.000Z" })];
+    const result = upsertTask(existing, makeEntry({ label: "task" }));
+    expect(result[0].updated >= before).toBe(true);
+  });
+
+  it("preserves order for non-matching tasks", () => {
+    const existing = [
+      makeEntry({ label: "a" }),
+      makeEntry({ label: "b" }),
+      makeEntry({ label: "c" }),
+    ];
+    const result = upsertTask(existing, makeEntry({ label: "b", status: "Waiting" }));
+    expect(result.map((t) => t.label)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("completeTask", () => {
+  it("removes task from active and returns completed entry", () => {
+    const active = [makeEntry({ label: "task-a" }), makeEntry({ label: "task-b" })];
+    const { updated, completed } = completeTask(active, "task-a");
+    expect(updated).toHaveLength(1);
+    expect(updated[0].label).toBe("task-b");
+    expect(completed).not.toBeNull();
+    expect(completed!.label).toBe("task-a");
+    expect(completed!.status).toBe("Done");
+  });
+
+  it("returns null completed when label not found", () => {
+    const active = [makeEntry({ label: "task-a" })];
+    const { updated, completed } = completeTask(active, "nonexistent");
+    expect(updated).toHaveLength(1);
+    expect(completed).toBeNull();
+  });
+
+  it("updates the 'updated' timestamp", () => {
+    const before = new Date().toISOString();
+    const active = [makeEntry({ label: "task", updated: "2020-01-01T00:00:00.000Z" })];
+    const { completed } = completeTask(active, "task");
+    expect(completed!.updated >= before).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// File I/O tests
+// ---------------------------------------------------------------------------
+
+describe("readActiveTaskFile / writeActiveTaskFile", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "active-task-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns null when file does not exist", async () => {
+    const result = await readActiveTaskFile(join(tmpDir, "ACTIVE-TASK.md"), 24);
+    expect(result).toBeNull();
+  });
+
+  it("reads and parses existing file", async () => {
+    const filePath = join(tmpDir, "ACTIVE-TASK.md");
+    await writeActiveTaskFile(
+      filePath,
+      [makeEntry({ label: "test-task" })],
+      [],
+    );
+    const result = await readActiveTaskFile(filePath, 24);
+    expect(result).not.toBeNull();
+    expect(result!.active).toHaveLength(1);
+    expect(result!.active[0].label).toBe("test-task");
+  });
+
+  it("writes and reads back correctly (round-trip)", async () => {
+    const filePath = join(tmpDir, "ACTIVE-TASK.md");
+    const active = [
+      makeEntry({ label: "forge-99", status: "In progress", branch: "feature/test", next: "Run tests" }),
+    ];
+    const completed = [makeEntry({ label: "old-task", status: "Done" })];
+    await writeActiveTaskFile(filePath, active, completed);
+    const result = await readActiveTaskFile(filePath, 24);
+    expect(result!.active).toHaveLength(1);
+    expect(result!.active[0].branch).toBe("feature/test");
+    expect(result!.active[0].next).toBe("Run tests");
+    expect(result!.completed).toHaveLength(1);
+    expect(result!.completed[0].label).toBe("old-task");
+  });
+
+  it("creates parent directories as needed", async () => {
+    const filePath = join(tmpDir, "deep", "nested", "ACTIVE-TASK.md");
+    await writeActiveTaskFile(filePath, [makeEntry()], []);
+    const result = await readActiveTaskFile(filePath, 24);
+    expect(result).not.toBeNull();
+  });
+
+  it("applies stale detection on read", async () => {
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const filePath = join(tmpDir, "ACTIVE-TASK.md");
+    await writeActiveTaskFile(
+      filePath,
+      [makeEntry({ updated: staleTime })],
+      [],
+    );
+    const result = await readActiveTaskFile(filePath, 24);
+    expect(result!.active[0].stale).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Flush to memory log tests
+// ---------------------------------------------------------------------------
+
+describe("flushCompletedTaskToMemory", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "active-task-memory-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates memory log file if it does not exist", async () => {
+    const task = makeEntry({ label: "test-flush", status: "Done" });
+    const filePath = await flushCompletedTaskToMemory(task, tmpDir);
+    const content = await readFile(filePath, "utf-8");
+    expect(content).toContain("## Completed Task: [test-flush]");
+    expect(content).toContain("**Status:** Done");
+  });
+
+  it("appends to existing memory log file", async () => {
+    const task = makeEntry({ label: "task-b", status: "Done" });
+    // First flush
+    await flushCompletedTaskToMemory(makeEntry({ label: "task-a", status: "Done" }), tmpDir);
+    // Second flush
+    const filePath = await flushCompletedTaskToMemory(task, tmpDir);
+    const content = await readFile(filePath, "utf-8");
+    expect(content).toContain("[task-a]");
+    expect(content).toContain("[task-b]");
+  });
+
+  it("includes branch and subagent in flush when present", async () => {
+    const task = makeEntry({
+      label: "task-x",
+      status: "Done",
+      branch: "fix/something",
+      subagent: "forge-session-abc",
+    });
+    const filePath = await flushCompletedTaskToMemory(task, tmpDir);
+    const content = await readFile(filePath, "utf-8");
+    expect(content).toContain("fix/something");
+    expect(content).toContain("forge-session-abc");
+  });
+
+  it("returns the file path with correct date-based name", async () => {
+    const task = makeEntry({ label: "dated-task", status: "Done" });
+    const filePath = await flushCompletedTaskToMemory(task, tmpDir);
+    const date = new Date().toISOString().slice(0, 10);
+    expect(filePath).toContain(date);
+    expect(filePath.endsWith(".md")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLI command tests
+// ---------------------------------------------------------------------------
+
+describe("runActiveTaskList", () => {
+  let tmpDir: string;
+  let ctx: ActiveTaskContext;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "active-task-cli-"));
+    ctx = {
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      staleHours: 24,
+      flushOnComplete: false,
+      memoryDir: join(tmpDir, "memory"),
+    };
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns fileExists=false when file missing", async () => {
+    const result = await runActiveTaskList(ctx);
+    expect(result.fileExists).toBe(false);
+    expect(result.total).toBe(0);
+  });
+
+  it("lists active tasks from file", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [
+        makeEntry({ label: "task-1", status: "In progress" }),
+        makeEntry({ label: "task-2", status: "Waiting" }),
+      ],
+      [],
+    );
+    const result = await runActiveTaskList(ctx);
+    expect(result.fileExists).toBe(true);
+    expect(result.total).toBe(2);
+    expect(result.tasks[0].label).toBe("task-1");
+    expect(result.tasks[1].label).toBe("task-2");
+  });
+
+  it("counts stale tasks correctly", async () => {
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [
+        makeEntry({ label: "stale", updated: staleTime }),
+        makeEntry({ label: "fresh" }),
+      ],
+      [],
+    );
+    const result = await runActiveTaskList(ctx);
+    expect(result.staleCount).toBe(1);
+  });
+});
+
+describe("runActiveTaskStale", () => {
+  let tmpDir: string;
+  let ctx: ActiveTaskContext;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "active-task-stale-"));
+    ctx = {
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      staleHours: 24,
+      flushOnComplete: false,
+      memoryDir: join(tmpDir, "memory"),
+    };
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns empty tasks when file missing", async () => {
+    const result = await runActiveTaskStale(ctx);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it("returns stale tasks with hours stale", async () => {
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [
+        makeEntry({ label: "stale-task", updated: staleTime }),
+        makeEntry({ label: "fresh-task" }), // fresh
+      ],
+      [],
+    );
+    const result = await runActiveTaskStale(ctx);
+    expect(result.total).toBe(1);
+    expect(result.tasks[0].label).toBe("stale-task");
+    expect(result.tasks[0].hoursStale).toBeGreaterThanOrEqual(47);
+  });
+});
+
+describe("runActiveTaskComplete", () => {
+  let tmpDir: string;
+  let ctx: ActiveTaskContext;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "active-task-complete-"));
+    ctx = {
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      staleHours: 24,
+      flushOnComplete: true,
+      memoryDir: join(tmpDir, "memory"),
+    };
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns error when file missing", async () => {
+    const result = await runActiveTaskComplete(ctx, "missing");
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns error when label not found", async () => {
+    await writeActiveTaskFile(ctx.activeTaskFilePath, [makeEntry({ label: "other" })], []);
+    const result = await runActiveTaskComplete(ctx, "nonexistent");
+    expect(result.ok).toBe(false);
+    expect((result as { ok: false; error: string }).error).toContain("nonexistent");
+  });
+
+  it("marks task as Done and removes from active list", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [
+        makeEntry({ label: "target-task" }),
+        makeEntry({ label: "other-task" }),
+      ],
+      [],
+    );
+    const result = await runActiveTaskComplete(ctx, "target-task");
+    expect(result.ok).toBe(true);
+
+    const updated = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    expect(updated!.active).toHaveLength(1);
+    expect(updated!.active[0].label).toBe("other-task");
+    expect(updated!.completed).toHaveLength(1);
+    expect(updated!.completed[0].label).toBe("target-task");
+    expect(updated!.completed[0].status).toBe("Done");
+  });
+
+  it("flushes to memory log when flushOnComplete=true", async () => {
+    await writeActiveTaskFile(ctx.activeTaskFilePath, [makeEntry({ label: "flush-task" })], []);
+    const result = await runActiveTaskComplete(ctx, "flush-task");
+    expect(result.ok).toBe(true);
+    const ok = result as { ok: true; label: string; flushedTo?: string };
+    expect(ok.flushedTo).toBeDefined();
+    const content = await readFile(ok.flushedTo!, "utf-8");
+    expect(content).toContain("[flush-task]");
+  });
+
+  it("does not flush when flushOnComplete=false", async () => {
+    ctx.flushOnComplete = false;
+    await writeActiveTaskFile(ctx.activeTaskFilePath, [makeEntry({ label: "no-flush" })], []);
+    const result = await runActiveTaskComplete(ctx, "no-flush");
+    expect(result.ok).toBe(true);
+    const ok = result as { ok: true; label: string; flushedTo?: string };
+    expect(ok.flushedTo).toBeUndefined();
+  });
+});
+
+describe("runActiveTaskAdd", () => {
+  let tmpDir: string;
+  let ctx: ActiveTaskContext;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "active-task-add-"));
+    ctx = {
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      staleHours: 24,
+      flushOnComplete: false,
+      memoryDir: join(tmpDir, "memory"),
+    };
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates new task when file does not exist", async () => {
+    const result = await runActiveTaskAdd(ctx, {
+      label: "new-task",
+      description: "A brand new task",
+    });
+    expect(result.ok).toBe(true);
+    const ok = result as { ok: true; label: string; upserted: boolean };
+    expect(ok.upserted).toBe(false);
+
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    expect(taskFile!.active).toHaveLength(1);
+    expect(taskFile!.active[0].label).toBe("new-task");
+  });
+
+  it("adds optional fields when provided", async () => {
+    await runActiveTaskAdd(ctx, {
+      label: "rich-task",
+      description: "Task with extras",
+      branch: "fix/something",
+      subagent: "forge-session",
+      next: "Deploy",
+      status: "Waiting",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    const task = taskFile!.active[0];
+    expect(task.branch).toBe("fix/something");
+    expect(task.subagent).toBe("forge-session");
+    expect(task.next).toBe("Deploy");
+    expect(task.status).toBe("Waiting");
+  });
+
+  it("updates existing task when label matches", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [makeEntry({ label: "existing", next: "old next" })],
+      [],
+    );
+    const result = await runActiveTaskAdd(ctx, {
+      label: "existing",
+      description: "Updated description",
+      next: "new next",
+    });
+    expect(result.ok).toBe(true);
+    const ok = result as { ok: true; label: string; upserted: boolean };
+    expect(ok.upserted).toBe(true);
+
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    expect(taskFile!.active).toHaveLength(1);
+    expect(taskFile!.active[0].description).toBe("Updated description");
+    expect(taskFile!.active[0].next).toBe("new next");
+  });
+
+  it("rejects invalid status gracefully (falls back to In progress)", async () => {
+    await runActiveTaskAdd(ctx, {
+      label: "bad-status",
+      description: "Task with bad status",
+      status: "InvalidStatus",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 24);
+    expect(taskFile!.active[0].status).toBe("In progress");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Config injection tests
+// ---------------------------------------------------------------------------
+
+describe("buildActiveTaskInjection (integration)", () => {
+  it("filters out Done tasks from injection", () => {
+    const tasks = [
+      makeEntry({ label: "done", status: "Done" }),
+      makeEntry({ label: "active", status: "In progress" }),
+    ];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result).toContain("[active]");
+    expect(result).not.toContain("[done]");
+  });
+
+  it("includes subagent session in injection", () => {
+    const tasks = [makeEntry({ subagent: "forge-session-xyz" })];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result).toContain("forge-session-xyz");
+  });
+
+  it("handles multiple active tasks within budget", () => {
+    const tasks = [
+      makeEntry({ label: "task-1", status: "In progress" }),
+      makeEntry({ label: "task-2", status: "Waiting" }),
+      makeEntry({ label: "task-3", status: "Stalled" }),
+    ];
+    const result = buildActiveTaskInjection(tasks, 1000);
+    expect(result).toContain("task-1");
+    expect(result).toContain("task-2");
+    expect(result).toContain("task-3");
+  });
+});

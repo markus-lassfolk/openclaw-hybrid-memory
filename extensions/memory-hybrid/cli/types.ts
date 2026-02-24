@@ -113,3 +113,42 @@ export type UninstallCliResult =
 export type ConfigCliResult =
   | { ok: true; configPath: string; message: string }
   | { ok: false; error: string };
+
+/** Active task working memory CLI result types */
+export type ActiveTaskListResult = {
+  tasks: Array<{
+    label: string;
+    description: string;
+    status: string;
+    branch?: string;
+    subagent?: string;
+    next?: string;
+    started: string;
+    updated: string;
+    stale: boolean;
+  }>;
+  total: number;
+  staleCount: number;
+  filePath: string;
+  fileExists: boolean;
+};
+
+export type ActiveTaskCompleteResult =
+  | { ok: true; label: string; flushedTo?: string }
+  | { ok: false; error: string };
+
+export type ActiveTaskStaleResult = {
+  tasks: Array<{
+    label: string;
+    description: string;
+    status: string;
+    updated: string;
+    hoursStale: number;
+  }>;
+  total: number;
+  filePath: string;
+};
+
+export type ActiveTaskAddResult =
+  | { ok: true; label: string; upserted: boolean }
+  | { ok: false; error: string };
