@@ -2080,8 +2080,8 @@ export class FactsDB {
 
   /** List positive procedures updated in the last N days (for memory-to-skills). Days clamped to [1, 365]. */
   listProceduresUpdatedInLastNDays(days: number, limit = 500): ProcedureEntry[] {
-    const clampedDays = Math.min(365, Math.max(1, Math.floor(days)));
     if (Number.isNaN(days) || days <= 0) return [];
+    const clampedDays = Math.min(365, Math.max(1, Math.floor(days)));
     try {
       const cutoff = Math.floor(Date.now() / 1000) - clampedDays * 24 * 3600;
       const rows = this.liveDb
