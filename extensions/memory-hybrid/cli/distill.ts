@@ -184,7 +184,6 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         return;
       }
       console.log(`\nProcedures: ${result.proceduresCollected}; clusters: ${result.clustersConsidered}; qualifying: ${result.qualifyingClusters}.`);
-      if (result.skippedDedup) console.log(`Skipped (dedup): ${result.skippedDedup}.`);
       if (result.skippedOther) console.log(`Skipped (other): ${result.skippedOther}.`);
       for (const p of result.pathsWritten) console.log(`  ${p}`);
       for (const d of result.drafts) {

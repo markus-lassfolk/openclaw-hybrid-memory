@@ -26,7 +26,6 @@ export type SkillsSuggestResult = {
   clustersConsidered: number;
   qualifyingClusters: number;
   pathsWritten: string[];
-  skippedDedup: number;
   skippedOther: number;
   drafts: Array<{ pattern: string; count: number; path: string }>;
 };
@@ -159,7 +158,6 @@ export async function runMemoryToSkills(
     clustersConsidered: 0,
     qualifyingClusters: 0,
     pathsWritten: [],
-    skippedDedup: 0,
     skippedOther: 0,
     drafts: [],
   };
