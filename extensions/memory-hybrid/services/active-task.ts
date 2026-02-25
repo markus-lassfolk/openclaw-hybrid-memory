@@ -656,6 +656,16 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
     try {
       const raw = await readFile(resolvedFilePath, "utf-8");
       const parsed = JSON.parse(raw) as TaskSignal;
+      // Validate required fields to avoid noisy downstream errors
+      if (
+        typeof parsed.agent !== "string" ||
+        typeof parsed.taskRef !== "string" ||
+        typeof parsed.timestamp !== "string" ||
+        typeof parsed.signal !== "string" ||
+        typeof parsed.summary !== "string"
+      ) {
+        continue; // Skip signals with missing required fields
+      }
       signals.push({ ...parsed, _filePath: resolvedFilePath });
     } catch {
       // Skip malformed or unreadable files — don't crash the orchestrator
