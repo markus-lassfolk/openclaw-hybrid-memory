@@ -5,7 +5,7 @@
  */
 
 import Database from "better-sqlite3";
-import { createHash, createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
@@ -15,14 +15,17 @@ import { capturePluginError } from "../services/error-reporter.js";
 const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
 const CRED_ALGO = "aes-256-gcm";
-const CRED_KDF_VERSION = 2; // v1 = SHA-256 (legacy), v2 = scrypt
+const CRED_KDF_VERSION = 2; // v1 = scrypt (legacy params), v2 = scrypt (recommended params)
 const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 
-/** Derive encryption key using scrypt (v2) or SHA-256 (v1 for backward compatibility). */
+/** Derive encryption key using scrypt.
+ *  v1: legacy scrypt with conservative parameters (N=8192, r=8, p=1).
+ *  v2: recommended scrypt parameters (N=16384, r=8, p=1).
+ */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
-    // Legacy SHA-256 KDF (weak, kept for backward compatibility)
-    return createHash("sha256").update(password, "utf8").digest();
+    // Legacy scrypt with conservative parameters (N=8192, r=8, p=1)
+    return scryptSync(password, salt, 32, { N: 8192, r: 8, p: 1 });
   }
   // v2: scrypt with recommended parameters (N=16384, r=8, p=1)
   return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
