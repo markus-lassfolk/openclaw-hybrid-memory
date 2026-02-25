@@ -21,8 +21,9 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile, writeFile, mkdir, readdir, unlink, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readFile, writeFile, mkdir, readdir, unlink, stat, realpath } from "node:fs/promises";
+import { dirname, join, resolve, relative, isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
 
 /** Valid task statuses */
@@ -564,7 +565,7 @@ export type TaskSignalType = "completed" | "blocked" | "escalate" | "update";
 
 /**
  * Structured status signal that a sub-agent writes to
- * `memory/task-signals/<label>.json` for the orchestrator to consume.
+ * `memory/task-signals/<label>-<timestamp>-<suffix>.json` for the orchestrator to consume.
  */
 export interface TaskSignal {
   /** Identifier of the emitting agent (e.g. "reaver-mqtt-auth") */
@@ -596,7 +597,7 @@ export interface PendingTaskSignal extends TaskSignal {
  * Emit a structured signal file for the orchestrator to consume.
  * Should only be called by sub-agents (but is not restricted).
  *
- * @param label     Short identifier for this signal (used as filename, e.g. "forge-108")
+ * @param label     Short identifier for this signal (used in filename, e.g. "forge-108")
  * @param signal    The signal payload to write
  * @param memoryDir Absolute path to the memory directory
  * @returns         Absolute path of the written signal file
@@ -610,9 +611,10 @@ export async function writeTaskSignal(
   await mkdir(signalsDir, { recursive: true });
   // Sanitise label to be filesystem-safe
   const safeLabel = label.replace(/[^a-zA-Z0-9_\-]/g, "-");
-  // Add timestamp suffix to prevent collision when different labels sanitize to the same value
+  // Add timestamp + random suffix to prevent collisions (sanitized labels or same-millisecond writes)
   const timestamp = Date.now();
-  const filePath = join(signalsDir, `${safeLabel}-${timestamp}.json`);
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
+  const filePath = join(signalsDir, `${safeLabel}-${timestamp}-${suffix}.json`);
   await writeFile(filePath, JSON.stringify(signal, null, 2), "utf-8");
   return filePath;
 }
@@ -636,19 +638,25 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
     throw err;
   }
 
-  const resolvedSignalsDir = resolve(signalsDir);
+  const resolvedSignalsDir = await realpath(signalsDir);
   const signals: PendingTaskSignal[] = [];
   for (const file of files) {
     if (!file.endsWith(".json")) continue;
     const filePath = join(signalsDir, file);
-    const resolvedFilePath = resolve(filePath);
-    if (!resolvedFilePath.startsWith(resolvedSignalsDir + "/") && resolvedFilePath !== resolvedSignalsDir) {
+    let resolvedFilePath: string;
+    try {
+      resolvedFilePath = await realpath(filePath);
+    } catch {
+      continue;
+    }
+    const rel = relative(resolvedSignalsDir, resolvedFilePath);
+    if (rel.startsWith("..") || isAbsolute(rel)) {
       continue;
     }
     try {
-      const raw = await readFile(filePath, "utf-8");
+      const raw = await readFile(resolvedFilePath, "utf-8");
       const parsed = JSON.parse(raw) as TaskSignal;
-      signals.push({ ...parsed, _filePath: filePath });
+      signals.push({ ...parsed, _filePath: resolvedFilePath });
     } catch {
       // Skip malformed or unreadable files — don't crash the orchestrator
       continue;
@@ -717,7 +725,8 @@ export async function readActiveTaskFileWithMtime(
  * since `knownMtime` was recorded. If the file was modified concurrently, the
  * caller-supplied `merge` callback is invoked with the freshly-read file so it
  * can re-apply its changes on top of the latest state. Up to `maxRetries`
- * attempts are made before throwing.
+ * attempts are made; if conflicts persist, a last-write-wins fallback write is
+ * performed to avoid leaving the file untouched.
  *
  * @param filePath      Absolute path to ACTIVE-TASK.md
  * @param active        Active task entries to write
@@ -728,6 +737,7 @@ export async function readActiveTaskFileWithMtime(
  *                      to write. Return null to abort the write.
  * @param maxRetries    Maximum number of retry attempts (default: 3)
  * @param staleMinutes  Minutes before a task is considered stale (default: 1440)
+ * @returns             True if a write occurred; false if merge aborted the write
  */
 export async function writeActiveTaskFileOptimistic(
   filePath: string,
@@ -739,7 +749,7 @@ export async function writeActiveTaskFileOptimistic(
   ) => Promise<[ActiveTaskEntry[], ActiveTaskEntry[]] | null>,
   maxRetries = 3,
   staleMinutes = 1440,
-): Promise<void> {
+): Promise<boolean> {
   let currentActive = active;
   let currentCompleted = completed;
 
@@ -753,7 +763,7 @@ export async function writeActiveTaskFileOptimistic(
       // File doesn't exist yet — no conflict possible, write directly
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         await writeActiveTaskFile(filePath, currentActive, currentCompleted);
-        return;
+        return true;
       }
       throw err;
     }
@@ -764,10 +774,10 @@ export async function writeActiveTaskFileOptimistic(
       if (!fresh) {
         // File was deleted between stat and readFile — just write
         await writeActiveTaskFile(filePath, currentActive, currentCompleted);
-        return;
+        return true;
       }
       const merged = await merge(fresh);
-      if (merged === null) return; // Caller decided to abort
+      if (merged === null) return false; // Caller decided to abort
       [currentActive, currentCompleted] = merged;
       // Update knownMtime to fresh state for next iteration
       knownMtime = fresh.mtime;
@@ -777,11 +787,12 @@ export async function writeActiveTaskFileOptimistic(
 
     // No conflict detected — write and return
     await writeActiveTaskFile(filePath, currentActive, currentCompleted);
-    return;
+    return true;
   }
 
   // Exhausted retries — write whatever we have (last-write-wins fallback)
   await writeActiveTaskFile(filePath, currentActive, currentCompleted);
+  return true;
 }
 
 /**

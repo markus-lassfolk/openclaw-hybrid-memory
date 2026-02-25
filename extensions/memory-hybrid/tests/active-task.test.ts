@@ -1027,11 +1027,11 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     };
   }
 
-  it("writes a signal file to memory/task-signals/<label>.json", async () => {
+  it("writes a signal file to memory/task-signals/<label>-<timestamp>-<suffix>.json", async () => {
     const signal = makeSignal();
     const filePath = await writeTaskSignal("my-label", signal, tmpDir);
     expect(filePath).toContain("task-signals");
-    expect(filePath).toMatch(/my-label-\d+\.json$/);
+    expect(filePath).toMatch(/my-label-\d+-[a-f0-9]{8}\.json$/);
     const raw = await readFile(filePath, "utf-8");
     const parsed = JSON.parse(raw);
     expect(parsed.agent).toBe("test-agent");
@@ -1068,7 +1068,7 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     await writeTaskSignal("with-path", signal, tmpDir);
     const signals = await readPendingSignals(tmpDir);
     expect(signals[0]._filePath).toBeDefined();
-    expect(signals[0]._filePath).toMatch(/with-path-\d+\.json$/);
+    expect(signals[0]._filePath).toMatch(/with-path-\d+-[a-f0-9]{8}\.json$/);
   });
 
   it("skips malformed JSON files without crashing", async () => {
@@ -1157,7 +1157,7 @@ describe("readActiveTaskFileWithMtime", () => {
     const first = await readActiveTaskFileWithMtime(filePath);
 
     // Brief pause to ensure mtime changes
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 1100));
 
     await writeActiveTaskFile(filePath, [makeEntry({ label: "second" })], []);
     const second = await readActiveTaskFileWithMtime(filePath);
@@ -1266,7 +1266,7 @@ describe("writeActiveTaskFileOptimistic", () => {
     const read = await readActiveTaskFileWithMtime(filePath);
 
     // Simulate a concurrent write by updating the file with a small delay
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 1100));
     await writeActiveTaskFile(filePath, [makeEntry({ label: "concurrent" })], []);
 
     let mergeCalled = false;
@@ -1294,7 +1294,7 @@ describe("writeActiveTaskFileOptimistic", () => {
     const read = await readActiveTaskFileWithMtime(filePath);
 
     // Simulate a concurrent write
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 1100));
     await writeActiveTaskFile(filePath, [makeEntry({ label: "concurrent" })], []);
 
     await writeActiveTaskFileOptimistic(

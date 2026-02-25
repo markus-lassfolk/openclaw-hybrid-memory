@@ -95,6 +95,7 @@ async function consumePendingTaskSignals(
   activeTaskPath: string,
   workspaceRoot: string,
   staleMinutes: number,
+  flushOnComplete: boolean,
   logger?: { info?: (msg: string) => void; warn?: (msg: string) => void },
 ): Promise<void> {
   const memoryDir = join(workspaceRoot, "memory");
@@ -108,6 +109,23 @@ async function consumePendingTaskSignals(
 
   if (signals.length === 0) return;
 
+  const signalTtlMs = Math.max(staleMinutes * 60 * 1000, 24 * 60 * 60 * 1000);
+  const nowMs = Date.now();
+  const isSignalExpired = (signal: PendingTaskSignal): boolean => {
+    const parsed = Date.parse(signal.timestamp);
+    if (Number.isNaN(parsed)) return false;
+    return nowMs - parsed > signalTtlMs;
+  };
+
+  signals = [...signals].sort((a, b) => {
+    const at = Date.parse(a.timestamp);
+    const bt = Date.parse(b.timestamp);
+    if (Number.isNaN(at) || Number.isNaN(bt)) {
+      return a._filePath.localeCompare(b._filePath);
+    }
+    return at === bt ? a._filePath.localeCompare(b._filePath) : at - bt;
+  });
+
   // Re-read the task file once and apply all signals in a single write
   let taskFile;
   try {
@@ -118,113 +136,194 @@ async function consumePendingTaskSignals(
   }
 
   if (!taskFile) {
-    // No task file yet — can't apply signals; delete them anyway to avoid accumulation
-    for (const signal of signals) {
-      await deleteSignal(signal._filePath).catch(() => {});
+    const expiredSignals = signals.filter(isSignalExpired);
+    if (expiredSignals.length > 0) {
+      for (const signal of expiredSignals) {
+        await deleteSignal(signal._filePath).catch(() => {});
+      }
+      logger?.info?.(
+        `memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) while ACTIVE-TASK.md is missing`,
+      );
     }
+    logger?.info?.("memory-hybrid: ACTIVE-TASK.md missing; deferring pending task signals");
     return;
   }
 
   const knownMtime = taskFile.mtime;
 
-  // Helper to apply signals to a task file state
+  const findMatchingTask = (
+    activeEntries: ActiveTaskEntry[],
+    signal: PendingTaskSignal,
+  ): ActiveTaskEntry | null => {
+    const byLabel = activeEntries.filter((t) => t.label === signal.taskRef);
+    if (byLabel.length === 1) return byLabel[0];
+    if (byLabel.length > 1) {
+      logger?.warn?.(
+        `memory-hybrid: multiple active tasks share label ${signal.taskRef}; leaving signal pending`,
+      );
+      return null;
+    }
+
+    const byDescription = activeEntries.filter((t) => t.description === signal.taskRef);
+    if (byDescription.length === 1) return byDescription[0];
+    if (byDescription.length > 1) {
+      logger?.warn?.(
+        `memory-hybrid: multiple active tasks match description ${signal.taskRef}; leaving signal pending`,
+      );
+      return null;
+    }
+
+    return null;
+  };
+
   const applySignals = (
     activeEntries: ActiveTaskEntry[],
     completedEntries: ActiveTaskEntry[],
-  ): [ActiveTaskEntry[], ActiveTaskEntry[], PendingTaskSignal[]] => {
-    let updatedActive = activeEntries;
+  ): {
+    active: ActiveTaskEntry[];
+    completed: ActiveTaskEntry[];
+    processedSignals: PendingTaskSignal[];
+    expiredSignals: PendingTaskSignal[];
+    completedToFlush: ActiveTaskEntry[];
+  } => {
+    let updatedActive = [...activeEntries];
     const updatedCompleted = [...completedEntries];
     const processedSignals: PendingTaskSignal[] = [];
+    const expiredSignals: PendingTaskSignal[] = [];
+    const completedToFlush: ActiveTaskEntry[] = [];
 
     for (const signal of signals) {
       try {
-        const now = new Date().toISOString();
-        // Find the matching task by label (taskRef may be a label or description)
-        // Prioritize exact label matches to avoid ambiguity
-        let existing = updatedActive.find((t) => t.label === signal.agent);
-        if (!existing) {
-          existing = updatedActive.find((t) => t.label === signal.taskRef);
-        }
-        if (!existing) {
-          existing = updatedActive.find((t) => t.description === signal.taskRef);
-        }
+        const timestamp = Date.parse(signal.timestamp);
+        const updatedTimestamp = Number.isNaN(timestamp)
+          ? new Date().toISOString()
+          : signal.timestamp;
 
-        let applied = false;
-        if (signal.signal === "completed") {
-          // Mark the task as done and move to completed
-          const targetLabel = existing?.label ?? signal.agent;
-          const { updated, completed } = completeTask(updatedActive, targetLabel);
-          if (completed) {
-            updatedActive = updated;
-            updatedCompleted.push(completed);
-            applied = true;
+        const existing = findMatchingTask(updatedActive, signal);
+        if (!existing) {
+          if (isSignalExpired(signal)) {
+            expiredSignals.push(signal);
+          } else {
+            logger?.warn?.(
+              `memory-hybrid: no matching active task for signal ${signal.taskRef}; leaving pending`,
+            );
           }
-        } else if (existing) {
-          // Update the existing task with signal data
-          const newStatus: ActiveTaskEntry["status"] =
-            signal.signal === "blocked" ? "Stalled" :
-            signal.signal === "escalate" ? "Waiting" :
-            existing.status;
-
-          const updatedEntry: ActiveTaskEntry = {
-            ...existing,
-            status: newStatus,
-            next: signal.summary
-              ? `[Signal: ${signal.signal}] ${signal.summary}`
-              : existing.next,
-            updated: signal.timestamp ?? now,
-          };
-          updatedActive = upsertTask(updatedActive, updatedEntry, true);
-          applied = true;
+          continue;
         }
 
-        // Only mark signal as processed if it was actually applied
-        if (applied) {
-          processedSignals.push(signal);
+        if (signal.signal === "completed") {
+          const { updated, completed } = completeTask(updatedActive, existing.label);
+          if (completed) {
+            const completedEntry = { ...completed, updated: updatedTimestamp };
+            updatedActive = updated;
+            updatedCompleted.push(completedEntry);
+            processedSignals.push(signal);
+            completedToFlush.push(completedEntry);
+          }
+          continue;
         }
+
+        if (signal.signal !== "blocked" && signal.signal !== "escalate" && signal.signal !== "update") {
+          if (isSignalExpired(signal)) {
+            expiredSignals.push(signal);
+          } else {
+            logger?.warn?.(
+              `memory-hybrid: unhandled task signal "${signal.signal}" for ${signal.taskRef}; leaving pending`,
+            );
+          }
+          continue;
+        }
+
+        const newStatus: ActiveTaskEntry["status"] =
+          signal.signal === "blocked" ? "Stalled" :
+          signal.signal === "escalate" ? "Waiting" :
+          existing.status;
+
+        const updatedEntry: ActiveTaskEntry = {
+          ...existing,
+          status: newStatus,
+          next: signal.summary
+            ? `[Signal: ${signal.signal}] ${signal.summary}`
+            : existing.next,
+          updated: updatedTimestamp,
+        };
+        updatedActive = upsertTask(updatedActive, updatedEntry, true);
+        processedSignals.push(signal);
       } catch (err) {
         logger?.warn?.(`memory-hybrid: failed to process signal from ${signal._filePath}: ${err}`);
-        // Don't mark as processed on error — leave for next attempt
       }
     }
 
-    return [updatedActive, updatedCompleted, processedSignals];
+    return {
+      active: updatedActive,
+      completed: updatedCompleted,
+      processedSignals,
+      expiredSignals,
+      completedToFlush,
+    };
   };
 
-  const [activeEntries, completedEntries, processedSignals] = applySignals(
-    taskFile.active,
-    taskFile.completed,
-  );
+  let latestResult = applySignals(taskFile.active, taskFile.completed);
+  let processedSignals = latestResult.processedSignals;
+  let expiredSignals = latestResult.expiredSignals;
+  let completedToFlush = latestResult.completedToFlush;
 
-  if (processedSignals.length > 0) {
-    try {
-      await writeActiveTaskFileOptimistic(
-        activeTaskPath,
-        activeEntries,
-        completedEntries,
-        knownMtime,
-        async (fresh) => {
-          // Conflict detected — re-apply signals on fresh state
-          const [reappliedActive, reappliedCompleted] = applySignals(
-            fresh.active,
-            fresh.completed,
-          );
-          return [reappliedActive, reappliedCompleted];
-        },
-        3,
-        staleMinutes,
-      );
-      // Only delete signal files after successful write
-      for (const signal of processedSignals) {
+  if (processedSignals.length === 0) {
+    if (expiredSignals.length > 0) {
+      for (const signal of expiredSignals) {
         await deleteSignal(signal._filePath).catch(() => {});
       }
       logger?.info?.(
-        `memory-hybrid: consumed ${processedSignals.length} pending task signal(s) from sub-agents`,
+        `memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) with no matching task`,
       );
-    } catch (err) {
-      logger?.warn?.(`memory-hybrid: failed to write ACTIVE-TASK.md after signal consumption: ${err}`);
-      // Signal files are not deleted, so they will be retried on next run
     }
+    return;
+  }
+
+  let wrote = false;
+  try {
+    wrote = await writeActiveTaskFileOptimistic(
+      activeTaskPath,
+      latestResult.active,
+      latestResult.completed,
+      knownMtime,
+      async (fresh) => {
+        latestResult = applySignals(fresh.active, fresh.completed);
+        processedSignals = latestResult.processedSignals;
+        expiredSignals = latestResult.expiredSignals;
+        completedToFlush = latestResult.completedToFlush;
+        return [latestResult.active, latestResult.completed];
+      },
+      3,
+      staleMinutes,
+    );
+  } catch (err) {
+    logger?.warn?.(`memory-hybrid: failed to write ACTIVE-TASK.md after signal consumption: ${err}`);
+  }
+
+  if (wrote) {
+    for (const signal of processedSignals) {
+      await deleteSignal(signal._filePath).catch(() => {});
+    }
+    for (const signal of expiredSignals) {
+      await deleteSignal(signal._filePath).catch(() => {});
+    }
+    if (flushOnComplete && completedToFlush.length > 0) {
+      const memoryDir = join(workspaceRoot, "memory");
+      for (const completed of completedToFlush) {
+        await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
+      }
+    }
+    logger?.info?.(
+      `memory-hybrid: consumed ${processedSignals.length} pending task signal(s) from sub-agents`,
+    );
+  } else if (expiredSignals.length > 0) {
+    for (const signal of expiredSignals) {
+      await deleteSignal(signal._filePath).catch(() => {});
+    }
+    logger?.info?.(
+      `memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) after write abort`,
+    );
   }
 }
 
@@ -964,7 +1063,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
           if (!label) {
             // Consume pending signals even when label is missing
-            await consumePendingTaskSignals(resolvedActiveTaskPath, workspaceRoot, staleMinutes, api.logger);
+            await consumePendingTaskSignals(
+              resolvedActiveTaskPath,
+              workspaceRoot,
+              staleMinutes,
+              ctx.cfg.activeTask.flushOnComplete,
+              api.logger,
+            );
             return;
           }
 
@@ -974,14 +1079,26 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           );
           if (!taskFile) {
             // Consume pending signals even when task file doesn't exist
-            await consumePendingTaskSignals(resolvedActiveTaskPath, workspaceRoot, staleMinutes, api.logger);
+            await consumePendingTaskSignals(
+              resolvedActiveTaskPath,
+              workspaceRoot,
+              staleMinutes,
+              ctx.cfg.activeTask.flushOnComplete,
+              api.logger,
+            );
             return;
           }
 
           const existingTask = taskFile.active.find((t) => t.label === label);
           if (!existingTask) {
             // Task not tracked — skip checkpoint but still consume signals
-            await consumePendingTaskSignals(resolvedActiveTaskPath, workspaceRoot, staleMinutes, api.logger);
+            await consumePendingTaskSignals(
+              resolvedActiveTaskPath,
+              workspaceRoot,
+              staleMinutes,
+              ctx.cfg.activeTask.flushOnComplete,
+              api.logger,
+            );
             return;
           }
 
@@ -1018,7 +1135,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           );
 
           // Consume any pending task signals emitted by sub-agents
-          await consumePendingTaskSignals(resolvedActiveTaskPath, workspaceRoot, staleMinutes, api.logger);
+          await consumePendingTaskSignals(
+            resolvedActiveTaskPath,
+            workspaceRoot,
+            staleMinutes,
+            ctx.cfg.activeTask.flushOnComplete,
+            api.logger,
+          );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "active-task-subagent-end",
