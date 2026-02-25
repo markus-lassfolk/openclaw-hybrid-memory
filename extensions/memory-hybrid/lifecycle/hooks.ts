@@ -674,7 +674,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
           const directiveLimit = directivesCfg.limit;
           const maxDirectiveCalls = directivesCfg.maxPerPrompt;
-          const maxDirectiveCandidates = Math.max(limit, directiveLimit * maxDirectiveCalls);
+          const maxDirectiveCandidates = limit + directiveLimit * maxDirectiveCalls;
           const directiveSeenIds = new Set(candidates.map((c) => c.entry.id));
           const directivePriorityIds = new Set<string>();
           const directiveMatches: string[] = [];
@@ -733,8 +733,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (directivesCfg.sessionStart) {
               const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
               if (!sessionStartSeen.has(sessionKey)) {
+                sessionStartSeen.add(sessionKey);
                 if (canRunDirective()) {
-                  sessionStartSeen.add(sessionKey);
                   const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
                   directiveCalls += 1;
                   addDirectiveResults(results, "sessionStart");
@@ -744,6 +744,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           if (directiveMatches.length > 0) {
+            // Apply directive priority boost before sorting to ensure directive results stay competitive
+            candidates = candidates.map((r) => {
+              if (directivePriorityIds.has(r.entry.id)) {
+                return { ...r, score: r.score * 1.25 };
+              }
+              return r;
+            });
             // Keep ordering deterministic and ensure directive results are meaningfully represented.
             candidates.sort((a, b) => {
               const s = b.score - a.score;
@@ -783,9 +790,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                           1 - (nowSec - r.entry.lastConfirmedAt) / NINETY_DAYS_SEC,
                         );
                 s *= importanceFactor * recencyFactor;
-              }
-              if (directivePriorityIds.has(r.entry.id)) {
-                s *= 1.25;
               }
               // Access-count salience boost — frequently recalled facts score higher
               const recallCount = r.entry.recallCount ?? 0;
