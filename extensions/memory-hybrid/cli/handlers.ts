@@ -3085,14 +3085,14 @@ function getPluginConfigFromFile(configPath: string): { config: Record<string, u
 /**
  * Set nested config value
  */
-function setNested(obj: Record<string, unknown>, path: string, value: unknown): void {
+function setNested(obj: Record<string, unknown>, path: string, value: unknown): boolean {
   const parts = path.split(".");
   let cur: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const p = parts[i];
     // Prevent prototype pollution via dangerous path segments
     if (p === "__proto__" || p === "constructor" || p === "prototype") {
-      return;
+      return false;
     }
     if (!(p in cur) || typeof (cur as any)[p] !== "object" || (cur as any)[p] === null) (cur as any)[p] = {};
     cur = (cur as any)[p] as Record<string, unknown>;
@@ -3100,7 +3100,7 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
   const last = parts[parts.length - 1];
   // Also prevent setting dangerous keys at the final segment
   if (last === "__proto__" || last === "constructor" || last === "prototype") {
-    return;
+    return false;
   }
   const v =
     value === "true" || value === "enabled"
@@ -3115,6 +3115,7 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
               ? parseFloat(String(value))
               : value;
   (cur as any)[last] = v;
+  return true;
 }
 
 /**
@@ -3294,7 +3295,9 @@ export function runConfigSetForCli(
     }
     return { ok: true, configPath, message: `Set credentials.enabled = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
   }
-  setNested(out.config, k, value);
+  if (!setNested(out.config, k, value)) {
+    return { ok: false, error: `Invalid config key: ${key}` };
+  }
   const written = getNested(out.config, k);
   const writtenStr = typeof written === "string" ? written : JSON.stringify(written);
 
