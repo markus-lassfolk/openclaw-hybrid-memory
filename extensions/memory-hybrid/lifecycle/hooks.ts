@@ -640,22 +640,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             candidates = candidates.slice(0, limit);
           }
 
-          const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
-          const directiveLimit = directivesCfg.limit;
-          const directiveSeenIds = new Set(candidates.map((c) => c.entry.id));
-          const directiveMatches: string[] = [];
-
-          function addDirectiveResults(results: SearchResult[], label: string): void {
-            if (results.length === 0) return;
-            for (const r of results) {
-              if (directiveSeenIds.has(r.entry.id)) continue;
-              directiveSeenIds.add(r.entry.id);
-              candidates.push(r);
-            }
-            directiveMatches.push(label);
-          }
-
-          async function runDirectiveRecall(query: string, opts?: { entity?: string }): Promise<SearchResult[]> {
+          async function runRecallPipeline(
+            query: string,
+            limit: number,
+            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string }
+          ): Promise<SearchResult[]> {
             const trimmed = query.trim();
             if (!trimmed) return [];
             const recallOpts = {
@@ -665,9 +654,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             };
             let sqliteResults: SearchResult[] = [];
             if (opts?.entity) {
-              sqliteResults = ctx.factsDb.lookup(opts.entity, undefined, undefined, { scopeFilter }).slice(0, directiveLimit);
+              sqliteResults = ctx.factsDb.lookup(opts.entity, undefined, undefined, { scopeFilter }).slice(0, limit);
             }
-            const ftsResults = ctx.factsDb.search(trimmed, directiveLimit, recallOpts);
+            const ftsResults = ctx.factsDb.search(trimmed, limit, recallOpts);
             sqliteResults = [...sqliteResults, ...ftsResults];
 
             let lanceResults: SearchResult[] = [];
@@ -686,7 +675,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     temperature: 0.3,
                     maxTokens: 150,
                     openai: ctx.openai,
-                    label: "HyDE",
+                    label: opts?.hydeLabel ?? "HyDE",
                     timeoutMs: 25_000,
                     pendingWarnings: ctx.pendingLLMWarnings,
                   });
@@ -694,14 +683,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   if (hydeText.length > 10) textToEmbed = hydeText;
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    operation: "directive-hyde-generation",
+                    operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
                     subsystem: "auto-recall",
                   });
-                  api.logger.warn(`memory-hybrid: directive HyDE generation failed, using raw query: ${err}`);
+                  api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
                 }
               }
               const vector = await ctx.embeddings.embed(textToEmbed);
-              lanceResults = await ctx.vectorDb.search(vector, directiveLimit * 2, minScore);
+              lanceResults = await ctx.vectorDb.search(vector, limit * 2, minScore);
               lanceResults = filterByScope(lanceResults, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
               lanceResults = lanceResults.map((r) => {
                 const fullEntry = ctx.factsDb.getById(r.entry.id);
@@ -712,28 +701,43 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               });
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "directive-vector-recall",
+                operation: `${opts?.errorPrefix ?? ""}vector-recall`,
                 subsystem: "auto-recall",
                 backend: "lancedb",
               });
-              api.logger.warn(`memory-hybrid: directive vector recall failed: ${err}`);
+              api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
             }
 
-            let results = mergeResults(sqliteResults, lanceResults, directiveLimit, ctx.factsDb);
+            let results = mergeResults(sqliteResults, lanceResults, limit, ctx.factsDb);
             if (ctx.cfg.memoryTiering.enabled && results.length > 0) {
               results = results.filter((r) => {
                 const full = ctx.factsDb.getById(r.entry.id);
                 return full && full.tier !== "cold";
-              }).slice(0, directiveLimit);
+              }).slice(0, limit);
             }
             return results;
           }
 
+          const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
+          const directiveLimit = directivesCfg.limit;
+          const directiveSeenIds = new Set(candidates.map((c) => c.entry.id));
+          const directiveMatches: string[] = [];
+
+          function addDirectiveResults(results: SearchResult[], label: string): void {
+            if (results.length === 0) return;
+            for (const r of results) {
+              if (directiveSeenIds.has(r.entry.id)) continue;
+              directiveSeenIds.add(r.entry.id);
+              candidates.push(r);
+            }
+            directiveMatches.push(label);
+          }
+
           if (directivesCfg.enabled) {
-            if (directivesCfg.entityMentioned && ctx.cfg.autoRecall.entityLookup.entities.length > 0) {
-              for (const entity of ctx.cfg.autoRecall.entityLookup.entities) {
+            if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookup.entities.length > 0) {
+              for (const entity of entityLookup.entities) {
                 if (!promptLower.includes(entity.toLowerCase())) continue;
-                const results = await runDirectiveRecall(entity, { entity });
+                const results = await runRecallPipeline(entity, directiveLimit, { entity, hydeLabel: "HyDE", errorPrefix: "directive-" });
                 addDirectiveResults(results, `entity:${entity}`);
               }
             }
@@ -741,7 +745,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (directivesCfg.keywords.length > 0) {
               for (const keyword of directivesCfg.keywords) {
                 if (!promptLower.includes(keyword.toLowerCase())) continue;
-                const results = await runDirectiveRecall(keyword);
+                const results = await runRecallPipeline(keyword, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-" });
                 addDirectiveResults(results, `keyword:${keyword}`);
               }
             }
@@ -751,7 +755,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               for (const [taskType, triggers] of taskTypeEntries) {
                 const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
                 if (!hit) continue;
-                const results = await runDirectiveRecall(taskType);
+                const results = await runRecallPipeline(taskType, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-" });
                 addDirectiveResults(results, `taskType:${taskType}`);
               }
             }
@@ -767,7 +771,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const sessionKey = String(sessionId);
               if (!sessionStartSeen.has(sessionKey)) {
                 sessionStartSeen.add(sessionKey);
-                const results = await runDirectiveRecall("session start");
+                const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-" });
                 addDirectiveResults(results, "sessionStart");
               }
             }
