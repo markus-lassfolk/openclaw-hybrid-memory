@@ -31,12 +31,17 @@ function run(cmd, args = [], opts = {}) {
   // On Windows, avoid running npm via a shell (cmd.exe) to prevent shell interpretation
   // of arguments that may contain user-controlled data (e.g., version from process.argv).
   if (isWindows && cmd === "npm") {
-    const npmExecPath = process.env.npm_execpath;
+    let npmExecPath = process.env.npm_execpath;
     if (!npmExecPath) {
       throw new Error(
         "Unable to locate npm safely on Windows (npm_execpath is not set). " +
           "Please run this installer via npm or npx so npm_execpath is available."
       );
+    }
+    // When invoked via npx, npm_execpath may point to npx-cli.js instead of npm-cli.js
+    // (npm issue #6662). Derive the correct npm-cli.js path.
+    if (npmExecPath.endsWith("npx-cli.js")) {
+      npmExecPath = npmExecPath.replace("npx-cli.js", "npm-cli.js");
     }
     return execFileSync(process.execPath, [npmExecPath, ...args], {
       stdio: "inherit",
