@@ -660,52 +660,84 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             sqliteResults = [...sqliteResults, ...ftsResults];
 
             let lanceResults: SearchResult[] = [];
+            const directiveAbort = new AbortController();
             try {
-              let textToEmbed = trimmed;
-              if (ctx.cfg.search?.hydeEnabled) {
-                try {
-                  const cronCfg = getCronModelConfig(ctx.cfg);
-                  const pref = getLLMModelPreference(cronCfg, "nano");
-                  const hydeModel = ctx.cfg.search.hydeModel ?? pref[0];
-                  const fallbackModels = ctx.cfg.search.hydeModel ? [] : pref.slice(1);
-                  const hydeContent = await chatCompleteWithRetry({
-                    model: hydeModel,
-                    fallbackModels,
-                    content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
-                    temperature: 0.3,
-                    maxTokens: 150,
-                    openai: ctx.openai,
-                    label: opts?.hydeLabel ?? "HyDE",
-                    timeoutMs: 25_000,
-                    pendingWarnings: ctx.pendingLLMWarnings,
-                  });
-                  const hydeText = hydeContent.trim();
-                  if (hydeText.length > 10) textToEmbed = hydeText;
-                } catch (err) {
-                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-                    subsystem: "auto-recall",
-                  });
-                  api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
+              const vectorStepPromise = (async (): Promise<SearchResult[]> => {
+                let textToEmbed = trimmed;
+                if (ctx.cfg.search?.hydeEnabled) {
+                  try {
+                    const cronCfg = getCronModelConfig(ctx.cfg);
+                    const pref = getLLMModelPreference(cronCfg, "nano");
+                    const hydeModel = ctx.cfg.search.hydeModel ?? pref[0];
+                    const fallbackModels = ctx.cfg.search.hydeModel ? [] : pref.slice(1);
+                    const hydeContent = await chatCompleteWithRetry({
+                      model: hydeModel,
+                      fallbackModels,
+                      content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
+                      temperature: 0.3,
+                      maxTokens: 150,
+                      openai: ctx.openai,
+                      label: opts?.hydeLabel ?? "HyDE",
+                      timeoutMs: 25_000,
+                      signal: directiveAbort.signal,
+                      pendingWarnings: ctx.pendingLLMWarnings,
+                    });
+                    const hydeText = hydeContent.trim();
+                    if (hydeText.length > 10) textToEmbed = hydeText;
+                  } catch (err) {
+                    if (!directiveAbort.signal.aborted) {
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
+                        subsystem: "auto-recall",
+                      });
+                      api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
+                    }
+                  }
                 }
+                const vector = await ctx.embeddings.embed(textToEmbed);
+                let results = await ctx.vectorDb.search(vector, limit * 2, minScore);
+                results = filterByScope(results, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
+                results = results.map((r) => {
+                  const fullEntry = ctx.factsDb.getById(r.entry.id);
+                  if (fullEntry) {
+                    return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
+                  }
+                  return r;
+                });
+                return results;
+              })();
+              let timeoutId: NodeJS.Timeout | undefined;
+              const timeoutPromise = new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                  directiveAbort.abort();
+                  reject(new Error(`directive recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
+                }, VECTOR_STEP_TIMEOUT_MS);
+              });
+              try {
+                lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
+              } finally {
+                if (timeoutId !== undefined) clearTimeout(timeoutId);
+                vectorStepPromise.catch((err) => {
+                  if (!directiveAbort.signal.aborted) {
+                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
+                      subsystem: "auto-recall",
+                    });
+                  }
+                });
               }
-              const vector = await ctx.embeddings.embed(textToEmbed);
-              lanceResults = await ctx.vectorDb.search(vector, limit * 2, minScore);
-              lanceResults = filterByScope(lanceResults, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
-              lanceResults = lanceResults.map((r) => {
-                const fullEntry = ctx.factsDb.getById(r.entry.id);
-                if (fullEntry) {
-                  return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
-                }
-                return r;
-              });
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: `${opts?.errorPrefix ?? ""}vector-recall`,
-                subsystem: "auto-recall",
-                backend: "lancedb",
-              });
-              api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+              const isTimeout = err instanceof Error && err.message.includes("timed out");
+              if (isTimeout) {
+                api.logger.warn?.(`memory-hybrid: ${err.message}, using FTS-only recall`);
+              } else {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+                  subsystem: "auto-recall",
+                  backend: "lancedb",
+                });
+                api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+              }
             }
 
             let results = mergeResults(sqliteResults, lanceResults, limit, ctx.factsDb);
