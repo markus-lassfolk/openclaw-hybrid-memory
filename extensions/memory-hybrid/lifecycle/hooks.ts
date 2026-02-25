@@ -149,6 +149,7 @@ async function consumePendingTaskSignals(
           existing = updatedActive.find((t) => t.description === signal.taskRef);
         }
 
+        let applied = false;
         if (signal.signal === "completed") {
           // Mark the task as done and move to completed
           const targetLabel = existing?.label ?? signal.agent;
@@ -156,6 +157,7 @@ async function consumePendingTaskSignals(
           if (completed) {
             updatedActive = updated;
             updatedCompleted.push(completed);
+            applied = true;
           }
         } else if (existing) {
           // Update the existing task with signal data
@@ -173,10 +175,13 @@ async function consumePendingTaskSignals(
             updated: signal.timestamp ?? now,
           };
           updatedActive = upsertTask(updatedActive, updatedEntry, true);
+          applied = true;
         }
 
-        // Mark signal as processed (will delete after successful write)
-        processedSignals.push(signal);
+        // Only mark signal as processed if it was actually applied
+        if (applied) {
+          processedSignals.push(signal);
+        }
       } catch (err) {
         logger?.warn?.(`memory-hybrid: failed to process signal from ${signal._filePath}: ${err}`);
         // Don't mark as processed on error — leave for next attempt

@@ -22,7 +22,7 @@
 
 import { existsSync } from "node:fs";
 import { readFile, writeFile, mkdir, readdir, unlink, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 
 /** Valid task statuses */
@@ -636,10 +636,15 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
     throw err;
   }
 
+  const resolvedSignalsDir = resolve(signalsDir);
   const signals: PendingTaskSignal[] = [];
   for (const file of files) {
     if (!file.endsWith(".json")) continue;
     const filePath = join(signalsDir, file);
+    const resolvedFilePath = resolve(filePath);
+    if (!resolvedFilePath.startsWith(resolvedSignalsDir + "/") && resolvedFilePath !== resolvedSignalsDir) {
+      continue;
+    }
     try {
       const raw = await readFile(filePath, "utf-8");
       const parsed = JSON.parse(raw) as TaskSignal;
