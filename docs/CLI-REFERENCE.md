@@ -56,6 +56,10 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `self-correction-run [--extract path] [--workspace path] [--dry-run] [--approve] [--model M]` | Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
 | `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
+| `credentials list [--service <pattern>]` | List vault entries (service, type, url; no values). Use `--service` to filter by substring (e.g. `--service unifi`). |
+| `credentials get --service <name> [--type <type>] [--value-only]` | Retrieve a credential value. Use `--type` when multiple types exist for the service. Use `--value-only` for scripting (prints only the secret). |
+| `credentials audit [--json]` | Flag suspicious entries (natural language, long service names, duplicates). |
+| `credentials prune [--yes] [--only-flags ...]` | Remove flagged entries (default: dry-run; use `--yes` to apply). |
 | `scope prune-session <session-id>` | Delete session-scoped memories for a given session (cleared on session end). |
 | `scope promote --id <fact-id> --scope global or agent [--scope-target <target>]` | Promote a session-scoped memory to global or agent scope (persists after session end). |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |

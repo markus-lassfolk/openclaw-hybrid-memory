@@ -127,13 +127,7 @@ For the API key: check if `OPENAI_API_KEY` is set in the environment. If yes, us
 
 Context is taken from the model catalog automatically. Only add `contextTokens` as a troubleshooting override if you hit prompt-overflow errors (e.g. set to ~90% of your model's window).
 
-**4f. Pruning (optional)** — set `agents.defaults.pruning`:
-
-```json
-{ "ttl": "30m" }
-```
-
-**4g. Auto-classify (recommended)** — enable LLM-based reclassification of `"other"` facts. Add `autoClassify` and optionally `categories` inside `plugins.entries.openclaw-hybrid-memory.config`:
+**4f. Auto-classify (recommended)** — enable LLM-based reclassification of `"other"` facts. Add `autoClassify` and optionally `categories` inside `plugins.entries.openclaw-hybrid-memory.config`:
 
 ```json
 {
@@ -152,7 +146,7 @@ This runs automatically: once on startup (5-minute delay) and then every 24 hour
 - `batchSize`: Facts per LLM call (default 20). Higher = fewer API calls but longer prompts.
 - `categories`: Add custom category names (e.g. `["research", "health"]`) to extend the seven defaults (`preference`, `fact`, `decision`, `entity`, `pattern`, `rule`, `other`). Leave empty `[]` if you only need the defaults.
 
-**Verify:** Read back `~/.openclaw/openclaw.json` and confirm all seven blocks (4a-4g) are present and correct. *(ref: v3 §4, §4.8, §4.9)*
+**Verify:** Read back `~/.openclaw/openclaw.json` and confirm all six blocks (4a-4f) are present and correct. *(ref: v3 §4, §4.8, §4.9)*
 
 ---
 

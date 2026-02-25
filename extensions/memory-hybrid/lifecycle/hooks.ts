@@ -90,6 +90,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Agent detection must run independently of autoRecall
     // to support multi-agent scoping even when autoRecall is disabled
     api.on("before_agent_start", async (event: unknown) => {
+      // Increment VectorDB refcount so a concurrent session teardown does not prematurely
+      // close the shared singleton while this session is still active (fixes issue #106).
+      ctx.vectorDb.open();
+
       if (!restartPendingCleared && existsSync(getRestartPendingPath())) {
         restartPendingCleared = true; // Set flag before unlink to prevent race
         try {
@@ -1437,6 +1441,17 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
       });
     }
+
+    // Decrement VectorDB refcount on session end. Uses removeSession() instead of close() so the
+    // shared singleton stays open while other concurrent sessions are still active (fixes issue #106).
+    // Registered last so all agent_end handlers that use vectorDb (auto-capture, credential
+    // auto-detect, tool-call credential) run first; otherwise the last session would close the DB
+    // before they run, causing an unnecessary close-reconnect cycle and DB left open with refcount zero.
+    // OpenClaw's event emitter awaits each handler in registration order, so being registered last
+    // guarantees this fires only after the async handlers above have fully resolved.
+    api.on("agent_end", async () => {
+      ctx.vectorDb.removeSession();
+    });
   };
 
   return { onAgentStart, onAgentEnd };

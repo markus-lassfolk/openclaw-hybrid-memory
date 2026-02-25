@@ -498,6 +498,9 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
             prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
           },
         },
+        // NOTE: agents.defaults.pruning is intentionally NOT included here.
+        // OpenClaw core does not recognize this key; it has no effect and only causes confusion.
+        // Memory pruning is handled internally by the plugin (every 60 min) via the memory_prune tool.
       },
     },
   };
@@ -2554,6 +2557,28 @@ export function runCredentialsListForCli(ctx: HandlerContext): Array<{ service: 
 }
 
 /**
+ * Get a single credential value by service (and optional type). Used by the `credentials get` CLI command.
+ * Returns null if vault is disabled or no matching entry exists.
+ */
+export function runCredentialsGetForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type?: string },
+): { service: string; type: string; value: string; url: string | null; notes: string | null } | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  const type = opts.type as CredentialType | undefined;
+  const entry = credentialsDb.get(opts.service.trim(), type);
+  if (!entry) return null;
+  return {
+    service: entry.service,
+    type: entry.type,
+    value: entry.value,
+    url: entry.url ?? null,
+    notes: entry.notes ?? null,
+  };
+}
+
+/**
  * Prune credentials vault: remove entries flagged by audit. Default dry-run; use --yes to apply.
  */
 export function runCredentialsPruneForCli(
@@ -3062,6 +3087,30 @@ export function runConfigSetForCli(
     }
     if (!("enabled" in er)) (er as Record<string, unknown>).enabled = false;
     if (!("consent" in er)) (er as Record<string, unknown>).consent = false;
+  }
+  // errorReporting must stay an object (schema); "config-set errorReporting true" → errorReporting.enabled + consent = true
+  if (k === "errorReporting" && !k.includes(".")) {
+    const boolVal = value === "true" || value === "enabled";
+    let er = out.config.errorReporting as Record<string, unknown> | undefined;
+    if (typeof er !== "object" || er === null) er = { enabled: false, consent: false };
+    (er as Record<string, unknown>).enabled = boolVal;
+    (er as Record<string, unknown>).consent = boolVal;
+    out.config.errorReporting = er;
+    const written = (er as Record<string, unknown>).enabled;
+    try {
+      hybridConfigSchema.parse(out.config);
+    } catch (schemaErr: unknown) {
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-errorReporting" });
+      return { ok: false, error: `Invalid config value: ${schemaErr}` };
+    }
+    try {
+      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+      writeFileSync(getRestartPendingPath(), "", "utf-8");
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-errorReporting" });
+      return { ok: false, error: `Could not write config: ${e}` };
+    }
+    return { ok: true, configPath, message: `Set errorReporting.enabled and errorReporting.consent = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
   }
   // credentials must stay an object (schema); "config-set credentials true" → credentials.enabled = true
   if (k === "credentials" && !k.includes(".")) {
