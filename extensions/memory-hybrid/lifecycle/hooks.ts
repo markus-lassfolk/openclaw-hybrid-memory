@@ -349,6 +349,19 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   // Track session starts for retrieval directives
   const sessionStartSeen = new Set<string>();
 
+  const resolveSessionKey = (event: unknown, api?: ClawdbotPluginApi): string | null => {
+    const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
+    const sessionId =
+      ev?.session?.id ??
+      ev?.session?.sessionId ??
+      ev?.session?.key ??
+      ev?.session?.label ??
+      ev?.sessionKey ??
+      api?.context?.sessionId ??
+      null;
+    return sessionId ? String(sessionId) : null;
+  };
+
   // Resolve active task file path against workspace root (same logic as CLI context)
   const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const resolvedActiveTaskPath = isAbsolute(ctx.cfg.activeTask.filePath)
@@ -518,132 +531,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             }
           }
 
-          const ftsResults = ctx.factsDb.search(e.prompt, limit, {
-            tierFilter,
-            scopeFilter,
-            reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
-          });
-          let lanceResults: SearchResult[] = [];
           const VECTOR_STEP_TIMEOUT_MS = 30_000;
-          const vectorStepAbort = new AbortController();
-          try {
-            const vectorStepPromise = (async (): Promise<SearchResult[]> => {
-              let textToEmbed = e.prompt!; // Safe: checked above in if (!e.prompt...)
-              if (ctx.cfg.search?.hydeEnabled) {
-                try {
-                  const cronCfg = getCronModelConfig(ctx.cfg);
-                  const pref = getLLMModelPreference(cronCfg, "nano");
-                  const hydeModel = ctx.cfg.search.hydeModel ?? pref[0];
-                  const fallbackModels = ctx.cfg.search.hydeModel ? [] : pref.slice(1);
-                  const hydeContent = await chatCompleteWithRetry({
-                    model: hydeModel,
-                    fallbackModels,
-                    content: `Write a short factual statement (1-2 sentences) that answers: ${e.prompt}\n\nOutput only the statement, no preamble.`,
-                    temperature: 0.3,
-                    maxTokens: 150,
-                    openai: ctx.openai,
-                    label: "HyDE",
-                    timeoutMs: 25_000,
-                    signal: vectorStepAbort.signal,
-                    pendingWarnings: ctx.pendingLLMWarnings,
-                  });
-                  const hydeText = hydeContent.trim();
-                  if (hydeText.length > 10) textToEmbed = hydeText;
-                } catch (err) {
-                  if (!vectorStepAbort.signal.aborted) {
-                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                      operation: "hyde-generation",
-                      subsystem: "auto-recall",
-                    });
-                    api.logger.warn(`memory-hybrid: HyDE generation failed, using raw prompt: ${err}`);
-                  }
-                }
-              }
-              const vector = await ctx.embeddings.embed(textToEmbed);
-              let results = await ctx.vectorDb.search(vector, limit * 2, minScore);
-              results = filterByScope(results, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
-              return results.map((r) => {
-                const fullEntry = ctx.factsDb.getById(r.entry.id);
-                if (fullEntry) {
-                  return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
-                }
-                return r;
-              });
-            })();
-            let timeoutId: NodeJS.Timeout | undefined;
-            const timeoutPromise = new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => {
-                vectorStepAbort.abort();
-                reject(new Error(`auto-recall vector step timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
-              }, VECTOR_STEP_TIMEOUT_MS);
-            });
-            try {
-              lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
-            } finally {
-              if (timeoutId !== undefined) clearTimeout(timeoutId);
-              // Prevent unhandled rejection if vectorStepPromise rejects after timeout
-              vectorStepPromise.catch((err) => {
-                if (!vectorStepAbort.signal.aborted) {
-                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    operation: "vector-step-post-timeout",
-                    subsystem: "auto-recall",
-                  });
-                }
-              });
-            }
-          } catch (err) {
-            const isTimeout = err instanceof Error && err.message.includes("timed out");
-            if (isTimeout) {
-              api.logger.warn?.(`memory-hybrid: ${err.message}, using FTS-only recall`);
-            } else {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: 'auto-recall-vector-search',
-                subsystem: 'vector',
-                phase: 'runtime',
-                backend: 'lancedb',
-              });
-              api.logger.warn(`memory-hybrid: vector recall failed: ${err}`);
-            }
-          }
-
-          let candidates = mergeResults(ftsResults, lanceResults, limit, ctx.factsDb);
-
-          // Exclude COLD tier from auto-recall (only HOT + WARM)
-          if (ctx.cfg.memoryTiering.enabled && candidates.length > 0) {
-            candidates = candidates.filter((r) => {
-              const full = ctx.factsDb.getById(r.entry.id);
-              return full && full.tier !== "cold";
-            }).slice(0, limit);
-          }
-
-          const promptLower = e.prompt.toLowerCase();
-          const { entityLookup } = ctx.cfg.autoRecall;
-          if (entityLookup.enabled && entityLookup.entities.length > 0) {
-            const seenIds = new Set(candidates.map((c) => c.entry.id));
-            for (const entity of entityLookup.entities) {
-              if (!promptLower.includes(entity.toLowerCase())) continue;
-              const entityResults = ctx.factsDb.lookup(entity, undefined, undefined, { scopeFilter }).slice(0, entityLookup.maxFactsPerEntity);
-              for (const r of entityResults) {
-                if (!seenIds.has(r.entry.id)) {
-                  seenIds.add(r.entry.id);
-                  candidates.push(r);
-                }
-              }
-            }
-            candidates.sort((a, b) => {
-              const s = b.score - a.score;
-              if (s !== 0) return s;
-              const da = a.entry.sourceDate ?? a.entry.createdAt;
-              const db = b.entry.sourceDate ?? b.entry.createdAt;
-              return db - da;
-            });
-            candidates = candidates.slice(0, limit);
-          }
+          let directiveHydeUsed = false;
 
           async function runRecallPipeline(
             query: string,
             limit: number,
-            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string }
+            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string; limitHydeOnce?: boolean }
           ): Promise<SearchResult[]> {
             const trimmed = query.trim();
             if (!trimmed) return [];
@@ -664,12 +558,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               const vectorStepPromise = (async (): Promise<SearchResult[]> => {
                 let textToEmbed = trimmed;
-                if (ctx.cfg.search?.hydeEnabled) {
+                const allowHyde = ctx.cfg.search?.hydeEnabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
+                if (allowHyde) {
                   try {
                     const cronCfg = getCronModelConfig(ctx.cfg);
                     const pref = getLLMModelPreference(cronCfg, "nano");
-                    const hydeModel = ctx.cfg.search.hydeModel ?? pref[0];
-                    const fallbackModels = ctx.cfg.search.hydeModel ? [] : pref.slice(1);
+                    const hydeModel = ctx.cfg.search?.hydeModel ?? pref[0];
+                    const fallbackModels = ctx.cfg.search?.hydeModel ? [] : pref.slice(1);
                     const hydeContent = await chatCompleteWithRetry({
                       model: hydeModel,
                       fallbackModels,
@@ -684,6 +579,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     });
                     const hydeText = hydeContent.trim();
                     if (hydeText.length > 10) textToEmbed = hydeText;
+                    if (opts?.limitHydeOnce) directiveHydeUsed = true;
                   } catch (err) {
                     if (!directiveAbort.signal.aborted) {
                       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -710,7 +606,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const timeoutPromise = new Promise<never>((_, reject) => {
                 timeoutId = setTimeout(() => {
                   directiveAbort.abort();
-                  reject(new Error(`directive recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
+                  reject(new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
                 }, VECTOR_STEP_TIMEOUT_MS);
               });
               try {
@@ -750,26 +646,64 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return results;
           }
 
+          let candidates = await runRecallPipeline(e.prompt, limit, { hydeLabel: "HyDE", errorPrefix: "auto-recall-" });
+
+          const promptLower = e.prompt.toLowerCase();
+          const { entityLookup } = ctx.cfg.autoRecall;
+          if (entityLookup.enabled && entityLookup.entities.length > 0) {
+            const seenIds = new Set(candidates.map((c) => c.entry.id));
+            for (const entity of entityLookup.entities) {
+              if (!promptLower.includes(entity.toLowerCase())) continue;
+              const entityResults = ctx.factsDb.lookup(entity, undefined, undefined, { scopeFilter }).slice(0, entityLookup.maxFactsPerEntity);
+              for (const r of entityResults) {
+                if (!seenIds.has(r.entry.id)) {
+                  seenIds.add(r.entry.id);
+                  candidates.push(r);
+                }
+              }
+            }
+            candidates.sort((a, b) => {
+              const s = b.score - a.score;
+              if (s !== 0) return s;
+              const da = a.entry.sourceDate ?? a.entry.createdAt;
+              const db = b.entry.sourceDate ?? b.entry.createdAt;
+              return db - da;
+            });
+            candidates = candidates.slice(0, limit);
+          }
           const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
           const directiveLimit = directivesCfg.limit;
+          const maxDirectiveCalls = directivesCfg.maxPerPrompt;
+          const maxDirectiveCandidates = Math.max(limit, directiveLimit * maxDirectiveCalls);
           const directiveSeenIds = new Set(candidates.map((c) => c.entry.id));
+          const directivePriorityIds = new Set<string>();
           const directiveMatches: string[] = [];
+          let directiveCalls = 0;
 
           function addDirectiveResults(results: SearchResult[], label: string): void {
             if (results.length === 0) return;
             for (const r of results) {
               if (directiveSeenIds.has(r.entry.id)) continue;
               directiveSeenIds.add(r.entry.id);
+              directivePriorityIds.add(r.entry.id);
               candidates.push(r);
             }
             directiveMatches.push(label);
+          }
+
+          function canRunDirective(): boolean {
+            if (directiveCalls >= maxDirectiveCalls) return false;
+            if (candidates.length >= maxDirectiveCandidates) return false;
+            return true;
           }
 
           if (directivesCfg.enabled) {
             if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookup.entities.length > 0) {
               for (const entity of entityLookup.entities) {
                 if (!promptLower.includes(entity.toLowerCase())) continue;
-                const results = await runRecallPipeline(entity, directiveLimit, { entity, hydeLabel: "HyDE", errorPrefix: "directive-" });
+                if (!canRunDirective()) break;
+                const results = await runRecallPipeline(entity, directiveLimit, { entity, hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                directiveCalls += 1;
                 addDirectiveResults(results, `entity:${entity}`);
               }
             }
@@ -777,7 +711,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (directivesCfg.keywords.length > 0) {
               for (const keyword of directivesCfg.keywords) {
                 if (!promptLower.includes(keyword.toLowerCase())) continue;
-                const results = await runRecallPipeline(keyword, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-" });
+                if (!canRunDirective()) break;
+                const results = await runRecallPipeline(keyword, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                directiveCalls += 1;
                 addDirectiveResults(results, `keyword:${keyword}`);
               }
             }
@@ -787,24 +723,22 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               for (const [taskType, triggers] of taskTypeEntries) {
                 const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
                 if (!hit) continue;
-                const results = await runRecallPipeline(taskType, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-" });
+                if (!canRunDirective()) break;
+                const results = await runRecallPipeline(taskType, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                directiveCalls += 1;
                 addDirectiveResults(results, `taskType:${taskType}`);
               }
             }
 
             if (directivesCfg.sessionStart) {
-              const sessionId =
-                (e as { session?: Record<string, unknown> }).session?.id ??
-                (e as { session?: Record<string, unknown> }).session?.sessionId ??
-                (e as { session?: Record<string, unknown> }).session?.key ??
-                (e as { session?: Record<string, unknown> }).session?.label ??
-                currentAgentIdRef.value ??
-                "default";
-              const sessionKey = String(sessionId);
+              const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
               if (!sessionStartSeen.has(sessionKey)) {
                 sessionStartSeen.add(sessionKey);
-                const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-" });
-                addDirectiveResults(results, "sessionStart");
+                if (canRunDirective()) {
+                  const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                  directiveCalls += 1;
+                  addDirectiveResults(results, "sessionStart");
+                }
               }
             }
           }
@@ -840,6 +774,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                           1 - (nowSec - r.entry.lastConfirmedAt) / NINETY_DAYS_SEC,
                         );
                 s *= importanceFactor * recencyFactor;
+              }
+              if (directivePriorityIds.has(r.entry.id)) {
+                s *= 1.25;
               }
               // Access-count salience boost — frequently recalled facts score higher
               const recallCount = r.entry.recallCount ?? 0;
@@ -1122,7 +1059,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
             api.logger.info?.(
-              `memory-hybrid: injecting ${lines.length} memories (sqlite: ${ftsResults.length}, lance: ${lanceResults.length}, ~${usedTokens} tokens)`,
+              `memory-hybrid: injecting ${lines.length} memories (~${usedTokens} tokens)`,
             );
           }
 
@@ -1553,6 +1490,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
+    if (ctx.cfg.autoRecall.enabled) {
+      api.on("agent_end", async (event: unknown) => {
+        const sessionKey = resolveSessionKey(event, api);
+        if (sessionKey) {
+          sessionStartSeen.delete(sessionKey);
+        }
+      });
+    }
+
     // Clear auth failure dedup map on session end
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       api.on("agent_end", async () => {

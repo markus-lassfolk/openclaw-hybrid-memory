@@ -80,6 +80,8 @@ export type RetrievalDirectivesConfig = {
   sessionStart: boolean;
   /** Max results per directive (default: 3). */
   limit: number;
+  /** Max directive matches per prompt (default: 4). */
+  maxPerPrompt: number;
 };
 
 /** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary, progressive options */
@@ -974,6 +976,10 @@ export const hybridConfigSchema = {
           typeof directivesRaw?.limit === "number" && directivesRaw.limit > 0
             ? Math.floor(directivesRaw.limit)
             : 3,
+        maxPerPrompt:
+          typeof directivesRaw?.maxPerPrompt === "number" && directivesRaw.maxPerPrompt > 0
+            ? Math.floor(directivesRaw.maxPerPrompt)
+            : 4,
       };
       const progressiveMaxCandidates =
         typeof ar.progressiveMaxCandidates === "number" && ar.progressiveMaxCandidates > 0
@@ -1054,6 +1060,7 @@ export const hybridConfigSchema = {
           taskTypes: {},
           sessionStart: false,
           limit: 3,
+          maxPerPrompt: 4,
         },
         summaryThreshold: 300,
         summaryMaxChars: 80,

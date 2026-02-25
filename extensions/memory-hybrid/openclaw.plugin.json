@@ -93,6 +93,10 @@
       "label": "Directive max results",
       "help": "Max results per directive recall (default: 3)"
     },
+    "autoRecall.retrievalDirectives.maxPerPrompt": {
+      "label": "Directive max per prompt",
+      "help": "Hard cap on directive recalls per prompt to limit latency (default: 4)"
+    },
     "autoRecall.summaryThreshold": {
       "label": "Summary threshold (chars)",
       "help": "Facts longer than this get a summary stored; 0 = disabled (default 300)"
@@ -512,7 +516,12 @@
                     "type": "boolean"
                   },
                   "limit": {
-                    "type": "number"
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "maxPerPrompt": {
+                    "type": "integer",
+                    "minimum": 1
                   }
                 }
               },

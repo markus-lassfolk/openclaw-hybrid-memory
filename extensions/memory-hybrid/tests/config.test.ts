@@ -177,6 +177,7 @@ describe("hybridConfigSchema.parse", () => {
           taskTypes: { debug: ["bug", "fix"] },
           sessionStart: true,
           limit: 5,
+          maxPerPrompt: 6,
         },
       },
     });
@@ -187,6 +188,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.retrievalDirectives.taskTypes.debug).toEqual(["bug", "fix"]);
     expect(result.autoRecall.retrievalDirectives.sessionStart).toBe(true);
     expect(result.autoRecall.retrievalDirectives.limit).toBe(5);
+    expect(result.autoRecall.retrievalDirectives.maxPerPrompt).toBe(6);
   });
 
   it("memoryTiering defaults when omitted", () => {
