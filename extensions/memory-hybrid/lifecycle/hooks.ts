@@ -744,6 +744,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           if (directiveMatches.length > 0) {
+            // Keep ordering deterministic and ensure directive results are meaningfully represented.
+            candidates.sort((a, b) => {
+              const s = b.score - a.score;
+              if (s !== 0) return s;
+              const da = a.entry.sourceDate ?? a.entry.createdAt;
+              const db = b.entry.sourceDate ?? b.entry.createdAt;
+              return db - da;
+            });
+            candidates = candidates.slice(0, limit);
             api.logger.info?.(`memory-hybrid: retrieval directives matched (${directiveMatches.join(", ")})`);
           }
 
@@ -1490,6 +1499,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
+    // Clear session-start dedup state on session end to avoid unbounded growth over long-lived gateways.
     if (ctx.cfg.autoRecall.enabled) {
       api.on("agent_end", async (event: unknown) => {
         const sessionKey = resolveSessionKey(event, api);
@@ -1503,7 +1513,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       api.on("agent_end", async () => {
         authFailureRecallsThisSession.clear();
-        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for new session");
+        sessionStartSeen.clear();
+        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map + sessionStartSeen for new session");
       });
     }
 
