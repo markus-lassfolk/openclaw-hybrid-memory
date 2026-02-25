@@ -1038,7 +1038,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             updated: now,
           };
           const updated = upsertTask(existingActive, entry);
-          const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, existingCompleted, ev.sessionKey);
+          const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, existingCompleted, undefined);
           if (writeResult.skipped) {
             api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_start: ${writeResult.reason}`);
           } else {
@@ -1117,7 +1117,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 resolvedActiveTaskPath,
                 updated,
                 [...taskFile.completed, completed],
-                ev.sessionKey,
+                undefined,
               );
               if (writeResult.skipped) {
                 api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Done): ${writeResult.reason}`);
@@ -1140,7 +1140,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               next: ev.error ? `Fix: ${ev.error.slice(0, 100)}` : existingTask.next,
             };
             const updated = upsertTask(taskFile.active, updatedEntry);
-            const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, taskFile.completed, ev.sessionKey);
+            const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, taskFile.completed, undefined);
             if (writeResult.skipped) {
               api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Failed): ${writeResult.reason}`);
             } else {
