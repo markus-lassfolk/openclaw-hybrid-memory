@@ -373,6 +373,9 @@ Cluster procedural memories and synthesize SKILL.md drafts into `skills/auto-gen
 | `outputDir` | `"skills/auto-generated"` | Output path relative to workspace |
 | `notify` | `true` | Cron asks agent to notify on new drafts |
 | `autoPublish` | `false` | Always require human review |
+| `validateScript` | — | Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by the plugin; for documentation/workflow. |
+
+When you run `install` or `verify --fix`, the **nightly-memory-to-skills** cron job is added or updated; its schedule is taken from `memoryToSkills.schedule` when available.
 
 ---
 

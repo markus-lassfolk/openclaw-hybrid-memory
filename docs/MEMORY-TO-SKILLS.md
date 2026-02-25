@@ -89,7 +89,7 @@ To disable the job, set `memoryToSkills.enabled: false` or disable the job in `~
 - **2+ tools:** The cluster must use at least two distinct tool names across steps.
 - **Dedup:** Existing skill directories under `skills/`, `skills/auto/`, and `skills/auto-generated/` are scanned; if the chosen slug already exists, the draft is skipped.
 
-External validation (e.g. `quick_validate.py` from the skill-creator skill) is not run by this plugin; you can add a post-step script if desired.
+External validation (e.g. `quick_validate.py` from the skill-creator skill) is not run by this plugin. You can set `memoryToSkills.validateScript` to document a script path for your own workflow; the plugin does not invoke it.
 
 ---
 

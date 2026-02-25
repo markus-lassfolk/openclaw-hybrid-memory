@@ -336,9 +336,13 @@
       "label": "Reflection min observations",
       "help": "Min observations to support a pattern (default 2)"
     },
+    "memoryToSkills": {
+      "label": "Memory-to-skills (enable/disable)",
+      "help": "Enable or disable memory-to-skills pipeline (true/false). Run: openclaw hybrid-mem skills-suggest. Use memoryToSkills.enabled for the same."
+    },
     "memoryToSkills.enabled": {
       "label": "Memory-to-skills",
-      "help": "Cluster procedures and draft skills to skills/auto-generated/ (nightly or skills-suggest)"
+      "help": "Cluster procedures and draft skills to skills/auto-generated/ (nightly or skills-suggest). Run: openclaw hybrid-mem skills-suggest [--dry-run] [--days N]"
     },
     "memoryToSkills.schedule": {
       "label": "Memory-to-skills schedule",
@@ -906,6 +910,10 @@
           "autoPublish": {
             "type": "boolean",
             "description": "Always require human review; no auto-promote (default: false)"
+          },
+          "validateScript": {
+            "type": "string",
+            "description": "Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by plugin."
           }
         },
         "description": "Memory-to-skills: cluster procedures, synthesize SKILL.md drafts (issue #114)"
