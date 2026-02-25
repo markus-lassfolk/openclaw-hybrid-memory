@@ -791,6 +791,9 @@ export async function writeActiveTaskFileOptimistic(
   }
 
   // Exhausted retries — write whatever we have (last-write-wins fallback)
+  console.warn(
+    `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; applying last-write-wins fallback`,
+  );
   await writeActiveTaskFile(filePath, currentActive, currentCompleted);
   return true;
 }
