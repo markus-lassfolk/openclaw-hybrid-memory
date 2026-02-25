@@ -47,8 +47,8 @@ describe("deriveKey", () => {
     expect(k1.equals(k2)).toBe(false);
   });
 
-  it("v1 (SHA-256) still works for backward compatibility", () => {
-    const salt = Buffer.alloc(0); // v1 doesn't use salt
+  it("v1 (scrypt with conservative parameters) still works for backward compatibility", () => {
+    const salt = Buffer.from("test-salt-32-bytes-long-enough!!");
     const key = deriveKey("password", salt, 1);
     expect(Buffer.isBuffer(key)).toBe(true);
     expect(key.length).toBe(32);
