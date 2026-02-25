@@ -1023,6 +1023,14 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.memoryToSkills.outputDir).toBe("skills/auto-generated");
     });
 
+    it("parses memoryToSkills.validateScript when provided", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        memoryToSkills: { validateScript: "  scripts/quick_validate.py  " },
+      });
+      expect(result.memoryToSkills.validateScript).toBe("scripts/quick_validate.py");
+    });
+
     it("mode expert: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
       process.env.OPENCLAW_CRED_KEY = "a-long-secret-key-at-least-16-chars";
       try {
