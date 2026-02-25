@@ -943,7 +943,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
   mem
     .command("config-set <key> <value>")
-    .description("Set a config key in memory/.config. E.g. errorReporting.botName \"Doris\", errorReporting.botId <uuid>. For help: hybrid-mem help config-set <key>")
+    .description("Set a config key in memory/.config. E.g. memoryToSkills true, memoryToSkills.enabled false, errorReporting.botName \"Doris\". For help: hybrid-mem help config-set <key>")
     .action(withExit(async (key: string, value: string) => {
       let res;
       try {

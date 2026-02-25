@@ -117,3 +117,21 @@ export function timestampFromFilename(name: string): string | undefined {
   const match = name.match(/^(\d{4}-\d{2}-\d{2})/);
   return match ? match[1] : undefined;
 }
+
+/**
+ * Shared helper for generating directory-safe slugs (lowercase, hyphens, alphanumeric; max 60 chars).
+ * @param text - The text to slugify.
+ * @param fallback - Fallback value when the slug is empty after processing (default: `"skill"`).
+ *   Pass `"procedure"` when generating slugs for the generate-auto-skills pipeline to preserve
+ *   its original fallback behavior.
+ */
+export function slugifyForSkill(text: string, fallback = "skill"): string {
+  const slug = text
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return slug || fallback;
+}
