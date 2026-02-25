@@ -93,8 +93,8 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true },
   // Sunday 04:00 | weekly-extract-procedures | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "default", enabled: true },
-  // Daily 02:00 | nightly-memory-to-skills | skills-suggest (issue #114)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
+  // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
   // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
@@ -1429,7 +1429,7 @@ export async function runSkillsSuggestForCli(
   const defaultPref = getLLMModelPreference(cronCfg, "default");
   const model = defaultPref[0] ?? getDefaultCronModel(cronCfg, "default");
   const fallbackModels = defaultPref.length > 1 ? defaultPref.slice(1) : [];
-  const info = (s: string) => logger.info?.(s) ?? (opts.verbose ? console.log(s) : () => {});
+  const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
   const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
   const windowDays = opts.days ?? cfg.memoryToSkills.windowDays;
   try {

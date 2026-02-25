@@ -260,21 +260,26 @@ export async function runMemoryToSkills(
       continue;
     }
 
-    const { name, body } = parseSynthesizedSkill(rawResponse);
+    const { name, description, body } = parseSynthesizedSkill(rawResponse);
     let slug = slugify(name);
     if (existingSlugs.has(slug)) {
       result.skippedDedup++;
       continue;
     }
     let n = 0;
-    while (existsSync(join(basePath, slug))) {
+    while (existsSync(join(basePath, slug)) || existingSlugs.has(slug)) {
       n++;
       slug = `${slugify(name)}-${n}`;
     }
 
     const skillDir = join(basePath, slug);
     const skillPath = join(skillDir, "SKILL.md");
-    const fullContent = body.includes("---\n") ? body : `---
+    const fullContent = description ? `---
+name: ${name}
+description: ${description}
+---
+
+${body}` : `---
 name: ${slug}
 description: Auto-generated from ${procs.length} procedure instances.
 ---
