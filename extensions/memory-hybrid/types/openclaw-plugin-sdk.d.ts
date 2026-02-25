@@ -26,7 +26,7 @@ declare module "openclaw/plugin-sdk" {
     ) => void;
     registerCli: (fn: (opts: { program: CliProgram }) => void, options?: { commands?: string[] }) => void;
     on: (event: string, handler: (ev: unknown) => void | Promise<void> | Promise<unknown> | { prependContext?: string } | Promise<{ prependContext?: string }>) => void;
-    context?: { agentId?: string; sessionId?: string; userId?: string };
+    context?: { agentId?: string; sessionId?: string; userId?: string; sessionKey?: string; messageChannel?: string };
     [key: string]: unknown;
   };
 }
