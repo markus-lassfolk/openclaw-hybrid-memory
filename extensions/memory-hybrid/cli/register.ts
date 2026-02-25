@@ -15,6 +15,7 @@ import { registerDistillCommands, type DistillContext } from "./distill.js";
 import { registerManageCommands, type ManageContext } from "./manage.js";
 import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type {
   FindDuplicatesResult,
   StoreCliOpts,
@@ -80,7 +81,7 @@ export type HybridMemCliContext = {
   mergeResults: typeof mergeResults;
   parseSourceDate: (v: string | number | null | undefined) => number | null;
   getMemoryCategories: () => string[];
-  cfg: { distill?: { reinforcementBoost?: number; reinforcementProcedureBoost?: number; reinforcementPromotionThreshold?: number } };
+  cfg: HybridMemoryConfig;
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
   runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;

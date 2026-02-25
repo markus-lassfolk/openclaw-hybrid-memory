@@ -1734,6 +1734,33 @@ export class FactsDB {
     return rows.map((r) => r.category || "other");
   }
 
+  /** Snapshot of top procedures for context-audit (sorted by confidence). */
+  getProceduresForAudit(limit = 5): Array<{ taskPattern: string; recipeJson: string; procedureType: "positive" | "negative"; confidence: number }> {
+    try {
+      const rows = this.liveDb
+        .prepare(
+          `SELECT task_pattern, recipe_json, procedure_type, confidence
+           FROM procedures
+           ORDER BY confidence DESC, COALESCE(last_validated, created_at) DESC
+           LIMIT ?`,
+        )
+        .all(limit) as Array<{ task_pattern: string; recipe_json: string; procedure_type: "positive" | "negative"; confidence: number }>;
+      return rows.map((r) => ({
+        taskPattern: r.task_pattern,
+        recipeJson: r.recipe_json,
+        procedureType: r.procedure_type,
+        confidence: r.confidence,
+      }));
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "procedures-audit",
+        severity: "info",
+        subsystem: "facts",
+      });
+      return [];
+    }
+  }
+
   /** Count of procedures (from procedures table). Returns 0 if table does not exist. */
   proceduresCount(): number {
     try {
