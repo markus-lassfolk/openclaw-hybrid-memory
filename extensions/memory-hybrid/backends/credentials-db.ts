@@ -24,7 +24,10 @@ const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
  */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
-    // Legacy SHA-256 KDF (weak, kept for backward compatibility)
+    // lgtm[js/insufficient-password-hash]
+    // Legacy SHA-256 KDF (weak, kept for backward compatibility with existing encrypted vaults).
+    // New vaults use v2 with scrypt. Existing v1 vaults encrypted with SHA-256 cannot be
+    // decrypted with a different KDF, so we must preserve this for backward compatibility.
     return createHash("sha256").update(password, "utf8").digest();
   }
   // v2: scrypt with recommended parameters (N=16384, r=8, p=1)
