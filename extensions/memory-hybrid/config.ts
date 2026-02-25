@@ -1207,10 +1207,10 @@ export const hybridConfigSchema = {
       requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     };
 
-    // Parse memory-to-skills config (issue #114). Default enabled to procedures.enabled.
+    // Parse memory-to-skills config (issue #114). Default enabled to procedures.enabled; explicit true allows running when procedures disabled.
     const memoryToSkillsRaw = cfg.memoryToSkills as Record<string, unknown> | undefined;
     const memoryToSkills: MemoryToSkillsConfig = {
-      enabled: memoryToSkillsRaw?.enabled !== false && procedures.enabled,
+      enabled: memoryToSkillsRaw?.enabled === true || (memoryToSkillsRaw?.enabled !== false && procedures.enabled),
       schedule: typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.length > 0
         ? memoryToSkillsRaw.schedule
         : "15 2 * * *",

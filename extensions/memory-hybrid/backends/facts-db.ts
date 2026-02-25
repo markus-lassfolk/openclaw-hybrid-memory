@@ -2078,10 +2078,12 @@ export class FactsDB {
     }
   }
 
-  /** List positive procedures updated in the last N days (for memory-to-skills). */
+  /** List positive procedures updated in the last N days (for memory-to-skills). Days clamped to [1, 365]. */
   listProceduresUpdatedInLastNDays(days: number, limit = 500): ProcedureEntry[] {
+    const clampedDays = Math.min(365, Math.max(1, Math.floor(days)));
+    if (Number.isNaN(days) || days <= 0) return [];
     try {
-      const cutoff = Math.floor(Date.now() / 1000) - days * 24 * 3600;
+      const cutoff = Math.floor(Date.now() / 1000) - clampedDays * 24 * 3600;
       const rows = this.liveDb
         .prepare(
           `SELECT * FROM procedures WHERE procedure_type = 'positive' AND updated_at >= ? ORDER BY updated_at DESC, created_at DESC LIMIT ?`,

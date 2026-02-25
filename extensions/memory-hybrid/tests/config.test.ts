@@ -1031,6 +1031,16 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.memoryToSkills.validateScript).toBe("scripts/quick_validate.py");
     });
 
+    it("allows memoryToSkills.enabled true when procedures disabled (explicit)", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        procedures: { enabled: false },
+        memoryToSkills: { enabled: true },
+      });
+      expect(result.procedures.enabled).toBe(false);
+      expect(result.memoryToSkills.enabled).toBe(true);
+    });
+
     it("mode expert: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
       process.env.OPENCLAW_CRED_KEY = "a-long-secret-key-at-least-16-chars";
       try {
