@@ -17,6 +17,7 @@ export class VectorDB {
   private table: lancedb.Table | null = null;
   private initPromise: Promise<void> | null = null;
   private closed = false;
+  private sessionCount = 0;
   private logger: VectorDBLogger | null = null;
 
   constructor(
@@ -35,9 +36,11 @@ export class VectorDB {
 
   private async ensureInitialized(): Promise<void> {
     // Await any in-flight init before inspecting state. Without this guard, a caller that
-    // arrives while doInitialize() is already running (e.g. close() was called mid-init and
-    // nulled initPromise before this caller checked it) would start a second concurrent
+    // arrives while doInitialize() is already running would start a second concurrent
     // doInitialize() — resulting in duplicate connections and a potential connection leak.
+    // After awaiting, we clear initPromise so that a stale resolved promise (left behind by
+    // _doClose() which intentionally preserves it for this very await) does not short-circuit
+    // the reconnect path at the `if (this.initPromise) return` guard below.
     if (this.initPromise) {
       try {
         await this.initPromise;
@@ -45,6 +48,10 @@ export class VectorDB {
         // The catch handler inside the promise chain already cleared initPromise on failure;
         // fall through so we can attempt a fresh init below.
       }
+      // Clear after a successful await: _doClose() intentionally preserves the resolved
+      // promise so concurrent callers can serialize on it here, but once awaited it is no
+      // longer needed and would block reconnection if left in place (table may be null).
+      this.initPromise = null;
     }
 
     // Auto-reconnect: if closed (e.g., stop() called while async operations are in-flight during
@@ -235,15 +242,54 @@ export class VectorDB {
     return Promise.resolve();
   }
 
-  close(): void {
+  /**
+   * Increment the session refcount. Called when an agent session begins using this VectorDB.
+   * If the DB was previously closed (e.g. by a premature stop()), resets the closed flag so
+   * the next operation auto-reconnects via ensureInitialized().
+   */
+  open(): void {
+    this.sessionCount++;
+    if (this.closed) {
+      this.closed = false;
+    }
+  }
+
+  /**
+   * Decrement the session refcount. Called when an agent session ends.
+   * Only actually closes the underlying DB when the refcount reaches zero.
+   * Use this in session teardown hooks instead of close() to prevent premature
+   * shutdown of a shared singleton while other sessions are still active.
+   */
+  removeSession(): void {
+    if (this.sessionCount <= 0) {
+      this.logWarn("memory-hybrid: VectorDB.removeSession() called with sessionCount already 0 — possible session lifecycle mismatch (open()/removeSession() calls are unbalanced)");
+    }
+    this.sessionCount = Math.max(0, this.sessionCount - 1);
+    if (this.sessionCount <= 0) {
+      this._doClose();
+    }
+  }
+
+  private _doClose(): void {
     this.closed = true;
     this.table = null;
     if (this.db) {
-      this.db.close();
+      try { this.db.close(); } catch { /* ignore */ }
     }
     this.db = null;
     // Intentionally NOT clearing initPromise here. If doInitialize() is in-flight, the
     // next ensureInitialized() call will await it before resetting state — preventing a
     // second concurrent doInitialize() and the associated connection leak / race condition.
+  }
+
+  /**
+   * Force-close the VectorDB regardless of active session count.
+   * Should only be called from gateway shutdown (service stop()).
+   * Active sessions will auto-reconnect via ensureInitialized() if they call any method
+   * after this (lazy reconnect safety net).
+   */
+  close(): void {
+    this.sessionCount = 0;
+    this._doClose();
   }
 }
