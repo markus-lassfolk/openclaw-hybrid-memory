@@ -682,13 +682,17 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           function addDirectiveResults(results: SearchResult[], label: string): void {
             if (results.length === 0) return;
+            let addedAny = false;
             for (const r of results) {
               if (directiveSeenIds.has(r.entry.id)) continue;
               directiveSeenIds.add(r.entry.id);
               directivePriorityIds.add(r.entry.id);
               candidates.push(r);
+              addedAny = true;
             }
-            directiveMatches.push(label);
+            if (addedAny) {
+              directiveMatches.push(label);
+            }
           }
 
           function canRunDirective(): boolean {
