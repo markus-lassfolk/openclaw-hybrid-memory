@@ -166,6 +166,31 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.enabled).toBe(true);
   });
 
+  it("parses retrieval directives config", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        retrievalDirectives: {
+          enabled: true,
+          entityMentioned: false,
+          keywords: ["oncall"],
+          taskTypes: { debug: ["bug", "fix"] },
+          sessionStart: true,
+          limit: 5,
+          maxPerPrompt: 6,
+        },
+      },
+    });
+
+    expect(result.autoRecall.retrievalDirectives.enabled).toBe(true);
+    expect(result.autoRecall.retrievalDirectives.entityMentioned).toBe(false);
+    expect(result.autoRecall.retrievalDirectives.keywords).toEqual(["oncall"]);
+    expect(result.autoRecall.retrievalDirectives.taskTypes.debug).toEqual(["bug", "fix"]);
+    expect(result.autoRecall.retrievalDirectives.sessionStart).toBe(true);
+    expect(result.autoRecall.retrievalDirectives.limit).toBe(5);
+    expect(result.autoRecall.retrievalDirectives.maxPerPrompt).toBe(6);
+  });
+
   it("memoryTiering defaults when omitted", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.memoryTiering.enabled).toBe(true);

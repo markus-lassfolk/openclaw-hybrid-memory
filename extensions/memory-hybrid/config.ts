@@ -67,6 +67,23 @@ export type AuthFailureRecallConfig = {
   includeVaultHints: boolean;
 };
 
+/** Targeted recall directives (trigger memory_recall alongside semantic auto-recall). */
+export type RetrievalDirectivesConfig = {
+  enabled: boolean;
+  /** When prompt mentions a configured entity, run targeted recall for that entity. */
+  entityMentioned: boolean;
+  /** Keyword triggers to run targeted recall (case-insensitive substring match). */
+  keywords: string[];
+  /** Task-type triggers: map task type → keywords that activate it. */
+  taskTypes: Record<string, string[]>;
+  /** When true, run a one-time session-start recall. */
+  sessionStart: boolean;
+  /** Max results per directive (default: 3). */
+  limit: number;
+  /** Max directive matches per prompt (default: 4). */
+  maxPerPrompt: number;
+};
+
 /** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary, progressive options */
 export type AutoRecallConfig = {
   enabled: boolean;
@@ -78,6 +95,8 @@ export type AutoRecallConfig = {
   preferLongTerm: boolean;
   useImportanceRecency: boolean;
   entityLookup: EntityLookupConfig;
+  /** Targeted recall directives (entity mention, keyword, task type, session start). */
+  retrievalDirectives: RetrievalDirectivesConfig;
   summaryThreshold: number;      // facts longer than this get a summary stored; 0 = disabled (default 300)
   summaryMaxChars: number;       // summary length when generated (default 80)
   useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
@@ -961,6 +980,39 @@ export const hybridConfigSchema = {
       const useSummaryInInjection = ar.useSummaryInInjection !== false;
       const summarizeWhenOverBudget = ar.summarizeWhenOverBudget === true;
       const summarizeModel = typeof ar.summarizeModel === "string" ? ar.summarizeModel : undefined;
+      const directivesRaw = ar.retrievalDirectives as Record<string, unknown> | undefined;
+      const keywordsRaw = directivesRaw?.keywords ?? directivesRaw?.keyword;
+      const keywords = Array.isArray(keywordsRaw)
+        ? (keywordsRaw as string[]).filter((k) => typeof k === "string" && k.trim().length > 0).map((k) => k.trim())
+        : [];
+      const taskTypesRaw = directivesRaw?.taskTypes;
+      const taskTypes: Record<string, string[]> =
+        taskTypesRaw && typeof taskTypesRaw === "object" && !Array.isArray(taskTypesRaw)
+          ? Object.fromEntries(
+              Object.entries(taskTypesRaw as Record<string, unknown>)
+                .map(([k, v]) => {
+                  if (!Array.isArray(v)) return null;
+                  const list = (v as string[]).filter((item) => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+                  return list.length > 0 ? [k, list] : null;
+                })
+                .filter((v): v is [string, string[]] => v !== null),
+            )
+          : {};
+      const retrievalDirectives: RetrievalDirectivesConfig = {
+        enabled: directivesRaw?.enabled !== false,
+        entityMentioned: directivesRaw?.entityMentioned !== false,
+        keywords,
+        taskTypes,
+        sessionStart: directivesRaw?.sessionStart === true,
+        limit:
+          typeof directivesRaw?.limit === "number" && directivesRaw.limit > 0
+            ? Math.floor(directivesRaw.limit)
+            : 3,
+        maxPerPrompt:
+          typeof directivesRaw?.maxPerPrompt === "number" && directivesRaw.maxPerPrompt > 0
+            ? Math.floor(directivesRaw.maxPerPrompt)
+            : 4,
+      };
       const progressiveMaxCandidates =
         typeof ar.progressiveMaxCandidates === "number" && ar.progressiveMaxCandidates > 0
           ? Math.floor(ar.progressiveMaxCandidates)
@@ -1009,6 +1061,7 @@ export const hybridConfigSchema = {
         preferLongTerm,
         useImportanceRecency,
         entityLookup,
+        retrievalDirectives,
         summaryThreshold,
         summaryMaxChars,
         useSummaryInInjection,
@@ -1032,6 +1085,15 @@ export const hybridConfigSchema = {
         preferLongTerm: false,
         useImportanceRecency: false,
         entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 2 },
+        retrievalDirectives: {
+          enabled: true,
+          entityMentioned: true,
+          keywords: [],
+          taskTypes: {},
+          sessionStart: false,
+          limit: 3,
+          maxPerPrompt: 4,
+        },
         summaryThreshold: 300,
         summaryMaxChars: 80,
         useSummaryInInjection: true,

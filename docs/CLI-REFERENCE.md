@@ -15,6 +15,8 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | Command | Purpose |
 |---------|---------|
 | `stats [--efficiency] [--brief]` | **Rich output (default):** storage (SQLite/LanceDB sizes, WAL), knowledge (facts, entities, categories), learned behavior (procedures, directives, rules, patterns, meta-patterns), graph links, operational (credentials, proposals, last distill/reflect/compact), decay distribution. Use `--brief` for legacy storage + decay only. `--efficiency` adds tier/source breakdown, token estimates, and token-savings note. |
+| `test` | Memory diagnostics: store a marker fact, verify structured/semantic/hybrid search and auto-recall, then clean up. |
+| `context-audit` | Report token usage per injected context source (auto-recall, procedures, active tasks, workspace files) and recommendations. |
 | `compact` | Run tier compaction: completed tasks → COLD, inactive preferences → WARM, active blockers → HOT. Prints hot/warm/cold counts. |
 | `store --text <text> [options]` | Store a fact (for scripts; agents use `memory_store`). |
 | `lookup <entity> [--key <key>] [--tag <tag>] [--as-of <date>] [--include-superseded]` | Exact lookup in SQLite. `--as-of` = point-in-time (ISO or epoch); `--include-superseded` = include historical facts. |

@@ -30,10 +30,13 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
+import type { HybridMemoryConfig } from "../config.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withExit, type Chainable } from "./shared.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
+import { runContextAudit } from "../services/context-audit.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -43,7 +46,7 @@ export type ManageContext = {
   mergeResults: typeof mergeResults;
   parseSourceDate: (v: string | number | null | undefined) => number | null;
   getMemoryCategories: () => string[];
-  cfg: { distill?: { reinforcementBoost?: number; reinforcementProcedureBoost?: number; reinforcementPromotionThreshold?: number } };
+  cfg: HybridMemoryConfig;
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
@@ -515,6 +518,55 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(withExit(async () => {
       const updated = factsDb.backfillDecay();
       console.log(`Backfilled decayAt for ${updated} facts.`);
+    }));
+
+  mem
+    .command("test")
+    .description("Run memory diagnostics (structured + semantic + hybrid + auto-recall)")
+    .action(withExit(async () => {
+      const result = await runMemoryDiagnostics({
+        factsDb,
+        vectorDb,
+        embeddings,
+        minScore: cfg.autoRecall?.minScore ?? 0.3,
+        autoRecallLimit: cfg.autoRecall?.limit ?? 10,
+      });
+
+      const icon = (ok: boolean) => (ok ? "✅" : "❌");
+      console.log("=== Memory Diagnostics ===");
+      console.log(`Marker: ${result.markerId}`);
+      console.log(`Structured search: ${icon(result.structured.ok)} (${result.structured.count} result(s))`);
+      console.log(`Semantic search: ${icon(result.semantic.ok)} (${result.semantic.count} result(s))`);
+      console.log(`Hybrid search: ${icon(result.hybrid.ok)} (${result.hybrid.count} result(s))`);
+      console.log(`Auto-recall: ${icon(result.autoRecall.ok)} (${result.autoRecall.count} candidate(s))`);
+    }));
+
+  mem
+    .command("context-audit")
+    .description("Report token usage per injected context source and recommendations")
+    .action(withExit(async () => {
+      const audit = await runContextAudit({ cfg, factsDb });
+
+      console.log("=== Context Budget Audit ===");
+      console.log(`Auto-recall: ${audit.autoRecall.enabled ? `${audit.autoRecall.budgetTokens} token budget` : "disabled"} (format: ${audit.autoRecall.injectionFormat}, hot: ${audit.autoRecall.hotTokens})`);
+      console.log(`Procedures: ${audit.procedures.enabled ? `${audit.procedures.tokens} tokens` : "disabled"} (lines: ${audit.procedures.lines})`);
+      console.log(`Active tasks: ${audit.activeTasks.enabled ? `${audit.activeTasks.tokens} tokens` : "disabled"} (active: ${audit.activeTasks.count}, stale: ${audit.activeTasks.stale})`);
+      console.log(`Workspace files: ${audit.workspaceFiles.totalTokens} tokens`);
+      if (audit.workspaceFiles.files.length > 0) {
+        for (const file of audit.workspaceFiles.files) {
+          console.log(`  - ${file.file}: ${file.tokens} tokens`);
+        }
+      }
+      console.log(`Total injected (est.): ${audit.totalTokens} tokens`);
+
+      if (audit.recommendations.length > 0) {
+        console.log("Recommendations:");
+        for (const rec of audit.recommendations) {
+          console.log(`  - ${rec}`);
+        }
+      } else {
+        console.log("Recommendations: none — context budget is healthy.");
+      }
     }));
 
   mem

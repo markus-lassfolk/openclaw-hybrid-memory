@@ -69,6 +69,34 @@
       "label": "Auto-Recall entity lookup",
       "help": "When prompt mentions an entity from the list, merge lookup(entity) facts into candidates (4.1)"
     },
+    "autoRecall.retrievalDirectives.enabled": {
+      "label": "Retrieval directives",
+      "help": "Enable targeted recall triggers (entity mention, keyword, task type, session start)"
+    },
+    "autoRecall.retrievalDirectives.entityMentioned": {
+      "label": "Directive: entity mentioned",
+      "help": "When prompt mentions an entity, run a targeted recall for that entity (default: true)"
+    },
+    "autoRecall.retrievalDirectives.keywords": {
+      "label": "Directive keywords",
+      "help": "Keyword triggers to run targeted recall (case-insensitive)."
+    },
+    "autoRecall.retrievalDirectives.taskTypes": {
+      "label": "Directive task types",
+      "help": "Task-type triggers mapping (taskType -> keywords to match)."
+    },
+    "autoRecall.retrievalDirectives.sessionStart": {
+      "label": "Directive session start",
+      "help": "Run a targeted recall once when a new session starts (default: false)"
+    },
+    "autoRecall.retrievalDirectives.limit": {
+      "label": "Directive max results",
+      "help": "Max results per directive recall (default: 3)"
+    },
+    "autoRecall.retrievalDirectives.maxPerPrompt": {
+      "label": "Directive max per prompt",
+      "help": "Hard cap on directive recalls per prompt to limit latency (default: 4)"
+    },
     "autoRecall.summaryThreshold": {
       "label": "Summary threshold (chars)",
       "help": "Facts longer than this get a summary stored; 0 = disabled (default 300)"
@@ -472,6 +500,44 @@
                   },
                   "maxFactsPerEntity": {
                     "type": "number"
+                  }
+                }
+              },
+              "retrievalDirectives": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "entityMentioned": {
+                    "type": "boolean"
+                  },
+                  "keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "taskTypes": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "sessionStart": {
+                    "type": "boolean"
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "maxPerPrompt": {
+                    "type": "integer",
+                    "minimum": 1
                   }
                 }
               },
