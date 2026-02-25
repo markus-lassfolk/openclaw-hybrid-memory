@@ -21,8 +21,9 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, writeFile, mkdir, readdir, unlink, stat, realpath } from "node:fs/promises";
+import { dirname, join, resolve, relative, isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
 
 /** Valid task statuses */
@@ -319,18 +320,24 @@ export async function writeActiveTaskFile(
 /**
  * Add or update a task entry. If an entry with the same label exists, update it.
  * Otherwise, append a new entry.
+ *
+ * @param active Active task entries
+ * @param entry Entry to upsert
+ * @param preserveUpdated If true, use entry.updated as-is; otherwise set to current time
  */
 export function upsertTask(
   active: ActiveTaskEntry[],
   entry: ActiveTaskEntry,
+  preserveUpdated = false,
 ): ActiveTaskEntry[] {
   const idx = active.findIndex((t) => t.label === entry.label);
+  const updatedTimestamp = preserveUpdated ? entry.updated : new Date().toISOString();
   if (idx >= 0) {
     const updated = [...active];
-    updated[idx] = { ...active[idx], ...entry, updated: new Date().toISOString() };
+    updated[idx] = { ...active[idx], ...entry, updated: updatedTimestamp };
     return updated;
   }
-  return [...active, { ...entry, updated: new Date().toISOString() }];
+  return [...active, { ...entry, updated: updatedTimestamp }];
 }
 
 /**
@@ -529,6 +536,303 @@ export async function flushCompletedTaskToMemory(
 
   await writeFile(filePath, newContent, "utf-8");
   return filePath;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-agent detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if the given session key belongs to a sub-agent.
+ * Sub-agents have "subagent:" somewhere in their session key.
+ *
+ * Examples:
+ *   "agent:forge:subagent:f3d14066" → true
+ *   "agent:main:main"               → false
+ *   undefined                       → false
+ */
+export function isSubagentSession(sessionKey?: string): boolean {
+  if (!sessionKey) return false;
+  return sessionKey.includes("subagent:");
+}
+
+// ---------------------------------------------------------------------------
+// Task signal types (file-based sub-agent → orchestrator signalling)
+// ---------------------------------------------------------------------------
+
+/** Signal types that a sub-agent can emit. */
+export type TaskSignalType = "completed" | "blocked" | "escalate" | "update";
+
+/**
+ * Structured status signal that a sub-agent writes to
+ * `memory/task-signals/<label>-<timestamp>-<suffix>.json` for the orchestrator to consume.
+ */
+export interface TaskSignal {
+  /** Identifier of the emitting agent (e.g. "reaver-mqtt-auth") */
+  agent: string;
+  /** Human-readable task reference (e.g. "Yarbo RE: MQTT Auth") */
+  taskRef: string;
+  /** ISO-8601 timestamp of when the signal was emitted */
+  timestamp: string;
+  /** Signal type */
+  signal: TaskSignalType;
+  /** Short human-readable summary of what changed */
+  summary: string;
+  /** Optional: from/to status transition */
+  statusChange?: { from: string; to: string };
+  /** Optional: key findings or data points to surface */
+  findings?: string[];
+}
+
+/**
+ * A TaskSignal enriched with the path of the file it was read from,
+ * so the orchestrator can delete/archive it after processing.
+ */
+export interface PendingTaskSignal extends TaskSignal {
+  /** Absolute path of the signal file on disk */
+  _filePath: string;
+}
+
+/**
+ * Emit a structured signal file for the orchestrator to consume.
+ * Should only be called by sub-agents (but is not restricted).
+ *
+ * @param label     Short identifier for this signal (used in filename, e.g. "forge-108")
+ * @param signal    The signal payload to write
+ * @param memoryDir Absolute path to the memory directory
+ * @returns         Absolute path of the written signal file
+ */
+export async function writeTaskSignal(
+  label: string,
+  signal: TaskSignal,
+  memoryDir: string,
+): Promise<string> {
+  const signalsDir = join(memoryDir, "task-signals");
+  await mkdir(signalsDir, { recursive: true });
+  // Sanitise label to be filesystem-safe
+  const safeLabel = label.replace(/[^a-zA-Z0-9_\-]/g, "-");
+  // Add timestamp + random suffix to prevent collisions (sanitized labels or same-millisecond writes)
+  const timestamp = Date.now();
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
+  const filePath = join(signalsDir, `${safeLabel}-${timestamp}-${suffix}.json`);
+  await writeFile(filePath, JSON.stringify(signal, null, 2), "utf-8");
+  return filePath;
+}
+
+/**
+ * Read all pending signal files from `memory/task-signals/*.json`.
+ * Returns an array of signals enriched with their file paths so the
+ * orchestrator can delete/archive them after processing.
+ *
+ * @param memoryDir Absolute path to the memory directory
+ */
+export async function readPendingSignals(memoryDir: string): Promise<PendingTaskSignal[]> {
+  const signalsDir = join(memoryDir, "task-signals");
+  if (!existsSync(signalsDir)) return [];
+
+  let files: string[];
+  try {
+    files = await readdir(signalsDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+
+  const resolvedSignalsDir = await realpath(signalsDir);
+  const signals: PendingTaskSignal[] = [];
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    const filePath = join(signalsDir, file);
+    let resolvedFilePath: string;
+    try {
+      resolvedFilePath = await realpath(filePath);
+    } catch {
+      continue;
+    }
+    const rel = relative(resolvedSignalsDir, resolvedFilePath);
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+      continue;
+    }
+    try {
+      const raw = await readFile(resolvedFilePath, "utf-8");
+      const parsed = JSON.parse(raw) as TaskSignal;
+      // Validate required fields to avoid noisy downstream errors
+      if (
+        typeof parsed.agent !== "string" ||
+        typeof parsed.taskRef !== "string" ||
+        typeof parsed.timestamp !== "string" ||
+        typeof parsed.signal !== "string" ||
+        typeof parsed.summary !== "string"
+      ) {
+        continue; // Skip signals with missing required fields
+      }
+      signals.push({ ...parsed, _filePath: resolvedFilePath });
+    } catch {
+      // Skip malformed or unreadable files — don't crash the orchestrator
+      continue;
+    }
+  }
+
+  return signals;
+}
+
+/**
+ * Delete a processed signal file.
+ * The orchestrator calls this after applying the signal to ACTIVE-TASK.md.
+ *
+ * @param filePath Absolute path of the signal file to delete (from `_filePath` field)
+ */
+export async function deleteSignal(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch (err) {
+    // Ignore ENOENT — already deleted (idempotent)
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mtime-aware file I/O (optimistic concurrency)
+// ---------------------------------------------------------------------------
+
+/** ActiveTaskFile extended with the file's mtime in milliseconds. */
+export interface ActiveTaskFileWithMtime extends ActiveTaskFile {
+  /** File modification time in milliseconds since epoch (from fs.stat) */
+  mtime: number;
+}
+
+/**
+ * Read and parse ACTIVE-TASK.md, also capturing the file's mtime.
+ * Use this when you intend to write the file back and need to detect
+ * concurrent modifications (optimistic concurrency).
+ *
+ * @param filePath    Absolute path to ACTIVE-TASK.md
+ * @param staleMinutes Minutes before a task is considered stale (default: 1440)
+ */
+export async function readActiveTaskFileWithMtime(
+  filePath: string,
+  staleMinutes = 1440,
+): Promise<ActiveTaskFileWithMtime | null> {
+  if (!existsSync(filePath)) return null;
+  try {
+    const [content, fileStat] = await Promise.all([
+      readFile(filePath, "utf-8"),
+      stat(filePath),
+    ]);
+    const parsed = parseActiveTaskFile(content);
+    parsed.active = detectStaleTasks(parsed.active, staleMinutes);
+    return { ...parsed, mtime: fileStat.mtimeMs };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+/**
+ * Write ACTIVE-TASK.md with optimistic concurrency protection.
+ *
+ * Before writing, re-reads the file and checks whether its mtime has changed
+ * since `knownMtime` was recorded. If the file was modified concurrently, the
+ * caller-supplied `merge` callback is invoked with the freshly-read file so it
+ * can re-apply its changes on top of the latest state. Up to `maxRetries`
+ * attempts are made; if conflicts persist, a last-write-wins fallback write is
+ * performed to avoid leaving the file untouched.
+ *
+ * @param filePath      Absolute path to ACTIVE-TASK.md
+ * @param active        Active task entries to write
+ * @param completed     Completed task entries to write
+ * @param knownMtime    The mtime observed at the last read (milliseconds)
+ * @param merge         Called when a conflict is detected; receives the fresh
+ *                      file state and must return the [active, completed] arrays
+ *                      to write. Return null to abort the write.
+ * @param maxRetries    Maximum number of retry attempts (default: 3)
+ * @param staleMinutes  Minutes before a task is considered stale (default: 1440)
+ * @returns             True if a write occurred; false if merge aborted the write
+ */
+export async function writeActiveTaskFileOptimistic(
+  filePath: string,
+  active: ActiveTaskEntry[],
+  completed: ActiveTaskEntry[],
+  knownMtime: number,
+  merge: (
+    fresh: ActiveTaskFileWithMtime,
+  ) => Promise<[ActiveTaskEntry[], ActiveTaskEntry[]] | null>,
+  maxRetries = 3,
+  staleMinutes = 1440,
+): Promise<boolean> {
+  let currentActive = active;
+  let currentCompleted = completed;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Check current mtime before writing
+    let currentMtime: number;
+    try {
+      const fileStat = await stat(filePath);
+      currentMtime = fileStat.mtimeMs;
+    } catch (err) {
+      // File doesn't exist yet — no conflict possible, write directly
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        await writeActiveTaskFile(filePath, currentActive, currentCompleted);
+        return true;
+      }
+      throw err;
+    }
+
+    if (currentMtime !== knownMtime) {
+      // File was modified since we last read it — re-read and merge
+      const fresh = await readActiveTaskFileWithMtime(filePath, staleMinutes);
+      if (!fresh) {
+        // File was deleted between stat and readFile — just write
+        await writeActiveTaskFile(filePath, currentActive, currentCompleted);
+        return true;
+      }
+      const merged = await merge(fresh);
+      if (merged === null) return false; // Caller decided to abort
+      [currentActive, currentCompleted] = merged;
+      // Update knownMtime to fresh state for next iteration
+      knownMtime = fresh.mtime;
+      // Continue to next iteration to check for conflicts again
+      continue;
+    }
+
+    // No conflict detected — write and return
+    await writeActiveTaskFile(filePath, currentActive, currentCompleted);
+    return true;
+  }
+
+  // Exhausted retries — write whatever we have (last-write-wins fallback)
+  console.warn(
+    `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; applying last-write-wins fallback`,
+  );
+  await writeActiveTaskFile(filePath, currentActive, currentCompleted);
+  return true;
+}
+
+/**
+ * Write ACTIVE-TASK.md, but refuse to write if the session is a sub-agent.
+ * Sub-agents should use `writeTaskSignal` to communicate status changes back
+ * to the orchestrator instead of writing ACTIVE-TASK.md directly.
+ *
+ * @param filePath   Absolute path to ACTIVE-TASK.md
+ * @param active     Active task entries to write
+ * @param completed  Completed task entries to write
+ * @param sessionKey The current session key (used to detect sub-agent mode)
+ * @returns          Object indicating whether the write was skipped
+ */
+export async function writeActiveTaskFileGuarded(
+  filePath: string,
+  active: ActiveTaskEntry[],
+  completed: ActiveTaskEntry[],
+  sessionKey?: string,
+): Promise<{ skipped: boolean; reason?: string }> {
+  if (isSubagentSession(sessionKey)) {
+    return {
+      skipped: true,
+      reason: "sub-agent sessions are read-only for ACTIVE-TASK.md; use writeTaskSignal instead",
+    };
+  }
+  await writeActiveTaskFile(filePath, active, completed);
+  return { skipped: false };
 }
 
 // ---------------------------------------------------------------------------
