@@ -3,7 +3,7 @@
  * synthesize SKILL.md drafts via LLM, write to skills/auto-generated/ (issue #114).
  */
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry } from "../types/memory.js";
@@ -283,6 +283,7 @@ ${body}`;
 
     if (opts.dryRun) {
       logger.info(`[dry-run] Would write ${skillPath}`);
+      existingSlugs.add(slug);
       result.pathsWritten.push(skillPath);
       result.drafts.push({ pattern: procs[0].taskPattern.slice(0, 60), count: procs.length, path: skillPath });
       written++;
@@ -310,6 +311,11 @@ ${body}`;
         subsystem: "memory-to-skills",
         operation: "write",
       });
+      try {
+        rmSync(skillDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup failure
+      }
       result.skippedOther++;
       continue;
     }

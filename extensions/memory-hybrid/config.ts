@@ -192,6 +192,8 @@ export type MemoryToSkillsConfig = {
   notify: boolean;
   /** Always require human review; no auto-promote (default: false) */
   autoPublish: boolean;
+  /** Optional: path to post-generation validation script (e.g. quick_validate.py). Not invoked by plugin; for user/documentation. */
+  validateScript?: string;
 };
 
 /** Dynamic memory tiering (hot/warm/cold). */
@@ -1226,6 +1228,7 @@ export const hybridConfigSchema = {
         : "skills/auto-generated",
       notify: memoryToSkillsRaw?.notify !== false,
       autoPublish: memoryToSkillsRaw?.autoPublish === true,
+      validateScript: typeof memoryToSkillsRaw?.validateScript === "string" && memoryToSkillsRaw.validateScript.trim().length > 0 ? memoryToSkillsRaw.validateScript.trim() : undefined,
     };
 
     // Parse optional distill config (Gemini for session distillation)
