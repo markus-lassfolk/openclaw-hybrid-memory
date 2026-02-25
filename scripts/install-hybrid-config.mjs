@@ -106,6 +106,10 @@ const fullDefaults = {
 
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
+    // Prevent prototype pollution via special property names
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      continue;
+    }
     const srcVal = source[key];
     const tgtVal = target[key];
     if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
