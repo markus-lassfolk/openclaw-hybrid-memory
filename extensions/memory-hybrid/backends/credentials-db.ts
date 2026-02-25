@@ -5,7 +5,7 @@
  */
 
 import Database from "better-sqlite3";
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { createHash, createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
@@ -15,17 +15,20 @@ import { capturePluginError } from "../services/error-reporter.js";
 const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
 const CRED_ALGO = "aes-256-gcm";
-const CRED_KDF_VERSION = 2; // v1 = scrypt (legacy params), v2 = scrypt (recommended params)
+const CRED_KDF_VERSION = 2; // v1 = SHA-256 (legacy), v2 = scrypt
 const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 
 /** Derive encryption key using scrypt.
- *  v1: legacy scrypt with conservative parameters (N=8192, r=8, p=1).
+ *  v1: legacy SHA-256 (kept for backward compatibility with existing encrypted vaults).
  *  v2: recommended scrypt parameters (N=16384, r=8, p=1).
  */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
-    // Legacy scrypt with conservative parameters (N=8192, r=8, p=1)
-    return scryptSync(password, salt, 32, { N: 8192, r: 8, p: 1 });
+    // lgtm[js/insufficient-password-hash]
+    // Legacy SHA-256 KDF (weak, kept for backward compatibility with existing encrypted vaults).
+    // New vaults use v2 with scrypt. Existing v1 vaults encrypted with SHA-256 cannot be
+    // decrypted with a different KDF, so we must preserve this for backward compatibility.
+    return createHash("sha256").update(password, "utf8").digest();
   }
   // v2: scrypt with recommended parameters (N=16384, r=8, p=1)
   return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
