@@ -37,6 +37,7 @@ import {
   buildActiveTaskInjection,
   buildStaleWarningInjection,
   writeActiveTaskFile,
+  writeActiveTaskFileGuarded,
   readActiveTaskFileWithMtime,
   writeActiveTaskFileOptimistic,
   upsertTask,
@@ -1037,10 +1038,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             updated: now,
           };
           const updated = upsertTask(existingActive, entry);
-          await writeActiveTaskFile(resolvedActiveTaskPath, updated, existingCompleted);
-          api.logger.info?.(
-            `memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`,
-          );
+          const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, existingCompleted, ev.sessionKey);
+          if (writeResult.skipped) {
+            api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_start: ${writeResult.reason}`);
+          } else {
+            api.logger.info?.(
+              `memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`,
+            );
+          }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "active-task-subagent-start",
@@ -1108,14 +1113,22 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (newStatus === "Done") {
             const { updated, completed } = completeTask(taskFile.active, label);
             if (completed) {
-              await writeActiveTaskFile(
+              const writeResult = await writeActiveTaskFileGuarded(
                 resolvedActiveTaskPath,
                 updated,
                 [...taskFile.completed, completed],
+                ev.sessionKey,
               );
-              if (ctx.cfg.activeTask.flushOnComplete) {
-                const memoryDir = join(workspaceRoot, "memory");
-                await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
+              if (writeResult.skipped) {
+                api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Done): ${writeResult.reason}`);
+              } else {
+                if (ctx.cfg.activeTask.flushOnComplete) {
+                  const memoryDir = join(workspaceRoot, "memory");
+                  await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
+                }
+                api.logger.info?.(
+                  `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
+                );
               }
             }
           } else {
@@ -1127,12 +1140,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               next: ev.error ? `Fix: ${ev.error.slice(0, 100)}` : existingTask.next,
             };
             const updated = upsertTask(taskFile.active, updatedEntry);
-            await writeActiveTaskFile(resolvedActiveTaskPath, updated, taskFile.completed);
+            const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, taskFile.completed, ev.sessionKey);
+            if (writeResult.skipped) {
+              api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Failed): ${writeResult.reason}`);
+            } else {
+              api.logger.info?.(
+                `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
+              );
+            }
           }
-
-          api.logger.info?.(
-            `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
-          );
 
           // Consume any pending task signals emitted by sub-agents
           await consumePendingTaskSignals(
