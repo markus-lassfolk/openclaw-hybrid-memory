@@ -54,23 +54,39 @@ export function getToolNamesFromRecipe(recipeJson: string): string[] {
   return arr.map((s) => (s && typeof s.tool === "string" ? s.tool : "")).filter(Boolean);
 }
 
-/** Step consistency: fraction of step positions where the majority tool matches (0–1). Exported for tests. */
-export function stepConsistency(procedures: ProcedureEntry[]): number {
+/** Shared helper: compute mode (most frequent tool) and its count at each position. */
+function computePositionModes(procedures: ProcedureEntry[]): Array<{ tool: string; count: number; total: number }> {
   const sequences = procedures.map((p) => getToolNamesFromRecipe(p.recipeJson)).filter((s) => s.length > 0);
-  if (sequences.length === 0) return 0;
+  if (sequences.length === 0) return [];
   const maxLen = Math.max(...sequences.map((s) => s.length));
-  if (maxLen === 0) return 0;
-  let matchSum = 0;
-  let count = 0;
+  const modes: Array<{ tool: string; count: number; total: number }> = [];
   for (let i = 0; i < maxLen; i++) {
     const atPosition = sequences.map((s) => s[i]).filter(Boolean);
-    if (atPosition.length === 0) continue;
+    if (atPosition.length === 0) break;
     const freq = new Map<string, number>();
     for (const t of atPosition) freq.set(t, (freq.get(t) ?? 0) + 1);
     const mode = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
     if (mode) {
-      matchSum += mode[1];
-      count += atPosition.length;
+      modes.push({ tool: mode[0], count: mode[1], total: atPosition.length });
+    }
+  }
+  return modes;
+}
+
+/** Step consistency: fraction of step positions where the majority tool matches (0–1). Exported for tests. */
+export function stepConsistency(procedures: ProcedureEntry[]): number {
+  const sequences = procedures.map((p) => getToolNamesFromRecipe(p.recipeJson)).filter((s) => s.length > 0);
+  if (sequences.length === 0) return 0;
+  const modes = computePositionModes(procedures);
+  if (modes.length === 0) return 0;
+  const totalSequences = sequences.length;
+  const minQuorum = Math.max(2, Math.ceil(totalSequences * 0.5));
+  let matchSum = 0;
+  let count = 0;
+  for (const m of modes) {
+    if (m.total >= minQuorum) {
+      matchSum += m.count;
+      count += m.total;
     }
   }
   return count === 0 ? 0 : matchSum / count;
@@ -87,19 +103,8 @@ export function distinctToolCount(procedures: ProcedureEntry[]): number {
 
 /** Majority tool sequence across procedures (mode at each position). Used for recipe.json. */
 function majorityToolSequence(procedures: ProcedureEntry[]): string[] {
-  const sequences = procedures.map((p) => getToolNamesFromRecipe(p.recipeJson)).filter((s) => s.length > 0);
-  if (sequences.length === 0) return [];
-  const maxLen = Math.max(...sequences.map((s) => s.length));
-  const result: string[] = [];
-  for (let i = 0; i < maxLen; i++) {
-    const atPosition = sequences.map((s) => s[i]).filter(Boolean);
-    if (atPosition.length === 0) break;
-    const freq = new Map<string, number>();
-    for (const t of atPosition) freq.set(t, (freq.get(t) ?? 0) + 1);
-    const mode = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
-    if (mode) result.push(mode[0]);
-  }
-  return result;
+  const modes = computePositionModes(procedures);
+  return modes.map((m) => m.tool);
 }
 
 /** Collect existing skill slugs under workspace (skills/, skills/auto/, skills/auto-generated/). Exported for tests. */
@@ -121,6 +126,17 @@ export function getExistingSkillSlugs(workspaceRoot: string): Set<string> {
     }
   }
   return slugs;
+}
+
+/** Ensure unique slug by appending -1, -2, etc. if collision detected. */
+function ensureUniqueSlug(basePath: string, slug: string, existingSlugs: Set<string>): string {
+  let candidate = slug;
+  let n = 0;
+  while (existingSlugs.has(candidate) || existsSync(join(basePath, candidate))) {
+    n++;
+    candidate = `${slug}-${n}`;
+  }
+  return candidate;
 }
 
 /** Parse LLM response: optional YAML frontmatter (name, description) and body. Exported for tests. Strips markdown code fences if present. */
@@ -275,11 +291,8 @@ export async function runMemoryToSkills(
     }
 
     const { name, description, body } = parseSynthesizedSkill(rawResponse);
-    const slug = slugifyForSkill(name);
-    if (existingSlugs.has(slug) || existsSync(join(basePath, slug))) {
-      result.skippedOther++;
-      continue;
-    }
+    const baseSlug = slugifyForSkill(name);
+    const slug = ensureUniqueSlug(basePath, baseSlug, existingSlugs);
 
     const skillDir = join(basePath, slug);
     const skillPath = join(skillDir, "SKILL.md");
