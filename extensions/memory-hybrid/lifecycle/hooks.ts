@@ -560,6 +560,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 let textToEmbed = trimmed;
                 const allowHyde = ctx.cfg.search?.hydeEnabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
                 if (allowHyde) {
+                  if (opts?.limitHydeOnce) directiveHydeUsed = true;
                   try {
                     const cronCfg = getCronModelConfig(ctx.cfg);
                     const pref = getLLMModelPreference(cronCfg, "nano");
@@ -579,7 +580,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     });
                     const hydeText = hydeContent.trim();
                     if (hydeText.length > 10) textToEmbed = hydeText;
-                    if (opts?.limitHydeOnce) directiveHydeUsed = true;
                   } catch (err) {
                     if (!directiveAbort.signal.aborted) {
                       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -698,48 +698,56 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           if (directivesCfg.enabled) {
-            if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookup.entities.length > 0) {
-              for (const entity of entityLookup.entities) {
-                if (!promptLower.includes(entity.toLowerCase())) continue;
-                if (!canRunDirective()) break;
-                const results = await runRecallPipeline(entity, directiveLimit, { entity, hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
-                directiveCalls += 1;
-                addDirectiveResults(results, `entity:${entity}`);
-              }
-            }
-
-            if (directivesCfg.keywords.length > 0) {
-              for (const keyword of directivesCfg.keywords) {
-                if (!promptLower.includes(keyword.toLowerCase())) continue;
-                if (!canRunDirective()) break;
-                const results = await runRecallPipeline(keyword, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
-                directiveCalls += 1;
-                addDirectiveResults(results, `keyword:${keyword}`);
-              }
-            }
-
-            const taskTypeEntries = Object.entries(directivesCfg.taskTypes);
-            if (taskTypeEntries.length > 0) {
-              for (const [taskType, triggers] of taskTypeEntries) {
-                const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
-                if (!hit) continue;
-                if (!canRunDirective()) break;
-                const results = await runRecallPipeline(taskType, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
-                directiveCalls += 1;
-                addDirectiveResults(results, `taskType:${taskType}`);
-              }
-            }
-
-            if (directivesCfg.sessionStart) {
-              const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
-              if (!sessionStartSeen.has(sessionKey)) {
-                sessionStartSeen.add(sessionKey);
-                if (canRunDirective()) {
-                  const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+            try {
+              if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookup.entities.length > 0) {
+                for (const entity of entityLookup.entities) {
+                  if (!promptLower.includes(entity.toLowerCase())) continue;
+                  if (!canRunDirective()) break;
+                  const results = await runRecallPipeline(entity, directiveLimit, { entity, hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
                   directiveCalls += 1;
-                  addDirectiveResults(results, "sessionStart");
+                  addDirectiveResults(results, `entity:${entity}`);
                 }
               }
+
+              if (directivesCfg.keywords.length > 0) {
+                for (const keyword of directivesCfg.keywords) {
+                  if (!promptLower.includes(keyword.toLowerCase())) continue;
+                  if (!canRunDirective()) break;
+                  const results = await runRecallPipeline(keyword, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                  directiveCalls += 1;
+                  addDirectiveResults(results, `keyword:${keyword}`);
+                }
+              }
+
+              const taskTypeEntries = Object.entries(directivesCfg.taskTypes);
+              if (taskTypeEntries.length > 0) {
+                for (const [taskType, triggers] of taskTypeEntries) {
+                  const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
+                  if (!hit) continue;
+                  if (!canRunDirective()) break;
+                  const results = await runRecallPipeline(taskType, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                  directiveCalls += 1;
+                  addDirectiveResults(results, `taskType:${taskType}`);
+                }
+              }
+
+              if (directivesCfg.sessionStart) {
+                const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
+                if (!sessionStartSeen.has(sessionKey)) {
+                  if (canRunDirective()) {
+                    const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                    directiveCalls += 1;
+                    addDirectiveResults(results, "sessionStart");
+                    sessionStartSeen.add(sessionKey);
+                  }
+                }
+              }
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "directive-recall",
+                subsystem: "auto-recall",
+              });
+              api.logger.warn(`memory-hybrid: directive recall failed, continuing with main recall results: ${err}`);
             }
           }
 
