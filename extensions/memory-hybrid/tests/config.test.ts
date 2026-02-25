@@ -1002,6 +1002,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.memoryTiering.enabled).toBe(false);
       expect(result.autoRecall.entityLookup.enabled).toBe(false);
       expect(result.autoRecall.authFailure.enabled).toBe(false);
+      expect(result.memoryToSkills.enabled).toBe(false);
     });
 
     it("mode normal: enables autoClassify, graph, procedures; disables reflection", () => {
@@ -1017,6 +1018,27 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.credentials.enabled).toBe(false);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
+      expect(result.memoryToSkills.enabled).toBe(true);
+      expect(result.memoryToSkills.schedule).toBe("15 2 * * *");
+      expect(result.memoryToSkills.outputDir).toBe("skills/auto-generated");
+    });
+
+    it("parses memoryToSkills.validateScript when provided", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        memoryToSkills: { validateScript: "  scripts/quick_validate.py  " },
+      });
+      expect(result.memoryToSkills.validateScript).toBe("scripts/quick_validate.py");
+    });
+
+    it("allows memoryToSkills.enabled true when procedures disabled (explicit)", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        procedures: { enabled: false },
+        memoryToSkills: { enabled: true },
+      });
+      expect(result.procedures.enabled).toBe(false);
+      expect(result.memoryToSkills.enabled).toBe(true);
     });
 
     it("mode expert: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {

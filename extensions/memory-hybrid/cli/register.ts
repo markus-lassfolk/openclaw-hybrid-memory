@@ -89,6 +89,7 @@ export type HybridMemCliContext = {
   runExtractDaily: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
   runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
+  runSkillsSuggest: (opts: { dryRun: boolean; days?: number; verbose?: boolean }) => Promise<import("../services/memory-to-skills.js").SkillsSuggestResult>;
   runBackfill: (opts: { dryRun: boolean; workspace?: string; limit?: number }, sink: BackfillCliSink) => Promise<BackfillCliResult>;
   runIngestFiles: (opts: { dryRun: boolean; workspace?: string; paths?: string[] }, sink: IngestFilesSink) => Promise<IngestFilesResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
@@ -206,6 +207,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractDaily: ctx.runExtractDaily,
     runExtractProcedures: ctx.runExtractProcedures,
     runGenerateAutoSkills: ctx.runGenerateAutoSkills,
+    runSkillsSuggest: ctx.runSkillsSuggest,
     runDistill: ctx.runDistill,
     runExtractDirectives: ctx.runExtractDirectives,
     runExtractReinforcement: ctx.runExtractReinforcement,

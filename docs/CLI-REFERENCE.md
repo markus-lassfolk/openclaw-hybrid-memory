@@ -55,6 +55,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `self-correction-extract [--days N] [--output path]` | Extract user correction incidents from session JSONL (last N days). Uses `.language-keywords.json` — run `build-languages` first for non-English. |
 | `self-correction-run [--extract path] [--workspace path] [--dry-run] [--approve] [--model M]` | Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
 | `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
+| `skills-suggest [--dry-run] [--days N] [--verbose]` | Memory-to-skills: cluster procedures, synthesize SKILL.md drafts to `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md). |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
 | `credentials list [--service <pattern>]` | List vault entries (service, type, url; no values). Use `--service` to filter by substring (e.g. `--service unifi`). |
 | `credentials get --service <name> [--type <type>] [--value-only]` | Retrieve a credential value. Use `--type` when multiple types exist for the service. Use `--value-only` for scripting (prints only the secret). |
