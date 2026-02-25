@@ -733,8 +733,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (directivesCfg.sessionStart) {
               const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
               if (!sessionStartSeen.has(sessionKey)) {
-                sessionStartSeen.add(sessionKey);
                 if (canRunDirective()) {
+                  sessionStartSeen.add(sessionKey);
                   const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
                   directiveCalls += 1;
                   addDirectiveResults(results, "sessionStart");
@@ -1502,10 +1502,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Clear session-start dedup state on session end to avoid unbounded growth over long-lived gateways.
     if (ctx.cfg.autoRecall.enabled) {
       api.on("agent_end", async (event: unknown) => {
-        const sessionKey = resolveSessionKey(event, api);
-        if (sessionKey) {
-          sessionStartSeen.delete(sessionKey);
-        }
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        sessionStartSeen.delete(sessionKey);
       });
     }
 
@@ -1513,8 +1511,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       api.on("agent_end", async () => {
         authFailureRecallsThisSession.clear();
-        sessionStartSeen.clear();
-        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map + sessionStartSeen for new session");
+        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for new session");
       });
     }
 
