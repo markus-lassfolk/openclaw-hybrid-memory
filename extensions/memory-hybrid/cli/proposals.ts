@@ -116,9 +116,8 @@ export function capProposalConfidence(confidence: number, targetFile: string, su
 function buildAppendBlock(proposalId: string, observation: string, suggestedChange: string, timestamp: string): string {
   const escapeHtmlComment = (text: string): string =>
     text
-      // Neutralize both standard and lenient HTML comment end markers.
-      .replace(/--!>/g, "-- !>")
-      .replace(/-->/g, "-- >")
+      // Neutralize both standard (-->) and lenient (--!>) HTML comment end markers.
+      .replace(/--!?>/g, "-- >")
       // Prevent starting a new HTML comment inside the observation.
       .replace(/<!--/g, "<! --");
   const safeObservation = escapeHtmlComment(observation);
