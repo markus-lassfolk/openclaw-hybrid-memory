@@ -50,6 +50,7 @@ import type { SelfCorrectionRunResult, CredentialsAuditResult, CredentialsPruneR
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, chatCompleteWithRetry } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { runMemoryToSkills, type SkillsSuggestResult } from "../services/memory-to-skills.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens, chunkSessionText, chunkTextByChars } from "../utils/text.js";
 import { parseSourceDate } from "../utils/dates.js";
@@ -92,6 +93,8 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true },
   // Sunday 04:00 | weekly-extract-procedures | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "default", enabled: true },
+  // Daily 02:00 | nightly-memory-to-skills | skills-suggest (issue #114)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
   // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
@@ -112,6 +115,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
   [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: (j) => /nightly-memory-to-skills|memory-to-skills|skills-suggest/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) => /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
@@ -697,6 +701,7 @@ export async function runVerifyForCli(
 
   log(`  procedures: ${bool(cfg.procedures.enabled)}`);
   log(`  procedures.requireApprovalForPromote: ${bool(cfg.procedures.requireApprovalForPromote)}`);
+  log(`  memoryToSkills: ${bool(cfg.memoryToSkills.enabled)} (schedule: ${cfg.memoryToSkills.schedule})`);
   const reflectionModelDisplay = cfg.reflection.enabled
     ? ` (model: ${cfg.reflection.model ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`})`  // reflection uses default, not nano
     : "";
@@ -876,6 +881,7 @@ export async function runVerifyForCli(
   const nightlyMemorySweepRe = /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
   const weeklyReflectionRe = /weekly-reflection|memory reflection|pattern synthesis/i;
   const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
+  const nightlyMemoryToSkillsRe = /nightly-memory-to-skills|memory-to-skills|skills-suggest/i;
   const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
   const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
   const weeklyPersonaProposalsRe = /weekly-persona-proposals|persona proposals/i;
@@ -890,6 +896,8 @@ export async function runVerifyForCli(
       return "weekly-reflection";
     } else if (extractProceduresRe.test(name)) {
       return "weekly-extract-procedures";
+    } else if (nightlyMemoryToSkillsRe.test(name) || (msg && /skills-suggest/i.test(msg))) {
+      return "nightly-memory-to-skills";
     } else if (selfCorrectionRe.test(name)) {
       return "self-correction-analysis";
     } else if (weeklyDeepMaintenanceRe.test(name)) {
@@ -1026,6 +1034,7 @@ export async function runVerifyForCli(
   // Display each job with its status
   const jobsToDisplay = [
     { key: "nightly-memory-sweep", description: "session distillation", docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup" },
+    { key: "nightly-memory-to-skills", description: "memory-to-skills", docsPath: "docs/MEMORY-TO-SKILLS.md" },
     { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
     { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
     { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
@@ -1369,6 +1378,55 @@ export async function runGenerateAutoSkillsForCli(
     );
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runGenerateAutoSkillsForCli" });
+    throw err;
+  }
+}
+
+/**
+ * Memory-to-skills: cluster procedures, synthesize SKILL.md drafts (issue #114).
+ */
+export async function runSkillsSuggestForCli(
+  ctx: HandlerContext,
+  opts: { dryRun: boolean; days?: number; verbose?: boolean },
+): Promise<SkillsSuggestResult> {
+  const { factsDb, embeddings, openai, cfg, logger } = ctx;
+  if (!cfg.memoryToSkills.enabled) {
+    return {
+      proceduresCollected: 0,
+      clustersConsidered: 0,
+      qualifyingClusters: 0,
+      pathsWritten: [],
+      skippedDedup: 0,
+      skippedOther: 0,
+      drafts: [],
+    };
+  }
+  const cronCfg = getCronModelConfig(cfg);
+  const defaultPref = getLLMModelPreference(cronCfg, "default");
+  const model = defaultPref[0] ?? getDefaultCronModel(cronCfg, "default");
+  const fallbackModels = defaultPref.length > 1 ? defaultPref.slice(1) : [];
+  const info = (s: string) => logger.info?.(s) ?? (opts.verbose ? console.log(s) : () => {});
+  const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
+  const windowDays = opts.days ?? cfg.memoryToSkills.windowDays;
+  try {
+    return await runMemoryToSkills(
+      factsDb,
+      embeddings,
+      openai,
+      cfg.memoryToSkills,
+      {
+        windowDays,
+        minInstances: cfg.memoryToSkills.minInstances,
+        consistencyThreshold: cfg.memoryToSkills.consistencyThreshold,
+        outputDir: cfg.memoryToSkills.outputDir,
+        dryRun: opts.dryRun,
+        model,
+        fallbackModels,
+      },
+      { info, warn },
+    );
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runSkillsSuggestForCli" });
     throw err;
   }
 }

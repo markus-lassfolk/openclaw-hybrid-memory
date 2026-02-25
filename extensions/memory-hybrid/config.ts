@@ -174,6 +174,26 @@ export type ProceduresConfig = {
   requireApprovalForPromote: boolean;
 };
 
+/** Memory-to-skills: nightly synthesis of skill drafts from clustered procedures (issue #114). */
+export type MemoryToSkillsConfig = {
+  /** Enable memory-to-skills pipeline (default: same as procedures.enabled) */
+  enabled: boolean;
+  /** Cron schedule for nightly run (default: "0 2 * * *" = 2 AM) */
+  schedule: string;
+  /** Procedures updated in last N days (default: 30) */
+  windowDays: number;
+  /** Minimum procedure instances per cluster (default: 3) */
+  minInstances: number;
+  /** Step consistency threshold 0–1 (default: 0.7) */
+  consistencyThreshold: number;
+  /** Output directory relative to workspace (default: "skills/auto-generated") */
+  outputDir: string;
+  /** Whether cron message asks agent to notify on new drafts (default: true) */
+  notify: boolean;
+  /** Always require human review; no auto-promote (default: false) */
+  autoPublish: boolean;
+};
+
 /** Dynamic memory tiering (hot/warm/cold). */
 export type MemoryTieringConfig = {
   enabled: boolean;
@@ -292,6 +312,8 @@ export type HybridMemoryConfig = {
   reflection: ReflectionConfig;
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
   procedures: ProceduresConfig;
+  /** Memory-to-skills: synthesize skill drafts from clustered procedures (default: enabled when procedures enabled) */
+  memoryToSkills: MemoryToSkillsConfig;
   /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
   /** Optional: LLM preference lists and per-provider API config for direct chat calls (issue #87). */
@@ -1183,6 +1205,29 @@ export const hybridConfigSchema = {
       requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     };
 
+    // Parse memory-to-skills config (issue #114). Default enabled to procedures.enabled.
+    const memoryToSkillsRaw = cfg.memoryToSkills as Record<string, unknown> | undefined;
+    const memoryToSkills: MemoryToSkillsConfig = {
+      enabled: memoryToSkillsRaw?.enabled !== false && procedures.enabled,
+      schedule: typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.length > 0
+        ? memoryToSkillsRaw.schedule
+        : "0 2 * * *",
+      windowDays: typeof memoryToSkillsRaw?.windowDays === "number" && memoryToSkillsRaw.windowDays >= 1
+        ? Math.min(365, Math.floor(memoryToSkillsRaw.windowDays))
+        : 30,
+      minInstances: typeof memoryToSkillsRaw?.minInstances === "number" && memoryToSkillsRaw.minInstances >= 1
+        ? Math.floor(memoryToSkillsRaw.minInstances)
+        : 3,
+      consistencyThreshold: typeof memoryToSkillsRaw?.consistencyThreshold === "number" && memoryToSkillsRaw.consistencyThreshold >= 0 && memoryToSkillsRaw.consistencyThreshold <= 1
+        ? memoryToSkillsRaw.consistencyThreshold
+        : 0.7,
+      outputDir: typeof memoryToSkillsRaw?.outputDir === "string" && memoryToSkillsRaw.outputDir.length > 0
+        ? memoryToSkillsRaw.outputDir
+        : "skills/auto-generated",
+      notify: memoryToSkillsRaw?.notify !== false,
+      autoPublish: memoryToSkillsRaw?.autoPublish === true,
+    };
+
     // Parse optional distill config (Gemini for session distillation)
     const distillRaw = cfg.distill as Record<string, unknown> | undefined;
     const distill =
@@ -1468,6 +1513,7 @@ export const hybridConfigSchema = {
       personaProposals,
       reflection,
       procedures,
+      memoryToSkills,
       memoryTiering,
       llm,
       distill,

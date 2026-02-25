@@ -71,6 +71,7 @@ Commands by category:
     extract-directives   Extract directive rules from sessions
     extract-reinforcement  Extract reinforcement from praise
     generate-auto-skills   Generate skills from procedures
+    skills-suggest         Cluster procedures, draft skills to auto-generated/ (--days, --dry-run)
     generate-proposals    Generate persona proposals from reflection (--dry-run, --verbose)
 
   Reflection & classification
@@ -125,6 +126,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem extract-daily",
   "hybrid-mem extract-procedures",
   "hybrid-mem generate-auto-skills",
+  "hybrid-mem skills-suggest",
   "hybrid-mem generate-proposals",
   "hybrid-mem extract-directives",
   "hybrid-mem extract-reinforcement",
@@ -622,6 +624,7 @@ export function createHybridMemCliContext(
     runExtractDaily: (opts, sink) => handlers.runExtractDailyForCli(handlerCtx, opts, sink),
     runExtractProcedures: (opts) => handlers.runExtractProceduresForCli(handlerCtx, opts),
     runGenerateAutoSkills: (opts) => handlers.runGenerateAutoSkillsForCli(handlerCtx, opts),
+    runSkillsSuggest: (opts) => handlers.runSkillsSuggestForCli(handlerCtx, opts),
     runBackfill: (opts, sink) => handlers.runBackfillForCli(handlerCtx, opts, sink),
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
