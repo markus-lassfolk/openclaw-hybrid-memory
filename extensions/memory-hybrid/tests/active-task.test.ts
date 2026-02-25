@@ -19,7 +19,15 @@ import {
   readActiveTaskFile,
   writeActiveTaskFile,
   ACTIVE_TASK_STATUSES,
+  isSubagentSession,
+  writeTaskSignal,
+  readPendingSignals,
+  deleteSignal,
+  readActiveTaskFileWithMtime,
+  writeActiveTaskFileGuarded,
+  writeActiveTaskFileOptimistic,
   type ActiveTaskEntry,
+  type TaskSignal,
 } from "../services/active-task.js";
 import {
   runActiveTaskList,
@@ -962,5 +970,356 @@ describe("buildActiveTaskInjection (integration)", () => {
     expect(result).toContain("task-1");
     expect(result).toContain("task-2");
     expect(result).toContain("task-3");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isSubagentSession tests
+// ---------------------------------------------------------------------------
+
+describe("isSubagentSession", () => {
+  it("returns true for session keys containing 'subagent:'", () => {
+    expect(isSubagentSession("agent:forge:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a")).toBe(true);
+    expect(isSubagentSession("agent:main:subagent:abc123")).toBe(true);
+    expect(isSubagentSession("subagent:xyz")).toBe(true);
+  });
+
+  it("returns false for orchestrator session keys", () => {
+    expect(isSubagentSession("agent:main:main")).toBe(false);
+    expect(isSubagentSession("agent:forge:forge")).toBe(false);
+    expect(isSubagentSession("main")).toBe(false);
+  });
+
+  it("returns false for undefined or empty session key", () => {
+    expect(isSubagentSession(undefined)).toBe(false);
+    expect(isSubagentSession("")).toBe(false);
+  });
+
+  it("is case-sensitive — 'Subagent:' without lowercase does not match", () => {
+    // Sub-agent keys in practice always use lowercase "subagent:"
+    expect(isSubagentSession("agent:forge:Subagent:abc")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task signal tests (writeTaskSignal / readPendingSignals / deleteSignal)
+// ---------------------------------------------------------------------------
+
+describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "task-signal-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeSignal(overrides: Partial<TaskSignal> = {}): TaskSignal {
+    return {
+      agent: "test-agent",
+      taskRef: "test-task",
+      timestamp: "2026-02-25T07:48:00.000Z",
+      signal: "completed",
+      summary: "Task is complete",
+      ...overrides,
+    };
+  }
+
+  it("writes a signal file to memory/task-signals/<label>.json", async () => {
+    const signal = makeSignal();
+    const filePath = await writeTaskSignal("my-label", signal, tmpDir);
+    expect(filePath).toContain("task-signals");
+    expect(filePath).toContain("my-label.json");
+    const raw = await readFile(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    expect(parsed.agent).toBe("test-agent");
+    expect(parsed.signal).toBe("completed");
+  });
+
+  it("sanitises label to be filesystem-safe", async () => {
+    const signal = makeSignal();
+    const filePath = await writeTaskSignal("label with spaces/and:colons", signal, tmpDir);
+    expect(filePath).not.toContain(" ");
+    expect(filePath).not.toContain(":");
+    expect(filePath).not.toContain("/task-signals/label with");
+  });
+
+  it("returns empty array when signals dir does not exist", async () => {
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(0);
+  });
+
+  it("reads all pending signals from signals dir", async () => {
+    const s1 = makeSignal({ agent: "agent-1", signal: "completed" });
+    const s2 = makeSignal({ agent: "agent-2", signal: "blocked" });
+    await writeTaskSignal("label-1", s1, tmpDir);
+    await writeTaskSignal("label-2", s2, tmpDir);
+
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(2);
+    const agents = signals.map((s) => s.agent).sort();
+    expect(agents).toEqual(["agent-1", "agent-2"]);
+  });
+
+  it("includes _filePath on each pending signal", async () => {
+    const signal = makeSignal();
+    await writeTaskSignal("with-path", signal, tmpDir);
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals[0]._filePath).toBeDefined();
+    expect(signals[0]._filePath).toContain("with-path.json");
+  });
+
+  it("skips malformed JSON files without crashing", async () => {
+    const { writeFile: fsWrite, mkdir: fsMkdir } = await import("node:fs/promises");
+    const signalsDir = join(tmpDir, "task-signals");
+    await fsMkdir(signalsDir, { recursive: true });
+    await fsWrite(join(signalsDir, "bad.json"), "not valid json", "utf-8");
+    await writeTaskSignal("good-label", makeSignal(), tmpDir);
+
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(1);
+    expect(signals[0].agent).toBe("test-agent");
+  });
+
+  it("ignores non-JSON files in signals dir", async () => {
+    const { writeFile: fsWrite, mkdir: fsMkdir } = await import("node:fs/promises");
+    const signalsDir = join(tmpDir, "task-signals");
+    await fsMkdir(signalsDir, { recursive: true });
+    await fsWrite(join(signalsDir, "notes.txt"), "ignore me", "utf-8");
+    await writeTaskSignal("real-signal", makeSignal(), tmpDir);
+
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(1);
+  });
+
+  it("deleteSignal removes the file", async () => {
+    const filePath = await writeTaskSignal("to-delete", makeSignal(), tmpDir);
+    await deleteSignal(filePath);
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(0);
+  });
+
+  it("deleteSignal is idempotent (ENOENT is ignored)", async () => {
+    const filePath = await writeTaskSignal("to-delete-twice", makeSignal(), tmpDir);
+    await deleteSignal(filePath);
+    // Second delete should not throw
+    await expect(deleteSignal(filePath)).resolves.toBeUndefined();
+  });
+
+  it("preserves optional fields in signal round-trip", async () => {
+    const signal = makeSignal({
+      signal: "blocked",
+      statusChange: { from: "in-progress", to: "blocked" },
+      findings: ["finding 1", "finding 2"],
+    });
+    await writeTaskSignal("rich-signal", signal, tmpDir);
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals[0].statusChange).toEqual({ from: "in-progress", to: "blocked" });
+    expect(signals[0].findings).toEqual(["finding 1", "finding 2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readActiveTaskFileWithMtime tests
+// ---------------------------------------------------------------------------
+
+describe("readActiveTaskFileWithMtime", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "mtime-test-"));
+    filePath = join(tmpDir, "ACTIVE-TASK.md");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns null when file does not exist", async () => {
+    const result = await readActiveTaskFileWithMtime(filePath);
+    expect(result).toBeNull();
+  });
+
+  it("returns parsed tasks and mtime when file exists", async () => {
+    await writeActiveTaskFile(filePath, [makeEntry()], []);
+    const result = await readActiveTaskFileWithMtime(filePath);
+    expect(result).not.toBeNull();
+    expect(result!.active).toHaveLength(1);
+    expect(typeof result!.mtime).toBe("number");
+    expect(result!.mtime).toBeGreaterThan(0);
+  });
+
+  it("returns a different mtime after the file is updated", async () => {
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "first" })], []);
+    const first = await readActiveTaskFileWithMtime(filePath);
+
+    // Brief pause to ensure mtime changes
+    await new Promise((r) => setTimeout(r, 10));
+
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "second" })], []);
+    const second = await readActiveTaskFileWithMtime(filePath);
+
+    expect(second!.mtime).toBeGreaterThanOrEqual(first!.mtime);
+    expect(second!.active[0].label).toBe("second");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeActiveTaskFileGuarded tests
+// ---------------------------------------------------------------------------
+
+describe("writeActiveTaskFileGuarded", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "guarded-test-"));
+    filePath = join(tmpDir, "ACTIVE-TASK.md");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("writes normally when no session key is provided (orchestrator default)", async () => {
+    const result = await writeActiveTaskFileGuarded(filePath, [makeEntry()], []);
+    expect(result.skipped).toBe(false);
+    const taskFile = await readActiveTaskFile(filePath);
+    expect(taskFile!.active).toHaveLength(1);
+  });
+
+  it("writes normally when orchestrator session key is provided", async () => {
+    const result = await writeActiveTaskFileGuarded(
+      filePath, [makeEntry()], [], "agent:main:main"
+    );
+    expect(result.skipped).toBe(false);
+    const taskFile = await readActiveTaskFile(filePath);
+    expect(taskFile!.active).toHaveLength(1);
+  });
+
+  it("skips write when session is a sub-agent", async () => {
+    const result = await writeActiveTaskFileGuarded(
+      filePath,
+      [makeEntry()],
+      [],
+      "agent:forge:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a",
+    );
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toContain("read-only");
+    // File should NOT have been written
+    const taskFile = await readActiveTaskFile(filePath);
+    expect(taskFile).toBeNull();
+  });
+
+  it("provides a reason when skipped", async () => {
+    const result = await writeActiveTaskFileGuarded(
+      filePath, [makeEntry()], [], "agent:x:subagent:y"
+    );
+    expect(result.reason).toBeDefined();
+    expect(result.reason!.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeActiveTaskFileOptimistic tests
+// ---------------------------------------------------------------------------
+
+describe("writeActiveTaskFileOptimistic", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "optimistic-test-"));
+    filePath = join(tmpDir, "ACTIVE-TASK.md");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("writes directly when mtime has not changed", async () => {
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "original" })], []);
+    const read = await readActiveTaskFileWithMtime(filePath);
+    expect(read).not.toBeNull();
+
+    const newActive = [makeEntry({ label: "updated" })];
+    let mergeCalled = false;
+    await writeActiveTaskFileOptimistic(
+      filePath,
+      newActive,
+      [],
+      read!.mtime,
+      async () => { mergeCalled = true; return null; },
+    );
+
+    // No conflict — merge should NOT have been called
+    expect(mergeCalled).toBe(false);
+    const result = await readActiveTaskFile(filePath);
+    expect(result!.active[0].label).toBe("updated");
+  });
+
+  it("calls merge when file was modified concurrently", async () => {
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "original" })], []);
+    const read = await readActiveTaskFileWithMtime(filePath);
+
+    // Simulate a concurrent write by updating the file with a small delay
+    await new Promise((r) => setTimeout(r, 20));
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "concurrent" })], []);
+
+    let mergeCalled = false;
+    await writeActiveTaskFileOptimistic(
+      filePath,
+      [makeEntry({ label: "mine" })],
+      [],
+      read!.mtime, // stale mtime — triggers merge
+      async (fresh) => {
+        mergeCalled = true;
+        // Accept the fresh state plus our label
+        return [[...fresh.active, makeEntry({ label: "mine" })], fresh.completed];
+      },
+    );
+
+    expect(mergeCalled).toBe(true);
+    const result = await readActiveTaskFile(filePath);
+    const labels = result!.active.map((t) => t.label);
+    expect(labels).toContain("concurrent");
+    expect(labels).toContain("mine");
+  });
+
+  it("aborts write when merge returns null", async () => {
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "original" })], []);
+    const read = await readActiveTaskFileWithMtime(filePath);
+
+    // Simulate a concurrent write
+    await new Promise((r) => setTimeout(r, 20));
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "concurrent" })], []);
+
+    await writeActiveTaskFileOptimistic(
+      filePath,
+      [makeEntry({ label: "mine" })],
+      [],
+      read!.mtime,
+      async () => null, // Abort
+    );
+
+    const result = await readActiveTaskFile(filePath);
+    // File should remain as "concurrent" — our write was aborted
+    expect(result!.active[0].label).toBe("concurrent");
+  });
+
+  it("writes successfully to non-existent file (no conflict possible)", async () => {
+    const newPath = join(tmpDir, "new-file.md");
+    await writeActiveTaskFileOptimistic(
+      newPath,
+      [makeEntry({ label: "new" })],
+      [],
+      0, // mtime 0 = not yet read
+      async () => null,
+    );
+    const result = await readActiveTaskFile(newPath);
+    expect(result!.active[0].label).toBe("new");
   });
 });

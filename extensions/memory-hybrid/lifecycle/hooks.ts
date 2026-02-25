@@ -37,10 +37,14 @@ import {
   buildActiveTaskInjection,
   buildStaleWarningInjection,
   writeActiveTaskFile,
+  writeActiveTaskFileGuarded,
   upsertTask,
   completeTask,
   flushCompletedTaskToMemory,
+  readPendingSignals,
+  deleteSignal,
   type ActiveTaskEntry,
+  type PendingTaskSignal,
 } from "../services/active-task.js";
 import { parseDuration } from "../utils/duration.js";
 
@@ -68,6 +72,113 @@ export interface LifecycleContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
+}
+
+// ---------------------------------------------------------------------------
+// Signal consumption helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Read all pending task signals from `memory/task-signals/*.json` and apply
+ * their status changes to ACTIVE-TASK.md.
+ *
+ * Called by the orchestrator after a subagent completes so that status updates
+ * emitted by sub-agents during their work are merged into the working memory.
+ *
+ * @param activeTaskPath  Absolute path to ACTIVE-TASK.md
+ * @param workspaceRoot   Workspace root (signals live in workspaceRoot/memory/task-signals/)
+ * @param logger          Plugin logger (optional, for info/warn messages)
+ */
+async function consumePendingTaskSignals(
+  activeTaskPath: string,
+  workspaceRoot: string,
+  logger?: { info?: (msg: string) => void; warn?: (msg: string) => void },
+): Promise<void> {
+  const memoryDir = join(workspaceRoot, "memory");
+  let signals: PendingTaskSignal[];
+  try {
+    signals = await readPendingSignals(memoryDir);
+  } catch (err) {
+    logger?.warn?.(`memory-hybrid: failed to read pending task signals: ${err}`);
+    return;
+  }
+
+  if (signals.length === 0) return;
+
+  // Re-read the task file once and apply all signals in a single write
+  let taskFile;
+  try {
+    taskFile = await readActiveTaskFile(activeTaskPath);
+  } catch (err) {
+    logger?.warn?.(`memory-hybrid: failed to read ACTIVE-TASK.md for signal consumption: ${err}`);
+    return;
+  }
+
+  if (!taskFile) {
+    // No task file yet — can't apply signals; delete them anyway to avoid accumulation
+    for (const signal of signals) {
+      await deleteSignal(signal._filePath).catch(() => {});
+    }
+    return;
+  }
+
+  let activeEntries = taskFile.active;
+  const completedEntries = [...taskFile.completed];
+  const processedCount = { count: 0 };
+
+  for (const signal of signals) {
+    try {
+      const now = new Date().toISOString();
+      // Find the matching task by label (taskRef may be a label or description)
+      const existing = activeEntries.find(
+        (t) => t.label === signal.agent || t.label === signal.taskRef || t.description === signal.taskRef,
+      );
+
+      if (signal.signal === "completed") {
+        // Mark the task as done and move to completed
+        const targetLabel = existing?.label ?? signal.agent;
+        const { updated, completed } = completeTask(activeEntries, targetLabel);
+        if (completed) {
+          activeEntries = updated;
+          completedEntries.push(completed);
+        }
+      } else if (existing) {
+        // Update the existing task with signal data
+        const newStatus: ActiveTaskEntry["status"] =
+          signal.signal === "blocked" ? "Stalled" :
+          signal.signal === "escalate" ? "Waiting" :
+          existing.status;
+
+        const updatedEntry: ActiveTaskEntry = {
+          ...existing,
+          status: newStatus,
+          next: signal.summary
+            ? `[Signal: ${signal.signal}] ${signal.summary}`
+            : existing.next,
+          updated: signal.timestamp ?? now,
+        };
+        activeEntries = upsertTask(activeEntries, updatedEntry);
+      }
+
+      // Delete the processed signal file
+      await deleteSignal(signal._filePath);
+      processedCount.count++;
+    } catch (err) {
+      logger?.warn?.(`memory-hybrid: failed to process signal from ${signal._filePath}: ${err}`);
+      // Don't delete on error — leave for next attempt
+    }
+  }
+
+  if (processedCount.count > 0) {
+    try {
+      await writeActiveTaskFile(activeTaskPath, activeEntries, completedEntries);
+      logger?.info?.(
+        `memory-hybrid: consumed ${processedCount.count} pending task signal(s) from sub-agents`,
+      );
+    } catch (err) {
+      logger?.warn?.(`memory-hybrid: failed to write ACTIVE-TASK.md after signal consumption: ${err}`);
+    }
+  }
 }
 
 export function createLifecycleHooks(ctx: LifecycleContext) {
@@ -845,6 +956,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.info?.(
             `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
           );
+
+          // Consume any pending task signals emitted by sub-agents
+          await consumePendingTaskSignals(resolvedActiveTaskPath, workspaceRoot, api.logger);
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "active-task-subagent-end",
