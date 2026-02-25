@@ -5,7 +5,7 @@
  */
 
 import Database from "better-sqlite3";
-import { createHash, createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
