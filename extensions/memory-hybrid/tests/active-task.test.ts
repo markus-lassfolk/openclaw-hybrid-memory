@@ -76,12 +76,14 @@ _No active tasks._
 `;
 
 function makeEntry(overrides: Partial<ActiveTaskEntry> = {}): ActiveTaskEntry {
+  // Use dynamic timestamps so "fresh" entries never accidentally cross the stale threshold
+  const now = new Date().toISOString();
   return {
     label: "test-task",
     description: "A test task",
     status: "In progress",
-    started: "2026-02-24T10:00:00.000Z",
-    updated: "2026-02-24T15:00:00.000Z",
+    started: now,
+    updated: now,
     ...overrides,
   };
 }
