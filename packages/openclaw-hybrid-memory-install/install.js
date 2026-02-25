@@ -26,6 +26,24 @@ const tmpDir = path.join(
 );
 
 function run(cmd, args = [], opts = {}) {
+  const isWindows = process.platform === "win32";
+
+  // On Windows, avoid running npm via a shell (cmd.exe) to prevent shell interpretation
+  // of arguments that may contain user-controlled data (e.g., version from process.argv).
+  if (isWindows && cmd === "npm") {
+    const npmExecPath = process.env.npm_execpath;
+    if (!npmExecPath) {
+      throw new Error(
+        "Unable to locate npm safely on Windows (npm_execpath is not set). " +
+          "Please run this installer via npm or npx so npm_execpath is available."
+      );
+    }
+    return execFileSync(process.execPath, [npmExecPath, ...args], {
+      stdio: "inherit",
+      ...opts,
+    });
+  }
+
   return execFileSync(cmd, args, { stdio: "inherit", ...opts });
 }
 
