@@ -541,6 +541,10 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
 
   function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
     for (const key of Object.keys(source)) {
+      // Guard against prototype pollution by skipping special keys.
+      if (key === "__proto__" || key === "constructor" || key === "prototype") {
+        continue;
+      }
       const srcVal = source[key];
       const tgtVal = target[key];
       if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
