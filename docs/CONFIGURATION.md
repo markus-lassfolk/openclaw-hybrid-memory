@@ -348,7 +348,7 @@ Cluster procedural memories and synthesize SKILL.md drafts into `skills/auto-gen
         "config": {
           "memoryToSkills": {
             "enabled": true,
-            "schedule": "0 2 * * *",
+            "schedule": "15 2 * * *",
             "windowDays": 30,
             "minInstances": 3,
             "consistencyThreshold": 0.7,
@@ -366,14 +366,14 @@ Cluster procedural memories and synthesize SKILL.md drafts into `skills/auto-gen
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | same as procedures | Enable memory-to-skills pipeline |
-| `schedule` | `"0 2 * * *"` | Cron for nightly run (2 AM) |
+| `schedule` | `"15 2 * * *"` | Cron for nightly run (2:15 AM, staggered after nightly-distill) |
 | `windowDays` | `30` | Procedures updated in last N days |
 | `minInstances` | `3` | Minimum procedure instances per cluster |
 | `consistencyThreshold` | `0.7` | Step consistency 0–1 required |
 | `outputDir` | `"skills/auto-generated"` | Output path relative to workspace |
-| `notify` | `true` | Cron asks agent to notify on new drafts |
-| `autoPublish` | `false` | Always require human review |
-| `validateScript` | — | Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by the plugin; for documentation/workflow. |
+| `notify` | `true` | Intended hint that the agent should notify on new drafts; currently informational only (nightly cron/publish flow does not yet consult this). |
+| `autoPublish` | `false` | Intended toggle for auto-publishing vs. always requiring human review; currently informational only (nightly cron/publish flow does not yet consult this). |
+| `validateScript` | — | Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by the plugin; for documentation/workflow only. |
 
 When you run `install` or `verify --fix`, the **nightly-memory-to-skills** cron job is added or updated; its schedule is taken from `memoryToSkills.schedule` when available.
 

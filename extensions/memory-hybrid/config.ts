@@ -188,9 +188,17 @@ export type MemoryToSkillsConfig = {
   consistencyThreshold: number;
   /** Output directory relative to workspace (default: "skills/auto-generated") */
   outputDir: string;
-  /** Whether cron message asks agent to notify on new drafts (default: true) */
+  /**
+   * Whether cron message asks agent to notify on new drafts (default: true).
+   * NOTE: Reserved for future use; currently not consumed by the plugin/CLI.
+   * External tooling may read this flag, but changing it has no effect on pipeline behavior.
+   */
   notify: boolean;
-  /** Always require human review; no auto-promote (default: false) */
+  /**
+   * Control for auto-publishing synthesized skills (default: false).
+   * NOTE: Reserved for future use; currently a no-op and does not affect promotion
+   * or review behavior. Kept for configuration schema stability and documentation.
+   */
   autoPublish: boolean;
   /** Optional: path to post-generation validation script (e.g. quick_validate.py). Not invoked by plugin; for user/documentation. */
   validateScript?: string;
@@ -1211,8 +1219,8 @@ export const hybridConfigSchema = {
     const memoryToSkillsRaw = cfg.memoryToSkills as Record<string, unknown> | undefined;
     const memoryToSkills: MemoryToSkillsConfig = {
       enabled: memoryToSkillsRaw?.enabled === true || (memoryToSkillsRaw?.enabled !== false && procedures.enabled),
-      schedule: typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.length > 0
-        ? memoryToSkillsRaw.schedule
+      schedule: typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.trim().length > 0
+        ? memoryToSkillsRaw.schedule.trim()
         : "15 2 * * *",
       windowDays: typeof memoryToSkillsRaw?.windowDays === "number" && memoryToSkillsRaw.windowDays >= 1
         ? Math.min(365, Math.floor(memoryToSkillsRaw.windowDays))

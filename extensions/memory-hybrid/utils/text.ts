@@ -119,10 +119,13 @@ export function timestampFromFilename(name: string): string | undefined {
 }
 
 /**
- * Slugify for skill names (lowercase, hyphens, alphanumeric; max 60 chars). Fallback "skill" if empty.
- * Shared utility for directory-safe slugs.
+ * Shared helper for generating directory-safe slugs (lowercase, hyphens, alphanumeric; max 60 chars).
+ * @param text - The text to slugify.
+ * @param fallback - Fallback value when the slug is empty after processing (default: `"skill"`).
+ *   Pass `"procedure"` when generating slugs for the generate-auto-skills pipeline to preserve
+ *   its original fallback behavior.
  */
-export function slugifyForSkill(text: string): string {
+export function slugifyForSkill(text: string, fallback = "skill"): string {
   const slug = text
     .toLowerCase()
     .replace(/\s+/g, "-")
@@ -130,5 +133,5 @@ export function slugifyForSkill(text: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 60);
-  return slug || "skill";
+  return slug || fallback;
 }

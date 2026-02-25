@@ -123,16 +123,28 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
 };
 
 /**
+ * Build the nightly-memory-to-skills cron job message based on memoryToSkills.notify config.
+ * When notify is false, omit the user-notification instruction from the job message.
+ */
+function buildMemoryToSkillsMessage(notify: boolean): string {
+  const base = "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/.";
+  const notifyClause = " If new skill drafts were generated, notify the user in this system channel with a concise summary and paths.";
+  const exitClause = " Exit 0 if memoryToSkills.enabled is false.";
+  return notify ? `${base}${notifyClause}${exitClause}` : `${base}${exitClause}`;
+}
+
+/**
  * Ensure maintenance cron jobs exist in ~/.openclaw/cron/jobs.json. Add any missing jobs; optionally normalize existing (schedule, pluginJobId).
  * Never re-enables jobs the user has disabled unless reEnableDisabled is true (callers should pass false to honor disabled jobs).
  * scheduleOverrides: optional map pluginJobId -> cron expr (e.g. memoryToSkills.schedule for nightly-memory-to-skills).
+ * messageOverrides: optional map pluginJobId -> cron job message string (e.g. memoryToSkills.notify for nightly-memory-to-skills).
  */
 function ensureMaintenanceCronJobs(
   openclawDir: string,
   pluginConfig: CronModelConfig | undefined,
-  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean; scheduleOverrides?: Record<string, string> } = {},
+  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean; scheduleOverrides?: Record<string, string>; messageOverrides?: Record<string, string> } = {},
 ): { added: string[]; normalized: string[] } {
-  const { normalizeExisting = false, reEnableDisabled = false, scheduleOverrides } = options;
+  const { normalizeExisting = false, reEnableDisabled = false, scheduleOverrides, messageOverrides } = options;
   const added: string[] = [];
   const normalized: string[] = [];
   const cronDir = join(openclawDir, "cron");
@@ -150,6 +162,7 @@ function ensureMaintenanceCronJobs(
     if (!existing) {
       const job = resolveCronJob(def, pluginConfig) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
+      if (messageOverrides?.[id]) job.message = messageOverrides[id];
       jobsArr.push(job);
       jobsChanged = true;
       added.push(name);
@@ -166,6 +179,11 @@ function ensureMaintenanceCronJobs(
             jobsChanged = true;
             if (!normalized.includes(name)) normalized.push(name);
           }
+        }
+        if (messageOverrides?.[id] && existing.message !== messageOverrides[id]) {
+          existing.message = messageOverrides[id];
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
@@ -569,10 +587,12 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       const pluginConfig = pluginCfg as CronModelConfig | undefined;
       const memToSkills = pluginCfg?.memoryToSkills as Record<string, unknown> | undefined;
       const schedule = typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0 ? (memToSkills.schedule as string).trim() : undefined;
+      const notify = memToSkills?.notify !== false;
       ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
         scheduleOverrides: schedule ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: schedule } : undefined,
+        messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(notify) },
       });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
@@ -1205,6 +1225,7 @@ export async function runVerifyForCli(
             normalizeExisting: true,
             reEnableDisabled: false,
             scheduleOverrides,
+            messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
@@ -3012,6 +3033,7 @@ export async function runUpgradeForCli(
       normalizeExisting: true,
       reEnableDisabled: false,
       scheduleOverrides,
+      messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
     });
     if (added.length > 0 || normalized.length > 0) {
       logger?.info?.(`memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`);

@@ -2,7 +2,7 @@
 
 **Issue:** [#114](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/114)
 
-The **memory-to-skills** pipeline mines procedural memories (and patterns), clusters them by task type, applies quality gates, and uses an LLM to synthesize **SKILL.md** drafts into `skills/auto-generated/`. This is distinct from **generate-auto-skills**, which writes one template-based skill per single procedure in `skills/auto/`. Memory-to-skills **clusters** similar procedures and **synthesizes** one coherent skill per cluster.
+The **memory-to-skills** pipeline mines procedural memories, clusters them by task type, applies quality gates, and uses an LLM to synthesize **SKILL.md** drafts into `skills/auto-generated/`. This is distinct from **generate-auto-skills**, which writes one template-based skill per single procedure in `skills/auto/`. Memory-to-skills **clusters** similar procedures and **synthesizes** one coherent skill per cluster.
 
 ---
 
@@ -15,7 +15,7 @@ The **memory-to-skills** pipeline mines procedural memories (and patterns), clus
 | **Filter** | Clusters with ≥ minInstances, step consistency ≥ threshold, and ≥ 2 distinct tools. |
 | **Generate** | LLM synthesizes one SKILL.md (and recipe.json) per qualifying cluster. |
 | **Write** | Drafts go to `skills/auto-generated/<slug>/`. |
-| **Dedup** | Skip if a skill with the same slug already exists under workspace skills. |
+| **Dedup** | Skip if a skill with the same slug already exists under workspace skills; the cluster is counted as `skippedOther`. |
 | **Notify** | Cron job message asks the agent to notify the user when new drafts are created. |
 
 ---
@@ -27,13 +27,13 @@ Under `plugins.entries["openclaw-hybrid-memory"].config.memoryToSkills`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | same as `procedures.enabled` | Enable the pipeline. |
-| `schedule` | `"0 2 * * *"` | Cron for nightly run (2 AM). |
+| `schedule` | `"15 2 * * *"` | Cron for nightly run (2:15 AM, staggered after nightly-distill). |
 | `windowDays` | `30` | Procedures updated in last N days. |
 | `minInstances` | `3` | Minimum procedure instances per cluster. |
 | `consistencyThreshold` | `0.7` | Step consistency 0–1 required. |
 | `outputDir` | `"skills/auto-generated"` | Output path relative to workspace. |
-| `notify` | `true` | Cron message asks agent to notify on new drafts. |
-| `autoPublish` | `false` | Always require human review. |
+| `notify` | `true` | Informational hint: whether the cron job should notify on new drafts. Currently not consumed by the pipeline; reserved for future use. |
+| `autoPublish` | `false` | Informational toggle for auto-publishing; currently a no-op. Always requires human review. |
 
 Example:
 
@@ -41,7 +41,7 @@ Example:
 {
   "memoryToSkills": {
     "enabled": true,
-    "schedule": "0 2 * * *",
+    "schedule": "15 2 * * *",
     "windowDays": 30,
     "minInstances": 3,
     "consistencyThreshold": 0.7,
@@ -76,7 +76,7 @@ If `memoryToSkills.enabled` is false, the command exits successfully with no wor
 
 ## Cron Job
 
-When you run `openclaw hybrid-mem install` or `openclaw hybrid-mem verify --fix`, the plugin adds a **nightly-memory-to-skills** job (default schedule: 2 AM). The job runs `openclaw hybrid-mem skills-suggest`. If new drafts were generated, the job message instructs the agent to notify the user in the system channel with a short summary and paths.
+When you run `openclaw hybrid-mem install` or `openclaw hybrid-mem verify --fix`, the plugin adds a **nightly-memory-to-skills** job (default schedule: 2:15 AM, staggered after nightly-distill at 2:00 AM). The job runs `openclaw hybrid-mem skills-suggest`. If new drafts were generated, the job message instructs the agent to notify the user in the system channel with a short summary and paths.
 
 To disable the job, set `memoryToSkills.enabled: false` or disable the job in `~/.openclaw/cron/jobs.json`.
 
