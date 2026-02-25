@@ -1031,7 +1031,7 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     const signal = makeSignal();
     const filePath = await writeTaskSignal("my-label", signal, tmpDir);
     expect(filePath).toContain("task-signals");
-    expect(filePath).toContain("my-label.json");
+    expect(filePath).toMatch(/my-label-\d+\.json$/);
     const raw = await readFile(filePath, "utf-8");
     const parsed = JSON.parse(raw);
     expect(parsed.agent).toBe("test-agent");
@@ -1068,7 +1068,7 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     await writeTaskSignal("with-path", signal, tmpDir);
     const signals = await readPendingSignals(tmpDir);
     expect(signals[0]._filePath).toBeDefined();
-    expect(signals[0]._filePath).toContain("with-path.json");
+    expect(signals[0]._filePath).toMatch(/with-path-\d+\.json$/);
   });
 
   it("skips malformed JSON files without crashing", async () => {

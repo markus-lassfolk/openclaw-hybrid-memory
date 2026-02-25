@@ -37,7 +37,6 @@ import {
   buildActiveTaskInjection,
   buildStaleWarningInjection,
   writeActiveTaskFile,
-  writeActiveTaskFileGuarded,
   readActiveTaskFileWithMtime,
   writeActiveTaskFileOptimistic,
   upsertTask,
@@ -141,9 +140,14 @@ async function consumePendingTaskSignals(
       try {
         const now = new Date().toISOString();
         // Find the matching task by label (taskRef may be a label or description)
-        const existing = updatedActive.find(
-          (t) => t.label === signal.agent || t.label === signal.taskRef || t.description === signal.taskRef,
-        );
+        // Prioritize exact label matches to avoid ambiguity
+        let existing = updatedActive.find((t) => t.label === signal.agent);
+        if (!existing) {
+          existing = updatedActive.find((t) => t.label === signal.taskRef);
+        }
+        if (!existing) {
+          existing = updatedActive.find((t) => t.description === signal.taskRef);
+        }
 
         if (signal.signal === "completed") {
           // Mark the task as done and move to completed
@@ -202,6 +206,8 @@ async function consumePendingTaskSignals(
           );
           return [reappliedActive, reappliedCompleted];
         },
+        3,
+        staleMinutes,
       );
       // Only delete signal files after successful write
       for (const signal of processedSignals) {

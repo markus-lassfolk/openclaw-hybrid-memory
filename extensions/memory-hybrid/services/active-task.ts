@@ -714,14 +714,15 @@ export async function readActiveTaskFileWithMtime(
  * can re-apply its changes on top of the latest state. Up to `maxRetries`
  * attempts are made before throwing.
  *
- * @param filePath    Absolute path to ACTIVE-TASK.md
- * @param active      Active task entries to write
- * @param completed   Completed task entries to write
- * @param knownMtime  The mtime observed at the last read (milliseconds)
- * @param merge       Called when a conflict is detected; receives the fresh
- *                    file state and must return the [active, completed] arrays
- *                    to write. Return null to abort the write.
- * @param maxRetries  Maximum number of retry attempts (default: 3)
+ * @param filePath      Absolute path to ACTIVE-TASK.md
+ * @param active        Active task entries to write
+ * @param completed     Completed task entries to write
+ * @param knownMtime    The mtime observed at the last read (milliseconds)
+ * @param merge         Called when a conflict is detected; receives the fresh
+ *                      file state and must return the [active, completed] arrays
+ *                      to write. Return null to abort the write.
+ * @param maxRetries    Maximum number of retry attempts (default: 3)
+ * @param staleMinutes  Minutes before a task is considered stale (default: 1440)
  */
 export async function writeActiveTaskFileOptimistic(
   filePath: string,
@@ -732,6 +733,7 @@ export async function writeActiveTaskFileOptimistic(
     fresh: ActiveTaskFileWithMtime,
   ) => Promise<[ActiveTaskEntry[], ActiveTaskEntry[]] | null>,
   maxRetries = 3,
+  staleMinutes = 1440,
 ): Promise<void> {
   let currentActive = active;
   let currentCompleted = completed;
@@ -753,7 +755,7 @@ export async function writeActiveTaskFileOptimistic(
 
     if (currentMtime !== knownMtime) {
       // File was modified since we last read it — re-read and merge
-      const fresh = await readActiveTaskFileWithMtime(filePath);
+      const fresh = await readActiveTaskFileWithMtime(filePath, staleMinutes);
       if (!fresh) {
         // File was deleted between stat and readFile — just write
         await writeActiveTaskFile(filePath, currentActive, currentCompleted);
@@ -764,8 +766,11 @@ export async function writeActiveTaskFileOptimistic(
       [currentActive, currentCompleted] = merged;
       // Update knownMtime to fresh state for next iteration
       knownMtime = fresh.mtime;
+      // Continue to next iteration to check for conflicts again
+      continue;
     }
 
+    // No conflict detected — write and return
     await writeActiveTaskFile(filePath, currentActive, currentCompleted);
     return;
   }
