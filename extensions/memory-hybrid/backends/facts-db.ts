@@ -2086,7 +2086,7 @@ export class FactsDB {
       const cutoff = Math.floor(Date.now() / 1000) - clampedDays * 24 * 3600;
       const rows = this.liveDb
         .prepare(
-          `SELECT * FROM procedures WHERE procedure_type = 'positive' AND updated_at >= ? ORDER BY updated_at DESC, created_at DESC LIMIT ?`,
+          `SELECT * FROM procedures WHERE procedure_type = 'positive' AND updated_at >= ? AND promoted_to_skill = 0 ORDER BY updated_at DESC, created_at DESC LIMIT ?`,
         )
         .all(cutoff, limit) as Array<Record<string, unknown>>;
       return rows.map((r) => this.procedureRowToEntry(r));
