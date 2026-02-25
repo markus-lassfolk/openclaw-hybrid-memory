@@ -178,7 +178,7 @@ export type ProceduresConfig = {
 export type MemoryToSkillsConfig = {
   /** Enable memory-to-skills pipeline (default: same as procedures.enabled) */
   enabled: boolean;
-  /** Cron schedule for nightly run (default: "0 2 * * *" = 2 AM) */
+  /** Cron schedule for nightly run (default: "15 2 * * *" = 2:15 AM) */
   schedule: string;
   /** Procedures updated in last N days (default: 30) */
   windowDays: number;
@@ -1213,7 +1213,7 @@ export const hybridConfigSchema = {
       enabled: memoryToSkillsRaw?.enabled !== false && procedures.enabled,
       schedule: typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.length > 0
         ? memoryToSkillsRaw.schedule
-        : "0 2 * * *",
+        : "15 2 * * *",
       windowDays: typeof memoryToSkillsRaw?.windowDays === "number" && memoryToSkillsRaw.windowDays >= 1
         ? Math.min(365, Math.floor(memoryToSkillsRaw.windowDays))
         : 30,
