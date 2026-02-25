@@ -132,7 +132,6 @@ Full-text search: `procedures_fts` on `task_pattern` for `searchProcedures` and 
 
 ## Related docs
 
-- [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md) — Cluster procedures and synthesize skill drafts (nightly or `skills-suggest`).
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Fact extraction from session logs (same JSONL source).
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All `hybrid-mem` commands.
 - [CONFIGURATION.md](CONFIGURATION.md) — Full plugin config reference.
