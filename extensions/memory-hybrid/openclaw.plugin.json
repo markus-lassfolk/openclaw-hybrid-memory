@@ -346,7 +346,7 @@
     },
     "memoryToSkills.schedule": {
       "label": "Memory-to-skills schedule",
-      "help": "Cron for nightly run (default 0 2 * * *)"
+      "help": "Cron for nightly run (default 15 2 * * *)"
     },
     "memoryToSkills.windowDays": {
       "label": "Memory-to-skills window (days)",
@@ -883,7 +883,7 @@
           },
           "schedule": {
             "type": "string",
-            "description": "Cron schedule for nightly run (default: 0 2 * * *)"
+            "description": "Cron schedule for nightly run (default: 15 2 * * *)"
           },
           "windowDays": {
             "type": "number",

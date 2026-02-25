@@ -1019,7 +1019,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
       expect(result.memoryToSkills.enabled).toBe(true);
-      expect(result.memoryToSkills.schedule).toBe("0 2 * * *");
+      expect(result.memoryToSkills.schedule).toBe("15 2 * * *");
       expect(result.memoryToSkills.outputDir).toBe("skills/auto-generated");
     });
 
