@@ -19,14 +19,13 @@ const CRED_KDF_VERSION = 2; // v1 = SHA-256 (legacy), v2 = scrypt
 const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 
 /** Derive encryption key using scrypt.
- *  v1: legacy scrypt parameters (kept for backward compatibility, but still uses a KDF).
+ *  v1: legacy SHA-256 KDF (weak, kept for backward compatibility with existing vaults).
  *  v2: recommended scrypt parameters (N=16384, r=8, p=1).
  */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
-    // Legacy KDF: use scrypt with more conservative parameters instead of raw SHA-256.
-    // This maintains a distinct KDF version while avoiding fast hashing of the password.
-    return scryptSync(password, salt, 32, { N: 8192, r: 8, p: 1 });
+    // Legacy SHA-256 KDF (weak, kept for backward compatibility)
+    return createHash("sha256").update(password, "utf8").digest();
   }
   // v2: scrypt with recommended parameters (N=16384, r=8, p=1)
   return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
