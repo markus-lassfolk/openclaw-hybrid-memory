@@ -1427,7 +1427,6 @@ export async function runSkillsSuggestForCli(
       clustersConsidered: 0,
       qualifyingClusters: 0,
       pathsWritten: [],
-      skippedDedup: 0,
       skippedOther: 0,
       drafts: [],
     };
