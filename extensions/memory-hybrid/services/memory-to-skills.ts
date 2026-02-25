@@ -275,12 +275,10 @@ export async function runMemoryToSkills(
     }
 
     const { name, description, body } = parseSynthesizedSkill(rawResponse);
-    const baseSlug = slugifyForSkill(name);
-    let slug = baseSlug;
-    let n = 0;
-    while (existingSlugs.has(slug) || existsSync(join(basePath, slug))) {
-      n++;
-      slug = `${baseSlug}-${n}`;
+    const slug = slugifyForSkill(name);
+    if (existingSlugs.has(slug) || existsSync(join(basePath, slug))) {
+      result.skippedOther++;
+      continue;
     }
 
     const skillDir = join(basePath, slug);
@@ -333,6 +331,10 @@ ${body}`;
       continue;
     }
 
+    const relativePath = join(opts.outputDir, slug);
+    for (const p of procs) {
+      factsDb.markProcedurePromoted(p.id, relativePath);
+    }
     existingSlugs.add(slug);
     result.pathsWritten.push(skillPath);
     result.drafts.push({ pattern: procs[0].taskPattern.slice(0, 60), count: procs.length, path: skillPath });

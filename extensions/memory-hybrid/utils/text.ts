@@ -120,7 +120,7 @@ export function timestampFromFilename(name: string): string | undefined {
 
 /**
  * Slugify for skill names (lowercase, hyphens, alphanumeric; max 60 chars). Fallback "skill" if empty.
- * Used by memory-to-skills and procedure-skill-generator for directory-safe slugs.
+ * Shared utility for directory-safe slugs.
  */
 export function slugifyForSkill(text: string): string {
   const slug = text
