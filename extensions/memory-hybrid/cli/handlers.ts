@@ -50,6 +50,7 @@ import type { SelfCorrectionRunResult, CredentialsAuditResult, CredentialsPruneR
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, chatCompleteWithRetry } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { runMemoryToSkills, type SkillsSuggestResult } from "../services/memory-to-skills.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens, chunkSessionText, chunkTextByChars } from "../utils/text.js";
 import { parseSourceDate } from "../utils/dates.js";
@@ -92,6 +93,8 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true },
   // Sunday 04:00 | weekly-extract-procedures | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "default", enabled: true },
+  // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
   // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
@@ -112,6 +115,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
   [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: (j) => /nightly-memory-to-skills|memory-to-skills|skills-suggest/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) => /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
@@ -121,13 +125,14 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
 /**
  * Ensure maintenance cron jobs exist in ~/.openclaw/cron/jobs.json. Add any missing jobs; optionally normalize existing (schedule, pluginJobId).
  * Never re-enables jobs the user has disabled unless reEnableDisabled is true (callers should pass false to honor disabled jobs).
+ * scheduleOverrides: optional map pluginJobId -> cron expr (e.g. memoryToSkills.schedule for nightly-memory-to-skills).
  */
 function ensureMaintenanceCronJobs(
   openclawDir: string,
   pluginConfig: CronModelConfig | undefined,
-  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean } = {},
+  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean; scheduleOverrides?: Record<string, string> } = {},
 ): { added: string[]; normalized: string[] } {
-  const { normalizeExisting = false, reEnableDisabled = false } = options;
+  const { normalizeExisting = false, reEnableDisabled = false, scheduleOverrides } = options;
   const added: string[] = [];
   const normalized: string[] = [];
   const cronDir = join(openclawDir, "cron");
@@ -140,17 +145,27 @@ function ensureMaintenanceCronJobs(
   for (const def of MAINTENANCE_CRON_JOBS) {
     const id = def.pluginJobId as string;
     const name = def.name as string;
+    const scheduleExpr = scheduleOverrides?.[id];
     const existing = jobsArr.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
     if (!existing) {
-      jobsArr.push(resolveCronJob(def, pluginConfig));
+      const job = resolveCronJob(def, pluginConfig) as Record<string, unknown>;
+      if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
+      jobsArr.push(job);
       jobsChanged = true;
       added.push(name);
     } else {
       if (normalizeExisting) {
         if (typeof existing.schedule === "string") {
-          existing.schedule = { kind: "cron", expr: existing.schedule };
+          existing.schedule = { kind: "cron", expr: scheduleExpr ?? existing.schedule };
           jobsChanged = true;
           normalized.push(name);
+        } else if (scheduleExpr) {
+          const currentExpr = (existing.schedule as { expr?: string })?.expr;
+          if (currentExpr !== scheduleExpr) {
+            existing.schedule = { kind: "cron", expr: scheduleExpr };
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          }
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
@@ -550,10 +565,15 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     mkdirSync(join(openclawDir, "memory"), { recursive: true });
     writeFileSync(configPath, after, "utf-8");
     try {
-      const pluginConfig = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID]
-        ? (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config as CronModelConfig | undefined
-        : undefined;
-      ensureMaintenanceCronJobs(openclawDir, pluginConfig, { normalizeExisting: false, reEnableDisabled: false });
+      const pluginCfg = getPluginEntryConfig(config);
+      const pluginConfig = pluginCfg as CronModelConfig | undefined;
+      const memToSkills = pluginCfg?.memoryToSkills as Record<string, unknown> | undefined;
+      const schedule = typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0 ? (memToSkills.schedule as string).trim() : undefined;
+      ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
+        normalizeExisting: false,
+        reEnableDisabled: false,
+        scheduleOverrides: schedule ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: schedule } : undefined,
+      });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
       // non-fatal: cron jobs optional on install
@@ -697,6 +717,7 @@ export async function runVerifyForCli(
 
   log(`  procedures: ${bool(cfg.procedures.enabled)}`);
   log(`  procedures.requireApprovalForPromote: ${bool(cfg.procedures.requireApprovalForPromote)}`);
+  log(`  memoryToSkills: ${bool(cfg.memoryToSkills.enabled)} (schedule: ${cfg.memoryToSkills.schedule}) — run: openclaw hybrid-mem skills-suggest [--dry-run] [--days N]`);
   const reflectionModelDisplay = cfg.reflection.enabled
     ? ` (model: ${cfg.reflection.model ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`})`  // reflection uses default, not nano
     : "";
@@ -886,6 +907,7 @@ export async function runVerifyForCli(
   const nightlyMemorySweepRe = /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
   const weeklyReflectionRe = /weekly-reflection|memory reflection|pattern synthesis/i;
   const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
+  const nightlyMemoryToSkillsRe = /nightly-memory-to-skills|memory-to-skills|skills-suggest/i;
   const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
   const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
   const weeklyPersonaProposalsRe = /weekly-persona-proposals|persona proposals/i;
@@ -900,6 +922,8 @@ export async function runVerifyForCli(
       return "weekly-reflection";
     } else if (extractProceduresRe.test(name)) {
       return "weekly-extract-procedures";
+    } else if (nightlyMemoryToSkillsRe.test(name) || (msg && /skills-suggest/i.test(msg))) {
+      return "nightly-memory-to-skills";
     } else if (selfCorrectionRe.test(name)) {
       return "self-correction-analysis";
     } else if (weeklyDeepMaintenanceRe.test(name)) {
@@ -1036,6 +1060,7 @@ export async function runVerifyForCli(
   // Display each job with its status
   const jobsToDisplay = [
     { key: "nightly-memory-sweep", description: "session distillation", docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup" },
+    { key: "nightly-memory-to-skills", description: "memory-to-skills", docsPath: "docs/MEMORY-TO-SKILLS.md" },
     { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
     { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
     { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
@@ -1172,9 +1197,14 @@ export async function runVerifyForCli(
         const cronStorePath = join(cronDir, "jobs.json");
 
         try {
+          const scheduleOverrides =
+            typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0
+              ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: cfg.memoryToSkills.schedule }
+              : undefined;
           const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(cfg), {
             normalizeExisting: true,
             reEnableDisabled: false,
+            scheduleOverrides,
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
@@ -1379,6 +1409,57 @@ export async function runGenerateAutoSkillsForCli(
     );
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runGenerateAutoSkillsForCli" });
+    throw err;
+  }
+}
+
+/**
+ * Memory-to-skills: cluster procedures, synthesize SKILL.md drafts (issue #114).
+ */
+export async function runSkillsSuggestForCli(
+  ctx: HandlerContext,
+  opts: { dryRun: boolean; days?: number; verbose?: boolean },
+): Promise<SkillsSuggestResult> {
+  const { factsDb, embeddings, openai, cfg, logger } = ctx;
+  if (!cfg.memoryToSkills.enabled) {
+    return {
+      proceduresCollected: 0,
+      clustersConsidered: 0,
+      qualifyingClusters: 0,
+      pathsWritten: [],
+      skippedDedup: 0,
+      skippedOther: 0,
+      drafts: [],
+    };
+  }
+  const cronCfg = getCronModelConfig(cfg);
+  const defaultPref = getLLMModelPreference(cronCfg, "default");
+  const model = defaultPref[0] ?? getDefaultCronModel(cronCfg, "default");
+  const fallbackModels = defaultPref.length > 1 ? defaultPref.slice(1) : [];
+  const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
+  const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
+  const windowDays = opts.days ?? cfg.memoryToSkills.windowDays;
+  const workspaceRoot = process.env.OPENCLAW_WORKSPACE || process.cwd();
+  try {
+    return await runMemoryToSkills(
+      factsDb,
+      embeddings,
+      openai,
+      cfg.memoryToSkills,
+      {
+        windowDays,
+        minInstances: cfg.memoryToSkills.minInstances,
+        consistencyThreshold: cfg.memoryToSkills.consistencyThreshold,
+        outputDir: cfg.memoryToSkills.outputDir,
+        workspaceRoot: workspaceRoot || undefined,
+        dryRun: opts.dryRun,
+        model,
+        fallbackModels,
+      },
+      { info, warn },
+    );
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runSkillsSuggestForCli" });
     throw err;
   }
 }
@@ -2924,9 +3005,14 @@ export async function runUpgradeForCli(
   try {
     const openclawDir = join(homedir(), ".openclaw");
     const pluginConfig = getCronModelConfig(cfg);
+    const scheduleOverrides =
+      typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0
+        ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: cfg.memoryToSkills.schedule }
+        : undefined;
     const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
       normalizeExisting: true,
       reEnableDisabled: false,
+      scheduleOverrides,
     });
     if (added.length > 0 || normalized.length > 0) {
       logger?.info?.(`memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`);
@@ -2936,6 +3022,15 @@ export async function runUpgradeForCli(
     // non-fatal: user can run verify --fix later
   }
   return { ok: true, version: installedVersion, pluginDir: extDir };
+}
+
+/** Get plugin entry config from root openclaw config (for schedule overrides etc.). */
+function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unknown> | undefined {
+  const plugins = root?.plugins as Record<string, unknown> | undefined;
+  const entries = plugins?.entries as Record<string, unknown> | undefined;
+  const entry = entries?.[PLUGIN_ID] as Record<string, unknown> | undefined;
+  const config = entry?.config;
+  return config && typeof config === "object" && !Array.isArray(config) ? (config as Record<string, unknown>) : undefined;
 }
 
 /**
@@ -3088,6 +3183,14 @@ export function runConfigSetForCli(
     if (!("enabled" in er)) (er as Record<string, unknown>).enabled = false;
     if (!("consent" in er)) (er as Record<string, unknown>).consent = false;
   }
+  // When setting any memoryToSkills.* key, ensure memoryToSkills object exists
+  if (k.startsWith("memoryToSkills.")) {
+    let mts = out.config.memoryToSkills as Record<string, unknown> | undefined;
+    if (typeof mts !== "object" || mts === null) {
+      mts = {};
+      out.config.memoryToSkills = mts;
+    }
+  }
   // errorReporting must stay an object (schema); "config-set errorReporting true" → errorReporting.enabled + consent = true
   if (k === "errorReporting" && !k.includes(".")) {
     const boolVal = value === "true" || value === "enabled";
@@ -3111,6 +3214,29 @@ export function runConfigSetForCli(
       return { ok: false, error: `Could not write config: ${e}` };
     }
     return { ok: true, configPath, message: `Set errorReporting.enabled and errorReporting.consent = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+  }
+  // memoryToSkills must stay an object (schema); "config-set memoryToSkills true" → memoryToSkills.enabled = true
+  if (k === "memoryToSkills" && !k.includes(".")) {
+    const boolVal = value === "true" || value === "enabled";
+    let mts = out.config.memoryToSkills as Record<string, unknown> | undefined;
+    if (typeof mts !== "object" || mts === null) mts = {};
+    (mts as Record<string, unknown>).enabled = boolVal;
+    out.config.memoryToSkills = mts;
+    const written = (mts as Record<string, unknown>).enabled;
+    try {
+      hybridConfigSchema.parse(out.config);
+    } catch (schemaErr: unknown) {
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-memoryToSkills" });
+      return { ok: false, error: `Invalid config value: ${schemaErr}` };
+    }
+    try {
+      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+      writeFileSync(getRestartPendingPath(), "", "utf-8");
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-memoryToSkills" });
+      return { ok: false, error: `Could not write config: ${e}` };
+    }
+    return { ok: true, configPath, message: `Set memoryToSkills.enabled = ${written}. Restart the gateway for changes to take effect. Run: openclaw hybrid-mem skills-suggest. Use openclaw hybrid-mem verify to confirm.` };
   }
   // credentials must stay an object (schema); "config-set credentials true" → credentials.enabled = true
   if (k === "credentials" && !k.includes(".")) {

@@ -1,0 +1,16 @@
+You are synthesizing a reusable skill from multiple similar procedure instances (task + steps) that a user has performed repeatedly.
+
+Below are {{count}} procedure instance(s) that describe the same or very similar task. Each instance has a task description and a list of steps (tool name and optional summary).
+
+Your job: produce exactly one SKILL.md draft that captures the common workflow. Output must be valid markdown with optional YAML frontmatter at the top.
+
+Rules:
+- Start with optional YAML frontmatter (between --- lines): "name" (short slug, lowercase-hyphens, e.g. council-pr-review) and "description" (one line, concise).
+- Then a title (## or #) and body. Include a "Steps" or "## Steps" section that lists the common workflow steps in order. Mention tools/commands used consistently. Note variations only when they matter (e.g. "When X use A, when Y use B").
+- Be concise. No filler. The skill will be used as context for an agent; keep it scannable.
+- Do not include secrets, API keys, or user-specific paths. Use placeholders like <file> or <path> if needed.
+- Output only the SKILL.md content. No preamble or explanation.
+
+Procedure instances:
+
+{{procedures}}
