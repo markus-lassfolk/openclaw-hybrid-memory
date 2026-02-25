@@ -2078,6 +2078,26 @@ export class FactsDB {
     }
   }
 
+  /** List positive procedures updated in the last N days (for memory-to-skills). */
+  listProceduresUpdatedInLastNDays(days: number, limit = 500): ProcedureEntry[] {
+    try {
+      const cutoff = Math.floor(Date.now() / 1000) - days * 24 * 3600;
+      const rows = this.liveDb
+        .prepare(
+          `SELECT * FROM procedures WHERE procedure_type = 'positive' AND updated_at >= ? ORDER BY updated_at DESC, created_at DESC LIMIT ?`,
+        )
+        .all(cutoff, limit) as Array<Record<string, unknown>>;
+      return rows.map((r) => this.procedureRowToEntry(r));
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: 'list-procedures-recent',
+        severity: 'info',
+        subsystem: 'facts'
+      });
+      return [];
+    }
+  }
+
   getProcedureById(id: string): ProcedureEntry | null {
     const row = this.liveDb.prepare(`SELECT * FROM procedures WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) return null;

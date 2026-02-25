@@ -1002,6 +1002,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.memoryTiering.enabled).toBe(false);
       expect(result.autoRecall.entityLookup.enabled).toBe(false);
       expect(result.autoRecall.authFailure.enabled).toBe(false);
+      expect(result.memoryToSkills.enabled).toBe(false);
     });
 
     it("mode normal: enables autoClassify, graph, procedures; disables reflection", () => {
@@ -1017,6 +1018,9 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.credentials.enabled).toBe(false);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
+      expect(result.memoryToSkills.enabled).toBe(true);
+      expect(result.memoryToSkills.schedule).toBe("0 2 * * *");
+      expect(result.memoryToSkills.outputDir).toBe("skills/auto-generated");
     });
 
     it("mode expert: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {

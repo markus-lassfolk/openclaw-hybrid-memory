@@ -336,6 +336,46 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
 
 ---
 
+## Memory-to-skills (issue #114)
+
+Cluster procedural memories and synthesize SKILL.md drafts into `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md) for full documentation.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "memoryToSkills": {
+            "enabled": true,
+            "schedule": "0 2 * * *",
+            "windowDays": 30,
+            "minInstances": 3,
+            "consistencyThreshold": 0.7,
+            "outputDir": "skills/auto-generated",
+            "notify": true,
+            "autoPublish": false
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | same as procedures | Enable memory-to-skills pipeline |
+| `schedule` | `"0 2 * * *"` | Cron for nightly run (2 AM) |
+| `windowDays` | `30` | Procedures updated in last N days |
+| `minInstances` | `3` | Minimum procedure instances per cluster |
+| `consistencyThreshold` | `0.7` | Step consistency 0–1 required |
+| `outputDir` | `"skills/auto-generated"` | Output path relative to workspace |
+| `notify` | `true` | Cron asks agent to notify on new drafts |
+| `autoPublish` | `false` | Always require human review |
+
+---
+
 ## LLM model tiers and provider config
 
 The plugin makes **direct API calls** to provider endpoints — it does not route through the OpenClaw gateway agent pipeline. Use the **`llm`** block to configure ordered model lists per tier and per-provider API keys.
