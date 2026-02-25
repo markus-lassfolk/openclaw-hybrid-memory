@@ -565,13 +565,10 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     mkdirSync(join(openclawDir, "memory"), { recursive: true });
     writeFileSync(configPath, after, "utf-8");
     try {
-      const pluginConfig = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID]
-        ? (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config as CronModelConfig | undefined
-        : undefined;
-      const memToSkillsSchedule = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID]
-        ? (( ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config as Record<string, unknown> )?.memoryToSkills as Record<string, unknown> | undefined
-        : undefined;
-      const schedule = typeof memToSkillsSchedule?.schedule === "string" && (memToSkillsSchedule.schedule as string).trim().length > 0 ? (memToSkillsSchedule.schedule as string).trim() : undefined;
+      const pluginCfg = getPluginEntryConfig(config);
+      const pluginConfig = pluginCfg as CronModelConfig | undefined;
+      const memToSkills = pluginCfg?.memoryToSkills as Record<string, unknown> | undefined;
+      const schedule = typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0 ? (memToSkills.schedule as string).trim() : undefined;
       ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
@@ -1442,6 +1439,7 @@ export async function runSkillsSuggestForCli(
   const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
   const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
   const windowDays = opts.days ?? cfg.memoryToSkills.windowDays;
+  const workspaceRoot = process.env.OPENCLAW_WORKSPACE || process.cwd();
   try {
     return await runMemoryToSkills(
       factsDb,
@@ -1453,6 +1451,7 @@ export async function runSkillsSuggestForCli(
         minInstances: cfg.memoryToSkills.minInstances,
         consistencyThreshold: cfg.memoryToSkills.consistencyThreshold,
         outputDir: cfg.memoryToSkills.outputDir,
+        workspaceRoot: workspaceRoot || undefined,
         dryRun: opts.dryRun,
         model,
         fallbackModels,
@@ -3023,6 +3022,15 @@ export async function runUpgradeForCli(
     // non-fatal: user can run verify --fix later
   }
   return { ok: true, version: installedVersion, pluginDir: extDir };
+}
+
+/** Get plugin entry config from root openclaw config (for schedule overrides etc.). */
+function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unknown> | undefined {
+  const plugins = root?.plugins as Record<string, unknown> | undefined;
+  const entries = plugins?.entries as Record<string, unknown> | undefined;
+  const entry = entries?.[PLUGIN_ID] as Record<string, unknown> | undefined;
+  const config = entry?.config;
+  return config && typeof config === "object" && !Array.isArray(config) ? (config as Record<string, unknown>) : undefined;
 }
 
 /**

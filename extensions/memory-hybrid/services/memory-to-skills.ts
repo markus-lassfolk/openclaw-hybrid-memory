@@ -11,6 +11,7 @@ import type { MemoryToSkillsConfig } from "../config.js";
 import type { Embeddings } from "./embeddings.js";
 import type OpenAI from "openai";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { slugifyForSkill } from "../utils/text.js";
 import { normalizeVector, cosineSimilarity } from "./reflection.js";
 import { unionFind, getRoot } from "./consolidation.js";
 import { chatCompleteWithRetry } from "./chat.js";
@@ -35,6 +36,8 @@ export type SkillsSuggestOptions = {
   minInstances: number;
   consistencyThreshold: number;
   outputDir: string;
+  /** Explicit workspace root (default from OPENCLAW_WORKSPACE or cwd when not set). */
+  workspaceRoot?: string;
   dryRun?: boolean;
   model: string;
   fallbackModels?: string[];
@@ -83,14 +86,21 @@ export function distinctToolCount(procedures: ProcedureEntry[]): number {
   return set.size;
 }
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60) || "skill";
+/** Majority tool sequence across procedures (mode at each position). Used for recipe.json. */
+function majorityToolSequence(procedures: ProcedureEntry[]): string[] {
+  const sequences = procedures.map((p) => getToolNamesFromRecipe(p.recipeJson)).filter((s) => s.length > 0);
+  if (sequences.length === 0) return [];
+  const maxLen = Math.max(...sequences.map((s) => s.length));
+  const result: string[] = [];
+  for (let i = 0; i < maxLen; i++) {
+    const atPosition = sequences.map((s) => s[i]).filter(Boolean);
+    if (atPosition.length === 0) break;
+    const freq = new Map<string, number>();
+    for (const t of atPosition) freq.set(t, (freq.get(t) ?? 0) + 1);
+    const mode = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (mode) result.push(mode[0]);
+  }
+  return result;
 }
 
 /** Collect existing skill slugs under workspace (skills/, skills/auto/, skills/auto-generated/). Exported for tests. */
@@ -114,11 +124,13 @@ export function getExistingSkillSlugs(workspaceRoot: string): Set<string> {
   return slugs;
 }
 
-/** Parse LLM response: optional YAML frontmatter (name, description) and body. Exported for tests. */
+/** Parse LLM response: optional YAML frontmatter (name, description) and body. Exported for tests. Strips markdown code fences if present. */
 export function parseSynthesizedSkill(raw: string): { name: string; description: string; body: string } {
   let name = "skill";
   let description = "";
   let body = raw.trim();
+  // Strip optional markdown code block wrapper (LLMs often wrap in ```markdown ... ```)
+  body = body.replace(/^```[a-z]*\r?\n/i, "").replace(/\r?\n```\s*$/, "").trim();
   const fmMatch = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (fmMatch) {
     const yaml = fmMatch[1];
@@ -205,7 +217,11 @@ export async function runMemoryToSkills(
   const clusters = [...rootToCluster.values()].filter((c) => c.length >= opts.minInstances);
   result.clustersConsidered = clusters.length;
 
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE || process.cwd();
+  const workspaceRoot = opts.workspaceRoot?.trim() || process.env.OPENCLAW_WORKSPACE || process.cwd();
+  if (!workspaceRoot) {
+    logger.warn("memory-to-skills: no workspace root; skipping write");
+    return result;
+  }
   const basePath = opts.outputDir.startsWith("/")
     ? opts.outputDir
     : join(workspaceRoot, opts.outputDir);
@@ -261,27 +277,21 @@ export async function runMemoryToSkills(
     }
 
     const { name, description, body } = parseSynthesizedSkill(rawResponse);
-    let slug = slugify(name);
-    if (existingSlugs.has(slug)) {
-      result.skippedDedup++;
-      continue;
-    }
+    const baseSlug = slugifyForSkill(name);
+    let slug = baseSlug;
     let n = 0;
-    while (existsSync(join(basePath, slug)) || existingSlugs.has(slug)) {
+    while (existingSlugs.has(slug) || existsSync(join(basePath, slug))) {
       n++;
-      slug = `${slugify(name)}-${n}`;
+      slug = `${baseSlug}-${n}`;
     }
 
     const skillDir = join(basePath, slug);
     const skillPath = join(skillDir, "SKILL.md");
-    const fullContent = description ? `---
-name: ${name}
-description: ${description}
----
-
-${body}` : `---
-name: ${slug}
-description: Auto-generated from ${procs.length} procedure instances.
+    // Always use slug for name; quote description for YAML safety (JSON.stringify for escaping)
+    const descEscaped = JSON.stringify(description || `Auto-generated from ${procs.length} procedure instance(s).`);
+    const fullContent = `---
+name: ${JSON.stringify(slug)}
+description: ${descEscaped}
 ---
 
 ${body}`;
@@ -308,7 +318,7 @@ ${body}`;
 
     try {
       writeFileSync(skillPath, fullContent, "utf-8");
-      const steps = getToolNamesFromRecipe(procs[0].recipeJson);
+      const steps = majorityToolSequence(procs);
       const recipeArr = steps.map((t) => ({ tool: t }));
       writeFileSync(join(skillDir, "recipe.json"), JSON.stringify(recipeArr, null, 2), "utf-8");
     } catch (err) {
