@@ -375,7 +375,7 @@ describe("version command utilities", () => {
 
     it("shows 'installed is newer' for GitHub when installed > github", () => {
       const installed = "2026.2.222";
-      const githubVersion = "2026.2.221"; // older than installed
+      const githubVersion = "2026.2.221";
       
       const hint = githubVersion != null && compare(installed, githubVersion) > 0
         ? " (installed is newer)"
@@ -386,7 +386,7 @@ describe("version command utilities", () => {
 
     it("shows 'installed is newer' for npm when installed > npm", () => {
       const installed = "2026.2.222";
-      const npmVersion = "2026.2.221"; // older than installed
+      const npmVersion = "2026.2.221";
       
       const hint = npmVersion != null && compare(installed, npmVersion) > 0
         ? " (installed is newer)"

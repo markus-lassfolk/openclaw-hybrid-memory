@@ -336,6 +336,49 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
 
 ---
 
+## Memory-to-skills (issue #114)
+
+Cluster procedural memories and synthesize SKILL.md drafts into `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md) for full documentation.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "memoryToSkills": {
+            "enabled": true,
+            "schedule": "15 2 * * *",
+            "windowDays": 30,
+            "minInstances": 3,
+            "consistencyThreshold": 0.7,
+            "outputDir": "skills/auto-generated",
+            "notify": true,
+            "autoPublish": false
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | same as procedures | Enable memory-to-skills pipeline |
+| `schedule` | `"15 2 * * *"` | Cron for nightly run (2:15 AM, staggered after nightly-distill) |
+| `windowDays` | `30` | Procedures updated in last N days |
+| `minInstances` | `3` | Minimum procedure instances per cluster |
+| `consistencyThreshold` | `0.7` | Step consistency 0–1 required |
+| `outputDir` | `"skills/auto-generated"` | Output path relative to workspace |
+| `notify` | `true` | Intended hint that the agent should notify on new drafts; currently informational only (nightly cron/publish flow does not yet consult this). |
+| `autoPublish` | `false` | Intended toggle for auto-publishing vs. always requiring human review; currently informational only (nightly cron/publish flow does not yet consult this). |
+| `validateScript` | — | Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by the plugin; for documentation/workflow only. |
+
+When you run `install` or `verify --fix`, the **nightly-memory-to-skills** cron job is added or updated; its schedule is taken from `memoryToSkills.schedule` when available.
+
+---
+
 ## LLM model tiers and provider config
 
 The plugin makes **direct API calls** to provider endpoints — it does not route through the OpenClaw gateway agent pipeline. Use the **`llm`** block to configure ordered model lists per tier and per-provider API keys.

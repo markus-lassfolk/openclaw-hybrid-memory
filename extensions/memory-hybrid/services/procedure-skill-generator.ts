@@ -8,18 +8,9 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry } from "../types/memory.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import { capturePluginError } from "./error-reporter.js";
+import { slugifyForSkill } from "../utils/text.js";
 
 const MAX_SKILLS_PER_RUN = 10;
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60) || "procedure";
-}
 
 function ensureUniqueSlug(basePath: string, slug: string): string {
   let candidate = slug;
@@ -59,7 +50,7 @@ export function generateAutoSkills(
   let skipped = 0;
 
   for (const proc of procedures) {
-    const slug = ensureUniqueSlug(basePath, slugify(proc.taskPattern));
+    const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern, "procedure"));
     const skillDir = join(basePath, slug);
     const skillPath = join(skillDir, "SKILL.md");
     const recipePath = join(skillDir, "recipe.json");

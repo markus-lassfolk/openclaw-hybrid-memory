@@ -336,6 +336,22 @@
       "label": "Reflection min observations",
       "help": "Min observations to support a pattern (default 2)"
     },
+    "memoryToSkills": {
+      "label": "Memory-to-skills (enable/disable)",
+      "help": "Enable or disable memory-to-skills pipeline (true/false). Run: openclaw hybrid-mem skills-suggest. Use memoryToSkills.enabled for the same."
+    },
+    "memoryToSkills.enabled": {
+      "label": "Memory-to-skills",
+      "help": "Cluster procedures and draft skills to skills/auto-generated/ (nightly or skills-suggest). Run: openclaw hybrid-mem skills-suggest [--dry-run] [--days N]"
+    },
+    "memoryToSkills.schedule": {
+      "label": "Memory-to-skills schedule",
+      "help": "Cron for nightly run (default 15 2 * * *)"
+    },
+    "memoryToSkills.windowDays": {
+      "label": "Memory-to-skills window (days)",
+      "help": "Procedures updated in last N days (default 30)"
+    },
     "multiAgent.orchestratorId": {
       "label": "Orchestrator Agent ID",
       "placeholder": "main",
@@ -856,6 +872,51 @@
           }
         },
         "description": "Procedural memory: auto-generated skills from learned patterns"
+      },
+      "memoryToSkills": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable memory-to-skills pipeline (default: same as procedures.enabled)"
+          },
+          "schedule": {
+            "type": "string",
+            "description": "Cron schedule for nightly run (default: 15 2 * * *)"
+          },
+          "windowDays": {
+            "type": "number",
+            "description": "Procedures updated in last N days (default: 30)"
+          },
+          "minInstances": {
+            "type": "number",
+            "description": "Minimum procedure instances per cluster (default: 3)"
+          },
+          "consistencyThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Step consistency threshold 0-1 (default: 0.7)"
+          },
+          "outputDir": {
+            "type": "string",
+            "description": "Output directory relative to workspace (default: skills/auto-generated)"
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Cron message asks agent to notify on new drafts (default: true)"
+          },
+          "autoPublish": {
+            "type": "boolean",
+            "description": "Always require human review; no auto-promote (default: false)"
+          },
+          "validateScript": {
+            "type": "string",
+            "description": "Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by plugin."
+          }
+        },
+        "description": "Memory-to-skills: cluster procedures, synthesize SKILL.md drafts (issue #114)"
       },
       "selfCorrection": {
         "type": "object",
