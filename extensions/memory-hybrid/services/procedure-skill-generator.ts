@@ -50,7 +50,7 @@ export function generateAutoSkills(
   let skipped = 0;
 
   for (const proc of procedures) {
-    const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern));
+    const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern, "procedure"));
     const skillDir = join(basePath, slug);
     const skillPath = join(skillDir, "SKILL.md");
     const recipePath = join(skillDir, "recipe.json");
