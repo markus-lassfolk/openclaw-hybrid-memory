@@ -120,6 +120,15 @@ description: Multi-model PR review council
     expect(out.description).toBe("");
     expect(out.body).toBe("# My Skill\n\nBody here.");
   });
+
+  it("strips markdown code fence wrapper", () => {
+    const raw = "```markdown\n---\nname: foo-bar\ndescription: A skill\n---\n\n# Foo Bar\nBody.\n```";
+    const out = parseSynthesizedSkill(raw);
+    expect(out.name).toBe("foo-bar");
+    expect(out.description).toBe("A skill");
+    expect(out.body).toContain("# Foo Bar");
+    expect(out.body).not.toMatch(/^```/);
+  });
 });
 
 describe("memory-to-skills getExistingSkillSlugs", () => {

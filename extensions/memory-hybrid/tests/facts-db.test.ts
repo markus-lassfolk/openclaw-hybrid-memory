@@ -953,6 +953,11 @@ describe("FactsDB.listProceduresUpdatedInLastNDays", () => {
     expect(Array.isArray(items)).toBe(true);
     expect(items.every((p) => p.procedureType === "positive")).toBe(true);
   });
+
+  it("returns empty array for invalid days (0 or negative)", () => {
+    expect(db.listProceduresUpdatedInLastNDays(0, 100)).toEqual([]);
+    expect(db.listProceduresUpdatedInLastNDays(-1, 100)).toEqual([]);
+  });
 });
 
 describe("FactsDB.estimateStoredTokens", () => {
