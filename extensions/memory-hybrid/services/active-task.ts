@@ -319,18 +319,24 @@ export async function writeActiveTaskFile(
 /**
  * Add or update a task entry. If an entry with the same label exists, update it.
  * Otherwise, append a new entry.
+ *
+ * @param active Active task entries
+ * @param entry Entry to upsert
+ * @param preserveUpdated If true, use entry.updated as-is; otherwise set to current time
  */
 export function upsertTask(
   active: ActiveTaskEntry[],
   entry: ActiveTaskEntry,
+  preserveUpdated = false,
 ): ActiveTaskEntry[] {
   const idx = active.findIndex((t) => t.label === entry.label);
+  const updatedTimestamp = preserveUpdated ? entry.updated : new Date().toISOString();
   if (idx >= 0) {
     const updated = [...active];
-    updated[idx] = { ...active[idx], ...entry, updated: new Date().toISOString() };
+    updated[idx] = { ...active[idx], ...entry, updated: updatedTimestamp };
     return updated;
   }
-  return [...active, { ...entry, updated: new Date().toISOString() }];
+  return [...active, { ...entry, updated: updatedTimestamp }];
 }
 
 /**
@@ -604,7 +610,9 @@ export async function writeTaskSignal(
   await mkdir(signalsDir, { recursive: true });
   // Sanitise label to be filesystem-safe
   const safeLabel = label.replace(/[^a-zA-Z0-9_\-]/g, "-");
-  const filePath = join(signalsDir, `${safeLabel}.json`);
+  // Add timestamp suffix to prevent collision when different labels sanitize to the same value
+  const timestamp = Date.now();
+  const filePath = join(signalsDir, `${safeLabel}-${timestamp}.json`);
   await writeFile(filePath, JSON.stringify(signal, null, 2), "utf-8");
   return filePath;
 }
