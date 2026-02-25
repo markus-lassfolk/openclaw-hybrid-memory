@@ -94,9 +94,9 @@ export async function runContextAudit(opts: {
         for (const p of positive.slice(0, 3)) {
           try {
             const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>).
-              map((s) => s.tool).
-              filter(Boolean).
-              join(" → ");
+              map((s) => s.tool)
+              .filter(Boolean)
+              .join(" → ");
             const emoji = p.confidence >= 0.7 ? "✅" : "⚠️";
             const confidence = Math.round(p.confidence * 100);
             lines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 50)}… (${steps})`);
@@ -113,9 +113,9 @@ export async function runContextAudit(opts: {
         for (const n of negative.slice(0, 2)) {
           try {
             const steps = (JSON.parse(n.recipeJson) as Array<{ tool?: string }>).
-              map((s) => s.tool).
-              filter(Boolean).
-              join(" → ");
+              map((s) => s.tool)
+              .filter(Boolean)
+              .join(" → ");
             const emoji = n.confidence >= 0.7 ? "❌" : "⚠️";
             const confidence = Math.round(n.confidence * 100);
             lines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`);
