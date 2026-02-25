@@ -947,6 +947,14 @@ describe("FactsDB.listProcedures", () => {
   });
 });
 
+describe("FactsDB.listProceduresUpdatedInLastNDays", () => {
+  it("returns only positive procedures updated in the last N days", () => {
+    const items = db.listProceduresUpdatedInLastNDays(30, 100);
+    expect(Array.isArray(items)).toBe(true);
+    expect(items.every((p) => p.procedureType === "positive")).toBe(true);
+  });
+});
+
 describe("FactsDB.estimateStoredTokens", () => {
   it("returns positive token estimate for stored facts", () => {
     db.store({ text: "A short fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
