@@ -46,6 +46,8 @@ Commands by category:
 
   Stats & query
     stats                Show memory statistics (--efficiency for tiers/tokens)
+    test                 Run memory diagnostics (structured/semantic/hybrid/auto-recall)
+    context-audit        Report token usage per injected context source
     search <query>       Hybrid search (vector + SQL)
     lookup <id>          Get fact by ID
     list                 List recent facts (--limit, --category, --tier, etc.)
@@ -115,6 +117,8 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem run-all",
   "hybrid-mem install",
   "hybrid-mem stats",
+  "hybrid-mem test",
+  "hybrid-mem context-audit",
   "hybrid-mem compact",
   "hybrid-mem prune",
   "hybrid-mem checkpoint",

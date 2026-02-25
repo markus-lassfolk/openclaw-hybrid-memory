@@ -346,6 +346,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   // Track auth failures per target per session to avoid spam
   const authFailureRecallsThisSession = new Map<string, number>();
+  // Track session starts for retrieval directives
+  const sessionStartSeen = new Set<string>();
 
   // Resolve active task file path against workspace root (same logic as CLI context)
   const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
@@ -412,7 +414,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             : ctx.cfg.autoRecall.limit;
           const { minScore } = ctx.cfg.autoRecall;
           const limit = searchLimit;
-          const tierFilter = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
+          const tierFilter: "warm" | "all" = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
 
           // Build scope filter dynamically from detected agentId
           // Merge agent-detected scope with configured scopeFilter for multi-tenant support
@@ -614,9 +616,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             }).slice(0, limit);
           }
 
+          const promptLower = e.prompt.toLowerCase();
           const { entityLookup } = ctx.cfg.autoRecall;
           if (entityLookup.enabled && entityLookup.entities.length > 0) {
-            const promptLower = e.prompt.toLowerCase();
             const seenIds = new Set(candidates.map((c) => c.entry.id));
             for (const entity of entityLookup.entities) {
               if (!promptLower.includes(entity.toLowerCase())) continue;
@@ -636,6 +638,143 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               return db - da;
             });
             candidates = candidates.slice(0, limit);
+          }
+
+          const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
+          const directiveLimit = directivesCfg.limit;
+          const directiveSeenIds = new Set(candidates.map((c) => c.entry.id));
+          const directiveMatches: string[] = [];
+
+          function addDirectiveResults(results: SearchResult[], label: string): void {
+            if (results.length === 0) return;
+            for (const r of results) {
+              if (directiveSeenIds.has(r.entry.id)) continue;
+              directiveSeenIds.add(r.entry.id);
+              candidates.push(r);
+            }
+            directiveMatches.push(label);
+          }
+
+          async function runDirectiveRecall(query: string, opts?: { entity?: string }): Promise<SearchResult[]> {
+            const trimmed = query.trim();
+            if (!trimmed) return [];
+            const recallOpts = {
+              tierFilter,
+              scopeFilter,
+              reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
+            };
+            let sqliteResults: SearchResult[] = [];
+            if (opts?.entity) {
+              sqliteResults = ctx.factsDb.lookup(opts.entity, undefined, undefined, { scopeFilter }).slice(0, directiveLimit);
+            }
+            const ftsResults = ctx.factsDb.search(trimmed, directiveLimit, recallOpts);
+            sqliteResults = [...sqliteResults, ...ftsResults];
+
+            let lanceResults: SearchResult[] = [];
+            try {
+              let textToEmbed = trimmed;
+              if (ctx.cfg.search?.hydeEnabled) {
+                try {
+                  const cronCfg = getCronModelConfig(ctx.cfg);
+                  const pref = getLLMModelPreference(cronCfg, "nano");
+                  const hydeModel = ctx.cfg.search.hydeModel ?? pref[0];
+                  const fallbackModels = ctx.cfg.search.hydeModel ? [] : pref.slice(1);
+                  const hydeContent = await chatCompleteWithRetry({
+                    model: hydeModel,
+                    fallbackModels,
+                    content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
+                    temperature: 0.3,
+                    maxTokens: 150,
+                    openai: ctx.openai,
+                    label: "HyDE",
+                    timeoutMs: 25_000,
+                    pendingWarnings: ctx.pendingLLMWarnings,
+                  });
+                  const hydeText = hydeContent.trim();
+                  if (hydeText.length > 10) textToEmbed = hydeText;
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "directive-hyde-generation",
+                    subsystem: "auto-recall",
+                  });
+                  api.logger.warn(`memory-hybrid: directive HyDE generation failed, using raw query: ${err}`);
+                }
+              }
+              const vector = await ctx.embeddings.embed(textToEmbed);
+              lanceResults = await ctx.vectorDb.search(vector, directiveLimit * 2, minScore);
+              lanceResults = filterByScope(lanceResults, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
+              lanceResults = lanceResults.map((r) => {
+                const fullEntry = ctx.factsDb.getById(r.entry.id);
+                if (fullEntry) {
+                  return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
+                }
+                return r;
+              });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "directive-vector-recall",
+                subsystem: "auto-recall",
+                backend: "lancedb",
+              });
+              api.logger.warn(`memory-hybrid: directive vector recall failed: ${err}`);
+            }
+
+            let results = mergeResults(sqliteResults, lanceResults, directiveLimit, ctx.factsDb);
+            if (ctx.cfg.memoryTiering.enabled && results.length > 0) {
+              results = results.filter((r) => {
+                const full = ctx.factsDb.getById(r.entry.id);
+                return full && full.tier !== "cold";
+              }).slice(0, directiveLimit);
+            }
+            return results;
+          }
+
+          if (directivesCfg.enabled) {
+            if (directivesCfg.entityMentioned && ctx.cfg.autoRecall.entityLookup.entities.length > 0) {
+              for (const entity of ctx.cfg.autoRecall.entityLookup.entities) {
+                if (!promptLower.includes(entity.toLowerCase())) continue;
+                const results = await runDirectiveRecall(entity, { entity });
+                addDirectiveResults(results, `entity:${entity}`);
+              }
+            }
+
+            if (directivesCfg.keywords.length > 0) {
+              for (const keyword of directivesCfg.keywords) {
+                if (!promptLower.includes(keyword.toLowerCase())) continue;
+                const results = await runDirectiveRecall(keyword);
+                addDirectiveResults(results, `keyword:${keyword}`);
+              }
+            }
+
+            const taskTypeEntries = Object.entries(directivesCfg.taskTypes);
+            if (taskTypeEntries.length > 0) {
+              for (const [taskType, triggers] of taskTypeEntries) {
+                const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
+                if (!hit) continue;
+                const results = await runDirectiveRecall(taskType);
+                addDirectiveResults(results, `taskType:${taskType}`);
+              }
+            }
+
+            if (directivesCfg.sessionStart) {
+              const sessionId =
+                (e as { session?: Record<string, unknown> }).session?.id ??
+                (e as { session?: Record<string, unknown> }).session?.sessionId ??
+                (e as { session?: Record<string, unknown> }).session?.key ??
+                (e as { session?: Record<string, unknown> }).session?.label ??
+                currentAgentIdRef.value ??
+                "default";
+              const sessionKey = String(sessionId);
+              if (!sessionStartSeen.has(sessionKey)) {
+                sessionStartSeen.add(sessionKey);
+                const results = await runDirectiveRecall("session start");
+                addDirectiveResults(results, "sessionStart");
+              }
+            }
+          }
+
+          if (directiveMatches.length > 0) {
+            api.logger.info?.(`memory-hybrid: retrieval directives matched (${directiveMatches.join(", ")})`);
           }
 
           if (candidates.length === 0) return hotBlock ? { prependContext: hotBlock } : undefined;
