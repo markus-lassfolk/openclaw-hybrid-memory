@@ -3090,10 +3090,18 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
   let cur: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const p = parts[i];
+    // Prevent prototype pollution via dangerous path segments
+    if (p === "__proto__" || p === "constructor" || p === "prototype") {
+      return;
+    }
     if (!(p in cur) || typeof (cur as any)[p] !== "object" || (cur as any)[p] === null) (cur as any)[p] = {};
     cur = (cur as any)[p] as Record<string, unknown>;
   }
   const last = parts[parts.length - 1];
+  // Also prevent setting dangerous keys at the final segment
+  if (last === "__proto__" || last === "constructor" || last === "prototype") {
+    return;
+  }
   const v =
     value === "true" || value === "enabled"
       ? true
