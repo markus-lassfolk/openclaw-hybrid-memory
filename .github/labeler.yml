@@ -1,0 +1,29 @@
+# Labeler configuration
+# Maps pull request labels to file path globs.
+# See https://github.com/actions/labeler for documentation.
+
+"extensions":
+  - changed-files:
+    - any-glob-to-any-file: "extensions/**"
+
+"packages":
+  - changed-files:
+    - any-glob-to-any-file: "packages/**"
+
+"scripts":
+  - changed-files:
+    - any-glob-to-any-file: "scripts/**"
+
+"documentation":
+  - changed-files:
+    - any-glob-to-any-file: "docs/**"
+    - any-glob-to-any-file: "*.md"
+    - any-glob-to-any-file: "release-notes/**"
+
+"deployment":
+  - changed-files:
+    - any-glob-to-any-file: "deploy/**"
+
+"github-actions":
+  - changed-files:
+    - any-glob-to-any-file: ".github/**"
