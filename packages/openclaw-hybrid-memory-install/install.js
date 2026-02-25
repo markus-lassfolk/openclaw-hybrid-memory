@@ -5,7 +5,7 @@
  * Run: npx -y openclaw-hybrid-memory-install
  * Fix broken credentials config (without loading plugin): npx -y openclaw-hybrid-memory-install fix-config
  */
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -25,8 +25,8 @@ const tmpDir = path.join(
   `openclaw-plugin-install-${process.pid}`
 );
 
-function run(cmd, opts = {}) {
-  return execSync(cmd, { stdio: "inherit", ...opts });
+function run(cmd, args = [], opts = {}) {
+  return execFileSync(cmd, args, { stdio: "inherit", ...opts });
 }
 
 try {
@@ -39,7 +39,7 @@ try {
 
   console.log("Fetching via npm pack...");
   fs.mkdirSync(tmpDir, { recursive: true });
-  run(`npm pack openclaw-hybrid-memory@${version}`, { cwd: tmpDir });
+  run("npm", ["pack", `openclaw-hybrid-memory@${version}`], { cwd: tmpDir });
 
   const tgz = fs.readdirSync(tmpDir).find((f) => f.endsWith(".tgz"));
   if (!tgz) throw new Error("npm pack did not produce a .tgz file");
@@ -47,10 +47,10 @@ try {
   console.log("Extracting...");
   fs.mkdirSync(pluginDir, { recursive: true });
   const tgzPath = path.join(tmpDir, tgz);
-  run(`tar -xzf ${JSON.stringify(tgzPath)} -C ${JSON.stringify(pluginDir)} --strip-components=1`);
+  run("tar", ["-xzf", tgzPath, "-C", pluginDir, "--strip-components=1"]);
 
   console.log("Installing deps and rebuilding native modules...");
-  run("npm install --omit=dev", { cwd: pluginDir });
+  run("npm", ["install", "--omit=dev"], { cwd: pluginDir });
 
   console.log("Cleaning up...");
   fs.rmSync(tmpDir, { recursive: true, force: true });
