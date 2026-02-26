@@ -715,6 +715,7 @@ export function vectorDimsForModel(model: string): number {
 }
 
 function resolveEnvVars(value: string): string {
+  // Use [^}]+ not (.*?) to avoid ReDoS (js/polynomial-redos): no backtracking on malicious input.
   return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
     const envValue = process.env[envVar];
     if (!envValue) throw new Error(`Environment variable ${envVar} is not set`);

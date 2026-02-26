@@ -42,6 +42,7 @@ import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
+import { deepMerge } from "./cli/handlers.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, createPendingLLMWarnings } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
@@ -414,6 +415,7 @@ export const _testing = {
   mergeResults,
   filterByScope,
   safeEmbed,
+  deepMerge,
   // Encryption primitives (used by CredentialsDB)
   deriveKey,
   encryptValue,
