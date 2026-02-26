@@ -112,7 +112,11 @@ export class VectorDB {
           createdAt: 0,
         },
       ]);
-      await this.table.delete('id = "__schema__"');
+      try {
+        await this.table.delete('id = "__schema__"');
+      } catch (deleteErr) {
+        this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
+      }
     }
   }
 
@@ -174,7 +178,11 @@ export class VectorDB {
               createdAt: 0,
             },
           ]);
-          await this.table.delete('id = "__schema__"');
+          try {
+            await this.table.delete('id = "__schema__"');
+          } catch (deleteErr) {
+            this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
+          }
           this.wasRepaired = true;
         }
       }
