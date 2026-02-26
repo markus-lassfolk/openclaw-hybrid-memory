@@ -210,7 +210,7 @@ export function initializeDatabases(
   const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
   const factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
-  const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
+  const vectorDb = new VectorDB(resolvedLancePath, vectorDim, cfg.vector.autoRepair);
   vectorDb.setLogger(api.logger);
   // Embeddings always use a direct OpenAI client (gateway does not proxy /v1/embeddings — issue #91)
   const openaiForEmbeddings = new OpenAI({ apiKey: cfg.embedding.apiKey });
@@ -408,6 +408,48 @@ export function initializeDatabases(
       }
     }
   })();
+
+  // Schema validation and optional auto-repair re-embedding (issue #128).
+  // Runs asynchronously so it does not block plugin start.
+  // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
+  if (cfg.vector.autoRepair) {
+    void (async () => {
+      try {
+        await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
+        if (vectorDb.wasRepaired) {
+          api.logger.info(
+            "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite...",
+          );
+          const facts = factsDb.getAll({ includeSuperseded: false });
+          let reembedded = 0;
+          for (const fact of facts) {
+            try {
+              const vec = await embeddings.embed(fact.text);
+              await vectorDb.store({
+                id: fact.id,
+                text: fact.text,
+                vector: vec,
+                importance: fact.importance ?? 0.5,
+                category: fact.category,
+              });
+              reembedded++;
+            } catch {
+              // Skip individual failures — best-effort re-embedding
+            }
+          }
+          api.logger.info(
+            `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts after auto-repair`,
+          );
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "vector-schema-repair-reembed",
+          subsystem: "vector",
+        });
+        api.logger.warn(`memory-hybrid: VectorDB auto-repair re-embedding failed: ${err}`);
+      }
+    })();
+  }
 
   return {
     factsDb,
