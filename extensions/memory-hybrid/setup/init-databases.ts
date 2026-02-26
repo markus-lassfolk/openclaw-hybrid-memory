@@ -414,17 +414,50 @@ export function initializeDatabases(
   // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
   if (cfg.vector.autoRepair) {
     void (async () => {
+      const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
         await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
-        if (vectorDb.wasRepaired) {
+        
+        // Check if there's an incomplete re-embedding from a previous run
+        let needsReembedding = vectorDb.wasRepaired;
+        let startOffset = 0;
+        
+        if (!needsReembedding && existsSync(reembedProgressPath)) {
+          try {
+            const progress = JSON.parse(readFileSync(reembedProgressPath, "utf-8")) as { completed: number; total: number };
+            if (progress.completed < progress.total) {
+              needsReembedding = true;
+              startOffset = progress.completed;
+              api.logger.info(
+                `memory-hybrid: resuming incomplete re-embedding from previous run (${progress.completed}/${progress.total} completed)`,
+              );
+            }
+          } catch {
+            // Ignore invalid progress file
+          }
+        }
+        
+        if (needsReembedding) {
           const initialGeneration = vectorDb.getCloseGeneration();
           api.logger.info(
-            "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite...",
+            vectorDb.wasRepaired
+              ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
+              : "memory-hybrid: resuming re-embedding after hot reload...",
           );
           const facts = factsDb.getAll({ includeSuperseded: false });
-          let reembedded = 0;
-          for (const fact of facts) {
+          let reembedded = startOffset;
+          
+          for (let i = startOffset; i < facts.length; i++) {
+            const fact = facts[i];
             if (vectorDb.getCloseGeneration() !== initialGeneration) {
+              // Save progress before aborting
+              try {
+                const progress = { completed: reembedded, total: facts.length };
+                const { writeFileSync } = await import("node:fs");
+                writeFileSync(reembedProgressPath, JSON.stringify(progress), "utf-8");
+              } catch {
+                // Ignore write errors
+              }
               api.logger.info(
                 `memory-hybrid: re-embedding aborted (VectorDB closed during hot reload) — ${reembedded}/${facts.length} facts re-embedded`,
               );
@@ -444,6 +477,17 @@ export function initializeDatabases(
               // Skip individual failures — best-effort re-embedding
             }
           }
+          
+          // Clean up progress file on successful completion
+          try {
+            const { unlinkSync } = await import("node:fs");
+            if (existsSync(reembedProgressPath)) {
+              unlinkSync(reembedProgressPath);
+            }
+          } catch {
+            // Ignore cleanup errors
+          }
+          
           api.logger.info(
             `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts after auto-repair`,
           );

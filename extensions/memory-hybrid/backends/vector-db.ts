@@ -127,6 +127,7 @@ export class VectorDB {
    */
   private async validateOrRepairSchema(): Promise<void> {
     const table = this.table!;
+    let tableDropped = false;
     try {
       const schema = await table.schema();
       // Arrow FixedSizeList columns (vector columns) have typeId === 16.
@@ -162,6 +163,7 @@ export class VectorDB {
               `Existing vectors are lost; facts will be re-embedded from SQLite automatically.`,
           );
           await this.db!.dropTable(LANCE_TABLE);
+          tableDropped = true;
           this.table = await this.db!.createTable(LANCE_TABLE, [
             {
               id: "__schema__",
@@ -177,6 +179,9 @@ export class VectorDB {
         }
       }
     } catch (err) {
+      if (tableDropped) {
+        throw err;
+      }
       // Non-fatal: schema validation is advisory. search() already catches errors and
       // returns [] on dimension mismatch, so callers are not impacted.
       this.logWarn(`memory-hybrid: LanceDB schema validation failed (non-fatal): ${err}`);
