@@ -25,6 +25,11 @@ export class VectorDB {
    * decide whether to trigger re-embedding of existing SQLite facts.
    */
   wasRepaired = false;
+  /**
+   * Incremented each time close() is called. Re-embedding loops can capture this value
+   * and abort when it changes, preventing them from running on a closed instance.
+   */
+  private closeGeneration = 0;
 
   constructor(
     private readonly dbPath: string,
@@ -150,7 +155,7 @@ export class VectorDB {
             `Vector search will return empty results until resolved (issue #128). ` +
             `Set vector.autoRepair=true in plugin config to automatically rebuild the index.`,
         );
-        if (this.autoRepair) {
+        if (this.autoRepair && typeof actualDim === "number" && actualDim !== this.vectorDim) {
           this.logWarn(
             `memory-hybrid: vector.autoRepair=true — dropping '${LANCE_TABLE}' and recreating ` +
               `with dim=${this.vectorDim} (was ${actual}). ` +
@@ -347,6 +352,7 @@ export class VectorDB {
 
   private _doClose(): void {
     this.closed = true;
+    this.closeGeneration++;
     this.table = null;
     if (this.db) {
       try { this.db.close(); } catch { /* ignore */ }
@@ -366,5 +372,13 @@ export class VectorDB {
   close(): void {
     this.sessionCount = 0;
     this._doClose();
+  }
+
+  /**
+   * Returns the current close generation. Re-embedding loops can capture this value
+   * and abort when it changes (indicating the VectorDB has been closed).
+   */
+  getCloseGeneration(): number {
+    return this.closeGeneration;
   }
 }

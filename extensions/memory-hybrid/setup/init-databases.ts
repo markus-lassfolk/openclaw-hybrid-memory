@@ -417,12 +417,19 @@ export function initializeDatabases(
       try {
         await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
         if (vectorDb.wasRepaired) {
+          const initialGeneration = vectorDb.getCloseGeneration();
           api.logger.info(
             "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite...",
           );
           const facts = factsDb.getAll({ includeSuperseded: false });
           let reembedded = 0;
           for (const fact of facts) {
+            if (vectorDb.getCloseGeneration() !== initialGeneration) {
+              api.logger.info(
+                `memory-hybrid: re-embedding aborted (VectorDB closed during hot reload) — ${reembedded}/${facts.length} facts re-embedded`,
+              );
+              return;
+            }
             try {
               const vec = await embeddings.embed(fact.text);
               await vectorDb.store({
