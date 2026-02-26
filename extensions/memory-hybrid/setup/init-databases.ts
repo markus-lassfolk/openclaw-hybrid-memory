@@ -420,16 +420,16 @@ export function initializeDatabases(
         
         // Check if there's an incomplete re-embedding from a previous run
         let needsReembedding = vectorDb.wasRepaired;
-        let startOffset = 0;
+        let completedIds = new Set<string>();
         
         if (!needsReembedding && existsSync(reembedProgressPath)) {
           try {
-            const progress = JSON.parse(readFileSync(reembedProgressPath, "utf-8")) as { completed: number; total: number };
-            if (progress.completed < progress.total) {
+            const progress = JSON.parse(readFileSync(reembedProgressPath, "utf-8")) as { completedIds: string[]; total: number };
+            if (progress.completedIds.length < progress.total) {
               needsReembedding = true;
-              startOffset = progress.completed;
+              completedIds = new Set(progress.completedIds);
               api.logger.info(
-                `memory-hybrid: resuming incomplete re-embedding from previous run (${progress.completed}/${progress.total} completed)`,
+                `memory-hybrid: resuming incomplete re-embedding from previous run (${progress.completedIds.length}/${progress.total} completed)`,
               );
             }
           } catch {
@@ -445,14 +445,16 @@ export function initializeDatabases(
               : "memory-hybrid: resuming re-embedding after hot reload...",
           );
           const facts = factsDb.getAll({ includeSuperseded: false });
-          let reembedded = startOffset;
+          let reembedded = completedIds.size;
           
-          for (let i = startOffset; i < facts.length; i++) {
-            const fact = facts[i];
+          for (const fact of facts) {
+            if (completedIds.has(fact.id)) {
+              continue;
+            }
             if (vectorDb.getCloseGeneration() !== initialGeneration) {
               // Save progress before aborting
               try {
-                const progress = { completed: reembedded, total: facts.length };
+                const progress = { completedIds: Array.from(completedIds), total: facts.length };
                 const { writeFileSync } = await import("node:fs");
                 writeFileSync(reembedProgressPath, JSON.stringify(progress), "utf-8");
               } catch {
@@ -465,13 +467,17 @@ export function initializeDatabases(
             }
             try {
               const vec = await embeddings.embed(fact.text);
-              await vectorDb.store({
-                id: fact.id,
-                text: fact.text,
-                vector: vec,
-                importance: fact.importance ?? 0.5,
-                category: fact.category,
-              });
+              const isDuplicate = await vectorDb.hasDuplicate(vec);
+              if (!isDuplicate) {
+                await vectorDb.store({
+                  id: fact.id,
+                  text: fact.text,
+                  vector: vec,
+                  importance: fact.importance ?? 0.5,
+                  category: fact.category,
+                });
+              }
+              completedIds.add(fact.id);
               reembedded++;
             } catch {
               // Skip individual failures — best-effort re-embedding
