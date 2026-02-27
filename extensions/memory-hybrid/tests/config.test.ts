@@ -1043,7 +1043,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.credentials.enabled).toBe(false);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
-      expect(result.memoryToSkills.enabled).toBe(true);
+      expect(result.memoryToSkills.enabled).toBe(false);
       expect(result.memoryToSkills.schedule).toBe("15 2 * * *");
       expect(result.memoryToSkills.outputDir).toBe("skills/auto-generated");
     });
@@ -1063,6 +1063,16 @@ describe("hybridConfigSchema.parse", () => {
         memoryToSkills: { enabled: true },
       });
       expect(result.procedures.enabled).toBe(false);
+      expect(result.memoryToSkills.enabled).toBe(true);
+    });
+
+    it("memoryToSkills.enabled true in normal mode enables pipeline (opt-in)", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        mode: "normal" as ConfigMode,
+        memoryToSkills: { enabled: true },
+      });
+      expect(result.procedures.enabled).toBe(true);
       expect(result.memoryToSkills.enabled).toBe(true);
     });
 

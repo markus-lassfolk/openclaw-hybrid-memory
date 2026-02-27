@@ -129,9 +129,13 @@ export function singleToolDominanceRatio(procedures: ProcedureEntry[]): number {
 export function isLikelyBoilerplateTaskPattern(task: string): boolean {
   const t = task.trim().toLowerCase();
   if (t.length < 10) return true;
+  // Match common injection preamble (task is the snippet text, not user intent)
+  if (t.startsWith("<relevant-memories>") || t.startsWith("the following memories")) return true;
   const boilerplate = [
     "relevant memories",
     "relevant context",
+    "memories may be relevant",
+    "following memories may be",
     "injected context",
     "pre-injected",
     "memory context",

@@ -129,6 +129,12 @@ describe("memory-to-skills isLikelyBoilerplateTaskPattern", () => {
     expect(isLikelyBoilerplateTaskPattern("Use the relevant memories provided")).toBe(true);
     expect(isLikelyBoilerplateTaskPattern("Access relevant context for the user")).toBe(true);
     expect(isLikelyBoilerplateTaskPattern("Pre-injected memory block")).toBe(true);
+    expect(isLikelyBoilerplateTaskPattern("The following memories may be relevant: …")).toBe(true);
+  });
+
+  it("returns true for injection preamble (snippet as task)", () => {
+    expect(isLikelyBoilerplateTaskPattern("<relevant-memories> The following memories may be relevant: …")).toBe(true);
+    expect(isLikelyBoilerplateTaskPattern("The following memories may be relevant to the current query.")).toBe(true);
   });
 
   it("returns false for concrete tasks", () => {
