@@ -32,6 +32,8 @@ export type SkillsSuggestResult = {
   drafts: Array<{ pattern: string; count: number; path: string }>;
   /** When dryRun and verbose: full SKILL.md and recipe.json content that would be written. */
   draftPreviews?: Array<{ path: string; skillMd: string; recipeJson: string }>;
+  /** True when run was preview-only (no files written). CLI uses this to show "Use --apply to write". */
+  dryRun?: boolean;
 };
 
 export type SkillsSuggestOptions = {
@@ -111,6 +113,51 @@ export function distinctToolCount(procedures: ProcedureEntry[]): number {
 function majorityToolSequence(procedures: ProcedureEntry[]): string[] {
   const modes = computePositionModes(procedures);
   return modes.map((m) => m.tool);
+}
+
+/** Fraction of recipe steps (across majority sequence) taken by the single most common tool (0–1). Exported for tests. */
+export function singleToolDominanceRatio(procedures: ProcedureEntry[]): number {
+  const seq = majorityToolSequence(procedures);
+  if (seq.length === 0) return 0;
+  const freq = new Map<string, number>();
+  for (const t of seq) freq.set(t, (freq.get(t) ?? 0) + 1);
+  const max = Math.max(...freq.values());
+  return max / seq.length;
+}
+
+/** Task patterns that look like injected context or non-actionable boilerplate (e.g. "relevant memories"). Exported for tests. */
+export function isLikelyBoilerplateTaskPattern(task: string): boolean {
+  const t = task.trim().toLowerCase();
+  if (t.length < 10) return true;
+  const boilerplate = [
+    "relevant memories",
+    "relevant context",
+    "injected context",
+    "pre-injected",
+    "memory context",
+    "context provided",
+    "given context",
+    "retrieved memories",
+    "memory snippet",
+    "memory block",
+  ];
+  return boilerplate.some((phrase) => t.includes(phrase));
+}
+
+/** Descriptions that are too vague to be a useful skill (e.g. "access and review based on context"). Exported for tests. */
+export function isGenericSkillDescription(description: string): boolean {
+  const d = description.trim().toLowerCase();
+  if (!d || d.length < 20) return true;
+  const vague = [
+    "based on the current context",
+    "as needed",
+    "access and review",
+    "access relevant memories",
+    "use the relevant",
+    "depending on context",
+    "when appropriate",
+  ];
+  return vague.some((phrase) => d.includes(phrase));
 }
 
 /** Collect existing skill slugs under workspace (skills/, skills/auto/, skills/auto-generated/). Exported for tests. */
@@ -200,6 +247,12 @@ export function parseSynthesizedSkill(raw: string): { name: string; description:
     if (nameM) name = nameM[1].trim();
     if (descM) description = descM[1].trim();
   }
+  // Strip redundant first heading when it is the literal "skill" (generic placeholder)
+  const firstLine = body.split(/\r?\n/)[0] ?? "";
+  const headingMatch = firstLine.match(/^#{1,6}\s+(.+)$/);
+  if (headingMatch && headingMatch[1].trim().toLowerCase() === "skill") {
+    body = body.replace(/^[^\n]+\n?/, "").trim();
+  }
   return { name, description, body };
 }
 
@@ -223,6 +276,7 @@ export async function runMemoryToSkills(
     skippedDuplicate: 0,
     drafts: [],
     draftPreviews: opts.dryRun && opts.verbose ? [] : undefined,
+    dryRun: opts.dryRun,
   };
 
   if (!config.enabled) {
@@ -307,6 +361,17 @@ export async function runMemoryToSkills(
       result.skippedOther++;
       continue;
     }
+    if (singleToolDominanceRatio(procs) > 0.6) {
+      logger.info(`memory-to-skills: skip cluster (recipe dominated by one tool; not actionable)`);
+      result.skippedOther++;
+      continue;
+    }
+    const repTask = procs[0].taskPattern;
+    if (isLikelyBoilerplateTaskPattern(repTask)) {
+      logger.info(`memory-to-skills: skip cluster (task pattern looks like injected context: "${repTask.slice(0, 50)}…")`);
+      result.skippedOther++;
+      continue;
+    }
     const newRecipe = majorityToolSequence(procs);
     const newRecipeKey = JSON.stringify(newRecipe);
     if (existingRecipeKeys.has(newRecipeKey)) {
@@ -348,6 +413,19 @@ export async function runMemoryToSkills(
     }
 
     const { name, description, body } = parseSynthesizedSkill(rawResponse);
+    // Skip if LLM returned generic name and no specific description (low-quality draft)
+    const genericName = name.toLowerCase().trim() === "skill";
+    const genericDesc = !description || /auto-generated from \d+ procedure/i.test(description);
+    if (genericName && genericDesc) {
+      logger.info(`memory-to-skills: skip cluster (LLM returned generic name/description; ask for a specific skill name and one-line description)`);
+      result.skippedOther++;
+      continue;
+    }
+    if (description && isGenericSkillDescription(description)) {
+      logger.info(`memory-to-skills: skip cluster (description too vague for a useful skill)`);
+      result.skippedOther++;
+      continue;
+    }
     const baseSlug = slugifyForSkill(name);
     const slug = ensureUniqueSlug(basePath, baseSlug, existingSlugs);
 

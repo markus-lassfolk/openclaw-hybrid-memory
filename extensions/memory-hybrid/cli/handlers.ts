@@ -1468,7 +1468,7 @@ export async function runGenerateAutoSkillsForCli(
  */
 export async function runSkillsSuggestForCli(
   ctx: HandlerContext,
-  opts: { dryRun: boolean; days?: number; verbose?: boolean },
+  opts: { dryRun?: boolean; apply?: boolean; days?: number; verbose?: boolean },
 ): Promise<SkillsSuggestResult> {
   const { factsDb, embeddings, openai, cfg, logger } = ctx;
   if (!cfg.memoryToSkills.enabled) {
@@ -1478,6 +1478,7 @@ export async function runSkillsSuggestForCli(
       qualifyingClusters: 0,
       pathsWritten: [],
       skippedOther: 0,
+      skippedDuplicate: 0,
       drafts: [],
     };
   }
@@ -1489,6 +1490,8 @@ export async function runSkillsSuggestForCli(
   const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
   const windowDays = opts.days ?? cfg.memoryToSkills.windowDays;
   const workspaceRoot = process.env.OPENCLAW_WORKSPACE || process.cwd();
+  const writeByDefault = cfg.memoryToSkills.writeByDefault === true;
+  const dryRun = opts.dryRun === true ? true : opts.apply === true ? false : !writeByDefault;
   try {
     return await runMemoryToSkills(
       factsDb,
@@ -1501,7 +1504,7 @@ export async function runSkillsSuggestForCli(
         consistencyThreshold: cfg.memoryToSkills.consistencyThreshold,
         outputDir: cfg.memoryToSkills.outputDir,
         workspaceRoot: workspaceRoot || undefined,
-        dryRun: opts.dryRun,
+        dryRun,
         verbose: opts.verbose,
         model,
         fallbackModels,

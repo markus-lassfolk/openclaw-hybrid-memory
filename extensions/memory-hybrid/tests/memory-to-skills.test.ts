@@ -6,6 +6,9 @@ import {
   getToolNamesFromRecipe,
   stepConsistency,
   distinctToolCount,
+  singleToolDominanceRatio,
+  isLikelyBoilerplateTaskPattern,
+  isGenericSkillDescription,
   parseSynthesizedSkill,
   getExistingSkillSlugs,
 } from "../services/memory-to-skills.js";
@@ -91,6 +94,63 @@ describe("memory-to-skills distinctToolCount", () => {
 
   it("returns 0 when no steps", () => {
     expect(distinctToolCount([makeProcedure("[]")])).toBe(0);
+  });
+});
+
+describe("memory-to-skills singleToolDominanceRatio", () => {
+  it("returns 0 when no steps", () => {
+    expect(singleToolDominanceRatio([makeProcedure("[]")])).toBe(0);
+  });
+
+  it("returns 1 when all steps are same tool", () => {
+    const procs = [
+      makeProcedure(JSON.stringify([{ tool: "exec" }, { tool: "exec" }, { tool: "exec" }])),
+      makeProcedure(JSON.stringify([{ tool: "exec" }, { tool: "exec" }])),
+    ];
+    expect(singleToolDominanceRatio(procs)).toBe(1);
+  });
+
+  it("returns fraction when mixed", () => {
+    const procs = [
+      makeProcedure(JSON.stringify([{ tool: "a" }, { tool: "b" }, { tool: "c" }])),
+      makeProcedure(JSON.stringify([{ tool: "a" }, { tool: "b" }, { tool: "c" }])),
+    ];
+    expect(singleToolDominanceRatio(procs)).toBe(1 / 3);
+  });
+});
+
+describe("memory-to-skills isLikelyBoilerplateTaskPattern", () => {
+  it("returns true for short task", () => {
+    expect(isLikelyBoilerplateTaskPattern("ab")).toBe(true);
+    expect(isLikelyBoilerplateTaskPattern("short")).toBe(true);
+  });
+
+  it("returns true for injected-context phrases", () => {
+    expect(isLikelyBoilerplateTaskPattern("Use the relevant memories provided")).toBe(true);
+    expect(isLikelyBoilerplateTaskPattern("Access relevant context for the user")).toBe(true);
+    expect(isLikelyBoilerplateTaskPattern("Pre-injected memory block")).toBe(true);
+  });
+
+  it("returns false for concrete tasks", () => {
+    expect(isLikelyBoilerplateTaskPattern("Deploy auth service to staging")).toBe(false);
+    expect(isLikelyBoilerplateTaskPattern("Check Home Assistant health")).toBe(false);
+  });
+});
+
+describe("memory-to-skills isGenericSkillDescription", () => {
+  it("returns true for empty or very short", () => {
+    expect(isGenericSkillDescription("")).toBe(true);
+    expect(isGenericSkillDescription("short")).toBe(true);
+  });
+
+  it("returns true for vague phrases", () => {
+    expect(isGenericSkillDescription("Access and review relevant memories based on the current context")).toBe(true);
+    expect(isGenericSkillDescription("Do something as needed when appropriate")).toBe(true);
+  });
+
+  it("returns false for specific descriptions", () => {
+    expect(isGenericSkillDescription("SSH to host and run health check script")).toBe(false);
+    expect(isGenericSkillDescription("Multi-model PR review council")).toBe(false);
   });
 });
 

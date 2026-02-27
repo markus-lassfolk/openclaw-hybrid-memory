@@ -21,7 +21,7 @@ export type DistillContext = {
   runExtractDaily: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
   runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
-  runSkillsSuggest: (opts: { dryRun: boolean; days?: number; verbose?: boolean }) => Promise<SkillsSuggestResult>;
+  runSkillsSuggest: (opts: { dryRun?: boolean; apply?: boolean; days?: number; verbose?: boolean }) => Promise<SkillsSuggestResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number; stored?: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
@@ -172,12 +172,14 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .command("skills-suggest")
     .description("Cluster procedures, synthesize SKILL.md drafts to skills/auto-generated/ (memory-to-skills)")
     .option("--dry-run", "Show what would be generated without writing")
+    .option("--apply", "Write skills to disk (default: preview only unless memoryToSkills.writeByDefault is true)")
     .option("--days <n>", "Procedures updated in last N days (default: config memoryToSkills.windowDays)", "")
     .option("--verbose", "Log clustering and synthesis steps")
-    .action(withExit(async (opts: { dryRun?: boolean; days?: string; verbose?: boolean }) => {
+    .action(withExit(async (opts: { dryRun?: boolean; apply?: boolean; days?: string; verbose?: boolean }) => {
       const days = opts.days != null && opts.days !== "" ? parseInt(opts.days, 10) : undefined;
       const result = await runSkillsSuggest({
         dryRun: !!opts.dryRun,
+        apply: !!opts.apply,
         days: Number.isFinite(days) ? days : undefined,
         verbose: !!opts.verbose,
       });
@@ -201,6 +203,9 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           console.log(prev.recipeJson);
           console.log("\n" + "─".repeat(60));
         }
+      }
+      if (result.dryRun && result.pathsWritten.length > 0) {
+        console.log("\nPreview only. Use --apply to write skills to disk.");
       }
     }));
 
