@@ -32,6 +32,7 @@ export type ProposalEntry = {
 export class ProposalsDB {
   private db: Database.Database;
   private readonly dbPath: string;
+  private closed = false;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -234,7 +235,14 @@ export class ProposalsDB {
     };
   }
 
+  /** True if the database is still open. Used by the proposals prune timer to avoid using the DB after stop() has closed it (issue #130). */
+  isOpen(): boolean {
+    return !this.closed;
+  }
+
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     try {
       this.db.close();
     } catch (err) {

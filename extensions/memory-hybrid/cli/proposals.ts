@@ -115,7 +115,11 @@ export function capProposalConfidence(confidence: number, targetFile: string, su
 
 function buildAppendBlock(proposalId: string, observation: string, suggestedChange: string, timestamp: string): string {
   const escapeHtmlComment = (text: string): string =>
-    text.replace(/-->/g, "-- >").replace(/<!--/g, "<! --");
+    text
+      // Neutralize both standard (-->) and lenient (--!>) HTML comment end markers.
+      .replace(/--!?>/g, "-- >")
+      // Prevent starting a new HTML comment inside the observation.
+      .replace(/<!--/g, "<! --");
   const safeObservation = escapeHtmlComment(observation);
   return `\n\n<!-- Proposal ${proposalId} applied at ${timestamp} -->\n<!-- Observation: ${safeObservation} -->\n\n${suggestedChange}\n`;
 }
@@ -373,18 +377,20 @@ export async function applyApprovedProposal(
       return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
     }
     writeFileSync(targetPath, applied.content);
+    // Only attempt git commit when the target is inside a git repo (issue #90: non-git workspace can still apply).
     if (isGitRepo(targetPath)) {
       const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
       if (!commitResult.ok) {
-        // Roll back the file write to avoid leaving the workspace in an inconsistent state
-        // (file modified on disk but not committed to git).
         writeFileSync(targetPath, original);
-        ctx.api?.logger?.warn?.(
-          `memory-hybrid: Git commit failed after applying proposal ${proposalId}; file write rolled back. ${commitResult.error}`,
-        );
+        const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+        if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
+          const cwd = repoRoot.stdout.trim();
+          const relPath = relative(cwd, targetPath);
+          spawnSync("git", ["reset", "HEAD", "--", relPath], { cwd, encoding: "utf-8" });
+        }
         return {
           ok: false,
-          error: `Git commit failed for proposal ${proposalId}; file write was rolled back. ${commitResult.error}`,
+          error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
         };
       }
     }

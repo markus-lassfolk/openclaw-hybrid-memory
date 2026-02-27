@@ -210,7 +210,7 @@ export function initializeDatabases(
   const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
   const factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
-  const vectorDb = new VectorDB(resolvedLancePath, vectorDim);
+  const vectorDb = new VectorDB(resolvedLancePath, vectorDim, cfg.vector.autoRepair);
   vectorDb.setLogger(api.logger);
   // Embeddings always use a direct OpenAI client (gateway does not proxy /v1/embeddings — issue #91)
   const openaiForEmbeddings = new OpenAI({ apiKey: cfg.embedding.apiKey });
@@ -408,6 +408,105 @@ export function initializeDatabases(
       }
     }
   })();
+
+  // Schema validation and optional auto-repair re-embedding (issue #128).
+  // Runs asynchronously so it does not block plugin start.
+  // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
+  if (cfg.vector.autoRepair) {
+    void (async () => {
+      const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
+      try {
+        await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
+
+        // Check if there's an incomplete re-embedding from a previous run
+        let needsReembedding = vectorDb.wasRepaired;
+        let completedIds = new Set<string>();
+
+        if (!needsReembedding && existsSync(reembedProgressPath)) {
+          try {
+            const progress = JSON.parse(readFileSync(reembedProgressPath, "utf-8")) as { completedIds: string[]; total: number };
+            if (progress.completedIds.length < progress.total) {
+              needsReembedding = true;
+              completedIds = new Set(progress.completedIds);
+              api.logger.info(
+                `memory-hybrid: resuming incomplete re-embedding from previous run (${progress.completedIds.length}/${progress.total} completed)`,
+              );
+            }
+          } catch {
+            // Ignore invalid progress file
+          }
+        }
+
+        if (needsReembedding) {
+          const initialGeneration = vectorDb.getCloseGeneration();
+          api.logger.info(
+            vectorDb.wasRepaired
+              ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
+              : "memory-hybrid: resuming re-embedding after hot reload...",
+          );
+          const facts = factsDb.getAll({ includeSuperseded: false });
+          let reembedded = completedIds.size;
+
+          for (const fact of facts) {
+            if (completedIds.has(fact.id)) {
+              continue;
+            }
+            if (vectorDb.getCloseGeneration() !== initialGeneration) {
+              // Save progress before aborting
+              try {
+                const progress = { completedIds: Array.from(completedIds), total: facts.length };
+                const { writeFileSync } = await import("node:fs");
+                writeFileSync(reembedProgressPath, JSON.stringify(progress), "utf-8");
+              } catch {
+                // Ignore write errors
+              }
+              api.logger.info(
+                `memory-hybrid: re-embedding aborted (VectorDB closed during hot reload) — ${reembedded}/${facts.length} facts re-embedded`,
+              );
+              return;
+            }
+            try {
+              const vec = await embeddings.embed(fact.text);
+              const isDuplicate = await vectorDb.hasDuplicate(vec);
+              if (!isDuplicate) {
+                await vectorDb.store({
+                  id: fact.id,
+                  text: fact.text,
+                  vector: vec,
+                  importance: fact.importance ?? 0.5,
+                  category: fact.category,
+                });
+              }
+              completedIds.add(fact.id);
+              reembedded++;
+            } catch {
+              // Skip individual failures — best-effort re-embedding
+            }
+          }
+
+          // Clean up progress file on successful completion
+          try {
+            const { unlinkSync } = await import("node:fs");
+            if (existsSync(reembedProgressPath)) {
+              unlinkSync(reembedProgressPath);
+            }
+          } catch {
+            // Ignore cleanup errors
+          }
+
+          api.logger.info(
+            `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts after auto-repair`,
+          );
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "vector-schema-repair-reembed",
+          subsystem: "vector",
+        });
+        api.logger.warn(`memory-hybrid: VectorDB auto-repair re-embedding failed: ${err}`);
+      }
+    })();
+  }
 
   return {
     factsDb,
