@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.02.270] - 2026-02-27
+
+Feature and fix release: LanceDB dimension-mismatch graceful fallback and auto-repair (#128, #129), VectorDB reference-counted lifecycle and reconnection fixes (#106, #107), security and CodeQL fixes (#118–#127), credentials get/list CLI and config-set fix, proposal apply and workspace resolution fixes (#90), verify activeTask, npm package files (#71), and docs.
+
+### Added
+
+- **VectorDB dimension mismatch:** Graceful fallback when LanceDB table dimension does not match configured embedding model: search/count/hasDuplicate return empty/0/false and log a clear warning instead of crashing. Optional `vector.autoRepair: true` drops and recreates the table with the correct dimension and triggers re-embedding from SQLite (issue #128, #129).
+- **Credentials CLI:** `openclaw hybrid-mem credentials get` and `credentials list --service <filter>` for vault inspection.
+- **Verify:** Active-task (ACTIVE-TASK.md) status shown in `openclaw hybrid-mem verify` output.
+- **CI:** GitHub Actions labeler workflow for PRs; CodeQL suppressions where applicable.
+
+### Fixed
+
+- **VectorDB:** Reference-counted singleton prevents premature close when multiple sessions use the plugin (#106). Race condition in `VectorDB.open()` by deferring state cleanup to `ensureInitialized()`; clear `initPromise` in `open()` so reconnection is not blocked; try-catch in `_doClose()`; run `removeSession()` at end of `agent_end` (#107).
+- **VectorDB auto-repair:** Re-embedding bugs fixed: track IDs instead of indices, check duplicates, handle delete errors; stale table handle on failed repair; incomplete re-embedding on hot reload; re-embedding loop leak on hot reload; skip auto-repair when dimension is unreadable.
+- **Proposals:** ProposalsDB prune timer guard (#130). Restore `isGitRepo` guard for proposal apply to avoid applying outside a git repo (#90). Resolve proposal target files against workspace, not plugin data dir. Add `proposals show` subcommand to manage CLI.
+- **Security (CodeQL/alert fixes):** Shell command built from env values (#119); password hash / scrypt handling (#120, #127); prototype-polluting deep merge (#121, #122, #118); ReDoS-safe regex in `resolveEnvVars` (js/polynomial-redos); HTML filtering regex (#125). Restore v1 KDF to scrypt to prevent data loss in existing vaults.
+- **Config/CLI:** `config-set errorReporting true` now sets an object (enabled/consent) instead of a boolean. Claude provider support in cron model resolution; reset git staging on proposal commit rollback.
+- **Credentials/stats:** Credential security and stats accuracy fixes.
+- **Package:** Add missing `setup/`, `lifecycle/`, `tools/` to npm package files (#71).
+
+### Changed
+
+- **Docs:** Remove unsupported `agents.defaults.pruning` from setup and config (#105). Copilot review instructions. PR-133 merge analysis for memory-to-skills revert.
+- **CI:** Labeler workflow uses `pull_request` (not `pull_request_target`); labeler action v5; fix label logic to use OR for glob patterns.
+- **Version bump** — Release 2026.02.27 (npm `2026.02.270`). Version numbers updated in package.json, openclaw.plugin.json, package-lock, and install package.
+
+---
+
 ## [2026.02.240] - 2026-02-24
 
 Feature and fix release: active-task working memory for multi-step tasks (#99, #104), VectorDB auto-reconnect after close (#103), credentials hardening and audit/prune/dedup CLI (#98), stats zero-hints clarification (#101), and related fixes.
@@ -424,7 +453,9 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.02.230...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.02.270...HEAD
+[2026.02.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.270
+[2026.02.240]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.240
 [2026.02.230]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.230
 [2026.2.223]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.223
 [2026.2.222]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.2.222

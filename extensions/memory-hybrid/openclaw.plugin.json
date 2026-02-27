@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.02.240",
+  "version": "2026.02.270",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",
