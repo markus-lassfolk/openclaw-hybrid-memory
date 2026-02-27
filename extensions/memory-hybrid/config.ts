@@ -720,6 +720,7 @@ const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-small": 1536,
   "text-embedding-3-large": 3072,
   "text-embedding-ada-002": 1536,
+  // Local / HuggingFace models that users may have previously generated vectors with
   "all-MiniLM-L6-v2": 384,
 };
 
@@ -728,6 +729,17 @@ export function vectorDimsForModel(model: string): number {
   if (!dims) throw new Error(`Unsupported embedding model: ${model}`);
   return dims;
 }
+
+/** Configuration for LanceDB vector store behaviour. */
+export type VectorConfig = {
+  /**
+   * When true, automatically drop and recreate the LanceDB table if its vector dimension
+   * doesn't match the configured embedding model dimension (issue #128).
+   * After repair, existing facts from SQLite are re-embedded automatically.
+   * Default: false (log the mismatch and return empty results instead of throwing).
+   */
+  autoRepair: boolean;
+};
 
 function resolveEnvVars(value: string): string {
   // Use [^}]+ not (.*?) to avoid ReDoS (js/polynomial-redos): no backtracking on malicious input.
@@ -1559,6 +1571,11 @@ export const hybridConfigSchema = {
       }
       resolvedStaleThreshold = converted;
     }
+
+    const vectorRaw = cfg.vector as Record<string, unknown> | undefined;
+    const vector: VectorConfig = {
+      autoRepair: vectorRaw?.autoRepair === true,
+    };
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
     const activeTask: ActiveTaskConfig = {
