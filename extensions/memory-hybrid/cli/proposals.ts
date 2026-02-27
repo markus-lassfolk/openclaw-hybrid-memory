@@ -377,19 +377,22 @@ export async function applyApprovedProposal(
       return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
     }
     writeFileSync(targetPath, applied.content);
-    const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
-    if (!commitResult.ok) {
-      writeFileSync(targetPath, original);
-      const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
-      if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
-        const cwd = repoRoot.stdout.trim();
-        const relPath = relative(cwd, targetPath);
-        spawnSync("git", ["reset", "HEAD", "--", relPath], { cwd, encoding: "utf-8" });
+    // Only attempt git commit when the target is inside a git repo (issue #90: non-git workspace can still apply).
+    if (isGitRepo(targetPath)) {
+      const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
+      if (!commitResult.ok) {
+        writeFileSync(targetPath, original);
+        const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+        if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
+          const cwd = repoRoot.stdout.trim();
+          const relPath = relative(cwd, targetPath);
+          spawnSync("git", ["reset", "HEAD", "--", relPath], { cwd, encoding: "utf-8" });
+        }
+        return {
+          ok: false,
+          error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
+        };
       }
-      return {
-        ok: false,
-        error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
-      };
     }
     ctx.proposalsDb.markApplied(proposalId);
     await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
