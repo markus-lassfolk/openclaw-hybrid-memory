@@ -3,7 +3,7 @@
  * synthesize SKILL.md drafts via LLM, write to skills/auto-generated/ (issue #114).
  */
 
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry } from "../types/memory.js";
@@ -27,7 +27,11 @@ export type SkillsSuggestResult = {
   qualifyingClusters: number;
   pathsWritten: string[];
   skippedOther: number;
+  /** Count of clusters skipped because recipe (tool sequence) already exists in an existing skill. */
+  skippedDuplicate: number;
   drafts: Array<{ pattern: string; count: number; path: string }>;
+  /** When dryRun and verbose: full SKILL.md and recipe.json content that would be written. */
+  draftPreviews?: Array<{ path: string; skillMd: string; recipeJson: string }>;
 };
 
 export type SkillsSuggestOptions = {
@@ -38,6 +42,8 @@ export type SkillsSuggestOptions = {
   /** Explicit workspace root (default from OPENCLAW_WORKSPACE or cwd when not set). */
   workspaceRoot?: string;
   dryRun?: boolean;
+  /** When true with dryRun, include full draft content in result.draftPreviews for display. */
+  verbose?: boolean;
   model: string;
   fallbackModels?: string[];
 };
@@ -139,6 +145,45 @@ function ensureUniqueSlug(basePath: string, slug: string, existingSlugs: Set<str
   return candidate;
 }
 
+/** Load existing skill recipe sequences from a directory. Returns map: recipeKey (JSON array of tool names) -> slug. */
+function loadExistingRecipeKeys(dir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!existsSync(dir)) return out;
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const recipePath = join(dir, e.name, "recipe.json");
+      if (!existsSync(recipePath)) continue;
+      try {
+        const raw = readFileSync(recipePath, "utf-8");
+        const arr = JSON.parse(raw) as Array<{ tool?: string }>;
+        const tools = Array.isArray(arr) ? arr.map((s) => (s && typeof s.tool === "string" ? s.tool : "")).filter(Boolean) : [];
+        const key = JSON.stringify(tools);
+        if (key.length > 0) out.set(key, e.name);
+      } catch {
+        // ignore malformed recipe
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return out;
+}
+
+/** Collect all existing recipe keys from workspace skill dirs (skills, skills/auto, skills/auto-generated). Returns map: recipeKey -> slug (first slug wins). */
+function getExistingRecipeKeys(workspaceRoot: string): Map<string, string> {
+  const combined = new Map<string, string>();
+  for (const sub of ["skills", "skills/auto", "skills/auto-generated"]) {
+    const dir = join(workspaceRoot, sub);
+    const m = loadExistingRecipeKeys(dir);
+    for (const [key, slug] of m) {
+      if (!combined.has(key)) combined.set(key, slug);
+    }
+  }
+  return combined;
+}
+
 /** Parse LLM response: optional YAML frontmatter (name, description) and body. Exported for tests. Strips markdown code fences if present. */
 export function parseSynthesizedSkill(raw: string): { name: string; description: string; body: string } {
   let name = "skill";
@@ -175,7 +220,9 @@ export async function runMemoryToSkills(
     qualifyingClusters: 0,
     pathsWritten: [],
     skippedOther: 0,
+    skippedDuplicate: 0,
     drafts: [],
+    draftPreviews: opts.dryRun && opts.verbose ? [] : undefined,
   };
 
   if (!config.enabled) {
@@ -240,6 +287,8 @@ export async function runMemoryToSkills(
     ? opts.outputDir
     : join(workspaceRoot, opts.outputDir);
   const existingSlugs = getExistingSkillSlugs(workspaceRoot);
+  /** Recipe key -> existing slug (from disk + skills written this run). Used to skip duplicate tool sequences. */
+  const existingRecipeKeys = getExistingRecipeKeys(workspaceRoot);
 
   let written = 0;
   for (const clusterIds of clusters) {
@@ -256,6 +305,14 @@ export async function runMemoryToSkills(
     const numTools = distinctToolCount(procs);
     if (numTools < 2) {
       result.skippedOther++;
+      continue;
+    }
+    const newRecipe = majorityToolSequence(procs);
+    const newRecipeKey = JSON.stringify(newRecipe);
+    if (existingRecipeKeys.has(newRecipeKey)) {
+      const existingSlug = existingRecipeKeys.get(newRecipeKey)!;
+      logger.info(`memory-to-skills: skip cluster (duplicate recipe of existing skill "${existingSlug}")`);
+      result.skippedDuplicate++;
       continue;
     }
     result.qualifyingClusters++;
@@ -308,8 +365,18 @@ ${body}`;
     if (opts.dryRun) {
       logger.info(`[dry-run] Would write ${skillPath}`);
       existingSlugs.add(slug);
+      existingRecipeKeys.set(newRecipeKey, slug);
       result.pathsWritten.push(skillPath);
       result.drafts.push({ pattern: procs[0].taskPattern.slice(0, 60), count: procs.length, path: skillPath });
+      if (result.draftPreviews) {
+        const steps = majorityToolSequence(procs);
+        const recipeArr = steps.map((t) => ({ tool: t }));
+        result.draftPreviews.push({
+          path: skillPath,
+          skillMd: fullContent,
+          recipeJson: JSON.stringify(recipeArr, null, 2),
+        });
+      }
       written++;
       continue;
     }
@@ -349,6 +416,7 @@ ${body}`;
       factsDb.markProcedurePromoted(p.id, relativePath);
     }
     existingSlugs.add(slug);
+    existingRecipeKeys.set(newRecipeKey, slug);
     result.pathsWritten.push(skillPath);
     result.drafts.push({ pattern: procs[0].taskPattern.slice(0, 60), count: procs.length, path: skillPath });
     written++;

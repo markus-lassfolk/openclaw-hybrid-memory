@@ -749,7 +749,7 @@ export async function runVerifyForCli(
 
   log(`  procedures: ${bool(cfg.procedures.enabled)}`);
   log(`  procedures.requireApprovalForPromote: ${bool(cfg.procedures.requireApprovalForPromote)}`);
-  log(`  memoryToSkills: ${bool(cfg.memoryToSkills.enabled)} (schedule: ${cfg.memoryToSkills.schedule}) — run: openclaw hybrid-mem skills-suggest [--dry-run] [--days N]`);
+  log(`  memoryToSkills: ${bool(cfg.memoryToSkills.enabled)}`);
   const reflectionModelDisplay = cfg.reflection.enabled
     ? ` (model: ${cfg.reflection.model ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`})`  // reflection uses default, not nano
     : "";
@@ -934,37 +934,53 @@ export async function runVerifyForCli(
     log("  If you don't use it, ignore this.");
   }
 
-  // Job name regex patterns for matching
+  // Job name regex patterns for matching (use normalized name so "Weekly Reflection" etc. match)
   const cronStorePath = join(openclawDir, "cron", "jobs.json");
-  const nightlyMemorySweepRe = /nightly-memory-sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
-  const weeklyReflectionRe = /weekly-reflection|memory reflection|pattern synthesis/i;
-  const extractProceduresRe = /extract-procedures|weekly-extract-procedures|procedural memory/i;
-  const nightlyMemoryToSkillsRe = /nightly-memory-to-skills|memory-to-skills|skills-suggest/i;
-  const selfCorrectionRe = /self-correction-analysis|self-correction\b/i;
-  const weeklyDeepMaintenanceRe = /weekly-deep-maintenance|deep maintenance/i;
-  const weeklyPersonaProposalsRe = /weekly-persona-proposals|persona proposals/i;
-  const monthlyConsolidationRe = /monthly-consolidation/i;
+  const nightlyMemorySweepRe = /nightly[- ]?memory[- ]?sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
+  const weeklyReflectionRe = /weekly[- ]?reflection|memory reflection|pattern synthesis/i;
+  const extractProceduresRe = /extract[- ]?procedures|weekly[- ]?extract[- ]?procedures|procedural memory/i;
+  const nightlyMemoryToSkillsRe = /nightly[- ]?memory[- ]?to[- ]?skills|memory[- ]?to[- ]?skills|skills[- ]?suggest/i;
+  const selfCorrectionRe = /self[- ]?correction[- ]?analysis|self[- ]?correction\b/i;
+  const weeklyDeepMaintenanceRe = /weekly[- ]?deep[- ]?maintenance|deep maintenance/i;
+  const weeklyPersonaProposalsRe = /weekly[- ]?persona[- ]?proposals|persona proposals/i;
+  const monthlyConsolidationRe = /monthly[- ]?consolidation/i;
+
+  const knownJobSlugs = new Set([
+    "nightly-memory-sweep", "nightly-memory-to-skills", "weekly-reflection", "weekly-extract-procedures",
+    "self-correction-analysis", "weekly-deep-maintenance", "monthly-consolidation", "weekly-persona-proposals",
+  ]);
+
+  /** Normalize job name to slug for matching: lowercase, spaces to single hyphen. */
+  function nameToSlug(n: string): string {
+    return n.toLowerCase().trim().replace(/\s+/g, "-").replace(/-+/g, "-");
+  }
 
   // Helper function to map job names to canonical keys
   function getCanonicalJobKey(name: string, msg?: string): string | null {
     const nameLower = name.toLowerCase();
+    const normalized = nameToSlug(name);
     if (nightlyMemorySweepRe.test(nameLower) || (msg && /nightly memory distillation|memory distillation pipeline/i.test(msg))) {
       return "nightly-memory-sweep";
-    } else if (weeklyReflectionRe.test(name)) {
+    } else if (weeklyReflectionRe.test(nameLower)) {
       return "weekly-reflection";
-    } else if (extractProceduresRe.test(name)) {
+    } else if (extractProceduresRe.test(nameLower)) {
       return "weekly-extract-procedures";
-    } else if (nightlyMemoryToSkillsRe.test(name) || (msg && /skills-suggest/i.test(msg))) {
+    } else if (nightlyMemoryToSkillsRe.test(nameLower) || (msg && /skills-suggest/i.test(msg))) {
       return "nightly-memory-to-skills";
-    } else if (selfCorrectionRe.test(name)) {
+    } else if (selfCorrectionRe.test(nameLower)) {
       return "self-correction-analysis";
-    } else if (weeklyDeepMaintenanceRe.test(name)) {
+    } else if (weeklyDeepMaintenanceRe.test(nameLower)) {
       return "weekly-deep-maintenance";
-    } else if (weeklyPersonaProposalsRe.test(name)) {
+    } else if (weeklyPersonaProposalsRe.test(nameLower)) {
       return "weekly-persona-proposals";
-    } else if (monthlyConsolidationRe.test(name)) {
+    } else if (monthlyConsolidationRe.test(nameLower)) {
       return "monthly-consolidation";
-    } else if (name) {
+    }
+    // Fallback: if slug matches a known key exactly (e.g. "Weekly Reflection" -> "weekly-reflection"), use it
+    if (knownJobSlugs.has(normalized)) {
+      return normalized;
+    }
+    if (name) {
       return name;
     }
     return null;
@@ -1391,7 +1407,7 @@ function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
  */
 export async function runExtractProceduresForCli(
   ctx: HandlerContext,
-  opts: { sessionDir?: string; days?: number; dryRun: boolean },
+  opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean },
 ): Promise<ExtractProceduresResult> {
   const { factsDb, cfg, logger } = ctx;
   if (cfg.procedures?.enabled === false) {
@@ -1410,6 +1426,7 @@ export async function runExtractProceduresForCli(
         filePaths,
         minSteps: cfg.procedures.minSteps,
         dryRun: opts.dryRun,
+        verbose: opts.verbose,
       },
       { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
     );
@@ -1485,6 +1502,7 @@ export async function runSkillsSuggestForCli(
         outputDir: cfg.memoryToSkills.outputDir,
         workspaceRoot: workspaceRoot || undefined,
         dryRun: opts.dryRun,
+        verbose: opts.verbose,
         model,
         fallbackModels,
       },

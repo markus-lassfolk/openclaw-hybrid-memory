@@ -74,11 +74,15 @@ function looksLikeFailure(content: unknown): boolean {
   );
 }
 
+/** Reason a session was skipped (when includeSkipReason is true). */
+export type ParseSkipReason = "no_task_intent" | "fewer_than_2_steps";
+
 /** Parse one session JSONL file content. Returns null if no tool calls or invalid. */
 export function parseSessionJsonl(
   content: string,
   sessionId: string,
-): ParsedSession | null {
+  opts?: { includeSkipReason?: boolean },
+): ParsedSession | { skipReason: ParseSkipReason } | null {
   const lines = content.split("\n").filter((l) => l.trim());
   let taskIntent = "";
   const steps: ProcedureStep[] = [];
@@ -102,8 +106,16 @@ export function parseSessionJsonl(
     if (!msg || typeof msg !== "object") continue;
 
     const role = msg.role as string | undefined;
-    const content = msg.content as Array<{ type?: string; text?: string; name?: string; input?: unknown; id?: string; tool_use_id?: string }> | undefined;
-    if (!Array.isArray(content)) continue;
+    const rawContent = msg.content;
+
+    // Accept content as array (OpenAI-style blocks) or as string (user message only)
+    if (role === "user" && typeof rawContent === "string" && !taskIntent) {
+      taskIntent = normalizeTaskIntent(rawContent);
+    }
+
+    if (!Array.isArray(rawContent)) continue;
+
+    const content = rawContent as Array<{ type?: string; text?: string; name?: string; input?: unknown; arguments?: unknown; id?: string; tool_use_id?: string }>;
 
     for (const block of content) {
       if (!block || typeof block !== "object") continue;
@@ -113,9 +125,12 @@ export function parseSessionJsonl(
         taskIntent = normalizeTaskIntent(block.text);
       }
 
-      if (role === "assistant" && type === "tool_use" && block.name) {
-        const args = block.input != null && typeof block.input === "object" && !Array.isArray(block.input)
-          ? (block.input as Record<string, unknown>)
+      // OpenAI: type "tool_use", args in block.input. OpenClaw: type "toolCall", args in block.arguments
+      const isToolUse = type === "tool_use" || type === "toolCall";
+      if (role === "assistant" && isToolUse && block.name) {
+        const rawArgs = block.input ?? block.arguments;
+        const args = rawArgs != null && typeof rawArgs === "object" && !Array.isArray(rawArgs)
+          ? (rawArgs as Record<string, unknown>)
           : undefined;
         steps.push({
           tool: block.name,
@@ -124,8 +139,10 @@ export function parseSessionJsonl(
         });
       }
 
-      if (role === "tool" && (type === "tool_result" || type === "result")) {
-        const toolContent = (block as Record<string, unknown>).content;
+      // OpenAI: role "tool", type "tool_result", content in block.content. OpenClaw: role "toolResult", content may be in block.text
+      const isToolResult = role === "tool" || role === "toolResult";
+      if (isToolResult && (type === "tool_result" || type === "result" || type === "toolResult" || type === "text")) {
+        const toolContent = (block as Record<string, unknown>).content ?? (block as Record<string, unknown>).text;
         if (looksLikeFailure(toolContent)) {
           lastFailure = typeof toolContent === "string" ? toolContent.slice(0, 200) : JSON.stringify(toolContent).slice(0, 200);
         } else {
@@ -135,7 +152,12 @@ export function parseSessionJsonl(
     }
   }
 
-  if (!taskIntent || steps.length < 2) return null;
+  if (!taskIntent || steps.length < 2) {
+    if (opts?.includeSkipReason) {
+      return { skipReason: !taskIntent ? "no_task_intent" : "fewer_than_2_steps" };
+    }
+    return null;
+  }
 
   return {
     sessionId,
@@ -192,6 +214,8 @@ export type ExtractProceduresOptions = {
   sessionDir?: string;
   filePaths?: string[];
   dryRun?: boolean;
+  /** When true, log skip reason for each session that yields no procedure. */
+  verbose?: boolean;
 };
 
 /** Calculate word overlap ratio between two task patterns (0.0 to 1.0). */
@@ -218,6 +242,7 @@ export async function extractProceduresFromSessions(
 ): Promise<ExtractProceduresResult> {
   const minSteps = options.minSteps ?? 2;
   const dryRun = options.dryRun ?? false;
+  const verbose = options.verbose === true;
 
   let filePaths: string[] = options.filePaths ?? [];
   if (filePaths.length === 0 && options.sessionDir) {
@@ -253,8 +278,15 @@ export async function extractProceduresFromSessions(
       continue;
     }
     const sessionId = path.basename(filePath, ".jsonl");
-    const parsed = parseSessionJsonl(content, sessionId);
-    if (!parsed || parsed.steps.length < minSteps) continue;
+    const parsed = parseSessionJsonl(content, sessionId, verbose ? { includeSkipReason: true } : undefined);
+    if (parsed && "skipReason" in parsed) {
+      if (verbose) logger.info(`procedure-extractor: skip ${sessionId}.jsonl — ${parsed.skipReason}`);
+      continue;
+    }
+    if (!parsed || parsed.steps.length < minSteps) {
+      if (verbose && parsed) logger.info(`procedure-extractor: skip ${sessionId}.jsonl — fewer than minSteps (${parsed.steps.length} < ${minSteps})`);
+      continue;
+    }
 
     const recipe = minimalRecipe(parsed.steps);
     const recipeJson = JSON.stringify(recipe);

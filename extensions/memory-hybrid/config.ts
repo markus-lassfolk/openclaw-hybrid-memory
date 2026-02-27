@@ -730,17 +730,6 @@ export function vectorDimsForModel(model: string): number {
   return dims;
 }
 
-/** Configuration for LanceDB vector store behaviour. */
-export type VectorConfig = {
-  /**
-   * When true, automatically drop and recreate the LanceDB table if its vector dimension
-   * doesn't match the configured embedding model dimension (issue #128).
-   * After repair, existing facts from SQLite are re-embedded automatically.
-   * Default: false (log the mismatch and return empty results instead of throwing).
-   */
-  autoRepair: boolean;
-};
-
 function resolveEnvVars(value: string): string {
   // Use [^}]+ not (.*?) to avoid ReDoS (js/polynomial-redos): no backtracking on malicious input.
   return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
