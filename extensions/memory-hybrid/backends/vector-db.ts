@@ -392,4 +392,12 @@ export class VectorDB {
     this.closeGeneration++;
     this._doClose();
   }
+
+  /**
+   * Returns the current close generation. Re-embedding loops can capture this value
+   * and abort when it changes (indicating the VectorDB has been closed).
+   */
+  getCloseGeneration(): number {
+    return this.closeGeneration;
+  }
 }
