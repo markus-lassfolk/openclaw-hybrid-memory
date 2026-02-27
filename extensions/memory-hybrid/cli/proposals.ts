@@ -377,20 +377,19 @@ export async function applyApprovedProposal(
       return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
     }
     writeFileSync(targetPath, applied.content);
-    if (isGitRepo(targetPath)) {
-      const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
-      if (!commitResult.ok) {
-        // Roll back the file write to avoid leaving the workspace in an inconsistent state
-        // (file modified on disk but not committed to git).
-        writeFileSync(targetPath, original);
-        ctx.api?.logger?.warn?.(
-          `memory-hybrid: Git commit failed after applying proposal ${proposalId}; file write rolled back. ${commitResult.error}`,
-        );
-        return {
-          ok: false,
-          error: `Git commit failed for proposal ${proposalId}; file write was rolled back. ${commitResult.error}`,
-        };
+    const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
+    if (!commitResult.ok) {
+      writeFileSync(targetPath, original);
+      const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+      if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
+        const cwd = repoRoot.stdout.trim();
+        const relPath = relative(cwd, targetPath);
+        spawnSync("git", ["reset", "HEAD", "--", relPath], { cwd, encoding: "utf-8" });
       }
+      return {
+        ok: false,
+        error: `Git commit failed; target file rolled back to original. Commit error: ${commitResult.error}`,
+      };
     }
     ctx.proposalsDb.markApplied(proposalId);
     await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
