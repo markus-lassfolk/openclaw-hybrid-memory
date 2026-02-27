@@ -125,10 +125,11 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     // human approval is required. This prevents agents from self-approving and
     // applying their own proposals, maintaining the security guarantee.
 
-    // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop)
+    // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop).
+    // Guard: only call pruneExpired when DB is still open to avoid "database connection is not open" after stop() (issue #130).
     timers.proposalsPruneTimer.value = setInterval(() => {
       try {
-        if (proposalsDb) {
+        if (proposalsDb?.isOpen()) {
           const pruned = proposalsDb.pruneExpired();
           if (pruned > 0) {
             api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
