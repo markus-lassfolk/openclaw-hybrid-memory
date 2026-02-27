@@ -411,12 +411,14 @@ export function initializeDatabases(
 
   // Schema validation and optional auto-repair re-embedding (issue #128).
   // Runs asynchronously so it does not block plugin start.
+  // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
   if (cfg.vector.autoRepair) {
     void (async () => {
       const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
         await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
 
+        // Check if there's an incomplete re-embedding from a previous run
         let needsReembedding = vectorDb.wasRepaired;
         let completedIds = new Set<string>();
 
@@ -431,7 +433,7 @@ export function initializeDatabases(
               );
             }
           } catch {
-            /* ignore invalid progress file */
+            // Ignore invalid progress file
           }
         }
 
@@ -446,14 +448,17 @@ export function initializeDatabases(
           let reembedded = completedIds.size;
 
           for (const fact of facts) {
-            if (completedIds.has(fact.id)) continue;
+            if (completedIds.has(fact.id)) {
+              continue;
+            }
             if (vectorDb.getCloseGeneration() !== initialGeneration) {
+              // Save progress before aborting
               try {
                 const progress = { completedIds: Array.from(completedIds), total: facts.length };
                 const { writeFileSync } = await import("node:fs");
                 writeFileSync(reembedProgressPath, JSON.stringify(progress), "utf-8");
               } catch {
-                /* ignore */
+                // Ignore write errors
               }
               api.logger.info(
                 `memory-hybrid: re-embedding aborted (VectorDB closed during hot reload) — ${reembedded}/${facts.length} facts re-embedded`,
@@ -475,17 +480,18 @@ export function initializeDatabases(
               completedIds.add(fact.id);
               reembedded++;
             } catch {
-              /* skip individual failures — best-effort re-embedding */
+              // Skip individual failures — best-effort re-embedding
             }
           }
 
+          // Clean up progress file on successful completion
           try {
             const { unlinkSync } = await import("node:fs");
             if (existsSync(reembedProgressPath)) {
               unlinkSync(reembedProgressPath);
             }
           } catch {
-            /* ignore */
+            // Ignore cleanup errors
           }
 
           api.logger.info(
