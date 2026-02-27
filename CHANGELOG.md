@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.02.271] - 2026-02-27
+
+Memory-to-skills disabled by default and boilerplate filter fix.
+
+### Changed
+
+- **Memory-to-skills:** Pipeline is **disabled by default**. Set `memoryToSkills.enabled: true` in config to run clustering/synthesis. Nightly job and `skills-suggest` exit cleanly when disabled.
+- **Memory-to-skills boilerplate filter:** Skip clusters whose task pattern is the injected memory preamble (e.g. `<relevant-memories>` or "The following memories may be relevant") so snippet-derived clusters no longer produce misleading skills.
+
+### Fixed
+
+- Clusters with task text like "<relevant-memories> The following memories may be relevant: …" are now skipped instead of generating skills tied to injected context.
+
+---
+
 ## [2026.02.270] - 2026-02-27
 
 Feature and fix release: LanceDB dimension-mismatch graceful fallback and auto-repair (#128, #129), VectorDB reference-counted lifecycle and reconnection fixes (#106, #107), security and CodeQL fixes (#118–#127), credentials get/list CLI and config-set fix, proposal apply and workspace resolution fixes (#90), verify activeTask, npm package files (#71), and docs.
@@ -453,7 +468,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.02.270...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.02.271...HEAD
+[2026.02.271]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.271
 [2026.02.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.270
 [2026.02.240]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.240
 [2026.02.230]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.230

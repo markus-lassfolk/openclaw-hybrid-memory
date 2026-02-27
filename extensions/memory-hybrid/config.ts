@@ -195,7 +195,7 @@ export type ProceduresConfig = {
 
 /** Memory-to-skills: nightly synthesis of skill drafts from clustered procedures (issue #114). */
 export type MemoryToSkillsConfig = {
-  /** Enable memory-to-skills pipeline (default: same as procedures.enabled) */
+  /** Enable memory-to-skills pipeline (default: false; set true to run clustering/synthesis). */
   enabled: boolean;
   /** Cron schedule for nightly run (default: "15 2 * * *" = 2:15 AM) */
   schedule: string;
@@ -1296,10 +1296,10 @@ export const hybridConfigSchema = {
       requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     };
 
-    // Parse memory-to-skills config (issue #114). Default enabled to procedures.enabled; explicit true allows running when procedures disabled.
+    // Parse memory-to-skills config (issue #114). Default disabled; set memoryToSkills.enabled: true to run.
     const memoryToSkillsRaw = cfg.memoryToSkills as Record<string, unknown> | undefined;
     const memoryToSkills: MemoryToSkillsConfig = {
-      enabled: memoryToSkillsRaw?.enabled === true || (memoryToSkillsRaw?.enabled !== false && procedures.enabled),
+      enabled: memoryToSkillsRaw?.enabled === true,
       schedule: typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.trim().length > 0
         ? memoryToSkillsRaw.schedule.trim()
         : "15 2 * * *",
