@@ -19,10 +19,22 @@ export class VectorDB {
   private closed = false;
   private sessionCount = 0;
   private logger: VectorDBLogger | null = null;
+  /**
+   * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
+   * LanceDB table due to a vector dimension mismatch. Callers can check this flag to
+   * decide whether to trigger re-embedding of existing SQLite facts (issue #128).
+   */
+  wasRepaired = false;
+  /**
+   * Incremented each time close() is called. Re-embedding loops can capture this value
+   * and abort when it changes, preventing them from running on a closed instance.
+   */
+  private closeGeneration = 0;
 
   constructor(
     private readonly dbPath: string,
     private readonly vectorDim: number,
+    private readonly autoRepair: boolean = false,
   ) {}
 
   setLogger(logger: VectorDBLogger): void {
@@ -88,6 +100,7 @@ export class VectorDB {
 
     if (tables.includes(LANCE_TABLE)) {
       this.table = await this.db.openTable(LANCE_TABLE);
+      await this.validateOrRepairSchema();
     } else {
       this.table = await this.db.createTable(LANCE_TABLE, [
         {
@@ -99,8 +112,88 @@ export class VectorDB {
           createdAt: 0,
         },
       ]);
-      await this.table.delete('id = "__schema__"');
+      try {
+        await this.table.delete('id = "__schema__"');
+      } catch (deleteErr) {
+        this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
+      }
     }
+  }
+
+  /**
+   * Validates the existing LanceDB table schema against the configured vector dimension (issue #128).
+   * - If no vector column is found: logs a warning (schema corruption).
+   * - If dimension mismatch: logs a clear warning with expected vs actual dims.
+   * - If autoRepair is true: drops and recreates the table with the correct dimension,
+   *   then sets wasRepaired=true so callers can trigger re-embedding from SQLite.
+   */
+  private async validateOrRepairSchema(): Promise<void> {
+    const table = this.table!;
+    let tableDropped = false;
+    try {
+      const schema = await table.schema();
+      // Arrow FixedSizeList columns (vector columns) have typeId === 16.
+      const vectorField = schema.fields.find(
+        (f: { type?: { typeId?: number; listSize?: number } }) =>
+          typeof f.type?.typeId === "number" && f.type.typeId === 16,
+      );
+
+      if (!vectorField) {
+        this.logWarn(
+          `memory-hybrid: ⚠️  LanceDB table '${LANCE_TABLE}' has no vector column — ` +
+            `vector search will return empty results. ` +
+            `This may indicate schema corruption. ` +
+            `Delete the LanceDB directory and restart to rebuild the index.`,
+        );
+        return;
+      }
+
+      const actualDim = (vectorField.type as { listSize?: number }).listSize;
+      if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
+        const actual = typeof actualDim === "number" ? actualDim : "unknown";
+        this.logWarn(
+          `memory-hybrid: ⚠️  LanceDB dimension mismatch — table has dim=${actual}, ` +
+            `configured embedding model expects dim=${this.vectorDim}. ` +
+            `Vector search will return empty results until resolved (issue #128). ` +
+            `Set vector.autoRepair=true in plugin config to automatically rebuild the index.`,
+        );
+        if (this.autoRepair && typeof actualDim === "number" && actualDim !== this.vectorDim) {
+          this.logWarn(
+            `memory-hybrid: vector.autoRepair=true — dropping '${LANCE_TABLE}' and recreating ` +
+              `with dim=${this.vectorDim} (was ${actual}). ` +
+              `Existing vectors are lost; facts will be re-embedded from SQLite automatically.`,
+          );
+          await this.db!.dropTable(LANCE_TABLE);
+          tableDropped = true;
+          this.table = await this.db!.createTable(LANCE_TABLE, [
+            {
+              id: "__schema__",
+              text: "",
+              vector: new Array(this.vectorDim).fill(0),
+              importance: 0,
+              category: "other",
+              createdAt: 0,
+            },
+          ]);
+          try {
+            await this.table.delete('id = "__schema__"');
+          } catch (deleteErr) {
+            this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
+          }
+          this.wasRepaired = true;
+        }
+      }
+    } catch (err) {
+      if (tableDropped) {
+        throw err;
+      }
+      this.logWarn(`memory-hybrid: LanceDB schema validation failed (non-fatal): ${err}`);
+    }
+  }
+
+  /** Returns the current close generation (for re-embedding loops to abort on hot reload). */
+  getCloseGeneration(): number {
+    return this.closeGeneration;
   }
 
   /** Get initialized table or throw descriptive error. */
@@ -290,6 +383,7 @@ export class VectorDB {
    */
   close(): void {
     this.sessionCount = 0;
+    this.closeGeneration++;
     this._doClose();
   }
 }
