@@ -2490,20 +2490,24 @@ export class FactsDB {
 
   /** Get reflection statistics */
   statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
-    const patterns = this.liveDb.prepare(
-      `SELECT COUNT(*) as c FROM facts WHERE category = 'pattern' AND source = 'reflection'`
-    ).pluck().get() as number;
-    const rules = this.liveDb.prepare(
-      `SELECT COUNT(*) as c FROM facts WHERE category = 'rule' AND source = 'reflection'`
-    ).pluck().get() as number;
-    return { reflectionPatternsCount: patterns, reflectionRulesCount: rules };
+    const patternsRow = this.liveDb
+      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'pattern'`)
+      .get() as { count: number } | undefined;
+    const rulesRow = this.liveDb
+      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'rule'`)
+      .get() as { count: number } | undefined;
+    return {
+      reflectionPatternsCount: patternsRow?.count ?? 0,
+      reflectionRulesCount: rulesRow?.count ?? 0,
+    };
   }
 
   /** Get self-correction incidents count */
   selfCorrectionIncidentsCount(): number {
-    return this.liveDb.prepare(
-      `SELECT COUNT(*) as c FROM facts WHERE source = 'self-correction'`
-    ).pluck().get() as number;
+    const row = this.liveDb
+      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'self-correction'`)
+      .get() as { count: number } | undefined;
+    return row?.count ?? 0;
   }
 
   /** Get language keywords count */
@@ -2550,7 +2554,7 @@ export class FactsDB {
   /** Get statistics by source */
   statsBySource(): Record<string, number> {
     const rows = this.liveDb
-      .prepare(`SELECT source, COUNT(*) as count FROM facts GROUP BY source`)
+      .prepare(`SELECT source, COUNT(*) as count FROM facts WHERE superseded_at IS NULL GROUP BY source`)
       .all() as Array<{ source: string; count: number }>;
     return Object.fromEntries(rows.map((r) => [r.source, r.count]));
   }
