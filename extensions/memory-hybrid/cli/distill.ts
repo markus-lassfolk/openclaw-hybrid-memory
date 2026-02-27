@@ -19,7 +19,7 @@ export type DistillContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
-  runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean }) => Promise<ExtractProceduresResult>;
+  runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
   runSkillsSuggest: (opts: { dryRun: boolean; days?: number; verbose?: boolean }) => Promise<SkillsSuggestResult>;
   runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
@@ -135,12 +135,14 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
     .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
     .option("--dry-run", "Show what would be stored without writing")
-    .action(withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean }) => {
+    .option("--verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)")
+    .action(withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean; verbose?: boolean }) => {
       const days = opts.days != null ? parseInt(opts.days, 10) : undefined;
       const result = await runExtractProcedures({
         sessionDir: opts.dir,
         days: Number.isFinite(days) ? days : undefined,
         dryRun: !!opts.dryRun,
+        verbose: !!opts.verbose,
       });
       if (result.dryRun) {
         console.log(`\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`);
@@ -185,9 +187,20 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       }
       console.log(`\nProcedures: ${result.proceduresCollected}; clusters: ${result.clustersConsidered}; qualifying: ${result.qualifyingClusters}.`);
       if (result.skippedOther) console.log(`Skipped (other): ${result.skippedOther}.`);
+      if (result.skippedDuplicate) console.log(`Skipped (duplicate recipe): ${result.skippedDuplicate}.`);
       for (const p of result.pathsWritten) console.log(`  ${p}`);
       for (const d of result.drafts) {
         console.log(`\nI noticed you've done "${d.pattern}${d.pattern.length >= 60 ? "…" : ""}" ${d.count} times. I drafted a skill — review at \`${d.path}\`.`);
+      }
+      if (result.draftPreviews?.length) {
+        console.log("\n" + "─".repeat(60) + "\n  Draft content that would be written (--dry-run --verbose)\n" + "─".repeat(60));
+        for (const prev of result.draftPreviews) {
+          console.log(`\n▼ Would write: ${prev.path}\n`);
+          console.log(prev.skillMd);
+          console.log("\n▼ Would write: " + prev.path.replace(/SKILL\.md$/, "recipe.json") + "\n");
+          console.log(prev.recipeJson);
+          console.log("\n" + "─".repeat(60));
+        }
       }
     }));
 
