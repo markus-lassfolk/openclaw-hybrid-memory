@@ -1495,6 +1495,47 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const deleted = factsDb.pruneScopedFacts(scopeFilter);
       console.log(`Pruned ${deleted} facts from scope ${opts.scope}${opts.scopeTarget ? ` (target=${opts.scopeTarget})` : ""}.`);
     }));
+  scope!
+    .command("promote")
+    .description("Promote high-importance session-scoped facts to global scope")
+    .option("--dry-run", "Preview without making changes")
+    .option("--threshold-days <n>", "Minimum age in days for a session fact to be promoted (default: 7)", "7")
+    .option("--min-importance <n>", "Minimum importance score to promote (default: 0.7)", "0.7")
+    .action(withExit(async (opts: { dryRun?: boolean; thresholdDays: string; minImportance: string }) => {
+      const thresholdDays = parseFloat(opts.thresholdDays);
+      const minImportance = parseFloat(opts.minImportance);
+
+      if (isNaN(thresholdDays) || thresholdDays < 0) {
+        console.error("--threshold-days must be a non-negative number");
+        process.exit(1);
+      }
+      if (isNaN(minImportance) || minImportance < 0 || minImportance > 1) {
+        console.error("--min-importance must be a number between 0 and 1");
+        process.exit(1);
+      }
+
+      const candidates = factsDb.findSessionFactsForPromotion(thresholdDays, minImportance);
+      if (candidates.length === 0) {
+        console.log("No session facts eligible for promotion.");
+        return;
+      }
+
+      if (opts.dryRun) {
+        console.log(`Would promote ${candidates.length} facts from session to global scope (dry-run):`);
+        for (const f of candidates) {
+          console.log(`  [${f.id}] importance=${f.importance.toFixed(2)} scope_target=${f.scopeTarget ?? "null"} text="${f.text.slice(0, 80)}"`);
+        }
+        return;
+      }
+
+      let promoted = 0;
+      for (const f of candidates) {
+        if (factsDb.promoteScope(f.id, "global", null)) {
+          promoted++;
+        }
+      }
+      console.log(`Promoted ${promoted} facts from session to global scope.`);
+    }));
 
   mem
     .command("version")
