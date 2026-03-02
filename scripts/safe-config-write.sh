@@ -31,7 +31,7 @@ validate_config() {
     fi
 
     # 2. Schema check: detect unknown top-level keys
-    local known_keys='["meta","wizard","update","auth","agents","tools","messages","commands","channels","talk","gateway","memory","plugins","models"]'
+    local known_keys='["meta","wizard","update","auth","agents","tools","messages","commands","channels","talk","gateway","memory","plugins","models","env"]'
     local unknown
     unknown=$(python3 -c "
 import json, sys
