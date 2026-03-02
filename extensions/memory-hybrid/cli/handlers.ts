@@ -676,6 +676,7 @@ export async function runVerifyForCli(
           writeFileSync(defaultConfigPath, JSON.stringify(rawConfig, null, 2) + "\n", "utf-8");
           log(`  → Removed agents.defaults.pruning from ${defaultConfigPath}`);
           fixes.pop();
+          issues.pop();
         }
       }
     }
