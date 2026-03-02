@@ -661,6 +661,30 @@ export async function runVerifyForCli(
   if (configOk) log(`${OK} Config: embedding.apiKey and model present`);
   else log(`${FAIL} Config: issues found`);
 
+  // Check for unsupported agents.defaults.pruning config (#105)
+  try {
+    if (existsSync(defaultConfigPath)) {
+      const rawConfig = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
+      const agentsDefaults = (rawConfig.agents as Record<string, unknown>)?.defaults as Record<string, unknown> | undefined;
+      if (agentsDefaults != null && 'pruning' in agentsDefaults) {
+        const WARN = noEmoji ? "[WARN]" : "⚠️";
+        log(`${WARN} Config: agents.defaults.pruning is set but not supported by OpenClaw core — it has no effect`);
+        log(`  Fix: Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).`);
+        issues.push("agents.defaults.pruning is set but unsupported (has no effect)");
+        fixes.push('Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).');
+        if (opts.fix) {
+          delete agentsDefaults.pruning;
+          writeFileSync(defaultConfigPath, JSON.stringify(rawConfig, null, 2), "utf-8");
+          log(`  → Removed agents.defaults.pruning from ${defaultConfigPath}`);
+          fixes.pop();
+          issues.pop();
+        }
+      }
+    }
+  } catch {
+    // non-fatal: skip pruning config check if config can't be read
+  }
+
   const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const isBindingsError = (msg: string) =>
     /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(msg);
