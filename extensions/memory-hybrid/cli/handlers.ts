@@ -666,7 +666,7 @@ export async function runVerifyForCli(
     if (existsSync(defaultConfigPath)) {
       const rawConfig = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
       const agentsDefaults = (rawConfig.agents as Record<string, unknown>)?.defaults as Record<string, unknown> | undefined;
-      if (agentsDefaults?.pruning) {
+      if (agentsDefaults != null && 'pruning' in agentsDefaults) {
         const WARN = noEmoji ? "[WARN]" : "⚠️";
         log(`${WARN} Config: agents.defaults.pruning is set but not supported by OpenClaw core — it has no effect`);
         issues.push("agents.defaults.pruning is set but unsupported (has no effect)");
