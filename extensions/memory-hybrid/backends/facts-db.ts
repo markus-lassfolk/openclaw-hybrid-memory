@@ -2605,6 +2605,27 @@ export class FactsDB {
     return result.changes;
   }
 
+  /**
+   * Find session-scoped facts eligible for promotion.
+   * Returns facts where scope='session', importance >= minImportance,
+   * created more than thresholdDays ago, and not superseded.
+   */
+  findSessionFactsForPromotion(thresholdDays: number, minImportance: number): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const thresholdSec = nowSec - thresholdDays * 86400;
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts
+         WHERE scope = 'session'
+           AND importance >= ?
+           AND created_at <= ?
+           AND (superseded_at IS NULL OR superseded_at = 0)
+           AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .all(minImportance, thresholdSec, nowSec) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToEntry(r));
+  }
+
   close(): void {
     try {
       this.db.close();
