@@ -2619,7 +2619,7 @@ export class FactsDB {
          WHERE scope = 'session'
            AND importance >= ?
            AND created_at <= ?
-           AND (superseded_at IS NULL OR superseded_at = 0)
+           AND superseded_at IS NULL
            AND (expires_at IS NULL OR expires_at > ?)`,
       )
       .all(minImportance, thresholdSec, nowSec) as Record<string, unknown>[];
