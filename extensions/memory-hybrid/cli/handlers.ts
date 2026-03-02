@@ -669,11 +669,12 @@ export async function runVerifyForCli(
       if (agentsDefaults != null && 'pruning' in agentsDefaults) {
         const WARN = noEmoji ? "[WARN]" : "⚠️";
         log(`${WARN} Config: agents.defaults.pruning is set but not supported by OpenClaw core — it has no effect`);
+        log(`  Fix: Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).`);
         issues.push("agents.defaults.pruning is set but unsupported (has no effect)");
         fixes.push('Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).');
         if (opts.fix) {
           delete agentsDefaults.pruning;
-          writeFileSync(defaultConfigPath, JSON.stringify(rawConfig, null, 2) + "\n", "utf-8");
+          writeFileSync(defaultConfigPath, JSON.stringify(rawConfig, null, 2), "utf-8");
           log(`  → Removed agents.defaults.pruning from ${defaultConfigPath}`);
           fixes.pop();
           issues.pop();
