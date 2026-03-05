@@ -180,8 +180,8 @@ export function expandGraph(
           const steps: LinkPathStep[] = [
             ...fromMeta.steps,
             {
-              fromFactId: link.sourceFactId,
-              toFactId: fromId,
+              fromFactId: fromId,
+              toFactId: link.sourceFactId,
               linkType: link.linkType,
               strength: link.strength,
             },
