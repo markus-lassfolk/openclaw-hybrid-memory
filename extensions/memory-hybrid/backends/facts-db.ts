@@ -530,17 +530,43 @@ export class FactsDB {
 
   /** Create memory_links table for graph-based spreading activation. */
   private migrateMemoryLinksTable(): void {
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS memory_links (
-        id TEXT PRIMARY KEY,
-        source_fact_id TEXT NOT NULL,
-        target_fact_id TEXT NOT NULL,
-        link_type TEXT NOT NULL,
-        strength REAL NOT NULL DEFAULT 1.0,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
-      )
-    `);
+    // Check if table exists and if it has the old CASCADE FK on target_fact_id
+    const tableInfo = this.liveDb
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`)
+      .get() as { sql: string } | undefined;
+    
+    if (tableInfo && tableInfo.sql.includes('target_fact_id') && tableInfo.sql.includes('ON DELETE CASCADE')) {
+      // Table exists with old CASCADE FK - need to recreate it
+      this.liveDb.exec(`
+        CREATE TABLE memory_links_new (
+          id TEXT PRIMARY KEY,
+          source_fact_id TEXT NOT NULL,
+          target_fact_id TEXT NOT NULL,
+          link_type TEXT NOT NULL,
+          strength REAL NOT NULL DEFAULT 1.0,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+        )
+      `);
+      this.liveDb.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
+      this.liveDb.exec(`DROP TABLE memory_links`);
+      this.liveDb.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
+    } else if (!tableInfo) {
+      // Table doesn't exist - create it fresh
+      this.liveDb.exec(`
+        CREATE TABLE memory_links (
+          id TEXT PRIMARY KEY,
+          source_fact_id TEXT NOT NULL,
+          target_fact_id TEXT NOT NULL,
+          link_type TEXT NOT NULL,
+          strength REAL NOT NULL DEFAULT 1.0,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+        )
+      `);
+    }
+    // If table exists without CASCADE on target, no migration needed
+    
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type)`);
@@ -1570,6 +1596,16 @@ export class FactsDB {
 
   pruneExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run(nowSec);
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
       .run(nowSec);
@@ -1578,6 +1614,16 @@ export class FactsDB {
 
   /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
   pruneSessionScope(sessionId: string): number {
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run(sessionId);
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?`)
       .run(sessionId);
@@ -1608,6 +1654,16 @@ export class FactsDB {
       )
       .run({ now: nowSec });
 
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE confidence < 0.1
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run();
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
       .run();
@@ -2724,6 +2780,14 @@ export class FactsDB {
 
     if (conditions.length === 0) return 0;
 
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    const linkCleanupQuery = `DELETE FROM memory_links
+      WHERE target_fact_id IN (
+        SELECT id FROM facts WHERE ${conditions.join(' OR ')}
+      )
+      AND link_type != 'DERIVED_FROM'`;
+    this.liveDb.prepare(linkCleanupQuery).run(...params);
+
     const query = `DELETE FROM facts WHERE ${conditions.join(' OR ')}`;
     const result = this.liveDb.prepare(query).run(...params);
     return result.changes;
@@ -3118,7 +3182,7 @@ export class FactsDB {
    *
    * Returns the number of INSTANCE_OF links created.
    */
-  autoDetectInstanceOf(newFactId: string, text: string): number {
+  autoDetectInstanceOf(newFactId: string, text: string, knownEntities?: string[]): number {
     const patterns = [
       /\bis\s+an?\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
       /\btype\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
@@ -3137,12 +3201,13 @@ export class FactsDB {
 
     if (candidates.size === 0) return 0;
 
-    const knownEntities = this.getKnownEntities().map((e) => e.toLowerCase());
+    const entities = knownEntities ?? this.getKnownEntities();
+    const knownEntitiesLower = entities.map((e) => e.toLowerCase());
     let linked = 0;
 
     for (const typeName of candidates) {
       // Only link to types that are known entities in the knowledge base
-      if (!knownEntities.includes(typeName)) continue;
+      if (!knownEntitiesLower.includes(typeName)) continue;
       const anchor = this.findEntityAnchor(typeName, newFactId);
       if (!anchor) continue;
       // Avoid duplicate INSTANCE_OF links
@@ -3317,7 +3382,7 @@ export class FactsDB {
     }
 
     // Step 4: INSTANCE_OF auto-detection
-    linkedCount += this.autoDetectInstanceOf(newFactId, text);
+    linkedCount += this.autoDetectInstanceOf(newFactId, text, knownEntities);
 
     return { linkedCount, supersededIds };
   }
