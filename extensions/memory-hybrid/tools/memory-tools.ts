@@ -248,6 +248,10 @@ export function registerMemoryTools(
             if (entry) {
               // Access boost — update recall_count and last_accessed on fetch by id
               factsDb.refreshAccessedFacts([entry.id]);
+              // Active reinforcement on fetch by id (Issue #147)
+              if (cfg.reinforcement.enabled && cfg.reinforcement.activeBoost > 0) {
+                try { factsDb.boostConfidence(entry.id, cfg.reinforcement.activeBoost, cfg.reinforcement.maxConfidence); } catch { /* non-fatal */ }
+              }
               const text = `[${entry.category}] ${entry.text}`;
               return {
                 content: [
@@ -514,6 +518,17 @@ export function registerMemoryTools(
             content: [{ type: "text", text: "No relevant memories found." }],
             details: { count: 0 },
           };
+        }
+
+        // Active reinforcement: boost confidence of retrieved facts (Issue #147)
+        if (cfg.reinforcement.enabled && cfg.reinforcement.activeBoost > 0) {
+          for (const r of results) {
+            try {
+              factsDb.boostConfidence(r.entry.id, cfg.reinforcement.activeBoost, cfg.reinforcement.maxConfidence);
+            } catch {
+              // Non-fatal — don't fail recall because of boost error
+            }
+          }
         }
 
         const contradictionStatus = new Map<string, boolean>();

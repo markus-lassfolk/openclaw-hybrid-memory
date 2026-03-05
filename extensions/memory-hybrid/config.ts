@@ -310,6 +310,20 @@ export type AmbientConfig = {
   budgetTokens: number;
 };
 
+/** Confidence reinforcement on repeated mentions (Issue #147). */
+export type ReinforcementConfig = {
+  /** Enable confidence reinforcement (default: true). */
+  enabled: boolean;
+  /** Confidence delta applied when a semantically similar fact is stored again (default: 0.1). */
+  passiveBoost: number;
+  /** Confidence delta applied when a fact is retrieved via memory_recall (default: 0.05). */
+  activeBoost: number;
+  /** Upper cap for confidence after reinforcement (default: 1.0). */
+  maxConfidence: number;
+  /** Cosine similarity threshold above which a new fact is treated as a repeat of an existing one (default: 0.85). */
+  similarityThreshold: number;
+};
+
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */
 export type RetrievalConfig = {
   /** Active retrieval strategies (default: ["semantic", "fts5", "graph"]). */
@@ -498,6 +512,8 @@ export type HybridMemoryConfig = {
 
   /** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
   nightlyCycle: NightlyCycleConfig;
+  /** Confidence reinforcement on repeated mentions (Issue #147, default: enabled). */
+  reinforcement: ReinforcementConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1887,6 +1903,26 @@ export const hybridConfigSchema = {
       consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
         ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
         : 7,
+    // Parse reinforcement config (Issue #147, default: enabled)
+    const reinforcementRaw = cfg.reinforcement as Record<string, unknown> | undefined;
+    const reinforcement: ReinforcementConfig = {
+      enabled: reinforcementRaw?.enabled !== false,
+      passiveBoost:
+        typeof reinforcementRaw?.passiveBoost === "number" && reinforcementRaw.passiveBoost >= 0 && reinforcementRaw.passiveBoost <= 1
+          ? reinforcementRaw.passiveBoost
+          : 0.1,
+      activeBoost:
+        typeof reinforcementRaw?.activeBoost === "number" && reinforcementRaw.activeBoost >= 0 && reinforcementRaw.activeBoost <= 1
+          ? reinforcementRaw.activeBoost
+          : 0.05,
+      maxConfidence:
+        typeof reinforcementRaw?.maxConfidence === "number" && reinforcementRaw.maxConfidence > 0 && reinforcementRaw.maxConfidence <= 1
+          ? reinforcementRaw.maxConfidence
+          : 1.0,
+      similarityThreshold:
+        typeof reinforcementRaw?.similarityThreshold === "number" && reinforcementRaw.similarityThreshold > 0 && reinforcementRaw.similarityThreshold <= 1
+          ? reinforcementRaw.similarityThreshold
+          : 0.85,
     };
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
@@ -1968,6 +2004,7 @@ export const hybridConfigSchema = {
       graphRetrieval,
       futureDateProtection,
       nightlyCycle,
+      reinforcement,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

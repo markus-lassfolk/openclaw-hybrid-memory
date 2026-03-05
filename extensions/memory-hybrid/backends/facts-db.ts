@@ -1746,6 +1746,36 @@ export class FactsDB {
   }
 
   /**
+   * Boost confidence of a fact by delta (confidence reinforcement on repeated mentions, Issue #147).
+   * Increments reinforced_count and updates last_reinforced_at.
+   * Confidence is capped at maxConfidence (default 1.0).
+   * Wraps read-modify-write in a transaction to prevent race conditions.
+   * Returns true if fact was updated, false if not found.
+   */
+  boostConfidence(id: string, delta: number, maxConfidence = 1.0): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const tx = this.liveDb.transaction(() => {
+      const row = this.liveDb
+        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+        .get(id) as { confidence: number } | undefined;
+      if (!row) return false;
+
+      const current = typeof row.confidence === "number" ? row.confidence : 1.0;
+      const boosted = Math.max(current, Math.min(maxConfidence, current + delta));
+
+      this.liveDb
+        .prepare(
+          `UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?`,
+        )
+        .run(boosted, nowSec, id);
+      return true;
+    });
+
+    return tx() as boolean;
+  }
+
+  /**
    * Annotate a fact with reinforcement from user praise.
    * Increments reinforced_count, updates last_reinforced_at, appends quote (max 10 quotes kept).
    * Wraps read-modify-write in a transaction to prevent race conditions.

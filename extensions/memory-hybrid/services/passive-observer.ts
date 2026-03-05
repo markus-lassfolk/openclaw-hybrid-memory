@@ -19,7 +19,7 @@ import type { FactsDB } from '../backends/facts-db.js'
 import type { VectorDB } from '../backends/vector-db.js'
 import type { EmbeddingProvider } from './embeddings.js'
 import type OpenAI from 'openai'
-import type { MemoryCategory } from '../config.js'
+import type { MemoryCategory, ReinforcementConfig } from '../config.js'
 import { chunkTextByChars } from '../utils/text.js'
 import { loadPrompt, fillPrompt } from '../utils/prompt-loader.js'
 import { chatCompleteWithRetry, LLMRetryError } from './chat.js'
@@ -55,6 +55,7 @@ export interface ObserverRunResult {
   chunksProcessed: number
   factsExtracted: number
   factsStored: number
+  factsReinforced: number
   errors: number
 }
 
@@ -240,6 +241,8 @@ export async function runPassiveObserver(
     dryRun?: boolean
     /** Fallback sessions dir from procedures config (used when config.sessionsDir is not set). */
     proceduresSessionsDir?: string
+    /** Confidence reinforcement config (Issue #147). When set and enabled, similar facts get confidence boost instead of silent skip. */
+    reinforcement?: ReinforcementConfig
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -248,6 +251,7 @@ export async function runPassiveObserver(
     chunksProcessed: 0,
     factsExtracted: 0,
     factsStored: 0,
+    factsReinforced: 0,
     errors: 0,
   }
 
@@ -331,13 +335,21 @@ export async function runPassiveObserver(
   // ---------------------------------------------------------------------------
   const recentFacts = factsDb.getRecentFacts(7, { excludeCategories: [] }) // last 7 days
   const recentVectors: (number[] | null)[] = []
+  const recentFactIds: (string | null)[] = []
   for (const f of recentFacts.slice(0, 200)) {
     try {
       recentVectors.push(normalizeVector(await embeddings.embed(f.text)))
+      recentFactIds.push(f.id)
     } catch {
       recentVectors.push(null)
+      recentFactIds.push(null)
     }
   }
+
+  const reinforcementEnabled = opts.reinforcement?.enabled !== false && opts.reinforcement != null
+  const passiveBoost = opts.reinforcement?.passiveBoost ?? 0.1
+  const maxConfidence = opts.reinforcement?.maxConfidence ?? 1.0
+  const similarityThreshold = config.deduplicationThreshold
 
   const prompt = loadPrompt('passive-observer')
 
@@ -438,12 +450,25 @@ export async function runPassiveObserver(
 
         const normVec = normalizeVector(vec)
 
-        // Dedup check against recent facts
+        // Dedup check against recent facts — reinforce instead of skip when enabled
         let isDuplicate = false
-        for (const rv of recentVectors) {
+        for (let ri = 0; ri < recentVectors.length; ri++) {
+          const rv = recentVectors[ri]
           if (!rv || rv.length === 0) continue
-          if (dotProductSimilarity(normVec, rv) >= config.deduplicationThreshold) {
+          if (dotProductSimilarity(normVec, rv) >= similarityThreshold) {
             isDuplicate = true
+            // Confidence reinforcement: boost the matched fact instead of silently skipping (Issue #147)
+            if (reinforcementEnabled && !opts.dryRun) {
+              const matchedId = recentFactIds[ri]
+              if (matchedId) {
+                try {
+                  const boosted = factsDb.boostConfidence(matchedId, passiveBoost, maxConfidence)
+                  if (boosted) result.factsReinforced++
+                } catch {
+                  // Non-fatal — don't fail passive observer because of boost error
+                }
+              }
+            }
             break
           }
         }
@@ -455,6 +480,7 @@ export async function runPassiveObserver(
           )
           result.factsStored++
           recentVectors.push(normVec)
+          recentFactIds.push(null)
           continue
         }
 
@@ -492,6 +518,7 @@ export async function runPassiveObserver(
         }
 
         recentVectors.push(normVec)
+        recentFactIds.push(stored.id)
         result.factsStored++
       }
     }
