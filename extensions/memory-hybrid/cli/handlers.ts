@@ -658,8 +658,14 @@ export async function runVerifyForCli(
   }
   const openclawDir = join(homedir(), ".openclaw");
   const defaultConfigPath = join(openclawDir, "openclaw.json");
-  if (configOk) log(`${OK} Config: embedding.apiKey and model present`);
-  else log(`${FAIL} Config: issues found`);
+  if (configOk) {
+    const msg = cfg.embedding.provider === "openai"
+      ? "Config: embedding.apiKey and model present"
+      : "Config: embedding.model present";
+    log(`${OK} ${msg}`);
+  } else {
+    log(`${FAIL} Config: issues found`);
+  }
 
   // Check for unsupported agents.defaults.pruning config (#105)
   try {
