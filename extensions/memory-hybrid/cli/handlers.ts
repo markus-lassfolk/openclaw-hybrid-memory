@@ -101,6 +101,8 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  // Daily 02:45 | nightly-dream-cycle | dream-cycle (prune → consolidate → reflect)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true },
 ];
 
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier). */
@@ -120,6 +122,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) => /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"]: (j) => /nightly-dream-cycle|dream.cycle/i.test(String(j.name ?? "")),
 };
 
 /**
@@ -600,10 +603,15 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       const memToSkills = pluginCfg?.memoryToSkills as Record<string, unknown> | undefined;
       const schedule = typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0 ? (memToSkills.schedule as string).trim() : undefined;
       const notify = memToSkills?.notify !== false;
+      const dreamCycleRaw = pluginCfg?.nightlyCycle as Record<string, unknown> | undefined;
+      const dreamCycleSchedule = typeof dreamCycleRaw?.schedule === "string" && (dreamCycleRaw.schedule as string).trim().length > 0 ? (dreamCycleRaw.schedule as string).trim() : undefined;
+      const installScheduleOverrides: Record<string, string> = {};
+      if (schedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = schedule;
+      if (dreamCycleSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = dreamCycleSchedule;
       ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
-        scheduleOverrides: schedule ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: schedule } : undefined,
+        scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
         messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(notify) },
       });
     } catch (err) {
@@ -1269,14 +1277,17 @@ export async function runVerifyForCli(
         const cronStorePath = join(cronDir, "jobs.json");
 
         try {
-          const scheduleOverrides =
-            typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0
-              ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: cfg.memoryToSkills.schedule }
-              : undefined;
+          const scheduleOverrides: Record<string, string> = {};
+          if (typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0) {
+            scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = cfg.memoryToSkills.schedule;
+          }
+          if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
+            scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
+          }
           const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(cfg), {
             normalizeExisting: true,
             reEnableDisabled: false,
-            scheduleOverrides,
+            scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
             messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
@@ -3083,14 +3094,17 @@ export async function runUpgradeForCli(
   try {
     const openclawDir = join(homedir(), ".openclaw");
     const pluginConfig = getCronModelConfig(cfg);
-    const scheduleOverrides =
-      typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0
-        ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: cfg.memoryToSkills.schedule }
-        : undefined;
+    const scheduleOverrides: Record<string, string> = {};
+    if (typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0) {
+      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = cfg.memoryToSkills.schedule;
+    }
+    if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
+      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
+    }
     const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
       normalizeExisting: true,
       reEnableDisabled: false,
-      scheduleOverrides,
+      scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
       messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
     });
     if (added.length > 0 || normalized.length > 0) {

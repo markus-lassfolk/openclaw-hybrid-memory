@@ -125,6 +125,7 @@ export type HybridMemCliContext = {
   runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
   runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ metaExtracted: number; metaStored: number }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
+  runDreamCycle: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;

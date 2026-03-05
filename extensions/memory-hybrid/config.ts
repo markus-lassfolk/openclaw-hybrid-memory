@@ -278,6 +278,20 @@ export type GraphRetrievalConfig = {
   maxExpandDepth: number;
   /** Maximum number of graph-expanded results appended to direct matches (default: 20). */
   maxExpandedResults: number;
+/** Nightly dream cycle: automated prune → consolidate → reflect pipeline (Issue #143). */
+export type NightlyCycleConfig = {
+  /** Enable the nightly dream cycle (default: false). */
+  enabled: boolean;
+  /** Cron expression for nightly run (default: "45 2 * * *" = 2:45 AM). */
+  schedule: string;
+  /** Reflection window in days (default: 7). */
+  reflectWindowDays: number;
+  /** Prune mode: "expired" = pruneExpired only, "decay" = decayConfidence only, "both" = both (default: "both"). */
+  pruneMode: "expired" | "decay" | "both";
+  /** LLM model for reflection step (default: resolved from llm config). */
+  model?: string;
+  /** Days before consolidating episodic events into facts (default: 7). */
+  consolidateAfterDays: number;
 };
 
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
@@ -456,6 +470,8 @@ export type HybridMemoryConfig = {
   ambient: AmbientConfig;
   /** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
   graphRetrieval: GraphRetrievalConfig;
+  /** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
+  nightlyCycle: NightlyCycleConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1747,6 +1763,25 @@ export const hybridConfigSchema = {
         typeof graphRetrievalRaw?.maxExpandedResults === "number" && graphRetrievalRaw.maxExpandedResults >= 0
           ? Math.min(50, Math.floor(graphRetrievalRaw.maxExpandedResults))
           : 20,
+    // Parse nightly dream cycle config (Issue #143, default: disabled)
+    const nightlyCycleRaw = cfg.nightlyCycle as Record<string, unknown> | undefined;
+    const nightlyCycle: NightlyCycleConfig = {
+      enabled: nightlyCycleRaw?.enabled === true,
+      schedule: typeof nightlyCycleRaw?.schedule === "string" && nightlyCycleRaw.schedule.trim().length > 0
+        ? nightlyCycleRaw.schedule.trim()
+        : "45 2 * * *",
+      reflectWindowDays: typeof nightlyCycleRaw?.reflectWindowDays === "number" && nightlyCycleRaw.reflectWindowDays >= 1
+        ? Math.min(90, Math.floor(nightlyCycleRaw.reflectWindowDays))
+        : 7,
+      pruneMode: (nightlyCycleRaw?.pruneMode === "expired" || nightlyCycleRaw?.pruneMode === "decay")
+        ? nightlyCycleRaw.pruneMode as "expired" | "decay"
+        : "both",
+      model: typeof nightlyCycleRaw?.model === "string" && nightlyCycleRaw.model.trim().length > 0
+        ? nightlyCycleRaw.model.trim()
+        : undefined,
+      consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
+        ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
+        : 7,
     };
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
@@ -1812,6 +1847,7 @@ export const hybridConfigSchema = {
       })(),
       ambient,
       graphRetrieval,
+      nightlyCycle,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
