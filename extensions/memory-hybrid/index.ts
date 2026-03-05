@@ -230,7 +230,7 @@ const timers = {
 };
 
 /** Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
-let lastProgressiveIndexIds: string[] = [];
+const lastProgressiveIndexIds: string[] = [];
 
 /** Runtime-detected agent identity. Used for dynamic scope filtering and default store scope. */
 // Runtime-detected agent identity
@@ -263,7 +263,7 @@ let lastProgressiveIndexIds: string[] = [];
 // and tools will see the updated value (fixes pass-by-value bug from refactor).
 const currentAgentIdRef: { value: string | null } = { value: null };
 
-let restartPendingCleared = false;
+const restartPendingCleared = false;
 
 const memoryHybridPlugin = {
   id: PLUGIN_ID,

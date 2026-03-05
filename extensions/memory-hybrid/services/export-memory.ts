@@ -80,7 +80,7 @@ export function runExport(
   const sourceSet = new Set(sources.map((s) => s.toLowerCase().trim()).filter(Boolean));
 
   const all = factsDb.getAll({ includeSuperseded: false });
-  let facts = all.filter((f) => {
+  const facts = all.filter((f) => {
     if (!includeCreds && (f.entity?.toLowerCase() === "credentials" || f.category === "credential")) return false;
     if (sourceSet.size > 0) {
       const src = (f.source ?? "conversation").toLowerCase();

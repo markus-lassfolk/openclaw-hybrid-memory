@@ -95,7 +95,7 @@ export async function runConsolidate(
   aliasDb?: import("./retrieval-aliases.js").AliasDB | null,
 ): Promise<ConsolidateResult> {
   const facts = factsDb.getFactsForConsolidation(opts.limit);
-  let candidateFacts = opts.includeStructured
+  const candidateFacts = opts.includeStructured
     ? facts
     : facts.filter((f) => !isStructuredForConsolidation(f.text, f.entity, f.key));
   if (candidateFacts.length < 2) {

@@ -64,7 +64,7 @@ export function insertRulesUnderSection(
   const content = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
   const lines = content.split("\n");
   const existingSet = new Set<string>();
-  let sectionStart = findSectionStart(lines, sectionTitle);
+  const sectionStart = findSectionStart(lines, sectionTitle);
 
   if (sectionStart >= 0) {
     const sectionEnd = findSectionEnd(lines, sectionStart);

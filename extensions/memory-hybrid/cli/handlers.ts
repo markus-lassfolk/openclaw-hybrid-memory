@@ -153,7 +153,7 @@ function ensureMaintenanceCronJobs(
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
-  let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] }) : {};
+  const store: { jobs?: unknown[] } = existsSync(cronStorePath) ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] }) : {};
   if (!Array.isArray(store.jobs)) store.jobs = [];
   const jobsArr = store.jobs as Array<Record<string, unknown>>;
   let jobsChanged = false;
