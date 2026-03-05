@@ -1094,6 +1094,8 @@ export function registerMemoryTools(
               coOccurrenceWeight: cfg.graph.coOccurrenceWeight,
               autoSupersede: cfg.graph.autoSupersede,
             },
+            entry.scope ?? null,
+            entry.scopeTarget ?? null,
           );
           entityAutoLinked = result.linkedCount;
           autoSupersededIds = result.supersededIds;

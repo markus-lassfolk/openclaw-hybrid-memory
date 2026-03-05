@@ -3116,6 +3116,8 @@ export class FactsDB {
     key: string | null,
     sessionId: string | null,
     cfg: { coOccurrenceWeight: number; autoSupersede: boolean },
+    scope?: string | null,
+    scopeTarget?: string | null,
   ): { linkedCount: number; supersededIds: string[] } {
     let linkedCount = 0;
     const supersededIds: string[] = [];
@@ -3182,6 +3184,17 @@ export class FactsDB {
     // Step 3: Supersession detection
     if (entity?.trim() && key?.trim()) {
       const nowSec = Math.floor(Date.now() / 1000);
+      const scopeClause = scope
+        ? scopeTarget != null
+          ? "AND scope = ? AND scope_target = ?"
+          : "AND scope = ? AND scope_target IS NULL"
+        : "";
+      const baseParams: unknown[] = [entity.trim(), key.trim(), newFactId, nowSec];
+      const scopeParams: unknown[] = scope
+        ? scopeTarget != null
+          ? [scope, scopeTarget]
+          : [scope]
+        : [];
       const conflicting = this.liveDb
         .prepare(
           `SELECT * FROM facts
@@ -3190,9 +3203,10 @@ export class FactsDB {
              AND id != ?
              AND superseded_at IS NULL
              AND (expires_at IS NULL OR expires_at > ?)
+             ${scopeClause}
            ORDER BY created_at DESC`,
         )
-        .all(entity.trim(), key.trim(), newFactId, nowSec) as Array<Record<string, unknown>>;
+        .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
 
       const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) ?? null;
 
