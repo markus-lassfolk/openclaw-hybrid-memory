@@ -62,7 +62,10 @@ export class FactsDB {
       )
     `);
 
-    // Create FTS5 virtual table for full-text search
+    // Create FTS5 virtual table for full-text search.
+    // NOTE: tags column is added later by migrateFtsTagsSupport() once the facts.tags
+    // column exists (via migrateTagsColumn). For brand-new databases the FTS5 starts
+    // without tags and is immediately upgraded by the migration sequence.
     this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         text,
@@ -70,13 +73,13 @@ export class FactsDB {
         entity,
         key,
         value,
-        content=facts,
-        content_rowid=rowid,
+        content='facts',
+        content_rowid='rowid',
         tokenize='porter unicode61'
       )
     `);
 
-    // Triggers to keep FTS in sync
+    // Triggers to keep FTS in sync (without tags — upgraded by migrateFtsTagsSupport)
     this.liveDb.exec(`
       CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
         INSERT INTO facts_fts(rowid, text, category, entity, key, value)
@@ -151,6 +154,9 @@ export class FactsDB {
 
     // ---- Memory scoping for procedures ----
     this.migrateProcedureScopeColumns();
+
+    // ---- FTS5 tags support (Issue #151) ----
+    this.migrateFtsTagsSupport();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -301,6 +307,69 @@ export class FactsDB {
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_procedures_scope_target ON procedures(scope, scope_target) WHERE scope_target IS NOT NULL`,
     );
+  }
+
+  /**
+   * Migrate the FTS5 virtual table to include the `tags` column (Issue #151).
+   * FTS5 virtual tables cannot be altered, so we drop and recreate if tags are absent.
+   * The FTS rebuild is deferred to the fts-search service's rebuildFtsIndex().
+   */
+  private migrateFtsTagsSupport(): void {
+    const row = this.liveDb
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`)
+      .get() as { sql: string } | undefined;
+
+    // If the CREATE statement already contains 'tags', nothing to do.
+    if (row && row.sql && row.sql.includes("tags")) return;
+
+    // Drop old triggers first (they reference the old column list).
+    this.liveDb.exec(`
+      DROP TRIGGER IF EXISTS facts_ai;
+      DROP TRIGGER IF EXISTS facts_ad;
+      DROP TRIGGER IF EXISTS facts_au;
+    `);
+
+    // Drop and recreate FTS5 with tags included.
+    this.liveDb.exec(`DROP TABLE IF EXISTS facts_fts`);
+    this.liveDb.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+        text,
+        category,
+        entity,
+        tags,
+        key,
+        value,
+        content='facts',
+        content_rowid='rowid',
+        tokenize='porter unicode61'
+      )
+    `);
+
+    // Recreate triggers with tags column.
+    this.liveDb.exec(`
+      CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+        INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
+        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
+        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+        INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+      END
+    `);
+
+    // Backfill existing facts into the new FTS index.
+    this.liveDb.exec(`
+      INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+      SELECT rowid, text, category, entity, tags, key, value FROM facts
+    `);
   }
 
   /**

@@ -48,6 +48,7 @@ import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, createPen
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
+import { searchFts, rebuildFtsIndex, buildFts5Query } from "./services/fts-search.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -439,6 +440,10 @@ export const _testing = {
   parsePatternsFromReflectionResponse,
   normalizeVector,
   cosineSimilarity,
+  // FTS5 search service (Issue #151)
+  searchFts,
+  rebuildFtsIndex,
+  buildFts5Query,
 };
 
 export { versionInfo } from "./versionInfo.js";
