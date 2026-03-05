@@ -1,7 +1,8 @@
 name: Copilot / Bot Automerge
 
 on:
-  check_suite:
+  workflow_run:
+    workflows: ["CI"]
     types: [completed]
   pull_request:
     types: [opened, synchronize]
@@ -15,7 +16,7 @@ jobs:
   automerge:
     name: Automerge bot PRs
     runs-on: ubuntu-latest
-    if: github.event_name == 'check_suite' || github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request'
 
     steps:
       - name: Automerge eligible bot PRs
@@ -48,9 +49,9 @@ jobs:
               candidatePRNumbers.add(context.payload.pull_request.number);
             }
 
-            if (context.eventName === 'check_suite') {
-              const suite = context.payload.check_suite;
-              for (const pr of (suite.pull_requests || [])) {
+            if (context.eventName === 'workflow_run') {
+              const workflowRun = context.payload.workflow_run;
+              for (const pr of (workflowRun.pull_requests || [])) {
                 candidatePRNumbers.add(pr.number);
               }
             }
