@@ -354,9 +354,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const authFailureRecallsThisSession = new Map<string, number>();
   // Track session starts for retrieval directives
   const sessionStartSeen = new Set<string>();
-  // Ambient retrieval session state (Issue #156)
-  const ambientSeenFacts = new SessionSeenFacts();
-  let ambientLastEmbedding: number[] | null = null;
+  // Ambient retrieval session state (Issue #156) — scoped per session key
+  const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
+  const ambientLastEmbeddingMap = new Map<string, number[] | null>();
 
   const resolveSessionKey = (event: unknown, api?: ClawdbotPluginApi): string | null => {
     const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
@@ -546,7 +546,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           async function runRecallPipeline(
             query: string,
             limit: number,
-            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string; limitHydeOnce?: boolean }
+            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string; limitHydeOnce?: boolean; precomputedVector?: number[] }
           ): Promise<SearchResult[]> {
             const trimmed = query.trim();
             if (!trimmed) return [];
@@ -599,7 +599,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     }
                   }
                 }
-                const vector = await ctx.embeddings.embed(textToEmbed);
+                // Reuse precomputed vector when HyDE did not transform the query text
+                const vector = (opts?.precomputedVector && textToEmbed === trimmed)
+                  ? opts.precomputedVector
+                  : await ctx.embeddings.embed(textToEmbed);
                 let results = await ctx.vectorDb.search(vector, limit * 2, minScore);
                 results = filterByScope(results, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
                 results = results.map((r) => {
@@ -655,20 +658,36 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return results;
           }
 
-          let candidates = await runRecallPipeline(e.prompt, limit, { hydeLabel: "HyDE", errorPrefix: "auto-recall-" });
-
           // --- Ambient multi-query retrieval (Issue #156) ---
           const ambientCfg = ctx.cfg.ambient;
+
+          // Resolve per-session ambient state (scoped by session key to avoid cross-session contamination)
+          const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
+          if (!ambientSeenFactsMap.has(sessionScopeKey)) {
+            ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
+          }
+          const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
+          const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
+
+          // Compute prompt embedding once — reused in runRecallPipeline (vector step) and topic-shift
+          // detection below, avoiding a duplicate embed call (Issue #156)
+          let promptEmbedding: number[] | null = null;
           if (ambientCfg.enabled && ambientCfg.multiQuery) {
             try {
-              // Compute prompt embedding for topic-shift detection (reuse from vector step when available)
-              let promptEmbedding: number[] | null = null;
-              try {
-                promptEmbedding = await ctx.embeddings.embed(e.prompt.slice(0, 512));
-              } catch {
-                // Non-fatal — skip topic-shift detection when embedding fails
-              }
+              promptEmbedding = await ctx.embeddings.embed(e.prompt.slice(0, 512));
+            } catch {
+              // Non-fatal — skip topic-shift detection when embedding fails
+            }
+          }
 
+          let candidates = await runRecallPipeline(e.prompt, limit, {
+            hydeLabel: "HyDE",
+            errorPrefix: "auto-recall-",
+            precomputedVector: promptEmbedding ?? undefined,
+          });
+
+          if (ambientCfg.enabled && ambientCfg.multiQuery) {
+            try {
               // Check for topic shift when we have both a previous and current embedding
               const isTopicShift =
                 ambientLastEmbedding !== null &&
@@ -685,18 +704,18 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
               // Update last embedding for next turn
               if (promptEmbedding !== null) {
-                ambientLastEmbedding = promptEmbedding;
+                ambientLastEmbeddingMap.set(sessionScopeKey, promptEmbedding);
               }
 
               // Generate additional queries (entity, temporal, context)
               const knownEntities = ctx.factsDb.getKnownEntities ? ctx.factsDb.getKnownEntities() : [];
-              const sessionKey = resolveSessionKey(e, api);
+              const ambientSessionKey = resolveSessionKey(e, api);
               const ambientQueries = generateAmbientQueries(
                 e.prompt,
                 ambientCfg,
                 {
                   userId: api.context?.userId,
-                  channelId: sessionKey,
+                  channelId: ambientSessionKey ?? undefined,
                   nowMs: Date.now(),
                 },
                 knownEntities,
@@ -1027,8 +1046,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (indexIds.length > 0) {
               ctx.factsDb.refreshAccessedFacts(indexIds);
             }
-            // Hebbian: Strengthen RELATED_TO links between facts recalled together
+            // Ambient: mark injected facts as seen for topic-shift deduplication (Issue #156)
             const allIds = [...pinned.map((r) => r.entry.id), ...indexIds];
+            if (ambientCfg.enabled && ambientCfg.multiQuery && allIds.length > 0) {
+              ambientSeenFacts.markSeen(allIds);
+            }
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together
             if (ctx.cfg.graph.enabled && allIds.length >= 2) {
               for (let i = 0; i < allIds.length; i++) {
                 for (let j = i + 1; j < allIds.length; j++) {
@@ -1065,6 +1088,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             ctx.lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
             ctx.factsDb.refreshAccessedFacts(includedIds);
+            // Ambient: mark injected facts as seen for topic-shift deduplication (Issue #156)
+            if (ambientCfg.enabled && ambientCfg.multiQuery && includedIds.length > 0) {
+              ambientSeenFacts.markSeen(includedIds);
+            }
             // Hebbian: Strengthen RELATED_TO links between facts recalled together
             if (ctx.cfg.graph.enabled && includedIds.length >= 2) {
               for (let i = 0; i < includedIds.length; i++) {

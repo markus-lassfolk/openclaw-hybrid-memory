@@ -1659,7 +1659,7 @@ export const hybridConfigSchema = {
       topicShiftThreshold:
         typeof ambientRaw?.topicShiftThreshold === "number" &&
         ambientRaw.topicShiftThreshold >= 0 &&
-        ambientRaw.topicShiftThreshold <= 1
+        ambientRaw.topicShiftThreshold <= 2
           ? ambientRaw.topicShiftThreshold
           : 0.4,
       maxQueriesPerTrigger:

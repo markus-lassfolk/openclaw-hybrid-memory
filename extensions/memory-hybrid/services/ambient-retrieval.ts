@@ -100,12 +100,12 @@ export function detectTopicShift(
 
 /** Common English stop-words / sentence starters to exclude from capitalised-word extraction. */
 const COMMON_STOP_WORDS = new Set([
-  "The", "This", "That", "When", "What", "Which", "Where", "Who", "How",
-  "And", "But", "For", "Now", "Then", "Are", "Was", "Has", "Have", "Had",
-  "Not", "Can", "Does", "Did", "Will", "May", "Use", "Get", "Set", "Run",
-  "All", "Any", "Each", "One", "Two", "New", "Old", "My", "Your", "Our",
-  "His", "Her", "Its", "They", "Them", "With", "From", "Into", "Over",
-  "Also", "Just", "More", "Most", "Very", "Some", "Such", "True", "False",
+  "the", "this", "that", "when", "what", "which", "where", "who", "how",
+  "and", "but", "for", "now", "then", "are", "was", "has", "have", "had",
+  "not", "can", "does", "did", "will", "may", "use", "get", "set", "run",
+  "all", "any", "each", "one", "two", "new", "old", "my", "your", "our",
+  "his", "her", "its", "they", "them", "with", "from", "into", "over",
+  "also", "just", "more", "most", "very", "some", "such", "true", "false",
 ]);
 
 /**
@@ -150,14 +150,15 @@ export function extractEntitiesFromMessage(
   // 5. Capitalised words (PascalCase or ALL_CAPS, 3+ chars)
   for (const m of text.matchAll(/\b([A-Z][a-zA-Z0-9_]{2,}|[A-Z]{3,})\b/g)) {
     const word = m[1];
-    if (!COMMON_STOP_WORDS.has(word)) {
+    if (!COMMON_STOP_WORDS.has(word.toLowerCase())) {
       candidates.add(word.toLowerCase());
     }
   }
 
   // 6. Quoted strings (single or double), 3–40 chars
   for (const m of text.matchAll(/["']([^"']{3,40})["']/g)) {
-    candidates.add(m[1].toLowerCase().trim());
+    const val = m[1].toLowerCase().trim();
+    if (val.length > 0) candidates.add(val);
   }
 
   return [...candidates].slice(0, 10);
