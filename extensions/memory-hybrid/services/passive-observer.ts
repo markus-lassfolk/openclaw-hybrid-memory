@@ -461,8 +461,12 @@ export async function runPassiveObserver(
             if (reinforcementEnabled && !opts.dryRun) {
               const matchedId = recentFactIds[ri]
               if (matchedId) {
-                const boosted = factsDb.boostConfidence(matchedId, passiveBoost, maxConfidence)
-                if (boosted) result.factsReinforced++
+                try {
+                  const boosted = factsDb.boostConfidence(matchedId, passiveBoost, maxConfidence)
+                  if (boosted) result.factsReinforced++
+                } catch {
+                  // Non-fatal — don't fail passive observer because of boost error
+                }
               }
             }
             break
