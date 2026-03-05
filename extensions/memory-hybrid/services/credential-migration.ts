@@ -21,6 +21,7 @@ export interface MigrateCredentialsOptions {
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
   credentialsDb: CredentialsDB;
+  aliasDb?: import("./retrieval-aliases.js").AliasDB | null;
   migrationFlagPath: string;
   markDone: boolean;
 }
@@ -39,7 +40,7 @@ export interface MigrateCredentialsResult {
 export async function migrateCredentialsToVault(
   opts: MigrateCredentialsOptions,
 ): Promise<MigrateCredentialsResult> {
-  const { factsDb, vectorDb, embeddings, credentialsDb, migrationFlagPath, markDone } = opts;
+  const { factsDb, vectorDb, embeddings, credentialsDb, aliasDb, migrationFlagPath, markDone } = opts;
   let migrated = 0;
   let skipped = 0;
   const errors: string[] = [];
@@ -71,6 +72,7 @@ export async function migrateCredentialsToVault(
         notes: parsed.notes,
       });
       factsDb.delete(entry.id);
+      aliasDb?.deleteByFactId(entry.id);
       try {
         await vectorDb.delete(entry.id);
       } catch (err) {

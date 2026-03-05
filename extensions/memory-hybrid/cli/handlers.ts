@@ -257,6 +257,7 @@ export interface HandlerContext {
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
+  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   resolvedSqlitePath: string;
@@ -296,7 +297,7 @@ export async function runStoreForCli(
   opts: StoreCliOpts,
   log: { warn: (m: string) => void },
 ): Promise<StoreCliResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
   if (factsDb.hasDuplicate(text)) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
@@ -398,6 +399,7 @@ export async function runStoreForCli(
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
             factsDb.supersede(classification.targetId, null);
+            aliasDb?.deleteByFactId(classification.targetId);
             return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
           }
           if (classification.action === "UPDATE" && classification.targetId) {
@@ -420,6 +422,7 @@ export async function runStoreForCli(
                 scopeTarget,
               });
               factsDb.supersede(classification.targetId, newEntry.id);
+              aliasDb?.deleteByFactId(classification.targetId);
               try {
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
@@ -457,7 +460,10 @@ export async function runStoreForCli(
       scopeTarget,
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
-    if (supersedesId) factsDb.supersede(supersedesId, entry.id);
+    if (supersedesId) {
+      factsDb.supersede(supersedesId, entry.id);
+      aliasDb?.deleteByFactId(supersedesId);
+    }
     try {
       const vector = await embeddings.embed(text);
       if (!(await vectorDb.hasDuplicate(vector))) {
@@ -1825,7 +1831,7 @@ export async function runExtractDailyForCli(
   opts: { days: number; dryRun: boolean; verbose?: boolean },
   sink: ExtractDailySink,
 ): Promise<ExtractDailyResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const memoryDir = join(homedir(), ".openclaw", "memory");
   const daysBack = opts.days;
   let totalExtracted = 0;
@@ -1952,6 +1958,7 @@ export async function runExtractDailyForCli(
               if (classification.action === "NOOP") continue;
               if (classification.action === "DELETE" && classification.targetId) {
                 factsDb.supersede(classification.targetId, null);
+                aliasDb?.deleteByFactId(classification.targetId);
                 continue;
               }
               if (classification.action === "UPDATE" && classification.targetId) {
@@ -1966,6 +1973,7 @@ export async function runExtractDailyForCli(
                     supersedesId: classification.targetId,
                   });
                   factsDb.supersede(classification.targetId, newEntry.id);
+                  aliasDb?.deleteByFactId(classification.targetId);
                   try {
                     if (!(await vectorDb.hasDuplicate(vecForStore))) {
                       await vectorDb.store({ text: trimmed, vector: vecForStore, importance: BATCH_STORE_IMPORTANCE, category, id: newEntry.id });
@@ -2660,7 +2668,7 @@ export async function runDistillForCli(
  * Migrate credentials to vault
  */
 export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<MigrateToVaultResult | null> {
-  const { factsDb, vectorDb, embeddings, credentialsDb, resolvedSqlitePath } = ctx;
+  const { factsDb, vectorDb, embeddings, credentialsDb, aliasDb, resolvedSqlitePath } = ctx;
   if (!credentialsDb) return null;
   const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
   try {
@@ -2669,6 +2677,7 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
       vectorDb,
       embeddings,
       credentialsDb,
+      aliasDb,
       migrationFlagPath,
       markDone: true,
     });

@@ -316,6 +316,14 @@ export type NightlyCycleConfig = {
   model?: string;
   /** Days before consolidating episodic events into facts (default: 7). */
   consolidateAfterDays: number;
+/** Multi-hook retrieval aliases (Issue #149). */
+export type AliasesConfig = {
+  /** Enable alias generation and embedding search (default: false). */
+  enabled: boolean;
+  /** Maximum aliases per fact (default: 5). */
+  maxAliases: number;
+  /** Model for alias generation; when unset, runtime uses getDefaultCronModel(cfg, "nano"). */
+  model?: string;
 };
 
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
@@ -542,6 +550,8 @@ export type HybridMemoryConfig = {
   health: HealthConfig;
   /** Knowledge gap analysis — orphan/weak detection and suggested links (Issue #141, default: enabled). */
   gaps: GapsConfig;
+  /** Multi-hook retrieval aliases: generate and index alternative phrasings per fact (Issue #149, default: disabled). */
+  aliases: AliasesConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1979,6 +1989,15 @@ export const hybridConfigSchema = {
         gapsRaw.similarityThreshold <= 1
           ? gapsRaw.similarityThreshold
           : 0.8,
+    // Parse aliases config (Issue #149, default: disabled)
+    const aliasesRaw = cfg.aliases as Record<string, unknown> | undefined;
+    const aliases: AliasesConfig = {
+      enabled: aliasesRaw?.enabled === true,
+      maxAliases:
+        typeof aliasesRaw?.maxAliases === "number" && aliasesRaw.maxAliases > 0
+          ? Math.min(10, Math.floor(aliasesRaw.maxAliases))
+          : 5,
+      model: typeof aliasesRaw?.model === "string" ? aliasesRaw.model : undefined,
     };
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
@@ -2069,6 +2088,7 @@ export const hybridConfigSchema = {
         };
       })(),
       gaps,
+      aliases,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

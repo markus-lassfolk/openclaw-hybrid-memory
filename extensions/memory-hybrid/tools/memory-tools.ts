@@ -15,7 +15,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { Embeddings } from "../services/embeddings.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
@@ -27,6 +27,7 @@ import {
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
 import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
 import {
   getMemoryCategories,
@@ -43,13 +44,13 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { detectFutureDate } from "../utils/date-detector.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
-  embeddings: EmbeddingProvider;
+  aliasDb?: AliasDB | null;
+  embeddings: Embeddings;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
@@ -87,7 +88,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
 
   api.registerTool(
     {
@@ -248,10 +249,6 @@ export function registerMemoryTools(
             if (entry) {
               // Access boost — update recall_count and last_accessed on fetch by id
               factsDb.refreshAccessedFacts([entry.id]);
-              // Active reinforcement on fetch by id (Issue #147)
-              if (cfg.reinforcement.enabled && cfg.reinforcement.activeBoost > 0) {
-                try { factsDb.boostConfidence(entry.id, cfg.reinforcement.activeBoost, cfg.reinforcement.maxConfidence); } catch { /* non-fatal */ }
-              }
               const text = `[${entry.category}] ${entry.text}`;
               return {
                 content: [
@@ -389,6 +386,7 @@ export function registerMemoryTools(
             includeSuperseded,
             scopeFilter,
             asOfSec ?? undefined,
+            cfg.aliases?.enabled ? aliasDb : null,
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).
@@ -518,17 +516,6 @@ export function registerMemoryTools(
             content: [{ type: "text", text: "No relevant memories found." }],
             details: { count: 0 },
           };
-        }
-
-        // Active reinforcement: boost confidence of retrieved facts (Issue #147)
-        if (cfg.reinforcement.enabled && cfg.reinforcement.activeBoost > 0) {
-          for (const r of results) {
-            try {
-              factsDb.boostConfidence(r.entry.id, cfg.reinforcement.activeBoost, cfg.reinforcement.maxConfidence);
-            } catch {
-              // Non-fatal — don't fail recall because of boost error
-            }
-          }
         }
 
         const contradictionStatus = new Map<string, boolean>();
@@ -940,6 +927,7 @@ export function registerMemoryTools(
 
             if (classification.action === "DELETE" && classification.targetId) {
               factsDb.supersede(classification.targetId, null);
+              aliasDb?.deleteByFactId(classification.targetId);
               return {
                 content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
                 details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
@@ -974,6 +962,7 @@ export function registerMemoryTools(
                   sourceSessions: api.context?.sessionId ?? undefined,
                 });
                 factsDb.supersede(classification.targetId, newEntry.id);
+                aliasDb?.deleteByFactId(classification.targetId);
 
                 const finalImportance = Math.max(importance, oldFact.importance);
                 try {
@@ -1079,8 +1068,6 @@ export function registerMemoryTools(
         }
         const nowSec = Math.floor(Date.now() / 1000);
         const storeSessionId = api.context?.sessionId ?? null;
-        // Detect future dates for decay freeze protection (#144)
-        const decayFreezeUntil = detectFutureDate(textToStore, cfg.futureDateProtection);
         const entry = factsDb.store({
           text: textToStore,
           category: category as MemoryCategory,
@@ -1095,13 +1082,13 @@ export function registerMemoryTools(
           scope,
           scopeTarget,
           sourceSessions: storeSessionId ?? undefined,
-          ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
         });
         if (supersedes?.trim()) {
           factsDb.supersede(supersedes.trim(), entry.id);
+          aliasDb?.deleteByFactId(supersedes.trim());
         }
 
         try {
@@ -1126,6 +1113,24 @@ export function registerMemoryTools(
         }
 
         walRemove(walEntryId, api.logger);
+
+        // Issue #149: generate and store retrieval aliases (non-blocking)
+        if (cfg.aliases?.enabled && aliasDb) {
+          const aliasModel =
+            cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+          void storeAliases(
+            entry.id,
+            textToStore,
+            cfg.aliases,
+            aliasModel,
+            openai,
+            embeddings,
+            aliasDb,
+            (msg) => api.logger.warn(msg),
+          ).catch((err) => {
+            api.logger.warn(`memory-hybrid: alias generation failed: ${err}`);
+          });
+        }
 
         // Contradiction detection (Issue #157): check for same entity+key, different value
         // Pass the stored fact's scope so detection stays within the same scope boundary.
@@ -1360,6 +1365,7 @@ export function registerMemoryTools(
             });
             api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
           }
+          aliasDb?.deleteByFactId(resolvedId);
 
           if (!sqlDeleted && !lanceDeleted) {
             if (lanceError) {
@@ -1437,6 +1443,7 @@ export function registerMemoryTools(
               });
               api.logger.warn(`memory-hybrid: LanceDB delete during supersede failed: ${err}`);
             }
+            aliasDb?.deleteByFactId(id);
             return {
               content: [
                 {

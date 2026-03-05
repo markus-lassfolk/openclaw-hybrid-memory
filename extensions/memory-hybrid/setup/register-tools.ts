@@ -12,7 +12,8 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { EventLog } from "../backends/event-log.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { Embeddings } from "../services/embeddings.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
@@ -27,14 +28,13 @@ import {
   type RunReflectionRulesFn,
   type RunReflectionMetaFn,
 } from "../tools/utility-tools.js";
-import { registerHealthTools } from "../tools/health-dashboard.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export interface ToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
-  embeddings: EmbeddingProvider;
+  embeddings: Embeddings;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
@@ -43,8 +43,8 @@ export interface ToolsContext {
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
+  aliasDb?: AliasDB | null;
   resolvedSqlitePath: string;
-  resolvedLancePath: string;
   timers: {
     proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
   };
@@ -87,11 +87,11 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     credentialsDb,
     proposalsDb,
     eventLog,
+    aliasDb,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
     resolvedSqlitePath,
-    resolvedLancePath,
     timers,
     buildToolScopeFilter,
     walWrite,
@@ -104,7 +104,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
+    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, aliasDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),
@@ -112,9 +112,9 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     findSimilarByEmbedding
   );
 
-  // Graph tools (memory linking, traversal, and gap analysis)
+  // Graph tools (memory linking and traversal)
   if (cfg.graph.enabled) {
-    registerGraphTools({ factsDb, vectorDb, embeddings, cfg }, api);
+    registerGraphTools({ factsDb, cfg }, api);
   }
 
   // Credential tools (secure credential storage and retrieval)
@@ -163,7 +163,4 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     (operation, data) => walWrite(wal, operation, data, api.logger),
     (id) => walRemove(wal, id, api.logger)
   );
-
-  // Health dashboard tool (Issue #148)
-  registerHealthTools({ factsDb, cfg, resolvedSqlitePath, resolvedLancePath }, api);
 }

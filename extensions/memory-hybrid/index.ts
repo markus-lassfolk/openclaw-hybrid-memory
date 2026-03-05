@@ -65,6 +65,7 @@ import {
   DEFAULT_RETRIEVAL_CONFIG,
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
+import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "./services/retrieval-aliases.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
 import {
   analyzeKnowledgeGaps,
@@ -209,6 +210,7 @@ let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
+let aliasDb: AliasDB | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -271,10 +273,11 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
+    aliasDb = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -294,6 +297,7 @@ const memoryHybridPlugin = {
       wal = dbContext.wal;
       proposalsDb = dbContext.proposalsDb;
       eventLog = dbContext.eventLog;
+      aliasDb = dbContext.aliasDb;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -320,6 +324,7 @@ const memoryHybridPlugin = {
       credentialsDb,
       proposalsDb,
       eventLog,
+      aliasDb,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -349,6 +354,7 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       proposalsDb,
       resolvedSqlitePath,
@@ -373,6 +379,7 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       currentAgentIdRef,
       lastProgressiveIndexIds,
@@ -494,6 +501,11 @@ export const _testing = {
   computeIsolationScore,
   computeRankScore,
   HOP_SCORE_DECAY,
+  // Retrieval aliases (Issue #149)
+  AliasDB,
+  generateAliases,
+  storeAliases,
+  searchAliasStrategy,
 };
 
 export { versionInfo } from "./versionInfo.js";

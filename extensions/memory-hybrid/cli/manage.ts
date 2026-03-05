@@ -41,6 +41,7 @@ import { runContextAudit } from "../services/context-audit.js";
 export type ManageContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
   embeddings: EmbeddingProvider;
   mergeResults: typeof mergeResults;
@@ -143,6 +144,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   const {
     factsDb,
     vectorDb,
+    aliasDb,
     versionInfo,
     embeddings,
     mergeResults: merge,
@@ -530,6 +532,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         factsDb,
         vectorDb,
         embeddings,
+        aliasDb,
         minScore: cfg.autoRecall?.minScore ?? 0.3,
         autoRecallLimit: cfg.autoRecall?.limit ?? 10,
       });
