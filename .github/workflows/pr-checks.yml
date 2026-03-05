@@ -40,7 +40,7 @@ jobs:
             const sizeLabels = ['size/XS', 'size/S', 'size/M', 'size/L', 'size/XL']
 
             // Ensure labels exist
-            const { data: repoLabels } = await github.rest.issues.listLabelsForRepo({
+            const repoLabels = await github.paginate(github.rest.issues.listLabelsForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
             })
@@ -62,7 +62,7 @@ jobs:
             }
 
             // Remove old size labels
-            const { data: prLabels } = await github.rest.issues.listLabelsOnIssue({
+            const prLabels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
