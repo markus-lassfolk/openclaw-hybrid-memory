@@ -231,7 +231,7 @@ export function createEmbeddingProvider(
     // Optional fallback to OpenAI when a key is provided
     if (apiKey) {
       const openaiClient = new OpenAI({ apiKey });
-      const openaiModels = models?.length ? models : [model];
+      const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       const fallback = new Embeddings(openaiClient, openaiModels, dimensions);
       return new FallbackEmbeddingProvider(primary, fallback, onFallback);
     }
@@ -249,7 +249,7 @@ export function createEmbeddingProvider(
     // ONNX runtime not yet implemented — fall back to OpenAI if key available
     if (apiKey) {
       const openaiClient = new OpenAI({ apiKey });
-      const openaiModels = models?.length ? models : [model];
+      const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       return new Embeddings(openaiClient, openaiModels, dimensions);
     }
     throw new Error("ONNX embedding provider is not yet implemented. Set embedding.apiKey to fall back to OpenAI, or use provider='ollama'.");
