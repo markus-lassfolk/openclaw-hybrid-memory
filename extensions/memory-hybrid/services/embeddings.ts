@@ -133,6 +133,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     const results = await this.embedBatch([text]);
+    if (results.length === 0) {
+      throw new Error(`Ollama embed returned empty results for single text`);
+    }
     return results[0];
   }
 
@@ -157,6 +160,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       const data = await resp.json() as { embeddings: number[][] };
       if (!Array.isArray(data.embeddings)) {
         throw new Error(`Ollama embed response missing 'embeddings' array`);
+      }
+      if (data.embeddings.length !== batch.length) {
+        throw new Error(`Ollama embed returned ${data.embeddings.length} embeddings but expected ${batch.length}`);
       }
       allResults.push(...data.embeddings);
     }

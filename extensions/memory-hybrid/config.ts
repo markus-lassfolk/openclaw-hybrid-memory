@@ -1005,10 +1005,15 @@ export const hybridConfigSchema = {
     }
 
     const embedding = cfg.embedding as Record<string, unknown> | undefined;
-    const embeddingProvider = (typeof embedding?.provider === "string" &&
-      ["openai", "ollama", "onnx"].includes(embedding.provider))
-      ? (embedding.provider as "openai" | "ollama" | "onnx")
-      : "openai";
+    const validProviders = ["openai", "ollama", "onnx"];
+    let embeddingProvider: "openai" | "ollama" | "onnx";
+    if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
+      embeddingProvider = embedding.provider as "openai" | "ollama" | "onnx";
+    } else if (embedding?.provider !== undefined) {
+      throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx.`);
+    } else {
+      embeddingProvider = "openai";
+    }
 
     // apiKey is required for openai provider only
     let resolvedApiKey: string | undefined;
