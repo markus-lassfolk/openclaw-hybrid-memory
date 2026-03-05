@@ -374,13 +374,15 @@ export function registerMemoryTools(
           const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
           results = [...entityResults];
           const rrfResultCap = rrfOutput.packed.length > 0 ? rrfOutput.packed.length : rrfOutput.fused.length;
-          for (let i = 0; i < Math.min(rrfResultCap, rrfOutput.fused.length); i++) {
+          let addedCount = 0;
+          for (let i = 0; i < rrfOutput.fused.length && addedCount < rrfResultCap; i++) {
             const fused = rrfOutput.fused[i];
             if (seenIds.has(fused.factId)) continue;
             const entry = rrfOutput.entries[i];
             if (entry) {
               results.push({ entry, score: fused.finalScore, backend: "sqlite" });
               seenIds.add(fused.factId);
+              addedCount++;
             }
           }
           results.sort((a, b) => b.score - a.score);
