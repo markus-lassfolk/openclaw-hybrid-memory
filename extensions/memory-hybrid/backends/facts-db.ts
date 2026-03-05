@@ -17,8 +17,18 @@ import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 
-export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON"] as const;
+export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
+
+/** A single contradiction record (from the contradictions table). */
+export interface ContradictionRecord {
+  id: string;
+  factIdNew: string;
+  factIdOld: string;
+  detectedAt: string;
+  resolved: boolean;
+  resolution: "superseded" | "kept" | "merged" | null;
+}
 
 export class FactsDB {
   private db: Database.Database;
@@ -157,6 +167,9 @@ export class FactsDB {
 
     // ---- FTS5 tags support (Issue #151) ----
     this.migrateFtsTagsSupport();
+
+    // ---- Contradiction tracking (Issue #157) ----
+    this.migrateContradictionsTable();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -307,6 +320,25 @@ export class FactsDB {
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_procedures_scope_target ON procedures(scope, scope_target) WHERE scope_target IS NOT NULL`,
     );
+  }
+
+  /** Create contradictions table for tracking conflicting facts (Issue #157). */
+  private migrateContradictionsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS contradictions (
+        id TEXT PRIMARY KEY,
+        fact_id_new TEXT NOT NULL,
+        fact_id_old TEXT NOT NULL,
+        detected_at TEXT NOT NULL,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        resolution TEXT,
+        FOREIGN KEY (fact_id_new) REFERENCES facts(id) ON DELETE CASCADE,
+        FOREIGN KEY (fact_id_old) REFERENCES facts(id) ON DELETE CASCADE
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_new ON contradictions(fact_id_new)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_old ON contradictions(fact_id_old)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_resolved ON contradictions(resolved) WHERE resolved = 0`);
   }
 
   /**
@@ -2693,6 +2725,220 @@ export class FactsDB {
       )
       .all(minImportance, thresholdSec, nowSec) as Record<string, unknown>[];
     return rows.map((r) => this.rowToEntry(r));
+  }
+
+  // ============================================================================
+  // Contradiction Detection (Issue #157)
+  // ============================================================================
+
+  /**
+   * Update a fact's confidence by `delta` (negative to reduce), with a floor of 0.1.
+   * Returns the new confidence value, or null if the fact was not found.
+   */
+  updateConfidence(id: string, delta: number): number | null {
+    const row = this.liveDb
+      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+      .get(id) as { confidence: number } | undefined;
+    if (!row) return null;
+    const current = row.confidence ?? 1.0;
+    const updated = Math.max(0.1, Math.min(1.0, current + delta));
+    this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
+    return updated;
+  }
+
+  /**
+   * Find active (non-superseded, non-expired) facts with the same entity and key but a
+   * different value. Returns facts ordered newest-first.
+   */
+  findConflictingFacts(
+    entity: string,
+    key: string,
+    value: string,
+    excludeFactId: string,
+  ): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts
+         WHERE lower(entity) = lower(?)
+           AND lower(key) = lower(?)
+           AND lower(value) != lower(?)
+           AND id != ?
+           AND superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+         ORDER BY created_at DESC`,
+      )
+      .all(entity, key, value, excludeFactId, nowSec) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.rowToEntry(r));
+  }
+
+  /**
+   * Record a contradiction between two facts:
+   *   1. Insert a row into the `contradictions` table.
+   *   2. Create a CONTRADICTS link from newFactId → oldFactId in memory_links.
+   *   3. Reduce confidence on the old fact by 0.2 (floor at 0.1).
+   *
+   * Returns the new contradiction record id.
+   */
+  recordContradiction(factIdNew: string, factIdOld: string): string {
+    const id = randomUUID();
+    const detectedAt = new Date().toISOString();
+
+    const tx = this.liveDb.transaction(() => {
+      this.liveDb
+        .prepare(
+          `INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at, resolved, resolution)
+           VALUES (?, ?, ?, ?, 0, NULL)`,
+        )
+        .run(id, factIdNew, factIdOld, detectedAt);
+
+      this.createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
+
+      this.updateConfidence(factIdOld, -0.2);
+    });
+    tx();
+    return id;
+  }
+
+  /**
+   * Detect contradictions for a newly stored fact and record them.
+   * Only runs when entity, key, and value are all non-empty.
+   *
+   * Returns an array of { contradictionId, oldFactId } for each contradiction found.
+   */
+  detectContradictions(
+    newFactId: string,
+    entity: string | null | undefined,
+    key: string | null | undefined,
+    value: string | null | undefined,
+  ): Array<{ contradictionId: string; oldFactId: string }> {
+    if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
+
+    const conflicting = this.findConflictingFacts(entity.trim(), key.trim(), value.trim(), newFactId);
+    const results: Array<{ contradictionId: string; oldFactId: string }> = [];
+
+    for (const old of conflicting) {
+      // findConflictingFacts already filters by different value, but guard for safety
+      if (old.value?.toLowerCase() === value.trim().toLowerCase()) continue;
+      const contradictionId = this.recordContradiction(newFactId, old.id);
+      results.push({ contradictionId, oldFactId: old.id });
+    }
+
+    return results;
+  }
+
+  /**
+   * Get contradiction records involving a specific fact (as new or old).
+   * If no factId given, returns all unresolved contradictions.
+   */
+  getContradictions(factId?: string): ContradictionRecord[] {
+    const rows = factId
+      ? (this.liveDb
+          .prepare(
+            `SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC`,
+          )
+          .all(factId, factId) as Array<Record<string, unknown>>)
+      : (this.liveDb
+          .prepare(
+            `SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC`,
+          )
+          .all() as Array<Record<string, unknown>>);
+    return rows.map((r) => ({
+      id: r.id as string,
+      factIdNew: r.fact_id_new as string,
+      factIdOld: r.fact_id_old as string,
+      detectedAt: r.detected_at as string,
+      resolved: (r.resolved as number) === 1,
+      resolution: (r.resolution as "superseded" | "kept" | "merged" | null) ?? null,
+    }));
+  }
+
+  /**
+   * Mark a contradiction as resolved with the given strategy.
+   * Returns true if the record was found and updated.
+   */
+  resolveContradiction(
+    contradictionId: string,
+    resolution: "superseded" | "kept" | "merged",
+  ): boolean {
+    const result = this.liveDb
+      .prepare(
+        `UPDATE contradictions SET resolved = 1, resolution = ? WHERE id = ? AND resolved = 0`,
+      )
+      .run(resolution, contradictionId);
+    return result.changes > 0;
+  }
+
+  /**
+   * Check if a fact is the target of any active (unresolved) CONTRADICTS link.
+   */
+  isContradicted(factId: string): boolean {
+    const row = this.liveDb
+      .prepare(
+        `SELECT 1 FROM contradictions WHERE fact_id_old = ? AND resolved = 0 LIMIT 1`,
+      )
+      .get(factId);
+    return row != null;
+  }
+
+  /**
+   * Nightly resolution stub (Issue #157 / foundation for #143 Dream Cycle).
+   *
+   * For each unresolved contradiction pair, applies auto-resolution when the
+   * newer fact is clearly more authoritative (higher confidence, newer, from an
+   * explicit user store).  Ambiguous cases are returned for future LLM resolution.
+   */
+  resolveContradictions(): {
+    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  } {
+    const unresolved = this.getContradictions();
+    const autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }> = [];
+    const ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }> = [];
+
+    for (const c of unresolved) {
+      const newFact = this.getById(c.factIdNew);
+      const oldFact = this.getById(c.factIdOld);
+
+      if (!newFact || !oldFact) {
+        // One or both facts deleted — treat as superseded
+        this.resolveContradiction(c.id, "superseded");
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        continue;
+      }
+
+      const newConf = newFact.confidence ?? 1.0;
+      const oldConf = oldFact.confidence ?? 1.0;
+      const newIsNewer = newFact.createdAt >= oldFact.createdAt;
+      const newIsHigherConf = newConf > oldConf;
+      const newIsFromUser = newFact.source === "conversation" || newFact.source === "cli";
+
+      if (newIsNewer && newIsHigherConf && newIsFromUser) {
+        this.resolveContradiction(c.id, "superseded");
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+      } else {
+        ambiguous.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+      }
+    }
+
+    return { autoResolved, ambiguous };
+  }
+
+  /** Count of unresolved contradictions. */
+  contradictionsCount(): number {
+    try {
+      const row = this.liveDb
+        .prepare(`SELECT COUNT(*) as cnt FROM contradictions WHERE resolved = 0`)
+        .get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "count-contradictions",
+        severity: "info",
+        subsystem: "facts",
+      });
+      return 0;
+    }
   }
 
   close(): void {

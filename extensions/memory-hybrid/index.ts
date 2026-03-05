@@ -40,7 +40,7 @@ import {
 import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
-import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
+import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType, type ContradictionRecord } from "./backends/facts-db.js";
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { deepMerge } from "./cli/handlers.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
@@ -292,6 +292,7 @@ const memoryHybridPlugin = {
       wal,
       credentialsDb,
       proposalsDb,
+      eventLog,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -448,4 +449,5 @@ export const _testing = {
 
 export { versionInfo } from "./versionInfo.js";
 export { sanitizeMessagesForClaude, type MessageLike } from "./utils/sanitize-messages.js";
+export type { ContradictionRecord } from "./backends/facts-db.js";
 export default memoryHybridPlugin;

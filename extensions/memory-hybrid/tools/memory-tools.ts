@@ -14,6 +14,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EventLog } from "../backends/event-log.js";
 import type { Embeddings } from "../services/embeddings.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
@@ -49,6 +50,7 @@ export interface PluginContext {
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
+  eventLog: EventLog | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
@@ -82,7 +84,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
 
   api.registerTool(
     {
@@ -398,10 +400,11 @@ export function registerMemoryTools(
         }
 
         const text = results
-          .map(
-            (r, i) =>
-              `${i + 1}. [${r.backend}/${r.entry.category}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%)`,
-          )
+          .map((r, i) => {
+            const contradicted = factsDb.isContradicted(r.entry.id);
+            const prefix = contradicted ? "[⚠️ CONTRADICTED] " : "";
+            return `${i + 1}. [${r.backend}/${r.entry.category}] ${prefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)`;
+          })
           .join("\n");
 
         const sanitized = results.map((r) => ({
@@ -416,6 +419,7 @@ export function registerMemoryTools(
           sourceDate: r.entry.sourceDate
             ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
             : undefined,
+          contradicted: factsDb.isContradicted(r.entry.id) || undefined,
         }));
 
         return {
@@ -965,6 +969,28 @@ export function registerMemoryTools(
 
         walRemove(walEntryId, api.logger);
 
+        // Contradiction detection (Issue #157): check for same entity+key, different value
+        const contradictions = factsDb.detectContradictions(entry.id, entity ?? null, key ?? null, value ?? null);
+        for (const { contradictionId, oldFactId } of contradictions) {
+          if (eventLog) {
+            eventLog.append({
+              sessionId: entry.id,
+              timestamp: new Date().toISOString(),
+              eventType: "correction",
+              content: {
+                type: "contradiction_detected",
+                contradictionId,
+                newFactId: entry.id,
+                oldFactId,
+                entity: entity ?? null,
+                key: key ?? null,
+                newValue: value ?? null,
+              },
+              entities: entity ? [entity] : undefined,
+            });
+          }
+        }
+
         // Auto-link to similar facts when enabled
         let autoLinked = 0;
         if (cfg.graph.enabled && cfg.graph.autoLink) {
@@ -984,7 +1010,8 @@ export function registerMemoryTools(
         const storedMsg =
           `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]` +
           (supersedes?.trim() ? " (supersedes previous fact)" : "") +
-          (autoLinked > 0 ? ` (linked to ${autoLinked} related fact${autoLinked === 1 ? "" : "s"})` : "");
+          (autoLinked > 0 ? ` (linked to ${autoLinked} related fact${autoLinked === 1 ? "" : "s"})` : "") +
+          (contradictions.length > 0 ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})` : "");
 
         return {
           content: [
@@ -1000,6 +1027,7 @@ export function registerMemoryTools(
             decayClass: entry.decayClass,
             ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
             ...(autoLinked > 0 ? { autoLinked } : {}),
+            ...(contradictions.length > 0 ? { contradictions: contradictions.map((c) => ({ contradictionId: c.contradictionId, oldFactId: c.oldFactId })) } : {}),
           },
         };
         } catch (err) {
