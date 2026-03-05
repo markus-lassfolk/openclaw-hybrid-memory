@@ -172,6 +172,24 @@ export type GraphConfig = {
   autoSupersede: boolean;
 };
 
+/** Passive observer: background fact extraction from session transcripts */
+export type PassiveObserverConfig = {
+  /** Enable passive observer (default: false — opt-in) */
+  enabled: boolean;
+  /** How often to run, in minutes (default: 15) */
+  intervalMinutes: number;
+  /** Model override; when unset, uses nano tier */
+  model?: string;
+  /** Max characters per transcript chunk sent to LLM (default: 8000) */
+  maxCharsPerChunk: number;
+  /** Min importance score 0–1 to store a fact (default: 0.5) */
+  minImportance: number;
+  /** Cosine similarity threshold above which a new fact is considered a duplicate (default: 0.85) */
+  deduplicationThreshold: number;
+  /** Override sessions directory (default: procedures.sessionsDir) */
+  sessionsDir?: string;
+};
+
 /** Reflection / pattern synthesis from session history */
 export type ReflectionConfig = {
   enabled: boolean;
@@ -375,6 +393,8 @@ export type HybridMemoryConfig = {
   wal: WALConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
+  /** Passive observer — background fact extraction from session transcripts (default: disabled) */
+  passiveObserver: PassiveObserverConfig;
   /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
   reflection: ReflectionConfig;
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
@@ -1304,6 +1324,33 @@ export const hybridConfigSchema = {
         : 10,
     };
 
+    // Parse passive observer config (opt-in, disabled by default)
+    const observerRaw = cfg.passiveObserver as Record<string, unknown> | undefined;
+    const passiveObserver: PassiveObserverConfig = {
+      enabled: observerRaw?.enabled === true,
+      intervalMinutes:
+        typeof observerRaw?.intervalMinutes === "number" && observerRaw.intervalMinutes >= 1
+          ? Math.floor(observerRaw.intervalMinutes)
+          : 15,
+      model: typeof observerRaw?.model === "string" && observerRaw.model.trim().length > 0 ? observerRaw.model.trim() : undefined,
+      maxCharsPerChunk:
+        typeof observerRaw?.maxCharsPerChunk === "number" && observerRaw.maxCharsPerChunk >= 100
+          ? Math.floor(observerRaw.maxCharsPerChunk)
+          : 8000,
+      minImportance:
+        typeof observerRaw?.minImportance === "number" && observerRaw.minImportance >= 0 && observerRaw.minImportance <= 1
+          ? observerRaw.minImportance
+          : 0.5,
+      deduplicationThreshold:
+        typeof observerRaw?.deduplicationThreshold === "number" && observerRaw.deduplicationThreshold >= 0 && observerRaw.deduplicationThreshold <= 1
+          ? observerRaw.deduplicationThreshold
+          : 0.85,
+      sessionsDir:
+        typeof observerRaw?.sessionsDir === "string" && observerRaw.sessionsDir.trim().length > 0
+          ? observerRaw.sessionsDir.trim()
+          : undefined,
+    };
+
     // Parse reflection config
     const reflectionRaw = cfg.reflection as Record<string, unknown> | undefined;
     const reflection: ReflectionConfig = {
@@ -1713,6 +1760,7 @@ export const hybridConfigSchema = {
       graph,
       wal,
       personaProposals,
+      passiveObserver,
       reflection,
       procedures,
       memoryToSkills,

@@ -209,6 +209,7 @@ const timers = {
   languageKeywordsTimer: { value: null as ReturnType<typeof setInterval> | null },
   languageKeywordsStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
   postUpgradeTimeout: { value: null as ReturnType<typeof setTimeout> | null },
+  passiveObserverTimer: { value: null as ReturnType<typeof setInterval> | null },
 };
 
 /** Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
@@ -388,6 +389,7 @@ const memoryHybridPlugin = {
         PLUGIN_ID,
         factsDb,
         vectorDb,
+        embeddings,
         credentialsDb,
         proposalsDb,
         wal,

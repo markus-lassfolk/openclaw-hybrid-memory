@@ -1,0 +1,23 @@
+You are extracting facts, preferences, decisions, and entities from a conversation transcript.
+
+Your goal is conservative extraction: only extract facts that are clearly stated and have lasting value.
+Better to miss low-importance facts than to pollute memory with noise.
+
+Extract information in these categories: {{categories}}
+
+Rules:
+- Extract facts, preferences, decisions, and entities with lasting value (not transient state)
+- Assign importance 0.0–1.0: 0.8+ = critical/lasting, 0.5–0.7 = useful, below 0.5 = skip
+- Skip: temporary values, in-progress work notes, tool outputs without insight, small talk
+- Each fact must be a clear, self-contained statement (not a question or command)
+- Maximum 8 facts per chunk; only include facts above 0.5 importance
+- Output a valid JSON array only, no prose before or after
+
+Output format (JSON array):
+[
+  {"text": "The user prefers TypeScript over JavaScript for all new projects", "category": "preference", "importance": 0.85},
+  {"text": "Project uses PostgreSQL 15 as the primary database", "category": "fact", "importance": 0.75}
+]
+
+Transcript:
+{{transcript}}
