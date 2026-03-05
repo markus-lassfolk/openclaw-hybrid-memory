@@ -268,6 +268,18 @@ export type SearchConfig = {
   hydeModel?: string;
 };
 
+/** GraphRAG retrieval configuration (Issue #145). */
+export type GraphRetrievalConfig = {
+  /** Enable GraphRAG expansion in memory_recall (default: true). */
+  enabled: boolean;
+  /** When true, memory_recall expands the graph by default even without expandGraph=true (default: false — backward compatible). */
+  defaultExpand: boolean;
+  /** Maximum BFS depth cap — expandDepth param is clamped to this value (default: 3). */
+  maxExpandDepth: number;
+  /** Maximum number of graph-expanded results appended to direct matches (default: 20). */
+  maxExpandedResults: number;
+};
+
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
 export type AmbientConfig = {
   /** Enable enhanced ambient retrieval (default: false). */
@@ -452,6 +464,8 @@ export type HybridMemoryConfig = {
   ambient: AmbientConfig;
   /** Future-date decay freeze protection (#144). Enabled by default. */
   futureDateProtection: FutureDateProtectionConfig;
+  /** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
+  graphRetrieval: GraphRetrievalConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1730,6 +1744,21 @@ export const hybridConfigSchema = {
           : 2000,
     };
 
+    // Parse graphRetrieval config (Issue #145, default: enabled, defaultExpand: false)
+    const graphRetrievalRaw = cfg.graphRetrieval as Record<string, unknown> | undefined;
+    const graphRetrieval: GraphRetrievalConfig = {
+      enabled: graphRetrievalRaw?.enabled !== false,
+      defaultExpand: graphRetrievalRaw?.defaultExpand === true,
+      maxExpandDepth:
+        typeof graphRetrievalRaw?.maxExpandDepth === "number" && graphRetrievalRaw.maxExpandDepth >= 0
+          ? Math.min(5, Math.floor(graphRetrievalRaw.maxExpandDepth))
+          : 3,
+      maxExpandedResults:
+        typeof graphRetrievalRaw?.maxExpandedResults === "number" && graphRetrievalRaw.maxExpandedResults >= 0
+          ? Math.min(50, Math.floor(graphRetrievalRaw.maxExpandedResults))
+          : 20,
+    };
+
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
     const activeTask: ActiveTaskConfig = {
       enabled: activeTaskRaw?.enabled !== false,
@@ -1804,6 +1833,7 @@ export const hybridConfigSchema = {
       })(),
       ambient,
       futureDateProtection,
+      graphRetrieval,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
