@@ -40,9 +40,9 @@ jobs:
             console.log(`Push to '${branch}' by '${pusher}'`);
 
             const isBot = BOT_AUTHORS.some(b => {
-              // pusher.name strips the [bot] suffix in some contexts — match loosely
+              // pusher.name strips the [bot] suffix in some contexts — match exactly
               const base = b.replace('[bot]', '');
-              return pusher === b || pusher === base || pusher.startsWith(base);
+              return pusher === b || pusher === base;
             });
 
             if (!isBot) {

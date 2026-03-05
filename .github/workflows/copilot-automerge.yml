@@ -121,10 +121,24 @@ jobs:
               if (failed.length > 0) {
                 const names = failed.map(r => r.name).join(', ');
                 console.log(`  Failed checks: ${names}`);
-                await github.rest.issues.createComment({
+                const body = `❌ Auto-merge skipped — the following check(s) did not pass: **${names}**.\n\nPlease investigate and fix before this PR can be auto-merged.`;
+                
+                const comments = await github.paginate(github.rest.issues.listComments, {
                   owner, repo, issue_number: prNumber,
-                  body: `❌ Auto-merge skipped — the following check(s) did not pass: **${names}**.\n\nPlease investigate and fix before this PR can be auto-merged.`,
                 });
+                const botComment = comments.find(
+                  c => c.user.type === 'Bot' && c.body.includes('❌ Auto-merge skipped — the following check(s) did not pass:'),
+                );
+                
+                if (botComment) {
+                  await github.rest.issues.updateComment({
+                    owner, repo, comment_id: botComment.id, body,
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: prNumber, body,
+                  });
+                }
                 continue;
               }
 
@@ -150,10 +164,24 @@ jobs:
 
               if (unresolvedThreads.length > 0) {
                 console.log(`  ${unresolvedThreads.length} unresolved review thread(s), skipping merge.`);
-                await github.rest.issues.createComment({
+                const body = `⚠️ Auto-merge skipped — ${unresolvedThreads.length} unresolved review thread(s). Please resolve all conversations before merge.`;
+                
+                const comments = await github.paginate(github.rest.issues.listComments, {
                   owner, repo, issue_number: prNumber,
-                  body: `⚠️ Auto-merge skipped — ${unresolvedThreads.length} unresolved review thread(s). Please resolve all conversations before merge.`,
                 });
+                const botComment = comments.find(
+                  c => c.user.type === 'Bot' && c.body.includes('⚠️ Auto-merge skipped — ') && c.body.includes('unresolved review thread(s)'),
+                );
+                
+                if (botComment) {
+                  await github.rest.issues.updateComment({
+                    owner, repo, comment_id: botComment.id, body,
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: prNumber, body,
+                  });
+                }
                 continue;
               }
 
