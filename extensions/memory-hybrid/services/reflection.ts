@@ -195,7 +195,7 @@ export async function runReflection(
   const existingPatternFacts = factsDb.getByCategory("pattern").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  let existingVectors: (number[] | null)[] = [];
+  const existingVectors: (number[] | null)[] = [];
   if (existingPatternFacts.length > 0) {
     for (let i = 0; i < existingPatternFacts.length; i += 20) {
       const batch = existingPatternFacts.slice(i, i + 20);
@@ -366,7 +366,7 @@ export async function runReflectionRules(
   const existingRuleFacts = factsDb.getByCategory("rule").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  let existingVectors: (number[] | null)[] = [];
+  const existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingRuleFacts.length; i += 20) {
     const batch = existingRuleFacts.slice(i, i + 20);
     for (const f of batch) {
@@ -519,7 +519,7 @@ export async function runReflectionMeta(
   const existingMetaFacts = factsDb.getByCategory("pattern").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && (f.tags?.includes("meta") === true),
   );
-  let existingVectors: (number[] | null)[] = [];
+  const existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingMetaFacts.length; i += 20) {
     const batch = existingMetaFacts.slice(i, i + 20);
     for (const f of batch) {

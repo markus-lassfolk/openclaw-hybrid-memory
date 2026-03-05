@@ -19,6 +19,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
@@ -63,6 +64,7 @@ export interface LifecycleContext {
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
+  aliasDb: AliasDB | null;
   wal: WriteAheadLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
@@ -1774,6 +1776,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
                     ctx.factsDb.supersede(classification.targetId, null);
+                    ctx.aliasDb?.deleteByFactId(classification.targetId);
                     api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                     continue;
                   }
@@ -1806,6 +1809,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                         supersedesId: classification.targetId,
                       });
                       ctx.factsDb.supersede(classification.targetId, newEntry.id);
+                      ctx.aliasDb?.deleteByFactId(classification.targetId);
                       try {
                         if (vector && !(await ctx.vectorDb.hasDuplicate(vector))) {
                           await ctx.vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });

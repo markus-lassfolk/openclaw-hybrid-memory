@@ -162,7 +162,11 @@ export class Embeddings implements EmbeddingProvider {
         if (resp.data.length !== batch.length) {
           throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
         }
-        allResults.push(...resp.data.map((item) => item.embedding));
+        allResults.push(
+          ...resp.data
+            .sort((a, b) => a.index - b.index)
+            .map((item) => item.embedding),
+        );
       }
       if (lastErr !== undefined && allResults.length === i) {
         capturePluginError(lastErr, {
@@ -247,8 +251,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
  */
 export class FallbackEmbeddingProvider implements EmbeddingProvider {
   private active: EmbeddingProvider;
+  private readonly primary: EmbeddingProvider;
   private readonly fallback: EmbeddingProvider | null;
   private switched = false;
+  private lastRetryAttempt = 0;
+  private readonly retryIntervalMs = 60000;
   private readonly onSwitch?: (err: unknown) => void;
   readonly dimensions: number;
   modelName: string;
@@ -259,6 +266,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     onSwitch?: (err: unknown) => void,
   ) {
     this.active = primary;
+    this.primary = primary;
     this.fallback = fallback;
     this.onSwitch = onSwitch;
     this.dimensions = primary.dimensions;
@@ -266,7 +274,22 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
-    if (this.switched || !this.fallback) {
+    if (!this.fallback) {
+      return this.active.embed(text);
+    }
+    if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
+      this.lastRetryAttempt = Date.now();
+      try {
+        const result = await this.primary.embed(text);
+        this.active = this.primary;
+        this.switched = false;
+        this.modelName = this.active.modelName;
+        return result;
+      } catch (_err) {
+        // Primary still failing — continue using fallback
+      }
+    }
+    if (this.switched) {
       return this.active.embed(text);
     }
     try {
@@ -275,13 +298,29 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       this.onSwitch?.(err);
       this.active = this.fallback;
       this.switched = true;
+      this.lastRetryAttempt = Date.now();
       this.modelName = this.active.modelName;
       return this.active.embed(text);
     }
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    if (this.switched || !this.fallback) {
+    if (!this.fallback) {
+      return this.active.embedBatch(texts);
+    }
+    if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
+      this.lastRetryAttempt = Date.now();
+      try {
+        const result = await this.primary.embedBatch(texts);
+        this.active = this.primary;
+        this.switched = false;
+        this.modelName = this.active.modelName;
+        return result;
+      } catch (_err) {
+        // Primary still failing — continue using fallback
+      }
+    }
+    if (this.switched) {
       return this.active.embedBatch(texts);
     }
     try {
@@ -290,6 +329,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       this.onSwitch?.(err);
       this.active = this.fallback;
       this.switched = true;
+      this.lastRetryAttempt = Date.now();
       this.modelName = this.active.modelName;
       return this.active.embedBatch(texts);
     }
