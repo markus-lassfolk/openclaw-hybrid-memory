@@ -411,7 +411,7 @@ export function registerUtilityTools(
 
           const result = detectClusters(factsDb, { minClusterSize, existingClusterIds });
 
-          if (shouldSave && result.clusters.length > 0) {
+          if (shouldSave) {
             factsDb.saveClusters(result.clusters);
           }
 
