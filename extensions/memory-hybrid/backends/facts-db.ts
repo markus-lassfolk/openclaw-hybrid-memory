@@ -1622,14 +1622,16 @@ export class FactsDB {
       .prepare(
         `DELETE FROM memory_links
          WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?
+           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
          )
          AND link_type != 'DERIVED_FROM'`
       )
-      .run(nowSec);
+      .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
-      .run(nowSec);
+      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+      .run({ now: nowSec });
     return result.changes;
   }
 

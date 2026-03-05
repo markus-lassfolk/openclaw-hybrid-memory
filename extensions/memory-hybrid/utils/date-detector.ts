@@ -122,7 +122,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
     let daysAhead = targetWd - currentWd;
     if (daysAhead <= 0) daysAhead += 7; // always at least 1 day ahead
     // "next" implies the week after the upcoming one when the day would otherwise be <7 days away
-    if (daysAhead < 7) daysAhead += 7;
+    if (daysAhead <= 7) daysAhead += 7;
     const ts = todayMidnightMs + daysAhead * 86400 * 1000;
     results.push(Math.floor(ts / 1000));
   }
