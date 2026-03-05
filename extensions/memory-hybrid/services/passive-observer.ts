@@ -331,7 +331,7 @@ export async function runPassiveObserver(
   // Phase 2: load recent fact vectors for dedup (only once per run, now that
   // we know there is new content to process).
   // ---------------------------------------------------------------------------
-  const recentFacts = factsDb.getRecentFacts(7) // last 7 days
+  const recentFacts = factsDb.getRecentFacts(7, { excludeCategories: [] }) // last 7 days
   const recentVectors: (number[] | null)[] = []
   for (const f of recentFacts.slice(0, 200)) {
     try {
@@ -371,6 +371,8 @@ export async function runPassiveObserver(
       Math.floor(config.maxCharsPerChunk * 0.05),
     )
 
+    let anyChunkSucceeded = false
+
     for (const chunk of chunks) {
       if (!chunk.trim()) continue
       result.chunksProcessed++
@@ -402,6 +404,8 @@ export async function runPassiveObserver(
         result.errors++
         continue
       }
+
+      anyChunkSucceeded = true
 
       const facts = parseObserverResponse(rawResponse, allCategories)
       const filtered = facts.filter((f) => f.importance >= config.minImportance)
@@ -481,9 +485,11 @@ export async function runPassiveObserver(
       }
     }
 
-    // Advance cursor to end of file (byte offset)
-    cursors[sessionId] = fileBytelen
-    cursorsChanged = true
+    // Advance cursor to end of file only if at least one chunk was successfully processed
+    if (anyChunkSucceeded) {
+      cursors[sessionId] = fileBytelen
+      cursorsChanged = true
+    }
   }
 
   if (cursorsChanged) {
