@@ -369,20 +369,27 @@ export function registerMemoryTools(
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).
-          // Cap at packed.length when the token-budget packing limited results; fall back
-          // to the full fused list when packed is empty (e.g. budget too small to pack any).
+          // When packed is non-empty, only include fused results whose factId was packed
+          // (avoids including items beyond the token budget). Fall back to the full fused
+          // list when packed is empty (e.g. budget too small to pack any).
+          // Use a factId→entry Map so entry lookup never depends on loop index alignment.
           const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
           results = [...entityResults];
-          const rrfResultCap = rrfOutput.packed.length > 0 ? rrfOutput.packed.length : rrfOutput.fused.length;
-          let addedCount = 0;
-          for (let i = 0; i < rrfOutput.fused.length && addedCount < rrfResultCap; i++) {
-            const fused = rrfOutput.fused[i];
-            if (seenIds.has(fused.factId)) continue;
-            const entry = rrfOutput.entries[i];
+          const entryByFactId = new Map<string, MemoryEntry>();
+          for (let i = 0; i < rrfOutput.fused.length; i++) {
+            const e = rrfOutput.entries[i];
+            if (e) entryByFactId.set(rrfOutput.fused[i].factId, e);
+          }
+          const packedFactIdSet = rrfOutput.packed.length > 0
+            ? new Set(rrfOutput.packedFactIds)
+            : null;
+          for (const fusedResult of rrfOutput.fused) {
+            if (packedFactIdSet && !packedFactIdSet.has(fusedResult.factId)) continue;
+            if (seenIds.has(fusedResult.factId)) continue;
+            const entry = entryByFactId.get(fusedResult.factId);
             if (entry) {
-              results.push({ entry, score: fused.finalScore, backend: "sqlite" });
-              seenIds.add(fused.factId);
-              addedCount++;
+              results.push({ entry, score: fusedResult.finalScore, backend: "sqlite" });
+              seenIds.add(fusedResult.factId);
             }
           }
           results.sort((a, b) => b.score - a.score);
