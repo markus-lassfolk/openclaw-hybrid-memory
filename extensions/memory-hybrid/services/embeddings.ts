@@ -164,7 +164,6 @@ export class Embeddings implements EmbeddingProvider {
         }
         allResults.push(
           ...resp.data
-            .slice()
             .sort((a, b) => a.index - b.index)
             .map((item) => item.embedding),
         );
