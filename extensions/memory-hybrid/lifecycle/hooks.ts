@@ -1117,7 +1117,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           // Access tracking for injected memories
           ctx.factsDb.refreshAccessedFacts(injectedIds);
           // Ambient: mark injected facts as seen for topic-shift deduplication (Issue #156)
-          if (ambientCfg.enabled) {
+          if (ambientCfg.enabled && ambientCfg.multiQuery) {
             ambientSeenFacts.markSeen(injectedIds);
           }
           // Hebbian: Strengthen RELATED_TO links between facts recalled together
