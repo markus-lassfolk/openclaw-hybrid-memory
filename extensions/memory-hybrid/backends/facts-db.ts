@@ -2081,6 +2081,15 @@ export class FactsDB {
     return this.db;
   }
 
+  /**
+   * Expose the underlying better-sqlite3 Database for services that require direct
+   * SQL access (e.g. the FTS5 search service used by the RRF retrieval pipeline).
+   * Returned instance is the same live handle used internally (with auto-reopen).
+   */
+  getRawDb(): Database.Database {
+    return this.liveDb;
+  }
+
   // ---------- Procedural memory: procedures table CRUD ----------
 
   private procedureRowToEntry(row: Record<string, unknown>): ProcedureEntry {
@@ -2758,14 +2767,30 @@ export class FactsDB {
   /**
    * Find active (non-superseded, non-expired) facts with the same entity and key but a
    * different value. Returns facts ordered newest-first.
+   *
+   * When `scope` is provided, only facts in the same scope (and same scope_target when
+   * non-null) are returned, preventing cross-scope contradiction detection.
    */
   findConflictingFacts(
     entity: string,
     key: string,
     value: string,
     excludeFactId: string,
+    scope?: string | null,
+    scopeTarget?: string | null,
   ): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
+    const scopeClause = scope
+      ? scopeTarget != null
+        ? "AND scope = ? AND scope_target = ?"
+        : "AND scope = ? AND scope_target IS NULL"
+      : "";
+    const baseParams: unknown[] = [entity, key, value, excludeFactId, nowSec];
+    const scopeParams: unknown[] = scope
+      ? scopeTarget != null
+        ? [scope, scopeTarget]
+        : [scope]
+      : [];
     const rows = this.liveDb
       .prepare(
         `SELECT * FROM facts
@@ -2775,9 +2800,10 @@ export class FactsDB {
            AND id != ?
            AND superseded_at IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
+           ${scopeClause}
          ORDER BY created_at DESC`,
       )
-      .all(entity, key, value, excludeFactId, nowSec) as Array<Record<string, unknown>>;
+      .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
     return rows.map((r) => this.rowToEntry(r));
   }
 
@@ -2819,6 +2845,9 @@ export class FactsDB {
    * Detect contradictions for a newly stored fact and record them.
    * Only runs when entity, key, and value are all non-empty.
    *
+   * Pass `scope` and `scopeTarget` (from the new fact) to restrict detection to the same
+   * memory scope, preventing cross-scope contradiction detection.
+   *
    * Returns an array of { contradictionId, oldFactId } for each contradiction found.
    */
   detectContradictions(
@@ -2826,10 +2855,12 @@ export class FactsDB {
     entity: string | null | undefined,
     key: string | null | undefined,
     value: string | null | undefined,
+    scope?: string | null,
+    scopeTarget?: string | null,
   ): Array<{ contradictionId: string; oldFactId: string }> {
     if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
 
-    const conflicting = this.findConflictingFacts(entity.trim(), key.trim(), value.trim(), newFactId);
+    const conflicting = this.findConflictingFacts(entity.trim(), key.trim(), value.trim(), newFactId, scope, scopeTarget);
     const results: Array<{ contradictionId: string; oldFactId: string }> = [];
 
     for (const old of conflicting) {
@@ -2916,22 +2947,42 @@ export class FactsDB {
       const newFact = this.getById(c.factIdNew);
       const oldFact = this.getById(c.factIdOld);
 
-      if (!newFact || !oldFact) {
-        // One or both facts deleted — treat as superseded
+      if (!newFact && !oldFact) {
+        // Both facts deleted — resolve as superseded, nothing further to do
         this.resolveContradiction(c.id, "superseded");
-        if (newFact && !oldFact) {
-          this.supersede(c.factIdOld, c.factIdNew);
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        continue;
+      }
+
+      if (!newFact && oldFact) {
+        // New/contradicting fact was deleted; old fact survives — keep it and restore confidence
+        this.resolveContradiction(c.id, "kept");
+        if (c.oldFactOriginalConfidence != null) {
+          this.liveDb
+            .prepare(`UPDATE facts SET confidence = ? WHERE id = ?`)
+            .run(c.oldFactOriginalConfidence, c.factIdOld);
         }
         autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
         continue;
       }
 
-      const newConf = newFact.confidence ?? 1.0;
+      if (newFact && !oldFact) {
+        // Old fact was deleted; new fact is authoritative — supersede
+        this.resolveContradiction(c.id, "superseded");
+        this.supersede(c.factIdOld, c.factIdNew);
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        continue;
+      }
+
+      // Both facts exist — compare them (all single-null cases handled above with continue)
+      const resolvedNew = newFact!;
+      const resolvedOld = oldFact!;
+      const newConf = resolvedNew.confidence ?? 1.0;
       // Use the original confidence before system reduction, if available
-      const oldConf = c.oldFactOriginalConfidence ?? oldFact.confidence ?? 1.0;
-      const newIsNewer = newFact.createdAt >= oldFact.createdAt;
+      const oldConf = c.oldFactOriginalConfidence ?? resolvedOld.confidence ?? 1.0;
+      const newIsNewer = resolvedNew.createdAt >= resolvedOld.createdAt;
       const newIsHigherConf = newConf > oldConf;
-      const newIsFromUser = newFact.source === "conversation" || newFact.source === "cli";
+      const newIsFromUser = resolvedNew.source === "conversation" || resolvedNew.source === "cli";
 
       if (newIsNewer && newIsHigherConf && newIsFromUser) {
         this.resolveContradiction(c.id, "superseded");
