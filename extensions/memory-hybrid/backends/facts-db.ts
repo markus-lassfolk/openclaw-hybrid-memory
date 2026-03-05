@@ -3103,7 +3103,7 @@ export class FactsDB {
              AND (expires_at IS NULL OR expires_at > ?)
              AND (
                (source_sessions IS NOT NULL AND (',' || source_sessions || ',' LIKE ? ESCAPE '\\'))
-               OR (entity IS NOT NULL AND entity = ?)
+               OR (entity IS NOT NULL AND lower(entity) = lower(?))
              )
            ORDER BY created_at DESC
            LIMIT 20`,
