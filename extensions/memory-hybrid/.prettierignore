@@ -1,0 +1,12 @@
+dist/
+package-lock.json
+
+# Existing TypeScript source files — will be formatted in a follow-up PR
+**/*.ts
+
+# Workflow files — not enforced by Prettier in this repo
+**/*.yml
+**/*.yaml
+
+# Markdown docs
+**/*.md
