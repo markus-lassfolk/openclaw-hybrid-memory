@@ -340,14 +340,14 @@ export function createPluginService(ctx: PluginServiceContext) {
               openai,
               cfg.passiveObserver,
               cfg.categories,
-              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir },
+              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement },
               api.logger,
             );
-            if (result.factsStored > 0 || result.factsExtracted > 0) {
+            if (result.factsStored > 0 || result.factsExtracted > 0 || result.factsReinforced > 0) {
               api.logger.info(
                 `memory-hybrid: passive-observer — scanned ${result.sessionsScanned} sessions, ` +
                 `${result.chunksProcessed} chunks, ${result.factsExtracted} extracted, ` +
-                `${result.factsStored} stored`,
+                `${result.factsStored} stored, ${result.factsReinforced} reinforced`,
               );
             }
           } catch (err) {
