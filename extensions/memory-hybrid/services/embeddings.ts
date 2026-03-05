@@ -59,7 +59,7 @@ export class Embeddings implements EmbeddingProvider {
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
-    this.batchSize = batchSize ?? 2048;
+    this.batchSize = batchSize || 2048;
     
     // Validate dimensions against known model limits and capabilities
     const modelMaxDimensions: Record<string, number> = {
@@ -193,7 +193,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     this.modelName = opts.model;
     this.dimensions = opts.dimensions;
     this.endpoint = (opts.endpoint ?? "http://localhost:11434").replace(/\/$/, "");
-    this.batchSize = opts.batchSize ?? 50;
+    this.batchSize = opts.batchSize || 50;
   }
 
   async embed(text: string): Promise<number[]> {
