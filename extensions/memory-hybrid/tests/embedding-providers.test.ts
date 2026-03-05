@@ -17,10 +17,12 @@ import {
 // Mock helpers
 // ---------------------------------------------------------------------------
 
-/** Build a mock OpenAI client that returns a fixed embedding vector. */
+/** Build a mock OpenAI client that returns a fixed embedding vector.
+ * Supports batch input: returns one copy of `vector` per input text. */
 function makeMockOpenAI(vector: number[]): import("openai").default {
-  const mockCreate = vi.fn().mockResolvedValue({
-    data: [{ embedding: vector }],
+  const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+    const count = Array.isArray(params.input) ? params.input.length : 1;
+    return Promise.resolve({ data: Array.from({ length: count }, () => ({ embedding: vector })) });
   });
   return {
     embeddings: { create: mockCreate },
@@ -77,7 +79,7 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(result).toEqual(vec);
   });
 
-  it("embedBatch() embeds each text independently", async () => {
+  it("embedBatch() returns correct number of results", async () => {
     const vec = [0.5, 0.6];
     const client = makeMockOpenAI(vec);
     const provider = new Embeddings(client, "text-embedding-3-small", 2);
@@ -85,6 +87,56 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(results).toHaveLength(3);
     expect(results[0]).toEqual(vec);
     expect(results[1]).toEqual(vec);
+    expect(results[2]).toEqual(vec);
+  });
+
+  it("embedBatch() makes a single batched API call (not N calls)", async () => {
+    const vec = [0.5, 0.6];
+    const client = makeMockOpenAI(vec);
+    const mockCreate = (client.embeddings.create as ReturnType<typeof vi.fn>);
+    const provider = new Embeddings(client, "text-embedding-3-small", 2);
+    await provider.embedBatch(["a", "b", "c"]);
+    expect(mockCreate).toHaveBeenCalledOnce();
+    const [callArg] = mockCreate.mock.calls[0] as [{ input: string[] }];
+    expect(callArg.input).toEqual(["a", "b", "c"]);
+  });
+
+  it("throws when dimensions exceed model max", () => {
+    const client = makeMockOpenAI([]);
+    expect(() => new Embeddings(client, "text-embedding-3-small", 2000)).toThrow(/exceed/i);
+    expect(() => new Embeddings(client, "text-embedding-3-large", 4000)).toThrow(/exceed/i);
+  });
+
+  it("does not throw when dimensions are within model max", () => {
+    const client = makeMockOpenAI([]);
+    expect(() => new Embeddings(client, "text-embedding-3-small", 1536)).not.toThrow();
+    expect(() => new Embeddings(client, "text-embedding-3-large", 3072)).not.toThrow();
+    expect(() => new Embeddings(client, "text-embedding-ada-002", 1536)).not.toThrow();
+  });
+
+  it("updates modelName when a fallback model succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      // Mock: always fail for text-embedding-3-small (exhausts withLLMRetry retries),
+      // succeed for text-embedding-ada-002
+      const mockCreate = vi.fn().mockImplementation((params: { model: string; input: string | string[] }) => {
+        if (params.model === "text-embedding-3-small") {
+          return Promise.reject(new Error("model unavailable"));
+        }
+        const count = Array.isArray(params.input) ? params.input.length : 1;
+        return Promise.resolve({ data: Array.from({ length: count }, () => ({ embedding: [0.1] })) });
+      });
+      const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+      const provider = new Embeddings(client, ["text-embedding-3-small", "text-embedding-ada-002"], 1);
+      expect(provider.modelName).toBe("text-embedding-3-small");
+      const embedPromise = provider.embed("test");
+      // Advance past all withLLMRetry delays (1s + 3s for 2 retries = 4s total)
+      await vi.advanceTimersByTimeAsync(5000);
+      await embedPromise;
+      expect(provider.modelName).toBe("text-embedding-ada-002");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -175,6 +227,16 @@ describe("OllamaEmbeddingProvider", () => {
     } as unknown as Response));
     const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 3 });
     await expect(p.embed("text")).rejects.toThrow(/missing 'embeddings'/);
+  });
+
+  it("embedBatch() throws when Ollama returns wrong number of embeddings", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ embeddings: [[0.1]] }), // 1 returned, 2 expected
+      text: async () => "",
+    } as Response));
+    const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 1 });
+    await expect(p.embedBatch(["a", "b"])).rejects.toThrow(/returned 1 embeddings for 2 inputs/);
   });
 
   it("respects custom endpoint", async () => {

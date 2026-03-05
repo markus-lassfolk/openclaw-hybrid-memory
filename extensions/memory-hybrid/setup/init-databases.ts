@@ -55,12 +55,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   function defaultOpenAIClient(): OpenAI {
     if (gatewayBaseUrl) {
+      const key = gatewayToken ?? cfg.embedding.apiKey;
+      if (!key) throw new UnconfiguredProviderError("openai", "openai/*");
       return getOrCreate(`openai:gateway:${gatewayBaseUrl}`, () => new OpenAI({
-        apiKey: gatewayToken ?? cfg.embedding.apiKey ?? "unused",
+        apiKey: key,
         baseURL: gatewayBaseUrl,
       }));
     }
-    return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey ?? "unused" }));
+    if (!cfg.embedding.apiKey) throw new UnconfiguredProviderError("openai", "openai/*");
+    return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey! }));
   }
 
   function resolveClient(model: string): { client: OpenAI; bareModel: string } {
@@ -107,7 +110,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
-      const apiKey = providerCfg.apiKey ?? "unused";
+      // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
+      const apiKey = providerCfg.apiKey ?? "no-key";
       const baseURL = providerCfg.baseURL;
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
@@ -145,7 +149,12 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   // Proxy that intercepts chat.completions.create and routes to the right provider client.
   // All other OpenAI methods (embeddings, etc.) are NOT proxied — embeddings use a separate client.
-  return new Proxy(new OpenAI({ apiKey: cfg.embedding.apiKey ?? "unused" }), {
+  // The proxy base is only accessed for non-chat methods (not used by this plugin directly).
+  // Only create it with a real key when one is available; otherwise omit to avoid "unused" placeholder.
+  const proxyBase = cfg.embedding.apiKey
+    ? new OpenAI({ apiKey: cfg.embedding.apiKey })
+    : new OpenAI({ apiKey: gatewayToken ?? "no-direct-openai-key" });
+  return new Proxy(proxyBase, {
     get(target, prop, receiver) {
       if (prop === "chat") {
         return {

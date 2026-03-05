@@ -1034,7 +1034,9 @@ export const hybridConfigSchema = {
     const singleModel = typeof embedding?.model === "string" ? embedding.model : DEFAULT_MODEL;
     const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
     let embeddingModels: string[] | undefined;
-    if (modelsRaw.length > 0 && embeddingProvider === "openai") {
+    // Parse models for all providers (#6): for openai, these are the model preference list;
+    // for ollama/onnx, these are the OpenAI fallback model names (used when apiKey is set).
+    if (modelsRaw.length > 0) {
       const valid: string[] = [];
       for (const m of modelsRaw) {
         try {
@@ -1066,6 +1068,10 @@ export const hybridConfigSchema = {
     } else if (embeddingProvider === "openai") {
       resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
     } else {
+      // Warn when falling back to 768 for an unknown ollama/onnx model (#5)
+      if (!EMBEDDING_DIMENSIONS[model]) {
+        console.warn(`memory-hybrid: embedding model '${model}' is not in the known-models list; defaulting to 768 dimensions. Set embedding.dimensions explicitly to suppress this warning.`);
+      }
       resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for unknown ollama models
     }
 
