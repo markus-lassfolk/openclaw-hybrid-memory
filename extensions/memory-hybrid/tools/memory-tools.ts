@@ -399,9 +399,14 @@ export function registerMemoryTools(
           };
         }
 
+        const contradictionStatus = new Map<string, boolean>();
+        for (const r of results) {
+          contradictionStatus.set(r.entry.id, factsDb.isContradicted(r.entry.id));
+        }
+
         const text = results
           .map((r, i) => {
-            const contradicted = factsDb.isContradicted(r.entry.id);
+            const contradicted = contradictionStatus.get(r.entry.id) ?? false;
             const prefix = contradicted ? "[⚠️ CONTRADICTED] " : "";
             return `${i + 1}. [${r.backend}/${r.entry.category}] ${prefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)`;
           })
@@ -419,7 +424,7 @@ export function registerMemoryTools(
           sourceDate: r.entry.sourceDate
             ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
             : undefined,
-          contradicted: factsDb.isContradicted(r.entry.id) || undefined,
+          contradicted: contradictionStatus.get(r.entry.id) || undefined,
         }));
 
         return {
@@ -974,7 +979,7 @@ export function registerMemoryTools(
         for (const { contradictionId, oldFactId } of contradictions) {
           if (eventLog) {
             eventLog.append({
-              sessionId: entry.id,
+              sessionId: api.context?.sessionId ?? "unknown",
               timestamp: new Date().toISOString(),
               eventType: "correction",
               content: {
