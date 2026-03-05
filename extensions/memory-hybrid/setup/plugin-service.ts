@@ -17,6 +17,7 @@ import {
   capturePluginError,
 } from "../services/error-reporter.js";
 import { walRemove } from "../services/wal-helpers.js";
+import { runPassiveObserver } from "../services/passive-observer.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
@@ -26,6 +27,7 @@ export interface PluginServiceContext {
   PLUGIN_ID: string;
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  embeddings: import("../services/embeddings.js").Embeddings;
   credentialsDb: CredentialsDB | null;
   proposalsDb: ProposalsDB | null;
   wal: WriteAheadLog | null;
@@ -43,6 +45,7 @@ export interface PluginServiceContext {
     languageKeywordsTimer: { value: ReturnType<typeof setInterval> | null };
     languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
     postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
+    passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
   };
 }
 
@@ -60,6 +63,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     PLUGIN_ID,
     factsDb,
     vectorDb,
+    embeddings,
     credentialsDb,
     proposalsDb,
     wal,
@@ -314,6 +318,54 @@ export function createPluginService(ctx: PluginServiceContext) {
         );
       }
 
+      // Passive observer: background fact extraction from session transcripts
+      if (cfg.passiveObserver.enabled) {
+        const { getLLMModelPreference } = await import("../config.js");
+        const observerModel =
+          cfg.passiveObserver.model ??
+          getLLMModelPreference(getCronModelConfig(cfg), "nano")[0] ??
+          getDefaultCronModel(getCronModelConfig(cfg), "nano");
+        const observerFallbacks = (() => {
+          const pref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+          return pref.length > 1 ? pref.slice(1) : undefined;
+        })();
+        const dbDir = dirname(resolvedSqlitePath);
+
+        const runObserver = async () => {
+          try {
+            const result = await runPassiveObserver(
+              factsDb,
+              vectorDb,
+              embeddings,
+              openai,
+              cfg.passiveObserver,
+              cfg.categories,
+              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir },
+              api.logger,
+            );
+            if (result.factsStored > 0 || result.factsExtracted > 0) {
+              api.logger.info(
+                `memory-hybrid: passive-observer — scanned ${result.sessionsScanned} sessions, ` +
+                `${result.chunksProcessed} chunks, ${result.factsExtracted} extracted, ` +
+                `${result.factsStored} stored`,
+              );
+            }
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: passive-observer run failed: ${err}`);
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
+              operation: "passive-observer-run",
+            });
+          }
+        };
+
+        const intervalMs = cfg.passiveObserver.intervalMinutes * 60_000;
+        timers.passiveObserverTimer.value = setInterval(() => void runObserver(), intervalMs);
+        api.logger.info(
+          `memory-hybrid: passive-observer enabled (model: ${observerModel}, interval: ${cfg.passiveObserver.intervalMinutes}m, minImportance: ${cfg.passiveObserver.minImportance})`,
+        );
+      }
+
       // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
       const versionFile = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
       timers.postUpgradeTimeout.value = setTimeout(() => {
@@ -400,6 +452,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         timers.languageKeywordsStartupTimeout.value = null;
       }
       if (timers.languageKeywordsTimer.value) { clearInterval(timers.languageKeywordsTimer.value); timers.languageKeywordsTimer.value = null; }
+      if (timers.passiveObserverTimer.value) { clearInterval(timers.passiveObserverTimer.value); timers.passiveObserverTimer.value = null; }
       if (timers.postUpgradeTimeout.value) {
         clearTimeout(timers.postUpgradeTimeout.value);
         timers.postUpgradeTimeout.value = null;
