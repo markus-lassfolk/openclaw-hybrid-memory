@@ -149,6 +149,7 @@ export async function runEpisodicConsolidation(
   const groups = groupEventsByEntity(events);
   let factsCreated = 0;
   let eventsConsolidated = 0;
+  const ephemeralSourceFactIds: string[] = [];
 
   for (const [entity, groupEvents] of groups) {
     if (groupEvents.length === 0) continue;
@@ -215,6 +216,7 @@ export async function runEpisodicConsolidation(
           expiresAt: nowSec - 1, // Immediately expired — will be pruned right away
           confidence: 0.5,
         });
+        ephemeralSourceFactIds.push(srcFact.id);
         // consolidated_fact -DERIVED_FROM-> source_fact (provenance)
         factsDb.createLink(consolidatedFact.id, srcFact.id, "DERIVED_FROM", 1.0);
       } catch (err) {
@@ -239,9 +241,11 @@ export async function runEpisodicConsolidation(
     );
   }
 
-  // Prune the immediately-expired ephemeral source facts.
-  // DERIVED_FROM links to them are preserved by design (see pruneExpired in facts-db.ts).
-  factsDb.pruneExpired();
+  // Delete only the ephemeral source facts created during this consolidation.
+  // DERIVED_FROM links to them are preserved by design (see delete() in facts-db.ts).
+  for (const id of ephemeralSourceFactIds) {
+    factsDb.delete(id);
+  }
 
   return { eventsConsolidated, factsCreated };
 }
