@@ -132,6 +132,12 @@ describe("detectFutureDate — 'next <weekday>'", () => {
     expect(result).not.toBeNull();
     expect(daysSince(result!)).toBeGreaterThan(7);
   });
+
+  it("detects 'next Thursday' on a Thursday as 14 days (same-day consistency)", () => {
+    const result = detectFutureDate("Call me next Thursday", ENABLED_CFG, NOW_MS);
+    expect(result).not.toBeNull();
+    expect(daysSince(result!)).toBe(14);
+  });
 });
 
 describe("detectFutureDate — 'next week/month/year'", () => {
@@ -427,5 +433,86 @@ describe("FactsDB — decayConfidence deletes low-confidence frozen facts that e
     const retrieved = db.getById(entry.id);
     expect(retrieved).not.toBeNull();
     expect(retrieved?.confidence).toBeCloseTo(0.15, 2);
+  });
+});
+
+describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
+  it("does NOT delete a frozen fact even if expires_at has passed", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    const freezeUntil = nowSec + 30 * 86400;
+
+    const entry = db.store({
+      text: "Meeting reminder for next Thursday",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "active",
+      decayFreezeUntil: freezeUntil,
+    });
+
+    const rawDb = db.getRawDb();
+    const expiresAt = nowSec - 1 * 86400;
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`)
+      .run(expiresAt, entry.id);
+
+    db.pruneExpired();
+
+    const retrieved = db.getById(entry.id);
+    expect(retrieved).not.toBeNull();
+  });
+
+  it("DOES delete a fact with expired expires_at and no freeze", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+
+    const entry = db.store({
+      text: "Old expired fact",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "active",
+    });
+
+    const rawDb = db.getRawDb();
+    const expiresAt = nowSec - 1 * 86400;
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`)
+      .run(expiresAt, entry.id);
+
+    db.pruneExpired();
+
+    const retrieved = db.getById(entry.id);
+    expect(retrieved).toBeNull();
+  });
+
+  it("DOES delete a fact with expired expires_at and expired freeze", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    const pastFreeze = nowSec - 5 * 86400;
+
+    const entry = db.store({
+      text: "Old fact with expired freeze",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "active",
+      decayFreezeUntil: pastFreeze,
+    });
+
+    const rawDb = db.getRawDb();
+    const expiresAt = nowSec - 1 * 86400;
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`)
+      .run(expiresAt, entry.id);
+
+    db.pruneExpired();
+
+    const retrieved = db.getById(entry.id);
+    expect(retrieved).toBeNull();
   });
 });
