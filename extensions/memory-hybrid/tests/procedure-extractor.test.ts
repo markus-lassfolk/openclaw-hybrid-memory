@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   parseSessionJsonl,
   minimalRecipe,
-  type ParsedSession,
 } from "../services/procedure-extractor.js";
 import type { ProcedureStep } from "../types/memory.js";
 
@@ -58,7 +57,7 @@ describe("procedure-extractor", () => {
           },
         }),
       ];
-      const result = parseSessionJsonl(lines.join("\n"), "session-1") as ParsedSession | null;
+      const result = parseSessionJsonl(lines.join("\n"), "session-1");
       expect(result).not.toBeNull();
       expect(result!.taskIntent).toBe("Check Moltbook notifications");
       expect(result!.steps).toHaveLength(2);
@@ -95,7 +94,7 @@ describe("procedure-extractor", () => {
           },
         }),
       ];
-      const result = parseSessionJsonl(lines.join("\n"), "s2") as ParsedSession | null;
+      const result = parseSessionJsonl(lines.join("\n"), "s2");
       expect(result).not.toBeNull();
       expect(result!.success).toBe(false);
       expect(result!.errorMessage).toContain("404");
@@ -119,7 +118,7 @@ describe("procedure-extractor", () => {
           },
         }),
       ];
-      const result = parseSessionJsonl(lines.join("\n"), "s3") as ParsedSession | null;
+      const result = parseSessionJsonl(lines.join("\n"), "s3");
       expect(result).not.toBeNull();
       expect(result!.taskIntent).toHaveLength(300);
     });
