@@ -397,12 +397,7 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": [
-          "essential",
-          "normal",
-          "expert",
-          "full"
-        ],
+        "enum": ["essential", "normal", "expert", "full"],
         "description": "Configuration preset. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
@@ -414,15 +409,10 @@
           },
           "model": {
             "type": "string",
-            "enum": [
-              "text-embedding-3-small",
-              "text-embedding-3-large"
-            ]
+            "enum": ["text-embedding-3-small", "text-embedding-3-large"]
           }
         },
-        "required": [
-          "apiKey"
-        ]
+        "required": ["apiKey"]
       },
       "lanceDbPath": {
         "type": "string"
@@ -453,13 +443,7 @@
               },
               "injectionFormat": {
                 "type": "string",
-                "enum": [
-                  "full",
-                  "short",
-                  "minimal",
-                  "progressive",
-                  "progressive_hybrid"
-                ]
+                "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
               },
               "progressiveMaxCandidates": {
                 "type": "number"
@@ -644,9 +628,7 @@
           },
           "store": {
             "type": "string",
-            "enum": [
-              "sqlite"
-            ]
+            "enum": ["sqlite"]
           },
           "encryptionKey": {
             "type": "string",
@@ -698,10 +680,7 @@
           },
           "mode": {
             "type": "string",
-            "enum": [
-              "community",
-              "self-hosted"
-            ],
+            "enum": ["community", "self-hosted"],
             "default": "community",
             "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance."
           },
@@ -730,10 +709,7 @@
             "description": "Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag for readable reports."
           }
         },
-        "required": [
-          "enabled",
-          "consent"
-        ],
+        "required": ["enabled", "consent"],
         "description": "Opt-in error reporting to GlitchTip/Sentry. See docs/ERROR-REPORTING.md."
       },
       "distill": {
@@ -842,11 +818,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": [
-                "SOUL.md",
-                "IDENTITY.md",
-                "USER.md"
-              ]
+              "enum": ["SOUL.md", "IDENTITY.md", "USER.md"]
             },
             "description": "Identity files that can be modified via proposals"
           },
@@ -1035,11 +1007,7 @@
           },
           "defaultStoreScope": {
             "type": "string",
-            "enum": [
-              "global",
-              "agent",
-              "auto"
-            ],
+            "enum": ["global", "agent", "auto"],
             "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
           }
         },
@@ -1110,8 +1078,6 @@
         "description": "Search tweaks: HyDE query expansion"
       }
     },
-    "required": [
-      "embedding"
-    ]
+    "required": ["embedding"]
   }
 }
