@@ -381,11 +381,18 @@ export type ErrorReportingConfig = {
 
 export type HybridMemoryConfig = {
   embedding: {
-    provider: "openai";
+    provider: "openai" | "ollama" | "onnx";
     model: string;
-    apiKey: string;
-    /** Optional ordered preference list (gateway fallback). First model defines vector dimension; all must have same dimension. */
+    /** Required for openai provider; optional for ollama/onnx. */
+    apiKey?: string;
+    /** Optional ordered preference list (openai gateway fallback). First model defines vector dimension; all must have same dimension. */
     models?: string[];
+    /** Vector dimensions for this model (required for ollama/onnx; auto-resolved for known openai models). */
+    dimensions: number;
+    /** Ollama endpoint URL (default: http://localhost:11434). Only used when provider='ollama'. */
+    endpoint?: string;
+    /** Number of texts to embed per batch call (default: 50). */
+    batchSize: number;
   };
   lanceDbPath: string;
   sqlitePath: string;
@@ -798,11 +805,21 @@ const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-ada-002": 1536,
   // Local / HuggingFace models that users may have previously generated vectors with
   "all-MiniLM-L6-v2": 384,
+  // Common Ollama embedding models
+  "nomic-embed-text": 768,
+  "mxbai-embed-large": 1024,
+  "all-minilm": 384,
+  "snowflake-arctic-embed": 1024,
+  "bge-m3": 1024,
+  "bge-large": 1024,
 };
 
-export function vectorDimsForModel(model: string): number {
+export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
-  if (!dims) throw new Error(`Unsupported embedding model: ${model}`);
+  if (!dims) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`Unsupported embedding model: ${model}`);
+  }
   return dims;
 }
 
@@ -988,18 +1005,31 @@ export const hybridConfigSchema = {
     }
 
     const embedding = cfg.embedding as Record<string, unknown> | undefined;
-    if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
-    }
-    const rawKey = (embedding.apiKey as string).trim();
-    if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
-      throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
+    const embeddingProvider = (typeof embedding?.provider === "string" &&
+      ["openai", "ollama", "onnx"].includes(embedding.provider))
+      ? (embedding.provider as "openai" | "ollama" | "onnx")
+      : "openai";
+
+    // apiKey is required for openai provider only
+    let resolvedApiKey: string | undefined;
+    if (embeddingProvider === "openai") {
+      if (!embedding || typeof embedding.apiKey !== "string") {
+        throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
+      }
+      const rawKey = (embedding.apiKey as string).trim();
+      if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
+        throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
+      }
+      resolvedApiKey = resolveEnvVars(rawKey);
+    } else if (embedding && typeof embedding.apiKey === "string" && (embedding.apiKey as string).trim().length >= 10) {
+      // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
+      resolvedApiKey = resolveEnvVars((embedding.apiKey as string).trim());
     }
 
-    const singleModel = typeof embedding.model === "string" ? embedding.model : DEFAULT_MODEL;
-    const modelsRaw = Array.isArray(embedding.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
+    const singleModel = typeof embedding?.model === "string" ? embedding.model : DEFAULT_MODEL;
+    const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
     let embeddingModels: string[] | undefined;
-    if (modelsRaw.length > 0) {
+    if (modelsRaw.length > 0 && embeddingProvider === "openai") {
       const valid: string[] = [];
       for (const m of modelsRaw) {
         try {
@@ -1020,7 +1050,26 @@ export const hybridConfigSchema = {
       }
     }
     const model = embeddingModels?.[0] ?? singleModel;
-    vectorDimsForModel(model);
+
+    // Resolve vector dimensions: explicit config takes priority, then look up from known models
+    const configDimensions = typeof embedding?.dimensions === "number" && embedding.dimensions > 0
+      ? embedding.dimensions
+      : undefined;
+    let resolvedDimensions: number;
+    if (configDimensions !== undefined) {
+      resolvedDimensions = configDimensions;
+    } else if (embeddingProvider === "openai") {
+      resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
+    } else {
+      resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for unknown ollama models
+    }
+
+    const resolvedEndpoint = typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
+      ? embedding.endpoint.trim()
+      : undefined;
+    const resolvedBatchSize = typeof embedding?.batchSize === "number" && embedding.batchSize > 0
+      ? Math.floor(embedding.batchSize)
+      : 50;
 
     // Parse custom categories
     const customCategories: string[] = Array.isArray(cfg.categories)
@@ -1770,10 +1819,13 @@ export const hybridConfigSchema = {
 
     return {
       embedding: {
-        provider: "openai",
+        provider: embeddingProvider,
         model,
-        apiKey: resolveEnvVars(embedding.apiKey),
+        apiKey: resolvedApiKey,
         models: embeddingModels,
+        dimensions: resolvedDimensions,
+        endpoint: resolvedEndpoint,
+        batchSize: resolvedBatchSize,
       },
       lanceDbPath:
         typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry } from "../types/memory.js";
 import type { MemoryToSkillsConfig } from "../config.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { slugifyForSkill } from "../utils/text.js";
@@ -265,7 +265,7 @@ export function parseSynthesizedSkill(raw: string): { name: string; description:
  */
 export async function runMemoryToSkills(
   factsDb: FactsDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   config: MemoryToSkillsConfig,
   opts: SkillsSuggestOptions,

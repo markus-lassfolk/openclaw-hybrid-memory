@@ -10,7 +10,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
@@ -22,7 +22,7 @@ import type { PendingLLMWarnings } from "../services/chat.js";
 export interface HooksContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;

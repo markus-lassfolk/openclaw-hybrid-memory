@@ -7,7 +7,7 @@ import { writeFileSync } from "fs";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type { MemoryCategory } from "../types/memory.js";
 import { tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "./auto-capture.js";
 import { extractTags } from "../utils/tags.js";
@@ -19,7 +19,7 @@ export const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrat
 export interface MigrateCredentialsOptions {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   credentialsDb: CredentialsDB;
   migrationFlagPath: string;
   markDone: boolean;

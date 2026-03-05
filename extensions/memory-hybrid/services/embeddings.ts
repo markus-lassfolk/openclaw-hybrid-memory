@@ -1,15 +1,28 @@
 /**
- * Embedding service: OpenAI implementation and shared helpers.
- * Uses an EmbeddingProvider interface so alternative providers can be added later.
+ * Embedding service: OpenAI and Ollama implementations, provider abstraction and factory.
  */
 
 import OpenAI from "openai";
 import { createHash } from "node:crypto";
 import { capturePluginError } from "./error-reporter.js";
 
-/** Interface for embedding providers (enables swapping OpenAI for other backends). */
+/** Full embedding provider interface — implementations must expose these. */
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
+  embedBatch(texts: string[]): Promise<number[][]>;
+  readonly dimensions: number;
+  readonly modelName: string;
+}
+
+/** Config shape accepted by createEmbeddingProvider (matches HybridMemoryConfig.embedding). */
+export interface EmbeddingConfig {
+  provider: "openai" | "ollama" | "onnx";
+  model: string;
+  apiKey?: string;
+  models?: string[];
+  dimensions: number;
+  endpoint?: string;
+  batchSize: number;
 }
 
 /** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
@@ -20,22 +33,30 @@ function hashText(text: string): string {
   return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
-/** OpenAI-based embedding provider (uses gateway client when provided). Optional in-memory cache. Supports model preference list (try in order on failure). */
+/**
+ * OpenAI-based embedding provider.
+ * Uses a cache, supports model preference lists (try in order on failure).
+ */
 export class Embeddings implements EmbeddingProvider {
   private client: OpenAI;
   private cache = new Map<string, number[]>();
   /** Ordered list: try first model, on failure try next (all must produce same vector dimension). */
   private readonly models: string[];
+  readonly dimensions: number;
+  readonly modelName: string;
 
   constructor(
     clientOrApiKey: OpenAI | string,
     modelOrModels: string | string[],
+    dimensions?: number,
   ) {
     this.client = typeof clientOrApiKey === "string"
       ? new OpenAI({ apiKey: clientOrApiKey })
       : clientOrApiKey;
     this.models = Array.isArray(modelOrModels) ? modelOrModels : [modelOrModels];
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
+    this.modelName = this.models[0];
+    this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
   }
 
   async embed(text: string): Promise<number[]> {
@@ -80,6 +101,161 @@ export class Embeddings implements EmbeddingProvider {
     });
     throw lastErr!;
   }
+
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    return Promise.all(texts.map((t) => this.embed(t)));
+  }
+}
+
+/**
+ * Ollama-based embedding provider.
+ * Calls Ollama REST API (POST /api/embed) — no external API key required.
+ */
+export class OllamaEmbeddingProvider implements EmbeddingProvider {
+  readonly dimensions: number;
+  readonly modelName: string;
+  private readonly endpoint: string;
+  private readonly batchSize: number;
+
+  constructor(opts: {
+    model: string;
+    dimensions: number;
+    endpoint?: string;
+    batchSize?: number;
+  }) {
+    this.modelName = opts.model;
+    this.dimensions = opts.dimensions;
+    this.endpoint = (opts.endpoint ?? "http://localhost:11434").replace(/\/$/, "");
+    this.batchSize = opts.batchSize ?? 50;
+  }
+
+  async embed(text: string): Promise<number[]> {
+    const results = await this.embedBatch([text]);
+    return results[0];
+  }
+
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    const allResults: number[][] = [];
+    for (let i = 0; i < texts.length; i += this.batchSize) {
+      const batch = texts.slice(i, i + this.batchSize);
+      let resp: Response;
+      try {
+        resp = await fetch(`${this.endpoint}/api/embed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: this.modelName, input: batch }),
+        });
+      } catch (err) {
+        throw new Error(`Ollama connection failed (${this.endpoint}): ${err}`);
+      }
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        throw new Error(`Ollama embed failed: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`);
+      }
+      const data = await resp.json() as { embeddings: number[][] };
+      if (!Array.isArray(data.embeddings)) {
+        throw new Error(`Ollama embed response missing 'embeddings' array`);
+      }
+      allResults.push(...data.embeddings);
+    }
+    return allResults;
+  }
+}
+
+/**
+ * Wrapper that tries a primary provider and switches permanently to a fallback on first failure.
+ * Useful for Ollama → OpenAI fallback when Ollama is temporarily unavailable.
+ */
+export class FallbackEmbeddingProvider implements EmbeddingProvider {
+  private active: EmbeddingProvider;
+  private readonly fallback: EmbeddingProvider | null;
+  private switched = false;
+  private readonly onSwitch?: (err: unknown) => void;
+
+  constructor(
+    primary: EmbeddingProvider,
+    fallback: EmbeddingProvider | null,
+    onSwitch?: (err: unknown) => void,
+  ) {
+    this.active = primary;
+    this.fallback = fallback;
+    this.onSwitch = onSwitch;
+  }
+
+  get dimensions(): number { return this.active.dimensions; }
+  get modelName(): string { return this.active.modelName; }
+
+  async embed(text: string): Promise<number[]> {
+    if (this.switched || !this.fallback) {
+      return this.active.embed(text);
+    }
+    try {
+      return await this.active.embed(text);
+    } catch (err) {
+      this.onSwitch?.(err);
+      this.active = this.fallback;
+      this.switched = true;
+      return this.active.embed(text);
+    }
+  }
+
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    if (this.switched || !this.fallback) {
+      return this.active.embedBatch(texts);
+    }
+    try {
+      return await this.active.embedBatch(texts);
+    } catch (err) {
+      this.onSwitch?.(err);
+      this.active = this.fallback;
+      this.switched = true;
+      return this.active.embedBatch(texts);
+    }
+  }
+}
+
+/**
+ * Factory: creates the right EmbeddingProvider from plugin config.
+ * - provider='ollama' → OllamaEmbeddingProvider (with optional OpenAI fallback if apiKey set)
+ * - provider='openai' → Embeddings (OpenAI)
+ * - provider='onnx'   → not yet implemented; falls back to OpenAI when apiKey available
+ */
+export function createEmbeddingProvider(
+  cfg: EmbeddingConfig,
+  onFallback?: (err: unknown) => void,
+): EmbeddingProvider {
+  const { provider, model, apiKey, models, dimensions, endpoint, batchSize } = cfg;
+
+  if (provider === "ollama") {
+    const primary = new OllamaEmbeddingProvider({ model, dimensions, endpoint, batchSize });
+    // Optional fallback to OpenAI when a key is provided
+    if (apiKey) {
+      const openaiClient = new OpenAI({ apiKey });
+      const openaiModels = models?.length ? models : [model];
+      const fallback = new Embeddings(openaiClient, openaiModels, dimensions);
+      return new FallbackEmbeddingProvider(primary, fallback, onFallback);
+    }
+    return primary;
+  }
+
+  if (provider === "openai") {
+    if (!apiKey) throw new Error("OpenAI embedding provider requires embedding.apiKey");
+    const openaiClient = new OpenAI({ apiKey });
+    const openaiModels = models?.length ? models : [model];
+    return new Embeddings(openaiClient, openaiModels, dimensions);
+  }
+
+  if (provider === "onnx") {
+    // ONNX runtime not yet implemented — fall back to OpenAI if key available
+    if (apiKey) {
+      const openaiClient = new OpenAI({ apiKey });
+      const openaiModels = models?.length ? models : [model];
+      return new Embeddings(openaiClient, openaiModels, dimensions);
+    }
+    throw new Error("ONNX embedding provider is not yet implemented. Set embedding.apiKey to fall back to OpenAI, or use provider='ollama'.");
+  }
+
+  throw new Error(`Unknown embedding provider: '${provider as string}'. Valid options: openai, ollama, onnx.`);
 }
 
 /** Centralized embedding with error handling. Returns null on failure and optionally logs. */

@@ -9,7 +9,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
@@ -114,7 +114,7 @@ export function parsePatternsFromReflectionResponse(rawResponse: string): string
 export async function runReflection(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   config: ReflectionConfig,
   opts: ReflectionOptions,
@@ -300,7 +300,7 @@ export async function runReflection(
 export async function runReflectionRules(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -453,7 +453,7 @@ export async function runReflectionRules(
 export async function runReflectionMeta(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },

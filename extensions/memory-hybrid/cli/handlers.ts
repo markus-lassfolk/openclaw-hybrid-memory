@@ -20,7 +20,7 @@ import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } f
 import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
@@ -250,7 +250,7 @@ function relativeTime(ms: number): string {
 export interface HandlerContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;

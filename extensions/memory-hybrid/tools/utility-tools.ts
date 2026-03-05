@@ -5,7 +5,7 @@ import type OpenAI from "openai";
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { resolveReflectionModelAndFallbacks } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
@@ -14,7 +14,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 export interface PluginContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   wal: WriteAheadLog | null;
@@ -25,7 +25,7 @@ export interface PluginContext {
 export type RunReflectionFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
   opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[] },
@@ -35,7 +35,7 @@ export type RunReflectionFn = (
 export type RunReflectionRulesFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
@@ -44,7 +44,7 @@ export type RunReflectionRulesFn = (
 export type RunReflectionMetaFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }

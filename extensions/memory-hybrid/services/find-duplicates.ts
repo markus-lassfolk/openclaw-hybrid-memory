@@ -5,7 +5,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import { safeEmbed } from "./embeddings.js";
 import { isStructuredForConsolidation } from "./consolidation.js";
 
@@ -24,7 +24,7 @@ export interface FindDuplicatesResult {
 export async function runFindDuplicates(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   safeEmbedFn: typeof safeEmbed,
   opts: FindDuplicatesOptions,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
