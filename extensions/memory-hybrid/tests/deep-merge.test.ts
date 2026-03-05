@@ -58,7 +58,7 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
     expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
     // Target should not have constructor key added
     expect(target.constructor).toBeDefined(); // constructor exists naturally on objects
-    expect((target.constructor as Record<string, unknown>).prototype).not.toHaveProperty("isAdmin");
+    expect((target.constructor as unknown as Record<string, unknown>).prototype).not.toHaveProperty("isAdmin");
   });
 
   it("blocks prototype key from being merged", () => {
