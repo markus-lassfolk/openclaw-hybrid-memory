@@ -280,6 +280,22 @@ export type GraphRetrievalConfig = {
   maxExpandedResults: number;
 };
 
+/** Nightly dream cycle: automated prune → consolidate → reflect pipeline (Issue #143). */
+export type NightlyCycleConfig = {
+  /** Enable the nightly dream cycle (default: false). */
+  enabled: boolean;
+  /** Cron expression for nightly run (default: "45 2 * * *" = 2:45 AM). */
+  schedule: string;
+  /** Reflection window in days (default: 7). */
+  reflectWindowDays: number;
+  /** Prune mode: "expired" = pruneExpired only, "decay" = decayConfidence only, "both" = both (default: "both"). */
+  pruneMode: "expired" | "decay" | "both";
+  /** LLM model for reflection step (default: resolved from llm config). */
+  model?: string;
+  /** Days before consolidating episodic events into facts (default: 7). */
+  consolidateAfterDays: number;
+};
+
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
 export type AmbientConfig = {
   /** Enable enhanced ambient retrieval (default: false). */
@@ -480,6 +496,8 @@ export type HybridMemoryConfig = {
 
 
 
+  /** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
+  nightlyCycle: NightlyCycleConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1850,6 +1868,27 @@ export const hybridConfigSchema = {
           : 20,
     };
 
+    // Parse nightly dream cycle config (Issue #143, default: disabled)
+    const nightlyCycleRaw = cfg.nightlyCycle as Record<string, unknown> | undefined;
+    const nightlyCycle: NightlyCycleConfig = {
+      enabled: nightlyCycleRaw?.enabled === true,
+      schedule: typeof nightlyCycleRaw?.schedule === "string" && nightlyCycleRaw.schedule.trim().length > 0
+        ? nightlyCycleRaw.schedule.trim()
+        : "45 2 * * *",
+      reflectWindowDays: typeof nightlyCycleRaw?.reflectWindowDays === "number" && nightlyCycleRaw.reflectWindowDays >= 1
+        ? Math.min(90, Math.floor(nightlyCycleRaw.reflectWindowDays))
+        : 7,
+      pruneMode: (nightlyCycleRaw?.pruneMode === "expired" || nightlyCycleRaw?.pruneMode === "decay" || nightlyCycleRaw?.pruneMode === "both")
+        ? nightlyCycleRaw.pruneMode as "expired" | "decay" | "both"
+        : "both",
+      model: typeof nightlyCycleRaw?.model === "string" && nightlyCycleRaw.model.trim().length > 0
+        ? nightlyCycleRaw.model.trim()
+        : undefined,
+      consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
+        ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
+        : 7,
+    };
+
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
     const activeTask: ActiveTaskConfig = {
       enabled: activeTaskRaw?.enabled !== false,
@@ -1928,6 +1967,7 @@ export const hybridConfigSchema = {
       ambient,
       graphRetrieval,
       futureDateProtection,
+      nightlyCycle,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
