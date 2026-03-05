@@ -1,0 +1,101 @@
+name: Auto-create PR for bot fix branches
+
+on:
+  push:
+    branches:
+      - 'bugfix/**'
+      - 'fix/**'
+      - 'hotfix/**'
+      - 'copilot-fix/**'
+      - 'cursor-agent/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  create-pr:
+    name: Create PR if none exists
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create PR for bot push
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = context.ref.replace('refs/heads/', '');
+
+            // IMPORTANT: Keep this list in sync with copilot-automerge.yml
+            const BOT_AUTHORS = [
+              'copilot[bot]',
+              'cursor[bot]',
+              'cursor-agent',
+              'github-actions[bot]',
+            ];
+
+            // Identify the actor/sender/pusher (prefer non-spoofable identifiers)
+            const actor = context.actor;
+            const senderLogin = context.payload.sender?.login ?? '';
+            const senderType = context.payload.sender?.type ?? '';
+            const pusher = context.payload.pusher?.name ?? '';
+            console.log(
+              `Push to '${branch}' by actor='${actor}', sender='${senderLogin}', pusher='${pusher}', senderType='${senderType}'`
+            );
+
+            const BOT_BASES = BOT_AUTHORS.map(b => b.replace('[bot]', ''));
+            const isKnownBotId = (id) =>
+              !!id && (BOT_AUTHORS.includes(id) || BOT_BASES.includes(id));
+            const isBot =
+              senderType === 'Bot' ||
+              isKnownBotId(actor) ||
+              isKnownBotId(senderLogin) ||
+              isKnownBotId(pusher);
+
+            if (!isBot) {
+              console.log('Pusher is not a known bot, skipping PR creation.');
+              return;
+            }
+
+            // Check if a PR already exists for this branch
+            const { data: existingPRs } = await github.rest.pulls.list({
+              owner, repo,
+              state: 'open',
+              head: `${owner}:${branch}`,
+            });
+
+            if (existingPRs.length > 0) {
+              console.log(`PR already exists: #${existingPRs[0].number}`);
+              return;
+            }
+
+            // Get the latest commit message to use as PR title
+            const { data: commit } = await github.rest.repos.getCommit({
+              owner, repo, ref: branch,
+            });
+
+            const commitMsg = commit.commit.message.split('\n')[0];
+            const title = commitMsg.length > 72
+              ? commitMsg.slice(0, 72) + '…'
+              : commitMsg;
+
+            const body = `Automated PR created by bot push to \`${branch}\`.
+
+## Changes
+
+${commit.commit.message}
+
+---
+*This PR was auto-created and is eligible for auto-merge once CI passes and all review threads are resolved.*`;
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner, repo,
+              title,
+              body,
+              head: branch,
+              base: 'main',
+            });
+
+            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
