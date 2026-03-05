@@ -17,6 +17,7 @@ import type { FindDuplicatesResult } from "../cli/types.js";
 import { runFindDuplicates } from "../services/find-duplicates.js";
 import { runConsolidate } from "../services/consolidation.js";
 import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
+import { runDreamCycle, type DreamCycleResult } from "../services/dream-cycle.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runExport } from "../services/export-memory.js";
@@ -156,6 +157,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem reflect",
   "hybrid-mem reflect-rules",
   "hybrid-mem reflect-meta",
+  "hybrid-mem dream-cycle",
   "hybrid-mem verify",
   "hybrid-mem credentials migrate-to-vault",
   "hybrid-mem distill-window",
@@ -208,6 +210,7 @@ export interface CliContextServices {
     sources?: string[];
     mode?: "replace" | "additive";
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
+  runDreamCycle: () => Promise<DreamCycleResult>;
   getMemoryCategories: () => string[];
   mergeResults: HybridMemCliContext["mergeResults"];
   parseSourceDate: (v: string | number | null | undefined) => number | null;
@@ -222,30 +225,33 @@ export interface HybridMemCliRegistrationContext {
   openai: HandlerContext["openai"];
   cfg: HandlerContext["cfg"];
   credentialsDb: HandlerContext["credentialsDb"];
+  aliasDb: HandlerContext["aliasDb"];
   wal: HandlerContext["wal"];
   proposalsDb: HandlerContext["proposalsDb"];
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;
   detectCategory: HandlerContext["detectCategory"];
+  /** Optional event log for episodic consolidation in dream cycle. */
+  eventLog?: import("../backends/event-log.js").EventLog | null;
 }
 
 function buildCliContextServices(
   ctx: HybridMemCliRegistrationContext,
   api: ClawdbotPluginApi,
 ): CliContextServices {
-  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
   return {
     runFindDuplicates: (opts) =>
       runFindDuplicates(factsDb, vectorDb, embeddings, safeEmbed, opts, api.logger),
     runConsolidate: (opts) => {
-      // Skip if API key is missing (OpenAI provider requires API key)
-      if (!cfg.embedding?.apiKey) {
+      // Skip if OpenAI provider is configured but API key is missing
+      if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
         return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
       }
-      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger);
+      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb);
     },
     runReflection: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
@@ -287,6 +293,26 @@ function buildCliContextServices(
           schemaVersion: versionInfo.schemaVersion,
         }),
       ),
+    runDreamCycle: () => {
+      const { defaultModel } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
+      return runDreamCycle(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        ctx.eventLog ?? null,
+        {
+          enabled: cfg.nightlyCycle.enabled,
+          schedule: cfg.nightlyCycle.schedule,
+          reflectWindowDays: cfg.nightlyCycle.reflectWindowDays,
+          pruneMode: cfg.nightlyCycle.pruneMode,
+          model: dreamModel,
+          consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
+        },
+        logSink,
+      );
+    },
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,
     parseSourceDate,
@@ -614,6 +640,7 @@ export function createHybridMemCliContext(
   return {
     factsDb: handlerCtx.factsDb,
     vectorDb: handlerCtx.vectorDb,
+    aliasDb: handlerCtx.aliasDb,
     versionInfo: services.versionInfo,
     embeddings: handlerCtx.embeddings,
     mergeResults: services.mergeResults,
@@ -647,6 +674,7 @@ export function createHybridMemCliContext(
     runReflection: services.runReflection,
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
+    runDreamCycle: services.runDreamCycle,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
       model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),

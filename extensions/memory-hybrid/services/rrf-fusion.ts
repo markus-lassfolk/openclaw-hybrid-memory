@@ -19,7 +19,7 @@ export interface RankedResult {
   /** 1-based rank within the strategy's result list (1 = best). */
   rank: number;
   /** Which strategy produced this result. */
-  source: "semantic" | "fts5" | "graph";
+  source: "semantic" | "fts5" | "graph" | "aliases";
 }
 
 /** A fused result after RRF combining and post-RRF score adjustments. */

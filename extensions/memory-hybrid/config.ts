@@ -268,6 +268,32 @@ export type SearchConfig = {
   hydeModel?: string;
 };
 
+/** Topic cluster detection configuration (Issue #146). */
+export type ClustersConfig = {
+  /** Enable topic cluster detection (default: true). */
+  enabled: boolean;
+  /** Minimum number of facts to form a cluster (default: 3). */
+  minClusterSize: number;
+  /** Reserved: Days between full re-cluster runs; 0 = disabled (default: 7). Currently not used by any automatic scheduling. */
+  refreshIntervalDays: number;
+  /** Reserved: Model for label generation; null = rule-based only (default: null). Currently not passed to detectClusters. */
+  labelModel: string | null;
+};
+
+/** Memory health dashboard configuration (Issue #148). */
+export type HealthConfig = {
+  /** Enable memory_health tool (default: true). */
+  enabled: boolean;
+};
+
+/** Knowledge gap analysis configuration (Issue #141). */
+export type GapsConfig = {
+  /** Enable the memory_gaps tool (default: true when graph is enabled). */
+  enabled: boolean;
+  /** Minimum cosine similarity to suggest a missing link (default: 0.8). */
+  similarityThreshold: number;
+};
+
 /** GraphRAG retrieval configuration (Issue #145). */
 export type GraphRetrievalConfig = {
   /** Enable GraphRAG expansion in memory_recall (default: true). */
@@ -278,6 +304,40 @@ export type GraphRetrievalConfig = {
   maxExpandDepth: number;
   /** Maximum number of graph-expanded results appended to direct matches (default: 20). */
   maxExpandedResults: number;
+};
+
+/** Nightly dream cycle: automated prune → consolidate → reflect pipeline (Issue #143). */
+export type NightlyCycleConfig = {
+  /** Enable the nightly dream cycle (default: false). */
+  enabled: boolean;
+  /** Cron expression for nightly run (default: "45 2 * * *" = 2:45 AM). */
+  schedule: string;
+  /** Reflection window in days (default: 7). */
+  reflectWindowDays: number;
+  /** Prune mode: "expired" = pruneExpired only, "decay" = decayConfidence only, "both" = both (default: "both"). */
+  pruneMode: "expired" | "decay" | "both";
+  /** LLM model for reflection step (default: resolved from llm config). */
+  model?: string;
+  /** Days before consolidating episodic events into facts (default: 7). */
+  consolidateAfterDays: number;
+};
+
+/** Multi-hook retrieval aliases (Issue #149). */
+export type AliasesConfig = {
+  /** Enable alias generation and embedding search (default: false). */
+  enabled: boolean;
+  /** Maximum aliases per fact (default: 5). */
+  maxAliases: number;
+  /** Model for alias generation; when unset, runtime uses getDefaultCronModel(cfg, "nano"). */
+  model?: string;
+};
+
+/** Shortest-path traversal configuration (Issue #140). */
+export type PathConfig = {
+  /** Enable memory_path tool (default: true). */
+  enabled: boolean;
+  /** Hard cap on maxDepth accepted by memory_path (default: 10). */
+  maxPathDepth: number;
 };
 
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
@@ -292,6 +352,20 @@ export type AmbientConfig = {
   maxQueriesPerTrigger: number;
   /** Token budget for ambient context injection (default: 2000). */
   budgetTokens: number;
+};
+
+/** Confidence reinforcement on repeated mentions (Issue #147). */
+export type ReinforcementConfig = {
+  /** Enable confidence reinforcement (default: true). */
+  enabled: boolean;
+  /** Confidence delta applied when a semantically similar fact is stored again (default: 0.1). */
+  passiveBoost: number;
+  /** Confidence delta applied when a fact is retrieved via memory_recall (default: 0.05). */
+  activeBoost: number;
+  /** Upper cap for confidence after reinforcement (default: 1.0). */
+  maxConfidence: number;
+  /** Cosine similarity threshold above which a new fact is treated as a repeat of an existing one (default: 0.85). */
+  similarityThreshold: number;
 };
 
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */
@@ -480,6 +554,20 @@ export type HybridMemoryConfig = {
 
 
 
+  /** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
+  nightlyCycle: NightlyCycleConfig;
+  /** Confidence reinforcement on repeated mentions (Issue #147, default: enabled). */
+  reinforcement: ReinforcementConfig;
+  /** Topic cluster detection: BFS connected-component analysis on memory_links (Issue #146). */
+  clusters: ClustersConfig;
+  /** Memory health dashboard (Issue #148, default: enabled). */
+  health: HealthConfig;
+  /** Knowledge gap analysis — orphan/weak detection and suggested links (Issue #141, default: enabled). */
+  gaps: GapsConfig;
+  /** Multi-hook retrieval aliases: generate and index alternative phrasings per fact (Issue #149, default: disabled). */
+  aliases: AliasesConfig;
+  /** Shortest-path traversal between memories via BFS (Issue #140, default: enabled). */
+  path: PathConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1066,10 +1154,6 @@ export const hybridConfigSchema = {
       throw new Error(`embedding.model is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`);
     }
     const singleModel = typeof embedding?.model === "string" ? embedding.model : DEFAULT_MODEL;
-    // Validate that OpenAI provider only uses OpenAI models
-    if (embeddingProvider === "openai" && !isOpenAIModel(singleModel)) {
-      throw new Error(`embedding.model '${singleModel}' is not a valid OpenAI model. When provider='openai', use one of: text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002.`);
-    }
     const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
     let embeddingModels: string[] | undefined;
     // Parse models for all providers (#6): for openai, these are the model preference list;
@@ -1079,11 +1163,9 @@ export const hybridConfigSchema = {
       for (const m of modelsRaw) {
         try {
           vectorDimsForModel(m);
-          if (!isOpenAIModel(m)) {
-            const reason = embeddingProvider === "openai"
-              ? "only OpenAI models are allowed"
-              : "the models field must contain OpenAI fallback model names";
-            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', ${reason} (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+          // For ollama/onnx providers, models field contains OpenAI fallback names — reject non-OpenAI models
+          if (embeddingProvider !== "openai" && !isOpenAIModel(m)) {
+            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
             continue;
           }
           valid.push(m);
@@ -1841,6 +1923,24 @@ export const hybridConfigSchema = {
           : 2000,
     };
 
+    // Parse clusters config (Issue #146, default: enabled, minClusterSize: 3, refreshIntervalDays: 7)
+    const clustersRaw = cfg.clusters as Record<string, unknown> | undefined;
+    const clusters: ClustersConfig = {
+      enabled: clustersRaw?.enabled !== false,
+      minClusterSize:
+        typeof clustersRaw?.minClusterSize === "number" && clustersRaw.minClusterSize >= 1
+          ? Math.floor(clustersRaw.minClusterSize)
+          : 3,
+      refreshIntervalDays:
+        typeof clustersRaw?.refreshIntervalDays === "number" && clustersRaw.refreshIntervalDays >= 0
+          ? Math.floor(clustersRaw.refreshIntervalDays)
+          : 7,
+      labelModel:
+        typeof clustersRaw?.labelModel === "string" && clustersRaw.labelModel.trim().length > 0
+          ? clustersRaw.labelModel.trim()
+          : null,
+    };
+
     // Parse graphRetrieval config (Issue #145, default: enabled, defaultExpand: false)
     const graphRetrievalRaw = cfg.graphRetrieval as Record<string, unknown> | undefined;
     const graphRetrieval: GraphRetrievalConfig = {
@@ -1854,6 +1954,82 @@ export const hybridConfigSchema = {
         typeof graphRetrievalRaw?.maxExpandedResults === "number" && graphRetrievalRaw.maxExpandedResults >= 0
           ? Math.min(50, Math.floor(graphRetrievalRaw.maxExpandedResults))
           : 20,
+    };
+
+    // Parse nightly dream cycle config (Issue #143, default: disabled)
+    const nightlyCycleRaw = cfg.nightlyCycle as Record<string, unknown> | undefined;
+    const nightlyCycle: NightlyCycleConfig = {
+      enabled: nightlyCycleRaw?.enabled === true,
+      schedule: typeof nightlyCycleRaw?.schedule === "string" && nightlyCycleRaw.schedule.trim().length > 0
+        ? nightlyCycleRaw.schedule.trim()
+        : "45 2 * * *",
+      reflectWindowDays: typeof nightlyCycleRaw?.reflectWindowDays === "number" && nightlyCycleRaw.reflectWindowDays >= 1
+        ? Math.min(90, Math.floor(nightlyCycleRaw.reflectWindowDays))
+        : 7,
+      pruneMode: (nightlyCycleRaw?.pruneMode === "expired" || nightlyCycleRaw?.pruneMode === "decay" || nightlyCycleRaw?.pruneMode === "both")
+        ? nightlyCycleRaw.pruneMode as "expired" | "decay" | "both"
+        : "both",
+      model: typeof nightlyCycleRaw?.model === "string" && nightlyCycleRaw.model.trim().length > 0
+        ? nightlyCycleRaw.model.trim()
+        : undefined,
+      consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
+        ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
+        : 7,
+    };
+
+    // Parse reinforcement config (Issue #147, default: enabled)
+    const reinforcementRaw = cfg.reinforcement as Record<string, unknown> | undefined;
+    const reinforcement: ReinforcementConfig = {
+      enabled: reinforcementRaw?.enabled !== false,
+      passiveBoost:
+        typeof reinforcementRaw?.passiveBoost === "number" && reinforcementRaw.passiveBoost >= 0 && reinforcementRaw.passiveBoost <= 1
+          ? reinforcementRaw.passiveBoost
+          : 0.1,
+      activeBoost:
+        typeof reinforcementRaw?.activeBoost === "number" && reinforcementRaw.activeBoost >= 0 && reinforcementRaw.activeBoost <= 1
+          ? reinforcementRaw.activeBoost
+          : 0.05,
+      maxConfidence:
+        typeof reinforcementRaw?.maxConfidence === "number" && reinforcementRaw.maxConfidence > 0 && reinforcementRaw.maxConfidence <= 1
+          ? reinforcementRaw.maxConfidence
+          : 1.0,
+      similarityThreshold:
+        typeof reinforcementRaw?.similarityThreshold === "number" && reinforcementRaw.similarityThreshold > 0 && reinforcementRaw.similarityThreshold <= 1
+          ? reinforcementRaw.similarityThreshold
+          : 0.85,
+    };
+
+    // Parse knowledge gaps config (Issue #141)
+    const gapsRaw = cfg.gaps as Record<string, unknown> | undefined;
+    const gaps: GapsConfig = {
+      enabled: gapsRaw?.enabled !== false,
+      similarityThreshold:
+        typeof gapsRaw?.similarityThreshold === "number" &&
+        gapsRaw.similarityThreshold >= 0 &&
+        gapsRaw.similarityThreshold <= 1
+          ? gapsRaw.similarityThreshold
+          : 0.8,
+    };
+
+    // Parse aliases config (Issue #149, default: disabled)
+    const aliasesRaw = cfg.aliases as Record<string, unknown> | undefined;
+    const aliases: AliasesConfig = {
+      enabled: aliasesRaw?.enabled === true,
+      maxAliases:
+        typeof aliasesRaw?.maxAliases === "number" && aliasesRaw.maxAliases > 0
+          ? Math.min(10, Math.floor(aliasesRaw.maxAliases))
+          : 5,
+      model: typeof aliasesRaw?.model === "string" ? aliasesRaw.model : undefined,
+    };
+
+    // Parse path config (Issue #140, default: enabled, maxPathDepth: 10)
+    const pathRaw = cfg.path as Record<string, unknown> | undefined;
+    const path: PathConfig = {
+      enabled: pathRaw?.enabled !== false,
+      maxPathDepth:
+        typeof pathRaw?.maxPathDepth === "number" && pathRaw.maxPathDepth > 0
+          ? Math.min(20, Math.floor(pathRaw.maxPathDepth))
+          : 10,
     };
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
@@ -1934,6 +2110,18 @@ export const hybridConfigSchema = {
       ambient,
       graphRetrieval,
       futureDateProtection,
+      nightlyCycle,
+      reinforcement,
+      clusters,
+      health: (() => {
+        const healthRaw = cfg.health as Record<string, unknown> | undefined;
+        return {
+          enabled: healthRaw?.enabled !== false,
+        };
+      })(),
+      gaps,
+      aliases,
+      path,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

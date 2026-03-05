@@ -26,6 +26,7 @@ export interface HooksContext {
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
+  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
@@ -59,6 +60,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       openai: ctx.openai,
       cfg: ctx.cfg,
       credentialsDb: ctx.credentialsDb,
+      aliasDb: ctx.aliasDb,
       wal: ctx.wal,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,

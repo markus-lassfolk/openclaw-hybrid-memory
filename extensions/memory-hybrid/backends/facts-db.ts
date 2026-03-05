@@ -172,6 +172,9 @@ export class FactsDB {
     // ---- Contradiction tracking (Issue #157) ----
     this.migrateContradictionsTable();
 
+    // ---- Topic cluster storage (Issue #146) ----
+    this.migrateClusterTables();
+
     // ---- Future-date decay freeze (#144) ----
     this.migrateDecayFreezeColumn();
   }
@@ -830,7 +833,7 @@ export class FactsDB {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
-      // Fix #8: normalize to null (not undefined) to match rowToEntry() behaviour
+      // normalize to null (not undefined) to match rowToEntry() behaviour
       decayFreezeUntil: decayFreezeUntil,
     };
   }
@@ -1743,6 +1746,34 @@ export class FactsDB {
     quotes.push(newSnippet.slice(0, 200));
     if (quotes.length > 10) quotes = quotes.slice(-10);
     return JSON.stringify(quotes);
+  }
+
+  /**
+   * Boost the confidence of a fact by a delta, clamped at maxConfidence.
+   * Also increments reinforced_count and updates last_reinforced_at.
+   * Returns true if the fact was found and updated.
+   */
+  boostConfidence(id: string, delta: number, maxConfidence = 1.0): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const tx = this.liveDb.transaction(() => {
+      const row = this.liveDb
+        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+        .get(id) as { confidence: number } | undefined;
+      if (!row) return false;
+
+      const current = typeof row.confidence === "number" ? row.confidence : 1.0;
+      const boosted = Math.min(maxConfidence, current + delta);
+
+      this.liveDb
+        .prepare(
+          `UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?`,
+        )
+        .run(boosted, nowSec, id);
+      return true;
+    });
+
+    return tx() as boolean;
   }
 
   /**
@@ -3439,6 +3470,117 @@ export class FactsDB {
     linkedCount += this.autoDetectInstanceOf(newFactId, text, knownEntities);
 
     return { linkedCount, supersededIds };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Topic cluster storage (Issue #146)
+  // ---------------------------------------------------------------------------
+
+  /** Create clusters and cluster_members tables for topic cluster storage. */
+  private migrateClusterTables(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS clusters (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        fact_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS cluster_members (
+        cluster_id TEXT NOT NULL REFERENCES clusters(id) ON DELETE CASCADE,
+        fact_id TEXT NOT NULL,
+        PRIMARY KEY (cluster_id, fact_id)
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_cluster_members_fact ON cluster_members(fact_id)`);
+  }
+
+  /**
+   * Get all unique fact IDs that participate in at least one memory link
+   * (as source or target). Used by cluster detection.
+   */
+  getAllLinkedFactIds(): string[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT DISTINCT id FROM (
+          SELECT source_fact_id AS id FROM memory_links
+          UNION
+          SELECT target_fact_id AS id FROM memory_links
+        )`,
+      )
+      .all() as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Get all edges from memory_links as sourceFactId/targetFactId pairs.
+   * Used for building the cluster adjacency map in a single query.
+   */
+  getAllLinks(): Array<{ sourceFactId: string; targetFactId: string }> {
+    const rows = this.liveDb
+      .prepare(`SELECT source_fact_id, target_fact_id FROM memory_links`)
+      .all() as Array<{ source_fact_id: string; target_fact_id: string }>;
+    return rows.map((r) => ({
+      sourceFactId: r.source_fact_id,
+      targetFactId: r.target_fact_id,
+    }));
+  }
+
+  /**
+   * Persist detected clusters, replacing all existing cluster data.
+   * Runs in a single transaction for atomicity.
+   */
+  saveClusters(clusters: Array<{ id: string; label: string; factIds: string[]; factCount: number; createdAt: number; updatedAt: number }>): void {
+    const insertCluster = this.liveDb.prepare(
+      `INSERT OR REPLACE INTO clusters (id, label, fact_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const insertMember = this.liveDb.prepare(
+      `INSERT OR IGNORE INTO cluster_members (cluster_id, fact_id) VALUES (?, ?)`,
+    );
+
+    this.liveDb.transaction(() => {
+      // Replace all clusters
+      this.liveDb.exec(`DELETE FROM cluster_members`);
+      this.liveDb.exec(`DELETE FROM clusters`);
+      for (const cluster of clusters) {
+        insertCluster.run(cluster.id, cluster.label, cluster.factCount, cluster.createdAt, cluster.updatedAt);
+        for (const factId of cluster.factIds) {
+          insertMember.run(cluster.id, factId);
+        }
+      }
+    })();
+  }
+
+  /** Get all stored clusters (without member IDs). Sorted by fact_count desc. */
+  getClusters(): Array<{ id: string; label: string; factCount: number; createdAt: number; updatedAt: number }> {
+    const rows = this.liveDb
+      .prepare(`SELECT id, label, fact_count, created_at, updated_at FROM clusters ORDER BY fact_count DESC`)
+      .all() as Array<{ id: string; label: string; fact_count: number; created_at: number; updated_at: number }>;
+    return rows.map((r) => ({
+      id: r.id,
+      label: r.label,
+      factCount: r.fact_count,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  /** Get member fact IDs for a specific cluster. */
+  getClusterMembers(clusterId: string): string[] {
+    const rows = this.liveDb
+      .prepare(`SELECT fact_id FROM cluster_members WHERE cluster_id = ?`)
+      .all(clusterId) as Array<{ fact_id: string }>;
+    return rows.map((r) => r.fact_id);
+  }
+
+  /** Get the cluster ID that a given fact belongs to (null if not in any cluster). */
+  getFactClusterId(factId: string): string | null {
+    const row = this.liveDb
+      .prepare(`SELECT cluster_id FROM cluster_members WHERE fact_id = ?`)
+      .get(factId) as { cluster_id: string } | undefined;
+    return row?.cluster_id ?? null;
   }
 
   close(): void {
