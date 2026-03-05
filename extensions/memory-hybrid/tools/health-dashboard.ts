@@ -126,11 +126,11 @@ export function buildHealthReport(
 
   // Tier distribution
   const tierRows = db
-    .prepare(`SELECT tier, COUNT(*) AS cnt FROM facts GROUP BY tier ORDER BY cnt DESC`)
+    .prepare(`SELECT COALESCE(tier, 'warm') AS tier, COUNT(*) AS cnt FROM facts GROUP BY COALESCE(tier, 'warm') ORDER BY cnt DESC`)
     .all() as Array<{ tier: string; cnt: number }>;
   const tierDistribution: Record<string, number> = {};
   for (const row of tierRows) {
-    tierDistribution[row.tier ?? "warm"] = row.cnt;
+    tierDistribution[row.tier] = row.cnt;
   }
 
   // Average confidence (active facts)
