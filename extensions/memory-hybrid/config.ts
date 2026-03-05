@@ -166,6 +166,10 @@ export type GraphConfig = {
   autoLinkLimit: number;        // Max similar facts to link per storage (default 3)
   maxTraversalDepth: number;    // Max hops for graph traversal in recall (default 2)
   useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
+  /** Weight for temporal co-occurrence RELATES_TO edges (default 0.3) */
+  coOccurrenceWeight: number;
+  /** When true, auto-create SUPERSEDES edge + supersede old fact when entity+key conflict detected (default true) */
+  autoSupersede: boolean;
 };
 
 /** Reflection / pattern synthesis from session history */
@@ -1230,6 +1234,10 @@ export const hybridConfigSchema = {
         ? Math.floor(graphRaw.maxTraversalDepth)
         : 2,
       useInRecall: graphRaw?.useInRecall !== false,
+      coOccurrenceWeight: typeof graphRaw?.coOccurrenceWeight === "number" && graphRaw.coOccurrenceWeight >= 0 && graphRaw.coOccurrenceWeight <= 1
+        ? graphRaw.coOccurrenceWeight
+        : 0.3,
+      autoSupersede: graphRaw?.autoSupersede !== false,
     };
 
     // Parse persona proposals config (opt-in, disabled by default)
