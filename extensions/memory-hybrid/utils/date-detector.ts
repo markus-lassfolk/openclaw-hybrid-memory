@@ -43,6 +43,15 @@ const WEEKDAY_MAP: Record<string, number> = {
   saturday: 6, sat: 6,
 };
 
+// Fix #4: hoist month-name pattern and regex source to module level so they
+// are computed once instead of being rebuilt on every extractCandidates call.
+const MONTH_NAMES_PATTERN = Object.keys(MONTH_MAP)
+  .filter((k) => k.length > 3 || ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].includes(k))
+  .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  .join("|");
+
+const MD_RE_SOURCE = `\\b(?:(${MONTH_NAMES_PATTERN})\\s+(\\d{1,2})(?:st|nd|rd|th)?|(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTH_NAMES_PATTERN}))\\b`;
+
 /**
  * Try all date patterns against `text`. Return all candidate epoch-second
  * timestamps that are in the future relative to `nowMs`.
@@ -59,24 +68,25 @@ function extractCandidates(text: string, nowMs: number): number[] {
   let m: RegExpExecArray | null;
   while ((m = isoRe.exec(text)) !== null) {
     const y = parseInt(m[1]!, 10);
-    const mo = parseInt(m[2]!, 10) - 1;
+    const moRaw = parseInt(m[2]!, 10);
     const d = parseInt(m[3]!, 10);
+    // Fix #7: reject out-of-range month/day before Date.UTC to avoid silent normalization
+    if (moRaw < 1 || moRaw > 12 || d < 1 || d > 31) continue;
+    const mo = moRaw - 1;
     const ts = Date.UTC(y, mo, d);
-    if (!isNaN(ts) && ts > todayMidnightMs) results.push(Math.floor(ts / 1000));
+    if (!isNaN(ts)) {
+      // Verify Date.UTC did not silently normalize (e.g. "2026-02-30" → March)
+      const check = new Date(ts);
+      if (check.getUTCMonth() !== mo || check.getUTCDate() !== d) continue;
+      if (ts > todayMidnightMs) results.push(Math.floor(ts / 1000));
+    }
   }
 
   // -------------------------------------------------------------------------
   // 2. Month-name day: "March 20", "Mar 20th", "20 March", "20th March"
+  //    Uses module-level MD_RE_SOURCE (Fix #4).
   // -------------------------------------------------------------------------
-  const monthNames = Object.keys(MONTH_MAP)
-    .filter((k) => k.length > 3 || ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].includes(k))
-    .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-
-  const mdRe = new RegExp(
-    `\\b(?:(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?|(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthNames}))\\b`,
-    "gi"
-  );
+  const mdRe = new RegExp(MD_RE_SOURCE, "gi");
   while ((m = mdRe.exec(text)) !== null) {
     let monthStr: string;
     let dayNum: number;
@@ -91,14 +101,21 @@ function extractCandidates(text: string, nowMs: number): number[] {
     }
     const moIdx = MONTH_MAP[monthStr];
     if (moIdx === undefined) continue;
+    // Fix #3: reject out-of-range day before Date.UTC to avoid silent normalization
+    if (dayNum < 1 || dayNum > 31) continue;
 
     // Try current year first, then next year
     for (const yearOffset of [0, 1]) {
       const y = now.getUTCFullYear() + yearOffset;
       const ts = Date.UTC(y, moIdx, dayNum);
-      if (!isNaN(ts) && ts > todayMidnightMs) {
-        results.push(Math.floor(ts / 1000));
-        break; // take the first future occurrence
+      if (!isNaN(ts)) {
+        // Verify no silent normalization (e.g. Feb 30 → March)
+        const check = new Date(ts);
+        if (check.getUTCMonth() !== moIdx || check.getUTCDate() !== dayNum) continue;
+        if (ts > todayMidnightMs) {
+          results.push(Math.floor(ts / 1000));
+          break; // take the first future occurrence
+        }
       }
     }
   }
@@ -179,8 +196,11 @@ export function detectFutureDate(
 
   // Take the latest future date
   const latest = Math.max(...candidates);
+  // Fix #2: guard against NaN/non-finite (should not happen after extractCandidates validation,
+  // but defend against future callers)
+  if (!Number.isFinite(latest)) return null;
 
-  // Enforce maxFreezeDays cap
+  // Enforce maxFreezeDays cap (0 = no limit)
   if (cfg.maxFreezeDays > 0) {
     const maxFreezeMs = nowMs + cfg.maxFreezeDays * 86400 * 1000;
     const maxFreezeSec = Math.floor(maxFreezeMs / 1000);

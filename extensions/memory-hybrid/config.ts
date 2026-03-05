@@ -383,7 +383,7 @@ export type ErrorReportingConfig = {
 export type FutureDateProtectionConfig = {
   /** When true, facts containing future dates have their decay frozen until that date passes. Default: true. */
   enabled: boolean;
-  /** Maximum days to freeze decay (prevents absurdly long freezes). Default: 365. */
+  /** Maximum days to freeze decay (prevents absurdly long freezes). 0 = no limit. Default: 365. */
   maxFreezeDays: number;
 };
 
@@ -1789,8 +1789,9 @@ export const hybridConfigSchema = {
     const fdpRaw = cfg.futureDateProtection as Record<string, unknown> | undefined;
     const futureDateProtection: FutureDateProtectionConfig = {
       enabled: fdpRaw?.enabled !== false, // default: true
+      // Fix #5: 0 means "no limit"; only fall back to 365 when value is absent/negative/non-number
       maxFreezeDays:
-        typeof fdpRaw?.maxFreezeDays === "number" && fdpRaw.maxFreezeDays > 0
+        typeof fdpRaw?.maxFreezeDays === "number" && fdpRaw.maxFreezeDays >= 0
           ? Math.floor(fdpRaw.maxFreezeDays)
           : 365,
     };

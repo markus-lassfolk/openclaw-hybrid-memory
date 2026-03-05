@@ -764,7 +764,15 @@ export class FactsDB {
           : JSON.stringify(sourceSessionsRaw);
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
-    const decayFreezeUntil = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
+    // Fix #2: guard against NaN/non-finite values passed in from external callers
+    const rawFreeze = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
+    const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
+    // Fix #1: ensure expires_at covers the full freeze period so the fact is not pruned
+    // before the freeze expires
+    const adjustedExpiresAt =
+      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil
+        ? decayFreezeUntil
+        : expiresAt;
     this.liveDb
       .prepare(
         `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
@@ -781,7 +789,7 @@ export class FactsDB {
         entry.source,
         nowSec,
         decayClass,
-        expiresAt,
+        adjustedExpiresAt,
         nowSec,
         confidence,
         summary,
@@ -806,7 +814,7 @@ export class FactsDB {
       id,
       createdAt: nowSec,
       decayClass,
-      expiresAt,
+      expiresAt: adjustedExpiresAt,
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
@@ -822,7 +830,8 @@ export class FactsDB {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
-      decayFreezeUntil: decayFreezeUntil ?? undefined,
+      // Fix #8: normalize to null (not undefined) to match rowToEntry() behaviour
+      decayFreezeUntil: decayFreezeUntil,
     };
   }
 

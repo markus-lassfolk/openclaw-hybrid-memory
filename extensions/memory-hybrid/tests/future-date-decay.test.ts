@@ -12,7 +12,7 @@
  * - Disabled config (no freeze)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -254,6 +254,9 @@ let tmpDir: string;
 let db: InstanceType<typeof FactsDB>;
 
 beforeEach(() => {
+  // Fix #6: pin Date.now() to NOW_MS so FactsDB internals (decayConfidence, pruneExpired,
+  // store) use the same clock as the test assertions.
+  vi.useFakeTimers({ now: NOW_MS });
   tmpDir = mkdtempSync(join(tmpdir(), "future-date-decay-test-"));
   db = new FactsDB(join(tmpDir, "facts.db"));
 });
@@ -261,6 +264,7 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
   rmSync(tmpDir, { recursive: true, force: true });
+  vi.useRealTimers();
 });
 
 describe("FactsDB — decay_freeze_until column migration", () => {
@@ -312,6 +316,50 @@ describe("FactsDB — store with decayFreezeUntil", () => {
     });
     const retrieved = db.getById(entry.id);
     expect(retrieved?.decayFreezeUntil ?? null).toBeNull();
+  });
+});
+
+describe("FactsDB — store() extends expiresAt to cover freeze period (fix #1)", () => {
+  it("extends expiresAt to decayFreezeUntil when freeze outlasts the TTL-based expiry", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    // session TTL = 24 hours; freeze = 30 days ahead
+    const freezeUntil = nowSec + 30 * 86400;
+    const entry = db.store({
+      text: "Meeting in 30 days",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "session", // TTL = 24h (< 30 days)
+      decayFreezeUntil: freezeUntil,
+    });
+    // expiresAt should be extended to at least decayFreezeUntil
+    expect(entry.expiresAt).not.toBeNull();
+    expect(entry.expiresAt!).toBeGreaterThanOrEqual(freezeUntil);
+    const retrieved = db.getById(entry.id);
+    expect(retrieved?.expiresAt).toBeGreaterThanOrEqual(freezeUntil);
+  });
+
+  it("does not shorten expiresAt when TTL-based expiry is beyond freeze", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    // stable TTL = 90 days; freeze = 10 days ahead
+    const freezeUntil = nowSec + 10 * 86400;
+    const entry = db.store({
+      text: "Review in 10 days",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "stable", // TTL = 90 days (> 10 days)
+      decayFreezeUntil: freezeUntil,
+    });
+    // expiresAt should stay at the 90-day TTL, not be shortened to freeze
+    expect(entry.expiresAt).not.toBeNull();
+    expect(entry.expiresAt!).toBeGreaterThanOrEqual(nowSec + 89 * 86400);
   });
 });
 
