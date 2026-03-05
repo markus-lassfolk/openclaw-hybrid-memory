@@ -125,9 +125,17 @@ export function searchFts(
      * When omitted, all columns are searched.
      */
     columns?: Array<(typeof FTS_COLUMNS)[number]>;
+    /** Include superseded facts (default: false). */
+    includeSuperseded?: boolean;
+    /** Point-in-time query: only facts valid at this epoch second. */
+    asOf?: number;
+    /** 'warm' = only warm tier (default), 'all' = warm + cold. */
+    tierFilter?: "warm" | "all";
+    /** Scope filter — only return global + matching user/agent/session. */
+    scopeFilter?: { userId?: string | null; agentId?: string | null; sessionId?: string | null } | null;
   } = {},
 ): FtsSearchResult[] {
-  const { limit = 20, entityFilter, tagFilter, columns } = options;
+  const { limit = 20, entityFilter, tagFilter, columns, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter } = options;
 
   const ftsQuery = buildFts5Query(query);
   if (!ftsQuery) return [];
@@ -141,6 +149,8 @@ export function searchFts(
   // Build WHERE clauses for structured filters.
   const extraClauses: string[] = [];
   const params: Record<string, unknown> = { query: matchExpr, limit };
+  const nowSec = Math.floor(Date.now() / 1000);
+  params.now = nowSec;
 
   if (entityFilter && entityFilter.trim()) {
     extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
@@ -149,6 +159,41 @@ export function searchFts(
   if (tagFilter && tagFilter.trim()) {
     extraClauses.push("AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern");
     params.tagPattern = `%,${tagFilter.toLowerCase().trim()},%`;
+  }
+
+  // Expiry filter (always exclude expired facts)
+  extraClauses.push("AND (f.expires_at IS NULL OR f.expires_at > @now)");
+
+  // Temporal/superseded filter
+  if (asOf != null) {
+    extraClauses.push("AND f.valid_from <= @asOf AND (f.valid_until IS NULL OR f.valid_until > @asOf)");
+    params.asOf = asOf;
+  } else if (!includeSuperseded) {
+    extraClauses.push("AND f.superseded_at IS NULL");
+  }
+
+  // Tier filter
+  if (tierFilter === "warm") {
+    extraClauses.push("AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')");
+  }
+
+  // Scope filter
+  if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
+    const scopeParts: string[] = ["(", "f.scope = 'global'"];
+    if (scopeFilter.userId) {
+      scopeParts.push("OR (f.scope = 'user' AND f.scope_target = @scopeUserId)");
+      params.scopeUserId = scopeFilter.userId;
+    }
+    if (scopeFilter.agentId) {
+      scopeParts.push("OR (f.scope = 'agent' AND f.scope_target = @scopeAgentId)");
+      params.scopeAgentId = scopeFilter.agentId;
+    }
+    if (scopeFilter.sessionId) {
+      scopeParts.push("OR (f.scope = 'session' AND f.scope_target = @scopeSessionId)");
+      params.scopeSessionId = scopeFilter.sessionId;
+    }
+    scopeParts.push(")");
+    extraClauses.push("AND " + scopeParts.join(" "));
   }
 
   const rows = db

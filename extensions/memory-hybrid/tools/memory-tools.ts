@@ -351,6 +351,13 @@ export function registerMemoryTools(
             ? cfg.retrieval.strategies.filter((s) => s !== "semantic")
             : cfg.retrieval.strategies;
           const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
+          const rrfOptions = {
+            tag,
+            includeSuperseded,
+            asOf: asOfSec,
+            tierFilter,
+            scopeFilter,
+          };
           const rrfOutput = await runRetrievalPipeline(
             query,
             queryVector,
@@ -359,16 +366,21 @@ export function registerMemoryTools(
             factsDb,
             rrfConfig,
             cfg.retrieval.explicitBudgetTokens,
+            rrfOptions,
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped)
+          // Normalize RRF scores to match entity result scale (0.5-1.0 range)
+          // RRF scores are typically 0.016-0.06, so we scale by ~15x to bring them to 0.24-0.9
+          const RRF_SCORE_SCALE = 15.0;
           const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
           results = [...entityResults];
           for (const fused of rrfOutput.fused) {
             if (seenIds.has(fused.factId)) continue;
-            const entry = factsDb.getById(fused.factId);
+            const entry = factsDb.getById(fused.factId, { asOf: asOfSec, scopeFilter });
             if (entry) {
-              results.push({ entry, score: fused.finalScore, backend: "sqlite" });
+              const normalizedScore = Math.min(1.0, fused.finalScore * RRF_SCORE_SCALE);
+              results.push({ entry, score: normalizedScore, backend: "sqlite" });
               seenIds.add(fused.factId);
             }
           }

@@ -43,6 +43,20 @@ export interface RetrievalConfig {
   semanticTopK: number;
 }
 
+/** Options for filtering facts during retrieval. */
+export interface RetrievalOptions {
+  /** Tag filter (must appear in tags column). */
+  tag?: string;
+  /** Include superseded facts (default: false). */
+  includeSuperseded?: boolean;
+  /** Point-in-time query: only facts valid at this epoch second. */
+  asOf?: number;
+  /** 'warm' = only warm tier (default), 'all' = warm + cold. */
+  tierFilter?: "warm" | "all";
+  /** Scope filter — only return global + matching user/agent/session. */
+  scopeFilter?: { userId?: string | null; agentId?: string | null; sessionId?: string | null } | null;
+}
+
 /** Result from the orchestrator, ready for context injection. */
 export interface OrchestratorResult {
   /** Fused and adjusted results, sorted by finalScore descending. */
@@ -144,8 +158,16 @@ function runFts5Strategy(
   db: Database.Database,
   query: string,
   limit: number,
+  options?: RetrievalOptions,
 ): RankedResult[] {
-  const results = searchFts(db, query, { limit });
+  const results = searchFts(db, query, {
+    limit,
+    tagFilter: options?.tag,
+    includeSuperseded: options?.includeSuperseded,
+    asOf: options?.asOf,
+    tierFilter: options?.tierFilter,
+    scopeFilter: options?.scopeFilter,
+  });
   return results.map((r, i) => ({
     factId: r.factId,
     rank: i + 1,
@@ -161,9 +183,29 @@ async function runSemanticStrategy(
   vectorDb: VectorDB,
   queryVector: number[],
   topK: number,
+  factsDb: FactLookup,
+  options?: RetrievalOptions,
 ): Promise<RankedResult[]> {
   const results: SearchResult[] = await vectorDb.search(queryVector, topK, 0.3);
-  return results.map((r, i) => ({
+  
+  // Apply scope filtering (vector DB doesn't support it natively)
+  const scopeFilter = options?.scopeFilter;
+  const filtered = scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)
+    ? results.filter((r) => {
+        const entry = factsDb.getById(r.entry.id);
+        if (!entry) return false;
+        const scope = entry.scope ?? "global";
+        if (scope === "global") return true;
+        const target = entry.scopeTarget ?? null;
+        return (
+          (scope === "user" && (scopeFilter.userId ?? null) === target) ||
+          (scope === "agent" && (scopeFilter.agentId ?? null) === target) ||
+          (scope === "session" && (scopeFilter.sessionId ?? null) === target)
+        );
+      })
+    : results;
+  
+  return filtered.map((r, i) => ({
     factId: r.entry.id,
     rank: i + 1,
     source: "semantic" as const,
@@ -188,7 +230,7 @@ function runGraphStrategy(): RankedResult[] {
  * Satisfied by FactsDB.
  */
 export interface FactLookup {
-  getById(id: string): MemoryEntry | null;
+  getById(id: string, options?: { asOf?: number; scopeFilter?: { userId?: string | null; agentId?: string | null; sessionId?: string | null } | null }): MemoryEntry | null;
 }
 
 /**
@@ -209,6 +251,7 @@ export interface FactLookup {
  * @param factsDb - FactsDB for metadata lookup.
  * @param config - Retrieval pipeline configuration.
  * @param budgetTokens - Token budget for packing (overrides config defaults).
+ * @param options - Filtering options (scope, tags, superseded, asOf, tier).
  * @param nowSec - Current time as epoch seconds (default: Date.now()/1000).
  */
 export async function runRetrievalPipeline(
@@ -219,6 +262,7 @@ export async function runRetrievalPipeline(
   factsDb: FactLookup,
   config: RetrievalConfig = DEFAULT_RETRIEVAL_CONFIG,
   budgetTokens: number = config.explicitBudgetTokens,
+  options?: RetrievalOptions,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
@@ -231,14 +275,14 @@ export async function runRetrievalPipeline(
     strategyPromises.push(
       Promise.resolve([
         "fts5",
-        runFts5Strategy(db, query, semanticTopK),
+        runFts5Strategy(db, query, semanticTopK, options),
       ] as [string, RankedResult[]]),
     );
   }
 
   if (strategies.includes("semantic") && queryVector) {
     strategyPromises.push(
-      runSemanticStrategy(vectorDb, queryVector, semanticTopK).then(
+      runSemanticStrategy(vectorDb, queryVector, semanticTopK, factsDb, options).then(
         (r) => ["semantic", r] as [string, RankedResult[]],
       ),
     );
@@ -272,7 +316,7 @@ export async function runRetrievalPipeline(
   const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
 
   for (const result of fused) {
-    const entry = factsDb.getById(result.factId);
+    const entry = factsDb.getById(result.factId, { asOf: options?.asOf, scopeFilter: options?.scopeFilter });
     if (entry) {
       factMetaMap.set(result.factId, {
         id: entry.id,
