@@ -278,6 +278,8 @@ export type GraphRetrievalConfig = {
   maxExpandDepth: number;
   /** Maximum number of graph-expanded results appended to direct matches (default: 20). */
   maxExpandedResults: number;
+};
+
 /** Nightly dream cycle: automated prune → consolidate → reflect pipeline (Issue #143). */
 export type NightlyCycleConfig = {
   /** Enable the nightly dream cycle (default: false). */
@@ -1763,6 +1765,8 @@ export const hybridConfigSchema = {
         typeof graphRetrievalRaw?.maxExpandedResults === "number" && graphRetrievalRaw.maxExpandedResults >= 0
           ? Math.min(50, Math.floor(graphRetrievalRaw.maxExpandedResults))
           : 20,
+    };
+
     // Parse nightly dream cycle config (Issue #143, default: disabled)
     const nightlyCycleRaw = cfg.nightlyCycle as Record<string, unknown> | undefined;
     const nightlyCycle: NightlyCycleConfig = {
