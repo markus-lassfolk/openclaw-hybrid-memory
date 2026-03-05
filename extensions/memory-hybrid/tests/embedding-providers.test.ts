@@ -451,6 +451,20 @@ describe("createEmbeddingProvider factory", () => {
     expect(() => createEmbeddingProvider(cfg)).toThrow(/Unknown embedding provider/);
   });
 
+  it("returns OllamaEmbeddingProvider without fallback when Ollama dimensions exceed OpenAI model limits", () => {
+    const cfg: EmbeddingConfig = {
+      provider: "ollama",
+      model: "high-dim-model",
+      apiKey: "sk-test-1234567890",
+      dimensions: 4096, // exceeds text-embedding-3-large max of 3072
+      batchSize: 50,
+    };
+    // Should not throw; should degrade gracefully to primary only
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider).toBeInstanceOf(OllamaEmbeddingProvider);
+    expect(provider.dimensions).toBe(4096);
+  });
+
   it("Ollama provider works end-to-end with mocked fetch", async () => {
     const vec = [0.1, 0.2, 0.3];
     vi.stubGlobal("fetch", mockOllamaFetch([vec]));
