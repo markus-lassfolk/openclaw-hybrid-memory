@@ -14,25 +14,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
-
-// ---------------------------------------------------------------------------
-// Cosine similarity (inline to avoid circular imports)
-// ---------------------------------------------------------------------------
-
-/** Compute cosine similarity between two equal-length vectors. Returns 0 on mismatch. */
-export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
-}
+import { cosineSimilarity } from "./ambient-retrieval.js";
 
 // ---------------------------------------------------------------------------
 // AliasDB

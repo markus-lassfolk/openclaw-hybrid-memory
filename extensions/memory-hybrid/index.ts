@@ -65,7 +65,8 @@ import {
   DEFAULT_RETRIEVAL_CONFIG,
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
-import { AliasDB, generateAliases, storeAliases, searchAliasStrategy, cosineSimilarity as aliasCosine } from "./services/retrieval-aliases.js";
+import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "./services/retrieval-aliases.js";
+import { cosineSimilarity as aliasCosine } from "./services/ambient-retrieval.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
@@ -268,6 +269,7 @@ const memoryHybridPlugin = {
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
+    aliasDb = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
