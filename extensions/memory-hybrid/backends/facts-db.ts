@@ -172,8 +172,8 @@ export class FactsDB {
     // ---- Contradiction tracking (Issue #157) ----
     this.migrateContradictionsTable();
 
-    // ---- Future-date decay freeze (#144) ----
-    this.migrateDecayFreezeColumn();
+    // ---- Topic cluster storage (Issue #146) ----
+    this.migrateClusterTables();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -351,18 +351,6 @@ export class FactsDB {
     if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
       this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
     }
-  }
-
-  /** Add decay_freeze_until column for future-date freeze protection (#144). */
-  private migrateDecayFreezeColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === "decay_freeze_until")) return;
-    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN decay_freeze_until INTEGER DEFAULT NULL`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_freeze ON facts(decay_freeze_until) WHERE decay_freeze_until IS NOT NULL`,
-    );
   }
 
   /**
@@ -715,8 +703,6 @@ export class FactsDB {
       scope?: "global" | "user" | "agent" | "session";
       /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
       scopeTarget?: string | null;
-      /** Future-date freeze: epoch seconds until which confidence decay is paused (#144). */
-      decayFreezeUntil?: number | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -764,19 +750,10 @@ export class FactsDB {
           : JSON.stringify(sourceSessionsRaw);
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
-    // Fix #2: guard against NaN/non-finite values passed in from external callers
-    const rawFreeze = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
-    const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
-    // Fix #1: ensure expires_at covers the full freeze period so the fact is not pruned
-    // before the freeze expires
-    const adjustedExpiresAt =
-      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil
-        ? decayFreezeUntil
-        : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -789,7 +766,7 @@ export class FactsDB {
         entry.source,
         nowSec,
         decayClass,
-        adjustedExpiresAt,
+        expiresAt,
         nowSec,
         confidence,
         summary,
@@ -806,7 +783,6 @@ export class FactsDB {
         successCount,
         lastValidated,
         sourceSessionsStr,
-        decayFreezeUntil,
       );
 
     return {
@@ -814,7 +790,7 @@ export class FactsDB {
       id,
       createdAt: nowSec,
       decayClass,
-      expiresAt: adjustedExpiresAt,
+      expiresAt,
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
@@ -830,8 +806,6 @@ export class FactsDB {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
-      // Fix #8: normalize to null (not undefined) to match rowToEntry() behaviour
-      decayFreezeUntil: decayFreezeUntil,
     };
   }
 
@@ -1357,7 +1331,6 @@ export class FactsDB {
           return null;
         }
       })(),
-      decayFreezeUntil: (row.decay_freeze_until as number) ?? null,
     };
   }
 
@@ -1631,16 +1604,14 @@ export class FactsDB {
       .prepare(
         `DELETE FROM memory_links
          WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
-             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?
          )
          AND link_type != 'DERIVED_FROM'`
       )
-      .run({ now: nowSec });
+      .run(nowSec);
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
-                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
-      .run({ now: nowSec });
+      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
+      .run(nowSec);
     return result.changes;
   }
 
@@ -1682,8 +1653,7 @@ export class FactsDB {
            AND expires_at > @now
            AND last_confirmed_at IS NOT NULL
            AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
-           AND confidence > 0.1
-           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`,
+           AND confidence > 0.1`,
       )
       .run({ now: nowSec });
 
@@ -1693,15 +1663,13 @@ export class FactsDB {
         `DELETE FROM memory_links
          WHERE target_fact_id IN (
            SELECT id FROM facts WHERE confidence < 0.1
-             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
          )
          AND link_type != 'DERIVED_FROM'`
       )
-      .run({ now: nowSec });
+      .run();
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE confidence < 0.1
-                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
-      .run({ now: nowSec });
+      .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
+      .run();
     return result.changes;
   }
 
@@ -1743,36 +1711,6 @@ export class FactsDB {
     quotes.push(newSnippet.slice(0, 200));
     if (quotes.length > 10) quotes = quotes.slice(-10);
     return JSON.stringify(quotes);
-  }
-
-  /**
-   * Boost confidence of a fact by delta (confidence reinforcement on repeated mentions, Issue #147).
-   * Increments reinforced_count and updates last_reinforced_at.
-   * Confidence is capped at maxConfidence (default 1.0).
-   * Wraps read-modify-write in a transaction to prevent race conditions.
-   * Returns true if fact was updated, false if not found.
-   */
-  boostConfidence(id: string, delta: number, maxConfidence = 1.0): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    const tx = this.liveDb.transaction(() => {
-      const row = this.liveDb
-        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
-        .get(id) as { confidence: number } | undefined;
-      if (!row) return false;
-
-      const current = typeof row.confidence === "number" ? row.confidence : 1.0;
-      const boosted = Math.max(current, Math.min(maxConfidence, current + delta));
-
-      this.liveDb
-        .prepare(
-          `UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?`,
-        )
-        .run(boosted, nowSec, id);
-      return true;
-    });
-
-    return tx() as boolean;
   }
 
   /**
@@ -3469,6 +3407,117 @@ export class FactsDB {
     linkedCount += this.autoDetectInstanceOf(newFactId, text, knownEntities);
 
     return { linkedCount, supersededIds };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Topic cluster storage (Issue #146)
+  // ---------------------------------------------------------------------------
+
+  /** Create clusters and cluster_members tables for topic cluster storage. */
+  private migrateClusterTables(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS clusters (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        fact_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS cluster_members (
+        cluster_id TEXT NOT NULL REFERENCES clusters(id) ON DELETE CASCADE,
+        fact_id TEXT NOT NULL,
+        PRIMARY KEY (cluster_id, fact_id)
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_cluster_members_fact ON cluster_members(fact_id)`);
+  }
+
+  /**
+   * Get all unique fact IDs that participate in at least one memory link
+   * (as source or target). Used by cluster detection.
+   */
+  getAllLinkedFactIds(): string[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT DISTINCT id FROM (
+          SELECT source_fact_id AS id FROM memory_links
+          UNION
+          SELECT target_fact_id AS id FROM memory_links
+        )`,
+      )
+      .all() as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Get all edges from memory_links as sourceFactId/targetFactId pairs.
+   * Used for building the cluster adjacency map in a single query.
+   */
+  getAllLinks(): Array<{ sourceFactId: string; targetFactId: string }> {
+    const rows = this.liveDb
+      .prepare(`SELECT source_fact_id, target_fact_id FROM memory_links`)
+      .all() as Array<{ source_fact_id: string; target_fact_id: string }>;
+    return rows.map((r) => ({
+      sourceFactId: r.source_fact_id,
+      targetFactId: r.target_fact_id,
+    }));
+  }
+
+  /**
+   * Persist detected clusters, replacing all existing cluster data.
+   * Runs in a single transaction for atomicity.
+   */
+  saveClusters(clusters: Array<{ id: string; label: string; factIds: string[]; factCount: number; createdAt: number; updatedAt: number }>): void {
+    const insertCluster = this.liveDb.prepare(
+      `INSERT OR REPLACE INTO clusters (id, label, fact_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const insertMember = this.liveDb.prepare(
+      `INSERT OR IGNORE INTO cluster_members (cluster_id, fact_id) VALUES (?, ?)`,
+    );
+
+    this.liveDb.transaction(() => {
+      // Replace all clusters
+      this.liveDb.exec(`DELETE FROM cluster_members`);
+      this.liveDb.exec(`DELETE FROM clusters`);
+      for (const cluster of clusters) {
+        insertCluster.run(cluster.id, cluster.label, cluster.factCount, cluster.createdAt, cluster.updatedAt);
+        for (const factId of cluster.factIds) {
+          insertMember.run(cluster.id, factId);
+        }
+      }
+    })();
+  }
+
+  /** Get all stored clusters (without member IDs). Sorted by fact_count desc. */
+  getClusters(): Array<{ id: string; label: string; factCount: number; createdAt: number; updatedAt: number }> {
+    const rows = this.liveDb
+      .prepare(`SELECT id, label, fact_count, created_at, updated_at FROM clusters ORDER BY fact_count DESC`)
+      .all() as Array<{ id: string; label: string; fact_count: number; created_at: number; updated_at: number }>;
+    return rows.map((r) => ({
+      id: r.id,
+      label: r.label,
+      factCount: r.fact_count,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  /** Get member fact IDs for a specific cluster. */
+  getClusterMembers(clusterId: string): string[] {
+    const rows = this.liveDb
+      .prepare(`SELECT fact_id FROM cluster_members WHERE cluster_id = ?`)
+      .all(clusterId) as Array<{ fact_id: string }>;
+    return rows.map((r) => r.fact_id);
+  }
+
+  /** Get the cluster ID that a given fact belongs to (null if not in any cluster). */
+  getFactClusterId(factId: string): string | null {
+    const row = this.liveDb
+      .prepare(`SELECT cluster_id FROM cluster_members WHERE fact_id = ?`)
+      .get(factId) as { cluster_id: string } | undefined;
+    return row?.cluster_id ?? null;
   }
 
   close(): void {

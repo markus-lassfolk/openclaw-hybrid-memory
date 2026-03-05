@@ -10,6 +10,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { resolveReflectionModelAndFallbacks } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { detectClusters } from "../services/topic-clusters.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -355,5 +356,97 @@ export function registerUtilityTools(
       },
     },
     { name: "memory_reflect_meta" },
+  );
+
+  // memory_clusters
+  api.registerTool(
+    {
+      name: "memory_clusters",
+      label: "Memory Clusters",
+      description:
+        "Detect and return topic clusters — groups of densely interconnected facts forming natural knowledge domains. Runs BFS connected-component analysis on the memory graph. Returns cluster labels, sizes, and member fact IDs.",
+      parameters: Type.Object({
+        minClusterSize: Type.Optional(
+          Type.Number({
+            description: "Minimum facts to form a cluster (default from config, typically 3)",
+            minimum: 2,
+          }),
+        ),
+        save: Type.Optional(
+          Type.Boolean({
+            description: "Persist detected clusters to the database (default: true)",
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const clustersCfg = cfg.clusters;
+        if (!clustersCfg.enabled) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Topic cluster detection is disabled. Set clusters.enabled: true in plugin config.",
+              },
+            ],
+            details: { error: "clusters_disabled" },
+          };
+        }
+
+        const minClusterSize =
+          typeof params.minClusterSize === "number" && params.minClusterSize >= 2
+            ? Math.floor(params.minClusterSize)
+            : clustersCfg.minClusterSize;
+
+        const shouldSave = params.save !== false;
+
+        try {
+          // Build existingClusterIds map for stable IDs across re-runs
+          const existingClusters = factsDb.getClusters();
+          const existingClusterIds = new Map<string, { id: string; createdAt: number }>();
+          for (const cluster of existingClusters) {
+            const members = factsDb.getClusterMembers(cluster.id);
+            const componentKey = [...members].sort().join(",");
+            existingClusterIds.set(componentKey, { id: cluster.id, createdAt: cluster.createdAt });
+          }
+
+          const result = detectClusters(factsDb, { minClusterSize, existingClusterIds });
+
+          if (shouldSave) {
+            factsDb.saveClusters(result.clusters);
+          }
+
+          const summary = result.clusters
+            .map((c) => `  • ${c.label} (${c.factCount} facts)`)
+            .join("\n");
+
+          const text =
+            result.clusters.length === 0
+              ? `No topic clusters found (need at least ${minClusterSize} interconnected facts per cluster). Total linked facts: ${result.totalLinkedFacts}.`
+              : `Found ${result.clusters.length} topic cluster(s) from ${result.totalLinkedFacts} linked facts (${result.isolatedFacts} below threshold):\n${summary}`;
+
+          return {
+            content: [{ type: "text", text }],
+            details: {
+              clusterCount: result.clusters.length,
+              totalLinkedFacts: result.totalLinkedFacts,
+              isolatedFacts: result.isolatedFacts,
+              clusters: result.clusters.map((c) => ({
+                id: c.id,
+                label: c.label,
+                factCount: c.factCount,
+                factIds: c.factIds,
+              })),
+            },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "clusters",
+            operation: "memory_clusters",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory_clusters" },
   );
 }
