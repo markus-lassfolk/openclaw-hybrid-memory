@@ -280,6 +280,14 @@ export type GraphRetrievalConfig = {
   maxExpandedResults: number;
 };
 
+/** Shortest-path traversal configuration (Issue #140). */
+export type PathConfig = {
+  /** Enable memory_path tool (default: true). */
+  enabled: boolean;
+  /** Hard cap on maxDepth accepted by memory_path (default: 10). */
+  maxPathDepth: number;
+};
+
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
 export type AmbientConfig = {
   /** Enable enhanced ambient retrieval (default: false). */
@@ -456,6 +464,8 @@ export type HybridMemoryConfig = {
   ambient: AmbientConfig;
   /** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
   graphRetrieval: GraphRetrievalConfig;
+  /** Shortest-path traversal between memories via BFS (Issue #140, default: enabled). */
+  path: PathConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1749,6 +1759,16 @@ export const hybridConfigSchema = {
           : 20,
     };
 
+    // Parse path config (Issue #140, default: enabled, maxPathDepth: 10)
+    const pathRaw = cfg.path as Record<string, unknown> | undefined;
+    const path: PathConfig = {
+      enabled: pathRaw?.enabled !== false,
+      maxPathDepth:
+        typeof pathRaw?.maxPathDepth === "number" && pathRaw.maxPathDepth > 0
+          ? Math.min(20, Math.floor(pathRaw.maxPathDepth))
+          : 10,
+    };
+
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
     const activeTask: ActiveTaskConfig = {
       enabled: activeTaskRaw?.enabled !== false,
@@ -1812,6 +1832,7 @@ export const hybridConfigSchema = {
       })(),
       ambient,
       graphRetrieval,
+      path,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

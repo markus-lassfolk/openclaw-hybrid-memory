@@ -66,6 +66,8 @@ import {
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
+import { findShortestPath, resolveInput, formatPath } from "./services/shortest-path.js";
+export type { ShortestPathResult, PathStep, ShortestPathLookup } from "./services/shortest-path.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -478,6 +480,10 @@ export const _testing = {
   expandGraph,
   formatLinkPath,
   HOP_SCORE_DECAY,
+  // Shortest-path traversal (Issue #140)
+  findShortestPath,
+  resolveInput,
+  formatPath,
 };
 
 export { versionInfo } from "./versionInfo.js";
