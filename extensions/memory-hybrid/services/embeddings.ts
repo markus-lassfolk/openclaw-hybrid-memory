@@ -173,6 +173,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
   private readonly fallback: EmbeddingProvider | null;
   private switched = false;
   private readonly onSwitch?: (err: unknown) => void;
+  readonly dimensions: number;
+  readonly modelName: string;
 
   constructor(
     primary: EmbeddingProvider,
@@ -182,10 +184,9 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     this.active = primary;
     this.fallback = fallback;
     this.onSwitch = onSwitch;
+    this.dimensions = primary.dimensions;
+    this.modelName = primary.modelName;
   }
-
-  get dimensions(): number { return this.active.dimensions; }
-  get modelName(): string { return this.active.modelName; }
 
   async embed(text: string): Promise<number[]> {
     if (this.switched || !this.fallback) {
