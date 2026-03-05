@@ -1,0 +1,53 @@
+name: Feature Request
+description: Propose a new feature or improvement for openclaw-hybrid-memory
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement! Please describe the problem you're solving and your proposed solution.
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Problem / Motivation
+      description: What problem does this feature solve? What use case drives it?
+      placeholder: I'm trying to do X but the current API doesn't support...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the feature you'd like to see added or changed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative approaches or workarounds?
+
+  - type: textarea
+    id: api-sketch
+    attributes:
+      label: API Sketch (TypeScript)
+      description: |
+        If applicable, show how you'd expect to call or configure the new feature.
+      render: typescript
+      placeholder: |
+        // Example of desired API
+        const results = await memory.search({
+          query: "...",
+          filter: { tag: "project-x" },
+          topK: 5,
+        });
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to submit a pull request for this feature
