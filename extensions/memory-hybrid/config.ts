@@ -278,6 +278,10 @@ export type ClustersConfig = {
   refreshIntervalDays: number;
   /** Reserved: Model for label generation; null = rule-based only (default: null). Currently not passed to detectClusters. */
   labelModel: string | null;
+/** Memory health dashboard configuration (Issue #148). */
+export type HealthConfig = {
+  /** Enable memory_health tool (default: true). */
+  enabled: boolean;
 };
 
 /** GraphRAG retrieval configuration (Issue #145). */
@@ -528,6 +532,8 @@ export type HybridMemoryConfig = {
   reinforcement: ReinforcementConfig;
   /** Topic cluster detection: BFS connected-component analysis on memory_links (Issue #146). */
   clusters: ClustersConfig;
+  /** Memory health dashboard (Issue #148, default: enabled). */
+  health: HealthConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -2038,6 +2044,12 @@ export const hybridConfigSchema = {
       nightlyCycle,
       reinforcement,
       clusters,
+      health: (() => {
+        const healthRaw = cfg.health as Record<string, unknown> | undefined;
+        return {
+          enabled: healthRaw?.enabled !== false,
+        };
+      })(),
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
