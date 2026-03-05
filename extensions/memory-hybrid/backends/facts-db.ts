@@ -538,8 +538,7 @@ export class FactsDB {
         link_type TEXT NOT NULL,
         strength REAL NOT NULL DEFAULT 1.0,
         created_at INTEGER NOT NULL,
-        FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+        FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
       )
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_fact_id)`);
@@ -1133,6 +1132,12 @@ export class FactsDB {
   }
 
   delete(id: string): boolean {
+    // Manually clean up links where this fact is the target, except DERIVED_FROM links
+    // (DERIVED_FROM links are preserved for provenance tracking even after source facts are deleted)
+    this.liveDb
+      .prepare(`DELETE FROM memory_links WHERE target_fact_id = ? AND link_type != 'DERIVED_FROM'`)
+      .run(id);
+    
     const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
   }

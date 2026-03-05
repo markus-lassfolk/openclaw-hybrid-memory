@@ -375,6 +375,25 @@ describe("DERIVED_FROM", () => {
     const level2 = db.getLinksFrom(processed.id).filter((l) => l.linkType === "DERIVED_FROM");
     expect(level2[0].targetFactId).toBe(raw.id);
   });
+
+  it("DERIVED_FROM links survive when target fact is deleted (provenance preservation)", () => {
+    const source1 = storeFact("Source fact 1");
+    const source2 = storeFact("Source fact 2");
+    const merged = storeFact("Merged fact");
+
+    // Create DERIVED_FROM links: merged ← source1, merged ← source2
+    db.createLink(merged.id, source1.id, "DERIVED_FROM", 1.0);
+    db.createLink(merged.id, source2.id, "DERIVED_FROM", 1.0);
+
+    // Delete source facts (simulating consolidation cleanup)
+    db.delete(source1.id);
+    db.delete(source2.id);
+
+    // DERIVED_FROM links should still exist for provenance tracking
+    const links = db.getLinksFrom(merged.id).filter((l) => l.linkType === "DERIVED_FROM");
+    expect(links).toHaveLength(2);
+    expect(links.map(l => l.targetFactId).sort()).toEqual([source1.id, source2.id].sort());
+  });
 });
 
 // ---------------------------------------------------------------------------
