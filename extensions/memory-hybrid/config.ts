@@ -324,6 +324,12 @@ export type AliasesConfig = {
   maxAliases: number;
   /** Model for alias generation; when unset, runtime uses getDefaultCronModel(cfg, "nano"). */
   model?: string;
+/** Shortest-path traversal configuration (Issue #140). */
+export type PathConfig = {
+  /** Enable memory_path tool (default: true). */
+  enabled: boolean;
+  /** Hard cap on maxDepth accepted by memory_path (default: 10). */
+  maxPathDepth: number;
 };
 
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
@@ -552,6 +558,8 @@ export type HybridMemoryConfig = {
   gaps: GapsConfig;
   /** Multi-hook retrieval aliases: generate and index alternative phrasings per fact (Issue #149, default: disabled). */
   aliases: AliasesConfig;
+  /** Shortest-path traversal between memories via BFS (Issue #140, default: enabled). */
+  path: PathConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1998,6 +2006,14 @@ export const hybridConfigSchema = {
           ? Math.min(10, Math.floor(aliasesRaw.maxAliases))
           : 5,
       model: typeof aliasesRaw?.model === "string" ? aliasesRaw.model : undefined,
+    // Parse path config (Issue #140, default: enabled, maxPathDepth: 10)
+    const pathRaw = cfg.path as Record<string, unknown> | undefined;
+    const path: PathConfig = {
+      enabled: pathRaw?.enabled !== false,
+      maxPathDepth:
+        typeof pathRaw?.maxPathDepth === "number" && pathRaw.maxPathDepth > 0
+          ? Math.min(20, Math.floor(pathRaw.maxPathDepth))
+          : 10,
     };
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
@@ -2089,6 +2105,7 @@ export const hybridConfigSchema = {
       })(),
       gaps,
       aliases,
+      path,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

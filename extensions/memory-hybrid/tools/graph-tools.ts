@@ -1,7 +1,7 @@
 /**
  * Graph Tool Registrations
  *
- * Tool definitions for memory link creation, graph exploration, and knowledge gap analysis.
+ * Tool definitions for memory link creation and graph exploration.
  * Extracted from index.ts for better modularity.
  */
 
@@ -11,15 +11,11 @@ import { stringEnum } from "openclaw/plugin-sdk";
 
 import type { FactsDB, MemoryLinkType } from "../backends/facts-db.js";
 import { MEMORY_LINK_TYPES } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { analyzeKnowledgeGaps, type GapMode } from "../services/knowledge-gaps.js";
+import { findShortestPath, resolveInput, formatPath } from "../services/shortest-path.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
-  vectorDb: VectorDB;
-  embeddings: Embeddings;
   cfg: HybridMemoryConfig;
 }
 
@@ -32,7 +28,7 @@ export function registerGraphTools(
   ctx: PluginContext,
   api: ClawdbotPluginApi,
 ): void {
-  const { factsDb, vectorDb, embeddings, cfg } = ctx;
+  const { factsDb, cfg } = ctx;
 
   // Graph tools (when graph enabled)
   if (cfg.graph.enabled) {
@@ -142,95 +138,88 @@ export function registerGraphTools(
       },
       { name: "memory_graph" },
     );
+  }
 
-    // memory_gaps tool (when gaps detection is enabled)
-    if (cfg.gaps.enabled) {
-      api.registerTool(
-        {
-          name: "memory_gaps",
-          label: "Memory Gaps",
-          description:
-            "Detect knowledge gaps in the memory graph. Reports orphan facts (zero links), " +
-            "weak facts (only 1 link), and suggested connections between semantically similar " +
-            "but currently unlinked facts. Results are ranked by age × isolation score.",
-          parameters: Type.Object({
-            mode: Type.Optional(
-              stringEnum(["orphans", "weak", "all"] as const),
-            ),
-            limit: Type.Optional(
-              Type.Number({
-                description: "Max results per category (default: 20)",
-              }),
-            ),
-          }),
-          async execute(_toolCallId: string, params: Record<string, unknown>) {
-            const mode: GapMode = (params.mode as GapMode | undefined) ?? "all";
-            const limit =
-              typeof params.limit === "number" && params.limit > 0
-                ? Math.min(100, Math.floor(params.limit))
-                : 20;
-            const threshold = cfg.gaps.similarityThreshold;
+  // Shortest-path tool (when path is enabled)
+  if (cfg.path.enabled) {
+    api.registerTool(
+      {
+        name: "memory_path",
+        label: "Memory Path",
+        description:
+          "Find the shortest path between two memories via BFS on the memory graph. " +
+          "Both `from` and `to` accept a fact ID or an entity name (resolved automatically). " +
+          "Returns the chain of facts and link types, or reports no path within maxDepth.",
+        parameters: Type.Object({
+          from: Type.String({ description: "Start fact ID or entity name" }),
+          to: Type.String({ description: "End fact ID or entity name" }),
+          maxDepth: Type.Optional(
+            Type.Number({ description: `Max hops to traverse (default 5, max ${cfg.path.maxPathDepth})` }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { from, to, maxDepth = 5 } = params as {
+            from: string;
+            to: string;
+            maxDepth?: number;
+          };
 
-            const report = await analyzeKnowledgeGaps(
-              factsDb,
-              vectorDb,
-              embeddings,
-              mode,
-              limit,
-              threshold,
-            );
+          const depthCap = Math.min(cfg.path.maxPathDepth, Math.max(1, Math.floor(maxDepth)));
 
-            const lines: string[] = [];
-
-            if (report.orphans.length > 0) {
-              lines.push(`Orphan facts (${report.orphans.length} — zero links):`);
-              for (const g of report.orphans) {
-                lines.push(
-                  `  [${g.factId.slice(0, 8)}] score=${g.rankScore.toFixed(2)} "${g.text.slice(0, 70)}${g.text.length > 70 ? "…" : ""}"`,
-                );
-              }
-              lines.push("");
-            }
-
-            if (report.weak.length > 0) {
-              lines.push(`Weak facts (${report.weak.length} — only 1 link):`);
-              for (const g of report.weak) {
-                lines.push(
-                  `  [${g.factId.slice(0, 8)}] score=${g.rankScore.toFixed(2)} "${g.text.slice(0, 70)}${g.text.length > 70 ? "…" : ""}"`,
-                );
-              }
-              lines.push("");
-            }
-
-            if (report.suggestedLinks.length > 0) {
-              lines.push(`Suggested links (${report.suggestedLinks.length} — similar but unlinked):`);
-              for (const s of report.suggestedLinks) {
-                lines.push(
-                  `  sim=${s.similarity.toFixed(3)}: [${s.sourceId.slice(0, 8)}] "${s.sourceText.slice(0, 50)}${s.sourceText.length > 50 ? "…" : ""}" ↔ [${s.targetId.slice(0, 8)}] "${s.targetText.slice(0, 50)}${s.targetText.length > 50 ? "…" : ""}"`,
-                );
-              }
-              lines.push("");
-            }
-
-            if (lines.length === 0) {
-              lines.push("No knowledge gaps detected.");
-            }
-
+          const fromId = resolveInput(factsDb, from);
+          if (!fromId) {
             return {
-              content: [{ type: "text", text: lines.join("\n") }],
-              details: {
-                mode,
-                limit,
-                threshold,
-                orphanCount: report.orphans.length,
-                weakCount: report.weak.length,
-                suggestedLinkCount: report.suggestedLinks.length,
-              },
+              content: [{ type: "text", text: `Could not resolve start: "${from}" (not a known fact ID or entity name)` }],
+              details: { error: "from_not_found", from },
             };
-          },
+          }
+
+          const toId = resolveInput(factsDb, to);
+          if (!toId) {
+            return {
+              content: [{ type: "text", text: `Could not resolve end: "${to}" (not a known fact ID or entity name)` }],
+              details: { error: "to_not_found", to },
+            };
+          }
+
+          const result = findShortestPath(factsDb, fromId, toId, { maxDepth: depthCap });
+
+          if (!result) {
+            return {
+              content: [{ type: "text", text: `No path found between "${from}" and "${to}" within ${depthCap} hops.` }],
+              details: { found: false, fromId, toId, maxDepth: depthCap },
+            };
+          }
+
+          const lines: string[] = [
+            `Path found: ${result.hops} hop${result.hops === 1 ? "" : "s"}`,
+            "",
+            formatPath(result.steps),
+            "",
+            "Chain:",
+          ];
+          for (let i = 0; i < result.chain.length; i++) {
+            const entry = result.chain[i];
+            const step = result.steps[i - 1];
+            if (step) {
+              lines.push(`  —[${step.linkType}]→`);
+            }
+            lines.push(`  [${entry.id.slice(0, 8)}…] ${entry.text.slice(0, 80)}${entry.text.length > 80 ? "…" : ""}`);
+          }
+
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: {
+              found: true,
+              fromId,
+              toId,
+              hops: result.hops,
+              steps: result.steps,
+            },
+          };
         },
-        { name: "memory_gaps" },
-      );
-    }
+      },
+      { name: "memory_path" },
+    );
   }
 }

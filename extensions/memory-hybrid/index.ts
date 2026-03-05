@@ -65,17 +65,9 @@ import {
   DEFAULT_RETRIEVAL_CONFIG,
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
-import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "./services/retrieval-aliases.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
-import {
-  analyzeKnowledgeGaps,
-  detectOrphans,
-  detectWeak,
-  detectSuggestedLinks,
-  computeIsolationScore,
-  computeRankScore,
-} from "./services/knowledge-gaps.js";
-export type { GapFact, SuggestedLink, KnowledgeGapReport, GapMode, GapFactsDB, GapVectorDB, GapEmbeddings } from "./services/knowledge-gaps.js";
+import { findShortestPath, resolveInput, formatPath } from "./services/shortest-path.js";
+export type { ShortestPathResult, PathStep, ShortestPathLookup } from "./services/shortest-path.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -210,7 +202,6 @@ let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
-let aliasDb: AliasDB | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -273,11 +264,10 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
-    aliasDb = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -297,7 +287,6 @@ const memoryHybridPlugin = {
       wal = dbContext.wal;
       proposalsDb = dbContext.proposalsDb;
       eventLog = dbContext.eventLog;
-      aliasDb = dbContext.aliasDb;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -324,7 +313,6 @@ const memoryHybridPlugin = {
       credentialsDb,
       proposalsDb,
       eventLog,
-      aliasDb,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -354,7 +342,6 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
-      aliasDb,
       wal,
       proposalsDb,
       resolvedSqlitePath,
@@ -379,7 +366,6 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
-      aliasDb,
       wal,
       currentAgentIdRef,
       lastProgressiveIndexIds,
@@ -493,19 +479,11 @@ export const _testing = {
   // GraphRAG retrieval (Issue #145)
   expandGraph,
   formatLinkPath,
-  // Knowledge gap analysis (Issue #141)
-  analyzeKnowledgeGaps,
-  detectOrphans,
-  detectWeak,
-  detectSuggestedLinks,
-  computeIsolationScore,
-  computeRankScore,
   HOP_SCORE_DECAY,
-  // Retrieval aliases (Issue #149)
-  AliasDB,
-  generateAliases,
-  storeAliases,
-  searchAliasStrategy,
+  // Shortest-path traversal (Issue #140)
+  findShortestPath,
+  resolveInput,
+  formatPath,
 };
 
 export { versionInfo } from "./versionInfo.js";
