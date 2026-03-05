@@ -3094,6 +3094,7 @@ export class FactsDB {
       const nowSec = Math.floor(Date.now() / 1000);
       // Look for facts stored in the same session (via source_sessions column)
       // Also accept entity or tag overlap as qualifying co-occurrence signal
+      const escapedSessionId = sessionId.replace(/[%_]/g, '\\$&');
       const recentRows = this.liveDb
         .prepare(
           `SELECT * FROM facts
@@ -3101,7 +3102,7 @@ export class FactsDB {
              AND superseded_at IS NULL
              AND (expires_at IS NULL OR expires_at > ?)
              AND (
-               (source_sessions IS NOT NULL AND source_sessions LIKE ?)
+               (source_sessions IS NOT NULL AND source_sessions LIKE ? ESCAPE '\\')
                OR (entity IS NOT NULL AND entity = ?)
              )
            ORDER BY created_at DESC
@@ -3110,7 +3111,7 @@ export class FactsDB {
         .all(
           newFactId,
           nowSec,
-          `%${sessionId}%`,
+          `%${escapedSessionId}%`,
           entity ?? "__NO_ENTITY__",
         ) as Array<Record<string, unknown>>;
 
@@ -3145,10 +3146,12 @@ export class FactsDB {
         )
         .all(entity.trim(), key.trim(), newFactId, nowSec) as Array<Record<string, unknown>>;
 
+      const newVal = (this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value ?? null;
+
       for (const row of conflicting) {
         const oldFact = this.rowToEntry(row);
         // Only create SUPERSEDES edge when value actually differs
-        const newVal = (this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value ?? null;
+        if (newVal === null && oldFact.value === null) continue;
         if (newVal !== null && oldFact.value !== null && newVal.toLowerCase() === oldFact.value.toLowerCase()) continue;
 
         // Create SUPERSEDES link (new → old)
