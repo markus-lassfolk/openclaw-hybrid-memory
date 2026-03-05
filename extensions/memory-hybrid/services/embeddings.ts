@@ -61,15 +61,25 @@ export class Embeddings implements EmbeddingProvider {
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
     this.batchSize = batchSize ?? 2048;
     
-    // Validate dimensions against known model limits
+    // Validate dimensions against known model limits and capabilities
     const modelMaxDimensions: Record<string, number> = {
       "text-embedding-3-small": 1536,
       "text-embedding-3-large": 3072,
+    };
+    const modelNativeDimensions: Record<string, number> = {
+      "text-embedding-3-small": 1536,
+      "text-embedding-3-large": 3072,
+      "text-embedding-ada-002": 1536,
     };
     for (const model of this.models) {
       const maxDim = modelMaxDimensions[model];
       if (maxDim !== undefined && this.dimensions > maxDim) {
         throw new Error(`Dimensions ${this.dimensions} exceed maximum ${maxDim} for model ${model}`);
+      }
+      const nativeDim = modelNativeDimensions[model];
+      const supportsDimensions = model.startsWith("text-embedding-3-");
+      if (nativeDim !== undefined && this.dimensions !== nativeDim && !supportsDimensions) {
+        throw new Error(`Model ${model} does not support custom dimensions (native: ${nativeDim}, requested: ${this.dimensions}). Use a text-embedding-3-* model for custom dimensions.`);
       }
     }
   }

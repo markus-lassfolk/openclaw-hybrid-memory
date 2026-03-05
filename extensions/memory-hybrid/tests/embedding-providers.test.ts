@@ -128,6 +128,12 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(() => new Embeddings(client, "text-embedding-ada-002", 1536)).not.toThrow();
   });
 
+  it("throws when non-text-embedding-3 model is used with custom dimensions", () => {
+    const client = makeMockOpenAI([]);
+    expect(() => new Embeddings(client, "text-embedding-ada-002", 768)).toThrow(/does not support custom dimensions/);
+    expect(() => new Embeddings(client, ["text-embedding-3-small", "text-embedding-ada-002"], 768)).toThrow(/does not support custom dimensions/);
+  });
+
   it("updates modelName when a fallback model succeeds", async () => {
     vi.useFakeTimers();
     try {
@@ -141,7 +147,7 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
         return Promise.resolve({ data: Array.from({ length: count }, () => ({ embedding: [0.1] })) });
       });
       const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
-      const provider = new Embeddings(client, ["text-embedding-3-small", "text-embedding-ada-002"], 1);
+      const provider = new Embeddings(client, ["text-embedding-3-small", "text-embedding-ada-002"], 1536);
       expect(provider.modelName).toBe("text-embedding-3-small");
       const embedPromise = provider.embed("test");
       // Advance past all withLLMRetry delays (1s + 3s for 2 retries = 4s total)
