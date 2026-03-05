@@ -2988,15 +2988,34 @@ export class FactsDB {
   }
 
   /**
-   * Check if a fact is the target of any active (unresolved) CONTRADICTS link.
+   * Check if a fact is involved in any active (unresolved) contradiction,
+   * either as the old or the new fact.
    */
   isContradicted(factId: string): boolean {
     const row = this.liveDb
       .prepare(
-        `SELECT 1 FROM contradictions WHERE fact_id_old = ? AND resolved = 0 LIMIT 1`,
+        `SELECT 1 FROM contradictions WHERE (fact_id_old = ? OR fact_id_new = ?) AND resolved = 0 LIMIT 1`,
       )
-      .get(factId);
+      .get(factId, factId);
     return row != null;
+  }
+
+  /**
+   * Batch check: return the subset of factIds that are involved in any
+   * active (unresolved) contradiction (as old or new fact).
+   * Emits a single SQL query instead of one per fact.
+   */
+  getContradictedIds(factIds: string[]): Set<string> {
+    if (factIds.length === 0) return new Set();
+    const placeholders = factIds.map(() => "?").join(",");
+    const rows = this.liveDb
+      .prepare(
+        `SELECT fact_id_old AS id FROM contradictions WHERE fact_id_old IN (${placeholders}) AND resolved = 0
+         UNION
+         SELECT fact_id_new AS id FROM contradictions WHERE fact_id_new IN (${placeholders}) AND resolved = 0`,
+      )
+      .all(...factIds, ...factIds) as Array<{ id: string }>;
+    return new Set(rows.map((r) => r.id));
   }
 
   /**
@@ -3202,12 +3221,12 @@ export class FactsDB {
     if (candidates.size === 0) return 0;
 
     const entities = knownEntities ?? this.getKnownEntities();
-    const knownEntitiesLower = entities.map((e) => e.toLowerCase());
+    const knownEntitiesSet = new Set(entities.map((e) => e.toLowerCase()));
     let linked = 0;
 
     for (const typeName of candidates) {
       // Only link to types that are known entities in the knowledge base
-      if (!knownEntitiesLower.includes(typeName)) continue;
+      if (!knownEntitiesSet.has(typeName)) continue;
       const anchor = this.findEntityAnchor(typeName, newFactId);
       if (!anchor) continue;
       // Avoid duplicate INSTANCE_OF links

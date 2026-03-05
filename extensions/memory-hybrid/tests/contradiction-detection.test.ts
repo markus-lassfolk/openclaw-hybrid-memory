@@ -204,14 +204,15 @@ describe("detectContradictions: null fields skip detection", () => {
 // 6. isContradicted() — retrieval marking
 // ---------------------------------------------------------------------------
 describe("isContradicted", () => {
-  it("returns true for the old (contradicted) fact", () => {
+  it("returns true for both facts involved in a contradiction (bidirectional)", () => {
     const old = storeFact("user", "theme", "dark", "User prefers dark mode");
     const newFact = storeFact("user", "theme", "light", "User switched to light mode");
 
     db.detectContradictions(newFact.id, "user", "theme", "light");
 
+    // Both sides of a contradiction are now marked (bidirectional CONTRADICTS links)
     expect(db.isContradicted(old.id)).toBe(true);
-    expect(db.isContradicted(newFact.id)).toBe(false);
+    expect(db.isContradicted(newFact.id)).toBe(true);
   });
 
   it("returns false for a fact with no contradictions", () => {

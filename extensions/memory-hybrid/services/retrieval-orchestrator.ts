@@ -194,6 +194,8 @@ export interface FactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
   /** Optional: check whether a fact has an unresolved CONTRADICTS link targeting it. */
   isContradicted?(factId: string): boolean;
+  /** Optional: batch check — returns the subset of factIds involved in unresolved contradictions. */
+  getContradictedIds?(factIds: string[]): Set<string>;
 }
 
 /**
@@ -325,8 +327,13 @@ export async function runRetrievalPipeline(
 
   // --- Token budget packing ---
   // Build contradicted set so contradicted facts are marked with a warning in the packed output.
+  // Prefer the batch method (single query) over per-entry isContradicted calls (N queries).
   const contradictedIds = new Set<string>();
-  if (factsDb.isContradicted) {
+  if (factsDb.getContradictedIds) {
+    const allIds = orderedEntries.map((e) => e.factId);
+    const batch = factsDb.getContradictedIds(allIds);
+    for (const id of batch) contradictedIds.add(id);
+  } else if (factsDb.isContradicted) {
     for (const { factId } of orderedEntries) {
       if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
     }

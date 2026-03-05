@@ -34,7 +34,7 @@ import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 import type { MemoryEntry } from "../types/memory.js";
 
-const { FactsDB, packIntoBudget, serializeFactForContext } = _testing;
+const { FactsDB, packIntoBudget, serializeFactForContext, runConsolidate } = _testing;
 
 let tmpDir: string;
 let db: InstanceType<typeof FactsDB>;
@@ -166,8 +166,9 @@ describe("CONTRADICTS bidirectional", () => {
 
     db.detectContradictions(factB.id, "city", "name", "London");
 
-    // The old fact (factA) should be contradicted (targeted by new → old)
+    // Both the old fact (factA) and the new fact (factB) should be contradicted
     expect(db.isContradicted(factA.id)).toBe(true);
+    expect(db.isContradicted(factB.id)).toBe(true);
   });
 
   it("CONTRADICTS links have strength 1.0", () => {
@@ -456,5 +457,71 @@ describe("packIntoBudget with contradictedIds", () => {
     const entry = makeEntry("d", { text: "Normal fact" });
     const { packed } = packIntoBudget([{ factId: "d", entry: entry as MemoryEntry }], 10_000);
     expect(packed[0]).not.toContain("WARNING");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DERIVED_FROM — consolidation regression (finding #7)
+// ---------------------------------------------------------------------------
+
+describe("runConsolidate DERIVED_FROM regression", () => {
+  it("DERIVED_FROM links survive after source facts are hard-deleted during consolidation", async () => {
+    // Store two similar source facts
+    const source1 = storeFact("The sky appears blue during daylight hours", "sky", null, null);
+    const source2 = storeFact("Sky looks blue when sun is up", "sky", null, null);
+
+    // Mock dependencies for runConsolidate.
+    // cosineSimilarity in consolidation.ts computes raw dot product (expects unit vectors),
+    // so use a unit vector: dot([1,0,0],[1,0,0]) = 1.0 ≥ threshold 0.99 → cluster forms.
+    const mockVector = [1, 0, 0];
+    const mockEmbeddings = {
+      embed: async (_text: string) => mockVector,
+    };
+    const mockVectorDb = {
+      store: async () => undefined,
+    };
+    const mergedText = "The sky is blue during daylight.";
+    const mockOpenAI = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: mergedText } }],
+          }),
+        },
+      },
+    } as unknown;
+    const logger = { info: () => {}, warn: () => {} };
+
+    // Pre-seed embeddings so cosineSimilarity triggers cluster formation:
+    // We mock the embed function to return a very similar vector for both facts.
+    // With threshold=0.99 and identical vectors the similarity is 1.0 >= 0.99.
+    const result = await runConsolidate(
+      db as never,
+      mockVectorDb as never,
+      mockEmbeddings as never,
+      mockOpenAI as never,
+      { threshold: 0.99, includeStructured: false, dryRun: false, limit: 100, model: "gpt-4o" },
+      logger,
+    );
+
+    expect(result.merged).toBeGreaterThanOrEqual(1);
+    expect(result.deleted).toBe(2);
+
+    // Source facts should be deleted
+    expect(db.getById(source1.id)).toBeNull();
+    expect(db.getById(source2.id)).toBeNull();
+
+    // Find the merged fact (it has a DERIVED_FROM link pointing to source1 or source2)
+    const linksToSource1 = db.getLinksTo(source1.id).filter((l) => l.linkType === "DERIVED_FROM");
+    const linksToSource2 = db.getLinksTo(source2.id).filter((l) => l.linkType === "DERIVED_FROM");
+
+    // DERIVED_FROM links must survive even though source facts are deleted (provenance trail)
+    expect(linksToSource1.length + linksToSource2.length).toBe(2);
+
+    // Verify the merged fact exists and has outbound DERIVED_FROM links
+    const mergedFactId = linksToSource1[0]?.sourceFactId ?? linksToSource2[0]?.sourceFactId;
+    expect(mergedFactId).toBeDefined();
+    const outbound = db.getLinksFrom(mergedFactId!).filter((l) => l.linkType === "DERIVED_FROM");
+    expect(outbound).toHaveLength(2);
   });
 });

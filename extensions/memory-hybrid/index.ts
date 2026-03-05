@@ -125,7 +125,7 @@ import { classifyMemoryOperation, parseClassificationResponse, type MemoryClassi
 import { extractStructuredFields } from "./services/fact-extraction.js";
 import { getMemoryTriggers, detectCredentialPatterns, extractCredentialMatch, isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX, inferServiceFromText, SENSITIVE_PATTERNS } from "./services/auto-capture.js";
 import { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel } from "./services/auto-classifier.js";
-import { unionFind, getRoot, isStructuredForConsolidation } from "./services/consolidation.js";
+import { unionFind, getRoot, isStructuredForConsolidation, runConsolidate } from "./services/consolidation.js";
 import { shouldCapture as shouldCaptureUtil, detectCategory as detectCategoryUtil } from "./services/capture-utils.js";
 import { buildToolScopeFilter } from "./utils/scope-filter.js";
 import { walWrite, walRemove } from "./services/wal-helpers.js";
@@ -430,6 +430,7 @@ export const _testing = {
   isCredentialLike,
   inferServiceFromText,
   isStructuredForConsolidation,
+  runConsolidate,
   normalizeSuggestedLabel,
   unionFind,
   getRoot,
