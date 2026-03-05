@@ -2040,6 +2040,15 @@ export class FactsDB {
     return this.db;
   }
 
+  /**
+   * Expose the underlying better-sqlite3 Database for services that require direct
+   * SQL access (e.g. the FTS5 search service used by the RRF retrieval pipeline).
+   * Returned instance is the same live handle used internally (with auto-reopen).
+   */
+  getRawDb(): Database.Database {
+    return this.liveDb;
+  }
+
   // ---------- Procedural memory: procedures table CRUD ----------
 
   private procedureRowToEntry(row: Record<string, unknown>): ProcedureEntry {

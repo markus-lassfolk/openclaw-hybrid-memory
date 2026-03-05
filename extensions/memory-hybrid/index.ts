@@ -49,6 +49,21 @@ import { extractProceduresFromSessions } from "./services/procedure-extractor.js
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
 import { searchFts, rebuildFtsIndex, buildFts5Query } from "./services/fts-search.js";
+import {
+  fuseResults,
+  applyPostRrfAdjustments,
+  RRF_K_DEFAULT,
+  type RankedResult,
+  type FusedResult,
+  type FactMetadata,
+} from "./services/rrf-fusion.js";
+import {
+  runRetrievalPipeline,
+  packIntoBudget,
+  serializeFactForContext,
+  estimateTokenCount,
+  DEFAULT_RETRIEVAL_CONFIG,
+} from "./services/retrieval-orchestrator.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -444,6 +459,15 @@ export const _testing = {
   searchFts,
   rebuildFtsIndex,
   buildFts5Query,
+  // RRF scoring pipeline (Issue #152)
+  fuseResults,
+  applyPostRrfAdjustments,
+  RRF_K_DEFAULT,
+  runRetrievalPipeline,
+  packIntoBudget,
+  serializeFactForContext,
+  estimateTokenCount,
+  DEFAULT_RETRIEVAL_CONFIG,
 };
 
 export { versionInfo } from "./versionInfo.js";
