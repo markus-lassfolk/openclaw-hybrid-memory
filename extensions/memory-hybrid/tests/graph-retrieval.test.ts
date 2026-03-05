@@ -433,7 +433,10 @@ describe("expandGraph: link path annotation", () => {
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const cResult = result.find((r) => r.factId === "c")!;
     expect(cResult.linkPath).toHaveLength(1);
+    expect(cResult.linkPath[0].fromFactId).toBe("a");
+    expect(cResult.linkPath[0].toFactId).toBe("c");
     expect(cResult.linkPath[0].linkType).toBe("CAUSED_BY");
+    expect(cResult.linkPath[0].toFactId).toBe(cResult.factId);
   });
 
   it("2-hop: linkPath has two steps for a chained traversal", () => {

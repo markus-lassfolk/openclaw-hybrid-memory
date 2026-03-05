@@ -108,7 +108,10 @@ interface NodeMeta {
  * @param factsDb - FactsDB-compatible interface.
  * @param seedResults - Initial results from semantic/FTS5 search.
  * @param options - Expansion options.
- * @returns Combined direct + expanded results, deduped, sorted by score desc.
+ * @returns Combined direct + expanded results. Direct (seed) results are returned
+ * in the original seed order; graph-expanded results follow, ordered by hopCount
+ * (1-hop, then 2-hop, etc.) and within each hop by decayed score desc. No global
+ * resort by score or best-path deduplication across multiple seeds/paths.
  */
 export function expandGraph(
   factsDb: GraphFactLookup,
@@ -121,6 +124,9 @@ export function expandGraph(
     scopeFilter,
     asOf,
   } = options;
+
+  const getByIdOpts =
+    scopeFilter != null || asOf != null ? { asOf, scopeFilter } : undefined;
 
   // Build direct results first.
   const directResults: GraphExpandedResult[] = seedResults.map((s) => ({
@@ -136,6 +142,8 @@ export function expandGraph(
     return directResults;
   }
 
+  const seedScoreMap = new Map<string, number>(seedResults.map((s) => [s.factId, s.score]));
+
   // BFS: track discovered nodes by factId → NodeMeta.
   const nodeMeta = new Map<string, NodeMeta>();
   for (const s of seedResults) {
@@ -144,6 +152,32 @@ export function expandGraph(
 
   // frontier holds the factIds to expand in the next hop.
   let frontier: string[] = seedResults.map((s) => s.factId);
+
+  /** Only add a candidate if it is visible (scope/asOf) and either new or a better path. */
+  function tryAddNode(
+    candidateId: string,
+    hop: number,
+    steps: LinkPathStep[],
+    seedId: string,
+    nextFrontier: string[],
+  ): void {
+    if (!factsDb.getById(candidateId, getByIdOpts)) return;
+    const existing = nodeMeta.get(candidateId);
+    const newSeedScore = seedScoreMap.get(seedId) ?? 0;
+    if (!existing) {
+      nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+      nextFrontier.push(candidateId);
+      return;
+    }
+    if (hop < existing.hopCount) {
+      nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+      nextFrontier.push(candidateId);
+      return;
+    }
+    if (hop === existing.hopCount && newSeedScore > (seedScoreMap.get(existing.seedId) ?? 0)) {
+      nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+    }
+  }
 
   for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
     const nextFrontier: string[] = [];
@@ -154,45 +188,31 @@ export function expandGraph(
       // --- Outgoing edges: fromId → targetId ---
       const outLinks = factsDb.getLinksFrom(fromId);
       for (const link of outLinks) {
-        if (!nodeMeta.has(link.targetFactId)) {
-          const steps: LinkPathStep[] = [
-            ...fromMeta.steps,
-            {
-              fromFactId: fromId,
-              toFactId: link.targetFactId,
-              linkType: link.linkType,
-              strength: link.strength,
-            },
-          ];
-          nodeMeta.set(link.targetFactId, {
-            hopCount: hop,
-            steps,
-            seedId: fromMeta.seedId,
-          });
-          nextFrontier.push(link.targetFactId);
-        }
+        const steps: LinkPathStep[] = [
+          ...fromMeta.steps,
+          {
+            fromFactId: fromId,
+            toFactId: link.targetFactId,
+            linkType: link.linkType,
+            strength: link.strength,
+          },
+        ];
+        tryAddNode(link.targetFactId, hop, steps, fromMeta.seedId, nextFrontier);
       }
 
       // --- Incoming edges: sourceId → fromId (we discover sourceId) ---
       const inLinks = factsDb.getLinksTo(fromId);
       for (const link of inLinks) {
-        if (!nodeMeta.has(link.sourceFactId)) {
-          const steps: LinkPathStep[] = [
-            ...fromMeta.steps,
-            {
-              fromFactId: fromId,
-              toFactId: link.sourceFactId,
-              linkType: link.linkType,
-              strength: link.strength,
-            },
-          ];
-          nodeMeta.set(link.sourceFactId, {
-            hopCount: hop,
-            steps,
-            seedId: fromMeta.seedId,
-          });
-          nextFrontier.push(link.sourceFactId);
-        }
+        const steps: LinkPathStep[] = [
+          ...fromMeta.steps,
+          {
+            fromFactId: fromId,
+            toFactId: link.sourceFactId,
+            linkType: link.linkType,
+            strength: link.strength,
+          },
+        ];
+        tryAddNode(link.sourceFactId, hop, steps, fromMeta.seedId, nextFrontier);
       }
     }
 
@@ -200,12 +220,6 @@ export function expandGraph(
   }
 
   // Build expanded results (non-seed nodes only).
-  const getByIdOpts =
-    scopeFilter != null || asOf != null ? { asOf, scopeFilter } : undefined;
-
-  // Pre-build seed score map for fast lookup.
-  const seedScoreMap = new Map<string, number>(seedResults.map((s) => [s.factId, s.score]));
-
   const expandedResults: GraphExpandedResult[] = [];
   for (const [factId, meta] of nodeMeta) {
     if (meta.hopCount === 0) continue; // already in directResults
