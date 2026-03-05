@@ -360,6 +360,7 @@ const memoryHybridPlugin = {
       aliasDb,
       wal,
       proposalsDb,
+      eventLog,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,

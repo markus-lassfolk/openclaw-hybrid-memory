@@ -247,8 +247,8 @@ function buildCliContextServices(
     runFindDuplicates: (opts) =>
       runFindDuplicates(factsDb, vectorDb, embeddings, safeEmbed, opts, api.logger),
     runConsolidate: (opts) => {
-      // Skip if API key is missing (OpenAI provider requires API key)
-      if (!cfg.embedding?.apiKey) {
+      // Skip if OpenAI provider is configured but API key is missing
+      if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
         return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
       }
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb);
