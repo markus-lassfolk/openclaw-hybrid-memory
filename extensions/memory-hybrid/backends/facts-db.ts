@@ -17,7 +17,7 @@ import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 
-export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS"] as const;
+export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF", "DERIVED_FROM"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
 
 /** A single contradiction record (from the contradictions table). */
@@ -530,18 +530,43 @@ export class FactsDB {
 
   /** Create memory_links table for graph-based spreading activation. */
   private migrateMemoryLinksTable(): void {
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS memory_links (
-        id TEXT PRIMARY KEY,
-        source_fact_id TEXT NOT NULL,
-        target_fact_id TEXT NOT NULL,
-        link_type TEXT NOT NULL,
-        strength REAL NOT NULL DEFAULT 1.0,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_fact_id) REFERENCES facts(id) ON DELETE CASCADE
-      )
-    `);
+    // Check if table exists and if it has the old CASCADE FK on target_fact_id
+    const tableInfo = this.liveDb
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`)
+      .get() as { sql: string } | undefined;
+    
+    if (tableInfo && tableInfo.sql.includes('FOREIGN KEY (target_fact_id)') && tableInfo.sql.includes('ON DELETE CASCADE')) {
+      // Table exists with old CASCADE FK - need to recreate it
+      this.liveDb.exec(`
+        CREATE TABLE memory_links_new (
+          id TEXT PRIMARY KEY,
+          source_fact_id TEXT NOT NULL,
+          target_fact_id TEXT NOT NULL,
+          link_type TEXT NOT NULL,
+          strength REAL NOT NULL DEFAULT 1.0,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+        )
+      `);
+      this.liveDb.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
+      this.liveDb.exec(`DROP TABLE memory_links`);
+      this.liveDb.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
+    } else if (!tableInfo) {
+      // Table doesn't exist - create it fresh
+      this.liveDb.exec(`
+        CREATE TABLE memory_links (
+          id TEXT PRIMARY KEY,
+          source_fact_id TEXT NOT NULL,
+          target_fact_id TEXT NOT NULL,
+          link_type TEXT NOT NULL,
+          strength REAL NOT NULL DEFAULT 1.0,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+        )
+      `);
+    }
+    // If table exists without CASCADE on target, no migration needed
+    
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type)`);
@@ -1133,6 +1158,12 @@ export class FactsDB {
   }
 
   delete(id: string): boolean {
+    // Manually clean up links where this fact is the target, except DERIVED_FROM links
+    // (DERIVED_FROM links are preserved for provenance tracking even after source facts are deleted)
+    this.liveDb
+      .prepare(`DELETE FROM memory_links WHERE target_fact_id = ? AND link_type != 'DERIVED_FROM'`)
+      .run(id);
+    
     const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
   }
@@ -1565,6 +1596,16 @@ export class FactsDB {
 
   pruneExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run(nowSec);
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
       .run(nowSec);
@@ -1573,6 +1614,16 @@ export class FactsDB {
 
   /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
   pruneSessionScope(sessionId: string): number {
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run(sessionId);
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?`)
       .run(sessionId);
@@ -1603,6 +1654,16 @@ export class FactsDB {
       )
       .run({ now: nowSec });
 
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE confidence < 0.1
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run();
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
       .run();
@@ -2719,6 +2780,14 @@ export class FactsDB {
 
     if (conditions.length === 0) return 0;
 
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    const linkCleanupQuery = `DELETE FROM memory_links
+      WHERE target_fact_id IN (
+        SELECT id FROM facts WHERE ${conditions.join(' OR ')}
+      )
+      AND link_type != 'DERIVED_FROM'`;
+    this.liveDb.prepare(linkCleanupQuery).run(...params);
+
     const query = `DELETE FROM facts WHERE ${conditions.join(' OR ')}`;
     const result = this.liveDb.prepare(query).run(...params);
     return result.changes;
@@ -2834,6 +2903,8 @@ export class FactsDB {
         .run(id, factIdNew, factIdOld, detectedAt, originalConfidence);
 
       this.createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
+      // Bidirectional: if A CONTRADICTS B, then B CONTRADICTS A
+      this.createLink(factIdOld, factIdNew, "CONTRADICTS", 1.0);
 
       this.updateConfidence(factIdOld, -0.2);
     });
@@ -2917,15 +2988,34 @@ export class FactsDB {
   }
 
   /**
-   * Check if a fact is the target of any active (unresolved) CONTRADICTS link.
+   * Check if a fact is involved in any active (unresolved) contradiction,
+   * either as the old or the new fact.
    */
   isContradicted(factId: string): boolean {
     const row = this.liveDb
       .prepare(
-        `SELECT 1 FROM contradictions WHERE fact_id_old = ? AND resolved = 0 LIMIT 1`,
+        `SELECT 1 FROM contradictions WHERE (fact_id_old = ? OR fact_id_new = ?) AND resolved = 0 LIMIT 1`,
       )
-      .get(factId);
+      .get(factId, factId);
     return row != null;
+  }
+
+  /**
+   * Batch check: return the subset of factIds that are involved in any
+   * active (unresolved) contradiction (as old or new fact).
+   * Emits a single SQL query instead of one per fact.
+   */
+  getContradictedIds(factIds: string[]): Set<string> {
+    if (factIds.length === 0) return new Set();
+    const placeholders = factIds.map(() => "?").join(",");
+    const rows = this.liveDb
+      .prepare(
+        `SELECT fact_id_old AS id FROM contradictions WHERE fact_id_old IN (${placeholders}) AND resolved = 0
+         UNION
+         SELECT fact_id_new AS id FROM contradictions WHERE fact_id_new IN (${placeholders}) AND resolved = 0`,
+      )
+      .all(...factIds, ...factIds) as Array<{ id: string }>;
+    return new Set(rows.map((r) => r.id));
   }
 
   /**
@@ -3100,6 +3190,62 @@ export class FactsDB {
   }
 
   /**
+   * Detect INSTANCE_OF patterns in fact text and create INSTANCE_OF links.
+   *
+   * Matches patterns:
+   *   - "is a <type>" / "is an <type>"
+   *   - "type of <type>"
+   *
+   * When a match is found and the type noun is a known entity with an anchor fact,
+   * creates an INSTANCE_OF link from newFactId → anchor fact.
+   *
+   * Returns the number of INSTANCE_OF links created.
+   */
+  autoDetectInstanceOf(newFactId: string, text: string, knownEntities?: string[]): number {
+    const patterns = [
+      /\bis\s+an?\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+      /\btype\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+    ];
+
+    const candidates = new Set<string>();
+    for (const pattern of patterns) {
+      let match: RegExpExecArray | null;
+      // Reset lastIndex before each use (global flag)
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(text)) !== null) {
+        const typeName = match[1].trim().toLowerCase();
+        if (typeName.length >= 2) candidates.add(typeName);
+      }
+    }
+
+    if (candidates.size === 0) return 0;
+
+    const entities = knownEntities ?? this.getKnownEntities();
+    const knownEntitiesSet = new Set(entities.map((e) => e.toLowerCase()));
+    let linked = 0;
+
+    for (const typeName of candidates) {
+      // Only link to types that are known entities in the knowledge base
+      if (!knownEntitiesSet.has(typeName)) continue;
+      const anchor = this.findEntityAnchor(typeName, newFactId);
+      if (!anchor) continue;
+      // Avoid duplicate INSTANCE_OF links
+      const existing = this.liveDb
+        .prepare(
+          `SELECT id FROM memory_links
+           WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'INSTANCE_OF'`,
+        )
+        .get(newFactId, anchor.id);
+      if (!existing) {
+        this.createLink(newFactId, anchor.id, "INSTANCE_OF", 1.0);
+        linked++;
+      }
+    }
+
+    return linked;
+  }
+
+  /**
    * Auto-link a newly stored fact to related facts at write time (Issue #154).
    *
    * Steps:
@@ -3109,6 +3255,7 @@ export class FactsDB {
    *   3. Supersession detection — if entity+key matches an existing fact with a
    *      different value, create a SUPERSEDES edge and (when autoSupersede is true)
    *      mark the old fact as superseded and reduce its confidence.
+   *   4. INSTANCE_OF auto-detection — matches "is a/an X" and "type of X" patterns.
    *
    * Returns { linkedCount, supersededIds } for use in the response message.
    */
@@ -3252,6 +3399,9 @@ export class FactsDB {
         }
       }
     }
+
+    // Step 4: INSTANCE_OF auto-detection
+    linkedCount += this.autoDetectInstanceOf(newFactId, text, knownEntities);
 
     return { linkedCount, supersededIds };
   }

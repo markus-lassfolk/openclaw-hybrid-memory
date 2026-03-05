@@ -36,7 +36,7 @@ export function registerGraphTools(
         name: "memory_link",
         label: "Memory Link",
         description:
-          "Create a typed relationship between two memories. Link types: SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON.",
+          "Create a typed relationship between two memories. Link types: SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON, CONTRADICTS (bidirectional), INSTANCE_OF (type taxonomy), DERIVED_FROM (provenance).",
         parameters: Type.Object({
           sourceFact: Type.String({ description: "ID of the source fact" }),
           targetFact: Type.String({ description: "ID of the target fact" }),
@@ -64,6 +64,14 @@ export function registerGraphTools(
             return {
               content: [{ type: "text", text: `Target fact not found: ${targetFact}` }],
               details: { error: "target_not_found", id: targetFact },
+            };
+          }
+          if (linkType === "CONTRADICTS") {
+            const contradictionId = factsDb.recordContradiction(sourceFact, targetFact);
+            const msg = `Created bidirectional ${linkType} link from "${src.text.slice(0, 50)}${src.text.length > 50 ? "…" : ""}" to "${tgt.text.slice(0, 50)}${tgt.text.length > 50 ? "…" : ""}" and reduced confidence`;
+            return {
+              content: [{ type: "text", text: msg }],
+              details: { contradictionId, sourceFact, targetFact, linkType },
             };
           }
           const linkId = factsDb.createLink(sourceFact, targetFact, linkType, strength);
