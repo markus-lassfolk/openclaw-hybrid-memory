@@ -25,7 +25,7 @@ import {
   VAULT_POINTER_PREFIX,
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
-import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { runRetrievalPipeline, serializeFactForContext } from "../services/retrieval-orchestrator.js";
 import {
   getMemoryCategories,
   DECAY_CLASSES,
@@ -38,7 +38,7 @@ import {
 } from "../config.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
-import { truncateForStorage } from "../utils/text.js";
+import { truncateForStorage, estimateTokens } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
 
@@ -375,13 +375,27 @@ export function registerMemoryTools(
           const RRF_SCORE_SCALE = 15.0;
           const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
           results = [...entityResults];
+          
+          // Enforce token budget: track tokens used and stop when budget is exceeded
+          let tokensUsed = 0;
+          for (const r of entityResults) {
+            const serialized = serializeFactForContext(r.entry);
+            tokensUsed += estimateTokens(serialized);
+          }
+          
           for (const fused of rrfOutput.fused) {
             if (seenIds.has(fused.factId)) continue;
             const entry = factsDb.getById(fused.factId, { asOf: asOfSec, scopeFilter });
             if (entry) {
+              // Check if adding this fact would exceed the token budget
+              const serialized = serializeFactForContext(entry);
+              const tokens = estimateTokens(serialized);
+              if (tokensUsed + tokens > cfg.retrieval.explicitBudgetTokens) break;
+              
               const normalizedScore = Math.min(1.0, fused.finalScore * RRF_SCORE_SCALE);
               results.push({ entry, score: normalizedScore, backend: "sqlite" });
               seenIds.add(fused.factId);
+              tokensUsed += tokens;
             }
           }
           results.sort((a, b) => b.score - a.score);
