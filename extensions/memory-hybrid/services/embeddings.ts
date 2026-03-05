@@ -315,7 +315,7 @@ export function createEmbeddingProvider(
       const openaiClient = new OpenAI({ apiKey });
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
-        const fallback = new Embeddings(openaiClient, openaiModels, dimensions);
+        const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
         return new FallbackEmbeddingProvider(primary, fallback, onFallback);
       } catch {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).

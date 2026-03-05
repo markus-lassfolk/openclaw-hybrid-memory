@@ -831,6 +831,12 @@ const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "bge-large": 1024,
 };
 
+const OPENAI_MODELS = new Set([
+  "text-embedding-3-small",
+  "text-embedding-3-large",
+  "text-embedding-ada-002",
+]);
+
 export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
   if (!dims) {
@@ -838,6 +844,10 @@ export function vectorDimsForModel(model: string, fallback?: number): number {
     throw new Error(`Unsupported embedding model: ${model}`);
   }
   return dims;
+}
+
+function isOpenAIModel(model: string): boolean {
+  return OPENAI_MODELS.has(model);
 }
 
 function resolveEnvVars(value: string): string {
@@ -1061,6 +1071,11 @@ export const hybridConfigSchema = {
       for (const m of modelsRaw) {
         try {
           vectorDimsForModel(m);
+          // For ollama/onnx providers, models field contains OpenAI fallback names — reject non-OpenAI models
+          if (embeddingProvider !== "openai" && !isOpenAIModel(m)) {
+            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+            continue;
+          }
           valid.push(m);
         } catch {
           console.warn(`memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
