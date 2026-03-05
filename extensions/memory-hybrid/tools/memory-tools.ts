@@ -27,6 +27,7 @@ import {
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
 import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
 import {
   getMemoryCategories,
@@ -48,6 +49,7 @@ export interface PluginContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
+  aliasDb?: AliasDB | null;
   embeddings: Embeddings;
   openai: OpenAI;
   wal: WriteAheadLog | null;
@@ -86,7 +88,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
 
   api.registerTool(
     {
@@ -384,6 +386,7 @@ export function registerMemoryTools(
             includeSuperseded,
             scopeFilter,
             asOfSec ?? undefined,
+            cfg.aliases?.enabled ? aliasDb : null,
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).
@@ -1107,6 +1110,24 @@ export function registerMemoryTools(
         }
 
         walRemove(walEntryId, api.logger);
+
+        // Issue #149: generate and store retrieval aliases (non-blocking)
+        if (cfg.aliases?.enabled && aliasDb) {
+          const aliasModel =
+            cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+          void storeAliases(
+            entry.id,
+            textToStore,
+            cfg.aliases,
+            aliasModel,
+            openai,
+            embeddings,
+            aliasDb,
+            (msg) => api.logger.warn(msg),
+          ).catch((err) => {
+            api.logger.warn(`memory-hybrid: alias generation failed: ${err}`);
+          });
+        }
 
         // Contradiction detection (Issue #157): check for same entity+key, different value
         // Pass the stored fact's scope so detection stays within the same scope boundary.

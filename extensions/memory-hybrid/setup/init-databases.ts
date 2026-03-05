@@ -16,6 +16,7 @@ import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { AliasDB } from "../services/retrieval-aliases.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -183,6 +184,7 @@ export interface DatabaseContext {
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   eventLog: EventLog;
+  aliasDb: AliasDB | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
@@ -301,6 +303,14 @@ export function initializeDatabases(
   const eventLogPath = join(dirname(resolvedSqlitePath), "event-log.db");
   const eventLog = new EventLog(eventLogPath);
   api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
+
+  // Initialize alias DB (Issue #149)
+  let aliasDb: AliasDB | null = null;
+  if (cfg.aliases?.enabled) {
+    const aliasPath = join(dirname(resolvedSqlitePath), "aliases.db");
+    aliasDb = new AliasDB(aliasPath);
+    api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath})`);
+  }
 
   // Load previously discovered categories so they remain available after restart
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
@@ -523,6 +533,7 @@ export function initializeDatabases(
     wal,
     proposalsDb,
     eventLog,
+    aliasDb,
     resolvedLancePath,
     resolvedSqlitePath,
     health,
@@ -539,8 +550,9 @@ export function closeOldDatabases(context: {
   credentialsDb?: CredentialsDB | null;
   proposalsDb?: ProposalsDB | null;
   eventLog?: EventLog | null;
+  aliasDb?: AliasDB | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb } = context;
 
   if (typeof factsDb?.close === "function") {
     try {
@@ -575,6 +587,13 @@ export function closeOldDatabases(context: {
       eventLog.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "eventLog" });
+    }
+  }
+  if (aliasDb) {
+    try {
+      aliasDb.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "aliasDb" });
     }
   }
 }

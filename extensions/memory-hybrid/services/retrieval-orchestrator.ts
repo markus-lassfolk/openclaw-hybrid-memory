@@ -23,6 +23,7 @@ import {
   type FactMetadata,
 } from "./rrf-fusion.js";
 import type { RetrievalConfig } from "../config.js";
+import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -235,6 +236,7 @@ export async function runRetrievalPipeline(
   includeSuperseded?: boolean,
   scopeFilter?: unknown,
   asOf?: number,
+  aliasDb?: AliasDB | null,
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
   const { strategies, semanticTopK, fts5TopK } = config;
@@ -262,6 +264,16 @@ export async function runRetrievalPipeline(
   if (strategies.includes("graph")) {
     strategyPromises.push(
       Promise.resolve(["graph", runGraphStrategy()] as [string, RankedResult[]]),
+    );
+  }
+
+  // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
+  if (aliasDb && queryVector) {
+    strategyPromises.push(
+      Promise.resolve([
+        "aliases",
+        searchAliasStrategy(aliasDb, queryVector, semanticTopK),
+      ] as [string, RankedResult[]]),
     );
   }
 
