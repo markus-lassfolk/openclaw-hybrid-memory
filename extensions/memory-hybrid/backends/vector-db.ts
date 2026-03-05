@@ -196,11 +196,6 @@ export class VectorDB {
     }
   }
 
-  /** Returns the current close generation (for re-embedding loops to abort on hot reload). */
-  getCloseGeneration(): number {
-    return this.closeGeneration;
-  }
-
   /** Get initialized table or throw descriptive error. */
   private getTable(): lancedb.Table {
     if (!this.table) {
