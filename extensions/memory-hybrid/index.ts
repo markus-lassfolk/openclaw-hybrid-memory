@@ -64,6 +64,8 @@ import {
   estimateTokenCount,
   DEFAULT_RETRIEVAL_CONFIG,
 } from "./services/retrieval-orchestrator.js";
+import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
+export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -472,6 +474,10 @@ export const _testing = {
   serializeFactForContext,
   estimateTokenCount,
   DEFAULT_RETRIEVAL_CONFIG,
+  // GraphRAG retrieval (Issue #145)
+  expandGraph,
+  formatLinkPath,
+  HOP_SCORE_DECAY,
 };
 
 export { versionInfo } from "./versionInfo.js";

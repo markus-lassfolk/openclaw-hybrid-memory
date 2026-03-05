@@ -27,6 +27,7 @@ import {
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
 import {
   getMemoryCategories,
   DECAY_CLASSES,
@@ -148,6 +149,19 @@ export function registerMemoryTools(
             description: "Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
           }),
         ),
+        expandGraph: Type.Optional(
+          Type.Boolean({
+            description:
+              "When true, run BFS graph expansion from the top results: related facts up to expandDepth hops are included. " +
+              "Direct matches score higher than expanded ones. Default: false (or graphRetrieval.defaultExpand from config).",
+          }),
+        ),
+        expandDepth: Type.Optional(
+          Type.Number({
+            description:
+              "Number of BFS hops to expand when expandGraph=true (default: 2, max: graphRetrieval.maxExpandDepth from config).",
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
@@ -179,6 +193,8 @@ export function registerMemoryTools(
           userId,
           agentId,
           sessionId,
+          expandGraph: expandGraphParam,
+          expandDepth: expandDepthParam,
         } = params as {
           query?: string;
           id?: string | number;
@@ -191,6 +207,8 @@ export function registerMemoryTools(
           userId?: string;
           agentId?: string;
           sessionId?: string;
+          expandGraph?: boolean;
+          expandDepth?: number;
         };
         const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
 
@@ -434,8 +452,48 @@ export function registerMemoryTools(
           results = filtered.slice(0, limit);
         }
 
-        // Graph traversal — expand results with connected facts when enabled
-        if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
+        // Resolve whether to run GraphRAG expansion for this call.
+        const useExpandGraph =
+          cfg.graphRetrieval.enabled &&
+          cfg.graph.enabled &&
+          results.length > 0 &&
+          (expandGraphParam ?? cfg.graphRetrieval.defaultExpand);
+
+        // GraphRAG expansion — BFS from seed results with path tracking and ranked scoring.
+        // When expandGraph=true, replaces the legacy flat-score graph traversal.
+        type ExpandedMeta = { expansionSource: "direct" | "graph"; hopCount: number; linkPath: string } | undefined;
+        const expansionMeta = new Map<string, ExpandedMeta>();
+
+        if (useExpandGraph) {
+          const rawDepth = typeof expandDepthParam === "number" ? expandDepthParam : cfg.retrieval.graphWalkDepth;
+          const depth = Math.min(Math.max(0, rawDepth), cfg.graphRetrieval.maxExpandDepth);
+          const seedInputs = results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry }));
+          const originalBackendMap = new Map<string, "sqlite" | "lancedb">();
+          for (const r of results) {
+            originalBackendMap.set(r.entry.id, r.backend);
+          }
+          const expanded = expandGraph(factsDb, seedInputs, {
+            maxDepth: depth,
+            maxExpandedResults: cfg.graphRetrieval.maxExpandedResults,
+            scopeFilter: scopeFilter ?? undefined,
+            asOf: asOfSec ?? undefined,
+          });
+
+          // Re-build results from expanded output (preserves scores and dedup).
+          const newResults: SearchResult[] = [];
+          for (const e of expanded) {
+            const backend = e.expansionSource === "direct" ? (originalBackendMap.get(e.factId) ?? "sqlite") : "sqlite";
+            newResults.push({ entry: e.entry, score: e.score, backend });
+            expansionMeta.set(e.factId, {
+              expansionSource: e.expansionSource,
+              hopCount: e.hopCount,
+              linkPath: formatLinkPath(e.linkPath),
+            });
+          }
+          newResults.sort((a, b) => b.score - a.score);
+          results = newResults.slice(0, limit);
+        } else if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
+          // Legacy flat-score graph traversal (backward compatible, no path annotation).
           const initialIds = new Set(results.map((r) => r.entry.id));
           const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
           const extraIds = connectedIds.filter((id) => !initialIds.has(id));
@@ -443,11 +501,7 @@ export function registerMemoryTools(
           for (const id of extraIds) {
             const entry = factsDb.getById(id, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
             if (entry) {
-              results.push({
-                entry,
-                score: 0.45,
-                backend: "sqlite",
-              });
+              results.push({ entry, score: 0.45, backend: "sqlite" });
             }
           }
           results.sort((a, b) => b.score - a.score);
@@ -469,25 +523,40 @@ export function registerMemoryTools(
         const text = results
           .map((r, i) => {
             const contradicted = contradictionStatus.get(r.entry.id) ?? false;
-            const prefix = contradicted ? "[⚠️ CONTRADICTED] " : "";
-            return `${i + 1}. [${r.backend}/${r.entry.category}] ${prefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)`;
+            const contradictedPrefix = contradicted ? "[⚠️ CONTRADICTED] " : "";
+            const meta = expansionMeta.get(r.entry.id);
+            const expansionSuffix =
+              meta && meta.expansionSource === "graph"
+                ? ` [graph+${meta.hopCount}hop${meta.linkPath ? `: ${meta.linkPath}` : ""}]`
+                : "";
+            return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}`;
           })
           .join("\n");
 
-        const sanitized = results.map((r) => ({
-          id: r.entry.id,
-          text: r.entry.text,
-          category: r.entry.category,
-          entity: r.entry.entity,
-          importance: r.entry.importance,
-          score: r.score,
-          backend: r.backend,
-          tags: r.entry.tags?.length ? r.entry.tags : undefined,
-          sourceDate: r.entry.sourceDate
-            ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
-            : undefined,
-          contradicted: contradictionStatus.get(r.entry.id) || undefined,
-        }));
+        const sanitized = results.map((r) => {
+          const meta = expansionMeta.get(r.entry.id);
+          return {
+            id: r.entry.id,
+            text: r.entry.text,
+            category: r.entry.category,
+            entity: r.entry.entity,
+            importance: r.entry.importance,
+            score: r.score,
+            backend: r.backend,
+            tags: r.entry.tags?.length ? r.entry.tags : undefined,
+            sourceDate: r.entry.sourceDate
+              ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+              : undefined,
+            contradicted: contradictionStatus.get(r.entry.id) || undefined,
+            ...(meta
+              ? {
+                  expansionSource: meta.expansionSource,
+                  hopCount: meta.hopCount,
+                  linkPath: meta.linkPath || undefined,
+                }
+              : {}),
+          };
+        });
 
         return {
           content: [
