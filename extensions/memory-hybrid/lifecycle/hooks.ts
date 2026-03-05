@@ -49,6 +49,12 @@ import {
   type PendingTaskSignal,
 } from "../services/active-task.js";
 import { parseDuration } from "../utils/duration.js";
+import {
+  generateAmbientQueries,
+  detectTopicShift,
+  deduplicateResultsById,
+  SessionSeenFacts,
+} from "../services/ambient-retrieval.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -348,6 +354,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const authFailureRecallsThisSession = new Map<string, number>();
   // Track session starts for retrieval directives
   const sessionStartSeen = new Set<string>();
+  // Ambient retrieval session state (Issue #156)
+  const ambientSeenFacts = new SessionSeenFacts();
+  let ambientLastEmbedding: number[] | null = null;
 
   const resolveSessionKey = (event: unknown, api?: ClawdbotPluginApi): string | null => {
     const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
@@ -647,6 +656,92 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           let candidates = await runRecallPipeline(e.prompt, limit, { hydeLabel: "HyDE", errorPrefix: "auto-recall-" });
+
+          // --- Ambient multi-query retrieval (Issue #156) ---
+          const ambientCfg = ctx.cfg.ambient;
+          if (ambientCfg.enabled && ambientCfg.multiQuery) {
+            try {
+              // Compute prompt embedding for topic-shift detection (reuse from vector step when available)
+              let promptEmbedding: number[] | null = null;
+              try {
+                promptEmbedding = await ctx.embeddings.embed(e.prompt.slice(0, 512));
+              } catch {
+                // Non-fatal — skip topic-shift detection when embedding fails
+              }
+
+              // Check for topic shift when we have both a previous and current embedding
+              const isTopicShift =
+                ambientLastEmbedding !== null &&
+                promptEmbedding !== null &&
+                detectTopicShift(
+                  ambientLastEmbedding,
+                  promptEmbedding,
+                  ambientCfg.topicShiftThreshold,
+                );
+
+              if (isTopicShift) {
+                api.logger.info?.("memory-hybrid: topic shift detected — re-running ambient retrieval");
+              }
+
+              // Update last embedding for next turn
+              if (promptEmbedding !== null) {
+                ambientLastEmbedding = promptEmbedding;
+              }
+
+              // Generate additional queries (entity, temporal, context)
+              const knownEntities = ctx.factsDb.getKnownEntities ? ctx.factsDb.getKnownEntities() : [];
+              const ambientQueries = generateAmbientQueries(
+                e.prompt,
+                ambientCfg,
+                {},
+                knownEntities,
+              );
+
+              // Skip index 0 (message query — already run above as the main recall)
+              const extraQueries = ambientQueries.slice(1);
+              if (extraQueries.length > 0) {
+                const extraResultSets: SearchResult[][] = [candidates];
+                for (const q of extraQueries) {
+                  try {
+                    const qResults = await runRecallPipeline(q.text, Math.ceil(limit / 2), {
+                      entity: q.type === "entity" ? q.entity : undefined,
+                      hydeLabel: "HyDE",
+                      errorPrefix: `ambient-${q.type}-`,
+                      limitHydeOnce: true,
+                    });
+                    extraResultSets.push(qResults);
+                  } catch (err) {
+                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      operation: `ambient-query-${q.type}`,
+                      subsystem: "auto-recall",
+                    });
+                  }
+                }
+
+                // Deduplicate across all result sets (message query first = highest priority)
+                const merged = deduplicateResultsById(extraResultSets, (r) => r.entry.id);
+
+                // On topic shift: filter out facts already shown in this session
+                const filtered = isTopicShift
+                  ? merged.filter((r) => !ambientSeenFacts.hasBeenSeen(r.entry.id))
+                  : merged;
+
+                candidates = filtered.slice(0, limit);
+
+                if (extraResultSets.length > 1) {
+                  api.logger.info?.(
+                    `memory-hybrid: ambient multi-query — ran ${extraQueries.length} extra queries, merged to ${candidates.length} candidates`,
+                  );
+                }
+              }
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "ambient-multi-query",
+                subsystem: "auto-recall",
+              });
+              api.logger.warn(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+            }
+          }
 
           const promptLower = e.prompt.toLowerCase();
           const { entityLookup } = ctx.cfg.autoRecall;
@@ -1016,6 +1111,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           // Access tracking for injected memories
           ctx.factsDb.refreshAccessedFacts(injectedIds);
+          // Ambient: mark injected facts as seen for topic-shift deduplication (Issue #156)
+          if (ambientCfg.enabled) {
+            ambientSeenFacts.markSeen(injectedIds);
+          }
           // Hebbian: Strengthen RELATED_TO links between facts recalled together
           if (ctx.cfg.graph.enabled && injectedIds.length >= 2) {
             for (let i = 0; i < injectedIds.length; i++) {
