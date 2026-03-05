@@ -1682,13 +1682,15 @@ export class FactsDB {
         `DELETE FROM memory_links
          WHERE target_fact_id IN (
            SELECT id FROM facts WHERE confidence < 0.1
+             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
          )
          AND link_type != 'DERIVED_FROM'`
       )
-      .run();
+      .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
-      .run();
+      .prepare(`DELETE FROM facts WHERE confidence < 0.1
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+      .run({ now: nowSec });
     return result.changes;
   }
 
