@@ -369,14 +369,15 @@ export function registerMemoryTools(
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).
-          // Use orderedEntries from packed to respect the token budget; fall back to
-          // iterating fused when packed is empty (e.g. budget too small).
+          // Cap at packed.length when the token-budget packing limited results; fall back
+          // to the full fused list when packed is empty (e.g. budget too small to pack any).
           const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
           results = [...entityResults];
           const getByIdOpts = (asOfSec != null || scopeFilter)
             ? { asOf: asOfSec ?? undefined, scopeFilter }
             : undefined;
-          for (const fused of rrfOutput.fused) {
+          const rrfResultCap = rrfOutput.packed.length > 0 ? rrfOutput.packed.length : rrfOutput.fused.length;
+          for (const fused of rrfOutput.fused.slice(0, rrfResultCap)) {
             if (seenIds.has(fused.factId)) continue;
             const entry = factsDb.getById(
               fused.factId,

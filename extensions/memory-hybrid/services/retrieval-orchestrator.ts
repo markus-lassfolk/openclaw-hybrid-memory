@@ -132,8 +132,9 @@ function runFts5Strategy(
   limit: number,
   tagFilter?: string,
   includeSuperseded?: boolean,
+  asOf?: number,
 ): RankedResult[] {
-  const results = searchFts(db, query, { limit, tagFilter, includeSuperseded });
+  const results = searchFts(db, query, { limit, tagFilter, includeSuperseded, asOf });
   return results.map((r, i) => ({
     factId: r.factId,
     rank: i + 1,
@@ -227,7 +228,7 @@ export async function runRetrievalPipeline(
     strategyPromises.push(
       Promise.resolve([
         "fts5",
-        runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded),
+        runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf),
       ] as [string, RankedResult[]]),
     );
   }
@@ -273,9 +274,19 @@ export async function runRetrievalPipeline(
   const factMetaMap = new Map<string, FactMetadata>();
   const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
 
+  // Effective timestamp for superseded/expired checks: prefer asOf, fall back to nowSec.
+  const effectiveNow = asOf ?? nowSec;
+
   for (const result of fused) {
     const entry = factsDb.getById(result.factId, getByIdOpts);
     if (entry) {
+      // When not including superseded/expired facts, filter them out here so that
+      // semantic results (which lack SQL-level filtering) are held to the same standard
+      // as FTS5 results. This is the single enforcement point for all strategies.
+      if (!includeSuperseded) {
+        if (entry.supersededAt != null) continue;
+        if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
+      }
       factMetaMap.set(result.factId, {
         id: entry.id,
         confidence: entry.confidence,
@@ -286,7 +297,7 @@ export async function runRetrievalPipeline(
     }
   }
 
-  // Filter fused array to remove out-of-scope facts that were not resolved
+  // Filter fused array to remove out-of-scope or superseded/expired facts not resolved above.
   const scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
 
   // --- Post-RRF adjustments ---

@@ -130,9 +130,15 @@ export function searchFts(
      * Pass true only when explicitly querying historical/superseded content.
      */
     includeSuperseded?: boolean;
+    /**
+     * Point-in-time filter (epoch seconds). When provided, superseded/expired
+     * filtering uses this timestamp instead of the current wall-clock time,
+     * ensuring consistent results for historical queries.
+     */
+    asOf?: number;
   } = {},
 ): FtsSearchResult[] {
-  const { limit = 20, entityFilter, tagFilter, columns, includeSuperseded = false } = options;
+  const { limit = 20, entityFilter, tagFilter, columns, includeSuperseded = false, asOf } = options;
 
   const ftsQuery = buildFts5Query(query);
   if (!ftsQuery) return [];
@@ -148,7 +154,8 @@ export function searchFts(
   const params: Record<string, unknown> = { query: matchExpr, limit };
 
   if (!includeSuperseded) {
-    const nowSec = Math.floor(Date.now() / 1000);
+    // Use asOf when provided so point-in-time queries filter against the correct timestamp.
+    const nowSec = asOf ?? Math.floor(Date.now() / 1000);
     extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
     params.nowSec = nowSec;
   }

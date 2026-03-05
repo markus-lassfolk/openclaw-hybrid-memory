@@ -171,6 +171,7 @@ hybridMemory:
 
     # Top-K candidates per strategy fed into RRF
     semanticTopK: 20
+    fts5TopK: 20
 ```
 
 ### Disabling a strategy
