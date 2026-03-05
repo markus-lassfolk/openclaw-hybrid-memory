@@ -140,6 +140,9 @@ export class Embeddings implements EmbeddingProvider {
             }),
             { maxRetries: 2 },
           );
+          if (resp.data.length !== batch.length) {
+            throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
+          }
           this.modelName = model;
           allResults.push(...resp.data.map((item) => item.embedding));
           break;
