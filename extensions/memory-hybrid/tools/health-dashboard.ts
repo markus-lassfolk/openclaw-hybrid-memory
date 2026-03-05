@@ -170,8 +170,20 @@ export function buildHealthReport(
     .get(nowSec, nowSec) as { cnt: number };
   const staleFacts = staleRow.cnt;
 
-  // Total links
-  const linksRow = db.prepare(`SELECT COUNT(*) AS cnt FROM memory_links`).get() as { cnt: number };
+  // Total links (only count links where at least one endpoint is an active fact)
+  const linksRow = db.prepare(
+    `SELECT COUNT(*) AS cnt FROM memory_links
+     WHERE source_fact_id IN (
+       SELECT id FROM facts
+       WHERE (valid_until IS NULL OR valid_until > ?)
+         AND (expires_at IS NULL OR expires_at > ?)
+     )
+     OR target_fact_id IN (
+       SELECT id FROM facts
+       WHERE (valid_until IS NULL OR valid_until > ?)
+         AND (expires_at IS NULL OR expires_at > ?)
+     )`,
+  ).get(nowSec, nowSec, nowSec, nowSec) as { cnt: number };
   const totalLinks = linksRow.cnt;
 
   // Avg links per active fact
