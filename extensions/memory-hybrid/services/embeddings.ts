@@ -317,9 +317,10 @@ export function createEmbeddingProvider(
       try {
         const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
         return new FallbackEmbeddingProvider(primary, fallback, onFallback);
-      } catch {
+      } catch (err) {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).
-        // Return the primary provider without a fallback rather than crashing.
+        // Warn the user so they know their fallback isn't working.
+        console.warn(`memory-hybrid: Failed to create OpenAI fallback for Ollama provider: ${err instanceof Error ? err.message : String(err)}. Continuing with Ollama-only (no fallback).`);
         return primary;
       }
     }

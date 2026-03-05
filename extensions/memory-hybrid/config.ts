@@ -1061,6 +1061,10 @@ export const hybridConfigSchema = {
       resolvedApiKey = resolveEnvVars((embedding.apiKey as string).trim());
     }
 
+    // Validate that model is specified for non-OpenAI providers
+    if (embeddingProvider !== "openai" && (!embedding || typeof embedding.model !== "string" || embedding.model.trim().length === 0)) {
+      throw new Error(`embedding.model is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`);
+    }
     const singleModel = typeof embedding?.model === "string" ? embedding.model : DEFAULT_MODEL;
     const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
     let embeddingModels: string[] | undefined;
