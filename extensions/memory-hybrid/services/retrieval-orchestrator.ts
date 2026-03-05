@@ -22,28 +22,11 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
+import type { RetrievalConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Configuration for the multi-strategy retrieval pipeline. */
-export interface RetrievalConfig {
-  /** Active retrieval strategies in priority order (default: all three). */
-  strategies: Array<"semantic" | "fts5" | "graph">;
-  /** RRF k constant (default 60). */
-  rrf_k: number;
-  /** Token budget for ambient (auto-recall) context injection (default 2000). */
-  ambientBudgetTokens: number;
-  /** Token budget for explicit (tool call) context injection (default 4000). */
-  explicitBudgetTokens: number;
-  /** Max hops for graph walk (stub; used when #145 is implemented, default 2). */
-  graphWalkDepth: number;
-  /** Top-K candidates from semantic search passed to RRF (default 20). */
-  semanticTopK: number;
-  /** Top-K candidates from FTS5 search passed to RRF (default 20). Independent of semanticTopK. */
-  fts5TopK: number;
-}
 
 /** Result from the orchestrator, ready for context injection. */
 export interface OrchestratorResult {
@@ -303,15 +286,18 @@ export async function runRetrievalPipeline(
     }
   }
 
+  // Filter fused array to remove out-of-scope facts that were not resolved
+  const scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
+
   // --- Post-RRF adjustments ---
-  applyPostRrfAdjustments(fused, factMetaMap, nowSec);
+  applyPostRrfAdjustments(scopedFused, factMetaMap, nowSec);
 
   // Re-sort entries to match final order
-  const finalOrder = new Map<string, number>(fused.map((r, i) => [r.factId, i]));
+  const finalOrder = new Map<string, number>(scopedFused.map((r, i) => [r.factId, i]));
   orderedEntries.sort((a, b) => (finalOrder.get(a.factId) ?? 0) - (finalOrder.get(b.factId) ?? 0));
 
   // --- Token budget packing ---
   const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens);
 
-  return { fused, packed, tokensUsed };
+  return { fused: scopedFused, packed, tokensUsed };
 }
