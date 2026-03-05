@@ -66,6 +66,8 @@ import {
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
+import { detectClusters, generateClusterLabel } from "./services/topic-clusters.js";
+export type { TopicCluster, ClusterDetectionResult, ClusterDetectionOptions, ClusterFactLookup } from "./services/topic-clusters.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -478,6 +480,9 @@ export const _testing = {
   expandGraph,
   formatLinkPath,
   HOP_SCORE_DECAY,
+  // Topic cluster detection (Issue #146)
+  detectClusters,
+  generateClusterLabel,
 };
 
 export { versionInfo } from "./versionInfo.js";

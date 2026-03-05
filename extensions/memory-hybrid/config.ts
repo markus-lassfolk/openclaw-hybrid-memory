@@ -268,6 +268,18 @@ export type SearchConfig = {
   hydeModel?: string;
 };
 
+/** Topic cluster detection configuration (Issue #146). */
+export type ClustersConfig = {
+  /** Enable topic cluster detection (default: true). */
+  enabled: boolean;
+  /** Minimum number of facts to form a cluster (default: 3). */
+  minClusterSize: number;
+  /** Days between full re-cluster runs; 0 = disabled (default: 7). */
+  refreshIntervalDays: number;
+  /** Model for label generation; null = rule-based only (default: null). */
+  labelModel: string | null;
+};
+
 /** GraphRAG retrieval configuration (Issue #145). */
 export type GraphRetrievalConfig = {
   /** Enable GraphRAG expansion in memory_recall (default: true). */
@@ -456,6 +468,8 @@ export type HybridMemoryConfig = {
   ambient: AmbientConfig;
   /** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
   graphRetrieval: GraphRetrievalConfig;
+  /** Topic cluster detection: BFS connected-component analysis on memory_links (Issue #146). */
+  clusters: ClustersConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1734,6 +1748,24 @@ export const hybridConfigSchema = {
           : 2000,
     };
 
+    // Parse clusters config (Issue #146, default: enabled, minClusterSize: 3, refreshIntervalDays: 7)
+    const clustersRaw = cfg.clusters as Record<string, unknown> | undefined;
+    const clusters: ClustersConfig = {
+      enabled: clustersRaw?.enabled !== false,
+      minClusterSize:
+        typeof clustersRaw?.minClusterSize === "number" && clustersRaw.minClusterSize >= 1
+          ? Math.floor(clustersRaw.minClusterSize)
+          : 3,
+      refreshIntervalDays:
+        typeof clustersRaw?.refreshIntervalDays === "number" && clustersRaw.refreshIntervalDays >= 0
+          ? Math.floor(clustersRaw.refreshIntervalDays)
+          : 7,
+      labelModel:
+        typeof clustersRaw?.labelModel === "string" && clustersRaw.labelModel.trim().length > 0
+          ? clustersRaw.labelModel.trim()
+          : null,
+    };
+
     // Parse graphRetrieval config (Issue #145, default: enabled, defaultExpand: false)
     const graphRetrievalRaw = cfg.graphRetrieval as Record<string, unknown> | undefined;
     const graphRetrieval: GraphRetrievalConfig = {
@@ -1812,6 +1844,7 @@ export const hybridConfigSchema = {
       })(),
       ambient,
       graphRetrieval,
+      clusters,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
