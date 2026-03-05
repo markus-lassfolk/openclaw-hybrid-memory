@@ -1066,6 +1066,10 @@ export const hybridConfigSchema = {
       throw new Error(`embedding.model is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`);
     }
     const singleModel = typeof embedding?.model === "string" ? embedding.model : DEFAULT_MODEL;
+    // Validate that OpenAI provider only uses OpenAI models
+    if (embeddingProvider === "openai" && !isOpenAIModel(singleModel)) {
+      throw new Error(`embedding.model '${singleModel}' is not a valid OpenAI model. When provider='openai', use one of: text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002.`);
+    }
     const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
     let embeddingModels: string[] | undefined;
     // Parse models for all providers (#6): for openai, these are the model preference list;
@@ -1075,6 +1079,11 @@ export const hybridConfigSchema = {
       for (const m of modelsRaw) {
         try {
           vectorDimsForModel(m);
+          // For openai provider, only accept OpenAI models
+          if (embeddingProvider === "openai" && !isOpenAIModel(m)) {
+            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='openai', only OpenAI models are allowed (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+            continue;
+          }
           // For ollama/onnx providers, models field contains OpenAI fallback names — reject non-OpenAI models
           if (embeddingProvider !== "openai" && !isOpenAIModel(m)) {
             console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
