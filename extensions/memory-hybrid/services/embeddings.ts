@@ -72,11 +72,12 @@ export class Embeddings implements EmbeddingProvider {
     let lastErr: Error | undefined;
     for (const model of this.models) {
       try {
+        const supportsDimensions = model.startsWith("text-embedding-3-");
         const resp = await withLLMRetry(
           () => this.client.embeddings.create({
             model,
             input: text,
-            dimensions: this.dimensions,
+            ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
           }),
           { maxRetries: 2 },
         );
