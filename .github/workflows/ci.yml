@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -42,7 +42,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -65,7 +65,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -85,7 +85,7 @@ jobs:
         with:
           node-version: 22
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
