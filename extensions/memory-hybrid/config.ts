@@ -268,6 +268,12 @@ export type SearchConfig = {
   hydeModel?: string;
 };
 
+/** Memory health dashboard configuration (Issue #148). */
+export type HealthConfig = {
+  /** Enable memory_health tool (default: true). */
+  enabled: boolean;
+};
+
 /** GraphRAG retrieval configuration (Issue #145). */
 export type GraphRetrievalConfig = {
   /** Enable GraphRAG expansion in memory_recall (default: true). */
@@ -456,6 +462,8 @@ export type HybridMemoryConfig = {
   ambient: AmbientConfig;
   /** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
   graphRetrieval: GraphRetrievalConfig;
+  /** Memory health dashboard (Issue #148, default: enabled). */
+  health: HealthConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1812,6 +1820,12 @@ export const hybridConfigSchema = {
       })(),
       ambient,
       graphRetrieval,
+      health: (() => {
+        const healthRaw = cfg.health as Record<string, unknown> | undefined;
+        return {
+          enabled: healthRaw?.enabled !== false,
+        };
+      })(),
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

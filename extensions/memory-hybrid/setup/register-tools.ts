@@ -27,6 +27,7 @@ import {
   type RunReflectionRulesFn,
   type RunReflectionMetaFn,
 } from "../tools/utility-tools.js";
+import { registerHealthTools } from "../tools/health-dashboard.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export interface ToolsContext {
@@ -43,6 +44,7 @@ export interface ToolsContext {
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   resolvedSqlitePath: string;
+  resolvedLancePath: string;
   timers: {
     proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
   };
@@ -89,6 +91,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     currentAgentIdRef,
     pendingLLMWarnings,
     resolvedSqlitePath,
+    resolvedLancePath,
     timers,
     buildToolScopeFilter,
     walWrite,
@@ -160,4 +163,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     (operation, data) => walWrite(wal, operation, data, api.logger),
     (id) => walRemove(wal, id, api.logger)
   );
+
+  // Health dashboard tool (Issue #148)
+  registerHealthTools({ factsDb, cfg, resolvedSqlitePath, resolvedLancePath }, api);
 }

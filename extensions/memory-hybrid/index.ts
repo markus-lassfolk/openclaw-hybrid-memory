@@ -315,6 +315,7 @@ const memoryHybridPlugin = {
       currentAgentIdRef,
       pendingLLMWarnings,
       resolvedSqlitePath,
+      resolvedLancePath,
       timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
       buildToolScopeFilter,
       walWrite,
