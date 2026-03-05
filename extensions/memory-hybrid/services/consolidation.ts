@@ -219,6 +219,10 @@ export async function runConsolidate(
         factId: entry.id,
       });
     }
+    // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
+    for (const id of clusterIds) {
+      factsDb.createLink(entry.id, id, "DERIVED_FROM", 1.0);
+    }
     for (const id of clusterIds) {
       factsDb.delete(id);
       deleted++;

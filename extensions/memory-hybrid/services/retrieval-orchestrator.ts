@@ -77,8 +77,11 @@ export function estimateTokenCount(text: string): number {
  * [entity: X | category: Y | confidence: 0.95 | stored: 2026-02-15]
  * Fact text here.
  * ```
+ *
+ * When `options.isContradicted` is true, a warning line is prepended so the
+ * consumer knows the fact has an unresolved contradiction.
  */
-export function serializeFactForContext(entry: MemoryEntry): string {
+export function serializeFactForContext(entry: MemoryEntry, options?: { isContradicted?: boolean }): string {
   const parts: string[] = [];
 
   if (entry.entity) parts.push(`entity: ${entry.entity}`);
@@ -90,7 +93,11 @@ export function serializeFactForContext(entry: MemoryEntry): string {
   parts.push(`stored: ${storedDate}`);
 
   const header = `[${parts.join(" | ")}]`;
-  return `${header}\n${entry.text}`;
+  const body = `${header}\n${entry.text}`;
+  if (options?.isContradicted) {
+    return `[WARNING: CONTRADICTED — verify before use]\n${body}`;
+  }
+  return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,17 +109,20 @@ export function serializeFactForContext(entry: MemoryEntry): string {
  *
  * @param entries - Ordered list of (factId, entry) pairs, best-scored first.
  * @param budgetTokens - Maximum token budget.
+ * @param options - Optional: set of fact IDs that are contradicted (marked with warning).
  * @returns Object with packed strings and total tokens used.
  */
 export function packIntoBudget(
   entries: Array<{ factId: string; entry: MemoryEntry }>,
   budgetTokens: number,
+  options?: { contradictedIds?: Set<string> },
 ): { packed: string[]; tokensUsed: number } {
   const packed: string[] = [];
   let tokensUsed = 0;
 
-  for (const { entry } of entries) {
-    const serialized = serializeFactForContext(entry);
+  for (const { factId, entry } of entries) {
+    const isContradicted = options?.contradictedIds?.has(factId) ?? false;
+    const serialized = serializeFactForContext(entry, { isContradicted });
     const tokens = estimateTokenCount(serialized);
     if (tokensUsed + tokens > budgetTokens) break;
     packed.push(serialized);
@@ -182,6 +192,8 @@ function runGraphStrategy(): RankedResult[] {
  */
 export interface FactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
+  /** Optional: check whether a fact has an unresolved CONTRADICTS link targeting it. */
+  isContradicted?(factId: string): boolean;
 }
 
 /**
@@ -312,7 +324,14 @@ export async function runRetrievalPipeline(
   orderedEntries.sort((a, b) => (finalOrder.get(a.factId) ?? 0) - (finalOrder.get(b.factId) ?? 0));
 
   // --- Token budget packing ---
-  const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens);
+  // Build contradicted set so contradicted facts are marked with a warning in the packed output.
+  const contradictedIds = new Set<string>();
+  if (factsDb.isContradicted) {
+    for (const { factId } of orderedEntries) {
+      if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
+    }
+  }
+  const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, { contradictedIds });
   const packedFactIds = orderedEntries.slice(0, packed.length).map((e) => e.factId);
 
   // Extract resolved entries in final order for caller (avoids double lookup)

@@ -17,7 +17,7 @@ import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 
-export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS"] as const;
+export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF", "DERIVED_FROM"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
 
 /** A single contradiction record (from the contradictions table). */
@@ -2834,6 +2834,8 @@ export class FactsDB {
         .run(id, factIdNew, factIdOld, detectedAt, originalConfidence);
 
       this.createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
+      // Bidirectional: if A CONTRADICTS B, then B CONTRADICTS A
+      this.createLink(factIdOld, factIdNew, "CONTRADICTS", 1.0);
 
       this.updateConfidence(factIdOld, -0.2);
     });
@@ -3100,6 +3102,61 @@ export class FactsDB {
   }
 
   /**
+   * Detect INSTANCE_OF patterns in fact text and create INSTANCE_OF links.
+   *
+   * Matches patterns:
+   *   - "is a <type>" / "is an <type>"
+   *   - "type of <type>"
+   *
+   * When a match is found and the type noun is a known entity with an anchor fact,
+   * creates an INSTANCE_OF link from newFactId → anchor fact.
+   *
+   * Returns the number of INSTANCE_OF links created.
+   */
+  autoDetectInstanceOf(newFactId: string, text: string): number {
+    const patterns = [
+      /\bis\s+an?\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+      /\btype\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+    ];
+
+    const candidates = new Set<string>();
+    for (const pattern of patterns) {
+      let match: RegExpExecArray | null;
+      // Reset lastIndex before each use (global flag)
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(text)) !== null) {
+        const typeName = match[1].trim().toLowerCase();
+        if (typeName.length >= 2) candidates.add(typeName);
+      }
+    }
+
+    if (candidates.size === 0) return 0;
+
+    const knownEntities = this.getKnownEntities().map((e) => e.toLowerCase());
+    let linked = 0;
+
+    for (const typeName of candidates) {
+      // Only link to types that are known entities in the knowledge base
+      if (!knownEntities.includes(typeName)) continue;
+      const anchor = this.findEntityAnchor(typeName, newFactId);
+      if (!anchor) continue;
+      // Avoid duplicate INSTANCE_OF links
+      const existing = this.liveDb
+        .prepare(
+          `SELECT id FROM memory_links
+           WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'INSTANCE_OF'`,
+        )
+        .get(newFactId, anchor.id);
+      if (!existing) {
+        this.createLink(newFactId, anchor.id, "INSTANCE_OF", 1.0);
+        linked++;
+      }
+    }
+
+    return linked;
+  }
+
+  /**
    * Auto-link a newly stored fact to related facts at write time (Issue #154).
    *
    * Steps:
@@ -3109,6 +3166,7 @@ export class FactsDB {
    *   3. Supersession detection — if entity+key matches an existing fact with a
    *      different value, create a SUPERSEDES edge and (when autoSupersede is true)
    *      mark the old fact as superseded and reduce its confidence.
+   *   4. INSTANCE_OF auto-detection — matches "is a/an X" and "type of X" patterns.
    *
    * Returns { linkedCount, supersededIds } for use in the response message.
    */
@@ -3252,6 +3310,9 @@ export class FactsDB {
         }
       }
     }
+
+    // Step 4: INSTANCE_OF auto-detection
+    linkedCount += this.autoDetectInstanceOf(newFactId, text);
 
     return { linkedCount, supersededIds };
   }

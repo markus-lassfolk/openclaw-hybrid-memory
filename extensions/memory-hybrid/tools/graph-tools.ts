@@ -36,7 +36,7 @@ export function registerGraphTools(
         name: "memory_link",
         label: "Memory Link",
         description:
-          "Create a typed relationship between two memories. Link types: SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON.",
+          "Create a typed relationship between two memories. Link types: SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON, CONTRADICTS (bidirectional), INSTANCE_OF (type taxonomy), DERIVED_FROM (provenance).",
         parameters: Type.Object({
           sourceFact: Type.String({ description: "ID of the source fact" }),
           targetFact: Type.String({ description: "ID of the target fact" }),
