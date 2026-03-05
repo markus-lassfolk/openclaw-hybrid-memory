@@ -371,8 +371,8 @@ export function registerMemoryTools(
 
           // Merge entity-lookup results first, then append RRF results (deduped)
           // Normalize RRF scores to match entity result scale (0.5-1.0 range)
-          // RRF scores are typically 0.016-0.06, so we scale by ~15x to bring them to 0.24-0.9
-          const RRF_SCORE_SCALE = 15.0;
+          // RRF scores are typically 1/(k+rank), so we scale by (k+1) to bring them to ~1.0 range
+          const RRF_SCORE_SCALE = cfg.retrieval.rrf_k + 1;
           const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
           results = [...entityResults];
           
@@ -392,8 +392,13 @@ export function registerMemoryTools(
               const tokens = estimateTokens(serialized);
               if (tokensUsed + tokens > cfg.retrieval.explicitBudgetTokens) break;
               
+              // Infer backend from fusion sources
+              const strategies = fused.sources.map((s) => s.strategy);
+              const backend: SearchResult["backend"] = 
+                strategies.length === 1 && strategies[0] === "semantic" ? "lancedb" : "sqlite";
+              
               const normalizedScore = Math.min(1.0, fused.finalScore * RRF_SCORE_SCALE);
-              results.push({ entry, score: normalizedScore, backend: "sqlite" });
+              results.push({ entry, score: normalizedScore, backend });
               seenIds.add(fused.factId);
               tokensUsed += tokens;
             }

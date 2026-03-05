@@ -62,11 +62,11 @@ and `k` is a constant (default 60).
 ### Example
 
 | Fact    | Semantic rank | FTS5 rank | RRF score (k=60)                  |
-|---------|--------------|-----------|-----------------------------------|
-| fact-A  | 1            | 1         | 1/61 + 1/61 ≈ 0.0328             |
-| fact-B  | 2            | —         | 1/62 ≈ 0.0161                    |
-| fact-C  | —            | 2         | 1/62 ≈ 0.0161                    |
-| fact-D  | 1 (only)     | —         | 1/61 ≈ 0.0164                    |
+|---------|---------------|-----------|-----------------------------------|
+| fact-A  | 1             | 1         | 1/61 + 1/61 ≈ 0.0328             |
+| fact-B  | 2             | —         | 1/62 ≈ 0.0161                    |
+| fact-C  | —             | 2         | 1/62 ≈ 0.0161                    |
+| fact-D  | 1 (only)      | —         | 1/61 ≈ 0.0164                    |
 
 fact-A ranks highest because it appears in both strategies. fact-D would rank
 above fact-B and fact-C because its single rank-1 result yields a higher score
