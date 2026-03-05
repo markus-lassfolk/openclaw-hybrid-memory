@@ -1079,14 +1079,11 @@ export const hybridConfigSchema = {
       for (const m of modelsRaw) {
         try {
           vectorDimsForModel(m);
-          // For openai provider, only accept OpenAI models
-          if (embeddingProvider === "openai" && !isOpenAIModel(m)) {
-            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='openai', only OpenAI models are allowed (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
-            continue;
-          }
-          // For ollama/onnx providers, models field contains OpenAI fallback names — reject non-OpenAI models
-          if (embeddingProvider !== "openai" && !isOpenAIModel(m)) {
-            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+          if (!isOpenAIModel(m)) {
+            const reason = embeddingProvider === "openai"
+              ? "only OpenAI models are allowed"
+              : "the models field must contain OpenAI fallback model names";
+            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', ${reason} (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
             continue;
           }
           valid.push(m);
