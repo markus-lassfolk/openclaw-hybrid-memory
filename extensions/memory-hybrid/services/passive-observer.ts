@@ -349,7 +349,7 @@ export async function runPassiveObserver(
   const reinforcementEnabled = opts.reinforcement?.enabled !== false && opts.reinforcement != null
   const passiveBoost = opts.reinforcement?.passiveBoost ?? 0.1
   const maxConfidence = opts.reinforcement?.maxConfidence ?? 1.0
-  const similarityThreshold = opts.reinforcement?.similarityThreshold ?? config.deduplicationThreshold
+  const similarityThreshold = config.deduplicationThreshold
 
   const prompt = loadPrompt('passive-observer')
 
