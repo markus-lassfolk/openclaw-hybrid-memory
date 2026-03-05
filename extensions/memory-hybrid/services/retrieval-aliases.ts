@@ -113,11 +113,8 @@ export class AliasDB {
     // Track best score per factId to deduplicate across aliases for the same fact
     const bestByFact = new Map<string, number>();
     for (const row of rows) {
-      const floats = new Float32Array(
-        row.embedding.buffer,
-        row.embedding.byteOffset,
-        row.embedding.byteLength / 4,
-      );
+      const alignedBuffer = row.embedding.slice().buffer;
+      const floats = new Float32Array(alignedBuffer);
       const score = cosineSimilarity(queryVector, Array.from(floats));
       if (score >= minScore) {
         const existing = bestByFact.get(row.factId);
