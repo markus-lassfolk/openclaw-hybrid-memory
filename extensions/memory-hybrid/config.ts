@@ -1059,7 +1059,9 @@ export const hybridConfigSchema = {
         }
       }
     }
-    const model = embeddingModels?.[0] ?? singleModel;
+    // For OpenAI, the models list is a preference list so use its first entry as the primary model.
+    // For Ollama/ONNX, models contains OpenAI fallback names — the primary model is always singleModel.
+    const model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
 
     // Resolve vector dimensions: explicit config takes priority, then look up from known models
     const configDimensions = typeof embedding?.dimensions === "number" && embedding.dimensions > 0

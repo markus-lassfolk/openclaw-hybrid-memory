@@ -27,7 +27,7 @@ export interface PluginServiceContext {
   PLUGIN_ID: string;
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: import("../services/embeddings.js").Embeddings;
+  embeddings: import("../services/embeddings.js").EmbeddingProvider;
   credentialsDb: CredentialsDB | null;
   proposalsDb: ProposalsDB | null;
   wal: WriteAheadLog | null;
