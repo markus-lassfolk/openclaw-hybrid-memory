@@ -101,6 +101,20 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(callArg.input).toEqual(["a", "b", "c"]);
   });
 
+  it("embedBatch() splits into multiple API calls when count exceeds batchSize", async () => {
+    const vec = [0.5, 0.6];
+    const client = makeMockOpenAI(vec);
+    const mockCreate = (client.embeddings.create as ReturnType<typeof vi.fn>);
+    const provider = new Embeddings(client, "text-embedding-3-small", 2, 2);
+    const texts = ["a", "b", "c", "d", "e"];
+    const results = await provider.embedBatch(texts);
+    expect(results).toHaveLength(5);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(mockCreate.mock.calls[0][0].input).toEqual(["a", "b"]);
+    expect(mockCreate.mock.calls[1][0].input).toEqual(["c", "d"]);
+    expect(mockCreate.mock.calls[2][0].input).toEqual(["e"]);
+  });
+
   it("throws when dimensions exceed model max", () => {
     const client = makeMockOpenAI([]);
     expect(() => new Embeddings(client, "text-embedding-3-small", 2000)).toThrow(/exceed/i);

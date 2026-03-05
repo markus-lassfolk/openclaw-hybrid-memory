@@ -44,11 +44,13 @@ export class Embeddings implements EmbeddingProvider {
   private readonly models: string[];
   readonly dimensions: number;
   modelName: string;
+  private readonly batchSize: number;
 
   constructor(
     clientOrApiKey: OpenAI | string,
     modelOrModels: string | string[],
     dimensions?: number,
+    batchSize?: number,
   ) {
     this.client = typeof clientOrApiKey === "string"
       ? new OpenAI({ apiKey: clientOrApiKey })
@@ -57,6 +59,7 @@ export class Embeddings implements EmbeddingProvider {
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
+    this.batchSize = batchSize ?? 2048;
     
     // Validate dimensions against known model limits
     const modelMaxDimensions: Record<string, number> = {
@@ -120,32 +123,41 @@ export class Embeddings implements EmbeddingProvider {
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
     
-    const { withLLMRetry } = await import("./chat.js");
-    let lastErr: Error | undefined;
-    for (const model of this.models) {
-      try {
-        const supportsDimensions = model.startsWith("text-embedding-3-");
-        const resp = await withLLMRetry(
-          () => this.client.embeddings.create({
-            model,
-            input: texts,
-            ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
-          }),
-          { maxRetries: 2 },
-        );
-        this.modelName = model;
-        return resp.data.map((item) => item.embedding);
-      } catch (err) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
-        continue;
+    const allResults: number[][] = [];
+    for (let i = 0; i < texts.length; i += this.batchSize) {
+      const batch = texts.slice(i, i + this.batchSize);
+      
+      const { withLLMRetry } = await import("./chat.js");
+      let lastErr: Error | undefined;
+      for (const model of this.models) {
+        try {
+          const supportsDimensions = model.startsWith("text-embedding-3-");
+          const resp = await withLLMRetry(
+            () => this.client.embeddings.create({
+              model,
+              input: batch,
+              ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
+            }),
+            { maxRetries: 2 },
+          );
+          this.modelName = model;
+          allResults.push(...resp.data.map((item) => item.embedding));
+          break;
+        } catch (err) {
+          lastErr = err instanceof Error ? err : new Error(String(err));
+          continue;
+        }
+      }
+      if (lastErr !== undefined && allResults.length === i) {
+        capturePluginError(lastErr, {
+          subsystem: "embeddings",
+          operation: "embedBatch",
+          phase: "fallback-exhausted",
+        });
+        throw lastErr;
       }
     }
-    capturePluginError(lastErr!, {
-      subsystem: "embeddings",
-      operation: "embedBatch",
-      phase: "fallback-exhausted",
-    });
-    throw lastErr!;
+    return allResults;
   }
 }
 
@@ -284,7 +296,7 @@ export function createEmbeddingProvider(
     if (apiKey) {
       const openaiClient = new OpenAI({ apiKey });
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
-      const fallback = new Embeddings(openaiClient, openaiModels, dimensions);
+      const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
       return new FallbackEmbeddingProvider(primary, fallback, onFallback);
     }
     return primary;
@@ -294,7 +306,7 @@ export function createEmbeddingProvider(
     if (!apiKey) throw new Error("OpenAI embedding provider requires embedding.apiKey");
     const openaiClient = new OpenAI({ apiKey });
     const openaiModels = models?.length ? models : [model];
-    return new Embeddings(openaiClient, openaiModels, dimensions);
+    return new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
   }
 
   if (provider === "onnx") {
@@ -302,7 +314,7 @@ export function createEmbeddingProvider(
     if (apiKey) {
       const openaiClient = new OpenAI({ apiKey });
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
-      return new Embeddings(openaiClient, openaiModels, dimensions);
+      return new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
     }
     throw new Error("ONNX embedding provider is not yet implemented. Set embedding.apiKey to fall back to OpenAI, or use provider='ollama'.");
   }
