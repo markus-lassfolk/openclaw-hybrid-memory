@@ -3146,7 +3146,7 @@ export class FactsDB {
         )
         .all(entity.trim(), key.trim(), newFactId, nowSec) as Array<Record<string, unknown>>;
 
-      const newVal = (this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value ?? null;
+      const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) || null;
 
       for (const row of conflicting) {
         const oldFact = this.rowToEntry(row);
