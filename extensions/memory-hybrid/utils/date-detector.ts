@@ -14,11 +14,9 @@
  *   "soon", "eventually", "later", "someday", "sometime", "at some point"
  */
 
-export type FutureDateProtectionConfig = {
-  enabled: boolean;
-  /** Maximum days to freeze (0 = no limit within the function; caller enforces). Default 365. */
-  maxFreezeDays: number;
-};
+import type { FutureDateProtectionConfig } from "../config.js";
+
+export type { FutureDateProtectionConfig };
 
 const MONTH_MAP: Record<string, number> = {
   jan: 0, january: 0,
@@ -44,13 +42,6 @@ const WEEKDAY_MAP: Record<string, number> = {
   friday: 5, fri: 5,
   saturday: 6, sat: 6,
 };
-
-/**
- * Return midnight UTC (epoch seconds) for a given Date, clearing H/M/S.
- */
-function midnightUtc(d: Date): number {
-  return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
-}
 
 /**
  * Try all date patterns against `text`. Return all candidate epoch-second
