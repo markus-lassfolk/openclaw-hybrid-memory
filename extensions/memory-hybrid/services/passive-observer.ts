@@ -455,7 +455,7 @@ export async function runPassiveObserver(
         for (let ri = 0; ri < recentVectors.length; ri++) {
           const rv = recentVectors[ri]
           if (!rv || rv.length === 0) continue
-          if (dotProductSimilarity(normVec, rv) >= config.deduplicationThreshold) {
+          if (dotProductSimilarity(normVec, rv) >= similarityThreshold) {
             isDuplicate = true
             // Confidence reinforcement: boost the matched fact instead of silently skipping (Issue #147)
             if (reinforcementEnabled && !opts.dryRun) {
