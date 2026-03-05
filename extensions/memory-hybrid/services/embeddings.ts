@@ -281,7 +281,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         this.switched = false;
         this.modelName = this.active.modelName;
         return result;
-      } catch {
+      } catch (_err) {
+        // Primary still failing — continue using fallback
       }
     }
     if (this.switched) {
@@ -311,7 +312,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         this.switched = false;
         this.modelName = this.active.modelName;
         return result;
-      } catch {
+      } catch (_err) {
+        // Primary still failing — continue using fallback
       }
     }
     if (this.switched) {
