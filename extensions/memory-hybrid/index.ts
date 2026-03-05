@@ -134,7 +134,7 @@ import {
   runReflectionRules,
   runReflectionMeta,
   normalizeVector,
-  cosineSimilarity,
+  dotProductSimilarity,
   parsePatternsFromReflectionResponse,
 } from "./services/reflection.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
@@ -455,7 +455,7 @@ export const _testing = {
   // Reflection parsing (for tests) - re-exported from service
   parsePatternsFromReflectionResponse,
   normalizeVector,
-  cosineSimilarity,
+  dotProductSimilarity,
   // FTS5 search service (Issue #151)
   searchFts,
   rebuildFtsIndex,
