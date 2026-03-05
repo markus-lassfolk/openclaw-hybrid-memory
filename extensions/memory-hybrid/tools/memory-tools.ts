@@ -886,6 +886,7 @@ export function registerMemoryTools(
                   supersedesId: classification.targetId,
                   scope,
                   scopeTarget,
+                  sourceSessions: api.context?.sessionId ?? undefined,
                 });
                 factsDb.supersede(classification.targetId, newEntry.id);
 
@@ -992,6 +993,7 @@ export function registerMemoryTools(
           }
         }
         const nowSec = Math.floor(Date.now() / 1000);
+        const storeSessionId = api.context?.sessionId ?? null;
         const entry = factsDb.store({
           text: textToStore,
           category: category as MemoryCategory,
@@ -1005,6 +1007,7 @@ export function registerMemoryTools(
           tags,
           scope,
           scopeTarget,
+          sourceSessions: storeSessionId ?? undefined,
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
@@ -1075,10 +1078,40 @@ export function registerMemoryTools(
           }
         }
 
+        // Entity-based auto-linking (Issue #154): known-entity matching, IP NER,
+        // temporal co-occurrence, and supersession detection.
+        let entityAutoLinked = 0;
+        let autoSupersededIds: string[] = [];
+        if (cfg.graph.enabled && cfg.graph.autoLink) {
+          const sessionId = api.context?.sessionId ?? null;
+          const result = factsDb.autoLinkEntities(
+            entry.id,
+            textToStore,
+            entity ?? null,
+            key ?? null,
+            sessionId,
+            {
+              coOccurrenceWeight: cfg.graph.coOccurrenceWeight,
+              autoSupersede: cfg.graph.autoSupersede,
+            },
+            entry.scope ?? null,
+            entry.scopeTarget ?? null,
+          );
+          entityAutoLinked = result.linkedCount;
+          autoSupersededIds = result.supersededIds;
+          if (autoSupersededIds.length > 0) {
+            api.logger.info?.(
+              `memory-hybrid: autoSupersede — superseded [${autoSupersededIds.join(", ")}] with ${entry.id}`,
+            );
+          }
+        }
+
+        const totalLinked = autoLinked + entityAutoLinked;
         const storedMsg =
           `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]` +
           (supersedes?.trim() ? " (supersedes previous fact)" : "") +
-          (autoLinked > 0 ? ` (linked to ${autoLinked} related fact${autoLinked === 1 ? "" : "s"})` : "") +
+          (totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : "") +
+          (autoSupersededIds.length > 0 ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})` : "") +
           (contradictions.length > 0 ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})` : "");
 
         return {
@@ -1094,7 +1127,8 @@ export function registerMemoryTools(
             backend: "both",
             decayClass: entry.decayClass,
             ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
-            ...(autoLinked > 0 ? { autoLinked } : {}),
+            ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
+            ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
             ...(contradictions.length > 0 ? { contradictions: contradictions.map((c) => ({ contradictionId: c.contradictionId, oldFactId: c.oldFactId })) } : {}),
           },
         };

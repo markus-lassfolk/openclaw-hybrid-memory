@@ -3013,6 +3013,249 @@ export class FactsDB {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Auto-linking helpers (Issue #154)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Return all distinct non-null entity names for active (non-superseded) facts.
+   * Used by entity-matching auto-linker at write time.
+   */
+  getKnownEntities(): string[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT DISTINCT entity FROM facts WHERE entity IS NOT NULL AND superseded_at IS NULL`,
+      )
+      .all() as Array<{ entity: string }>;
+    return rows.map((r) => r.entity);
+  }
+
+  /**
+   * Extract entity mentions from a fact's text using:
+   *   1. Known-entity matching — exact word-boundary (weight 1.0) or substring (weight 0.7).
+   *   2. Simple NER — IPv4 regex (weight 0.5).
+   *
+   * Returns unique {entity, weight} pairs sorted by descending weight.
+   */
+  extractEntitiesFromText(
+    text: string,
+    knownEntities: string[],
+  ): Array<{ entity: string; weight: number }> {
+    const seen = new Map<string, number>();
+    const lowerText = text.toLowerCase();
+
+    for (const entity of knownEntities) {
+      if (!entity) continue;
+      const lowerEntity = entity.toLowerCase();
+
+      // Exact whole-word match
+      const escapedForRegex = lowerEntity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const wordBoundaryRe = new RegExp(`\\b${escapedForRegex}\\b`);
+      if (wordBoundaryRe.test(lowerText)) {
+        const current = seen.get(entity) ?? 0;
+        if (current < 1.0) seen.set(entity, 1.0);
+        continue;
+      }
+
+      // Substring match (no word boundary required)
+      if (lowerText.includes(lowerEntity)) {
+        const current = seen.get(entity) ?? 0;
+        if (current < 0.7) seen.set(entity, 0.7);
+      }
+    }
+
+    // IPv4 NER
+    const ipRe = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;
+    let m: RegExpExecArray | null;
+    while ((m = ipRe.exec(text)) !== null) {
+      const ip = m[0];
+      if (!seen.has(ip)) seen.set(ip, 0.5);
+    }
+
+    return Array.from(seen.entries())
+      .map(([entity, weight]) => ({ entity, weight }))
+      .sort((a, b) => b.weight - a.weight);
+  }
+
+  /**
+   * Find the most recent active (non-superseded, non-expired) fact anchoring an entity.
+   * Returns null if no such fact exists.
+   */
+  findEntityAnchor(entity: string, excludeId?: string): MemoryEntry | null {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const excludeClause = excludeId ? "AND id != ?" : "";
+    const params = excludeId ? [entity, nowSec, excludeId] : [entity, nowSec];
+    const row = this.liveDb
+      .prepare(
+        `SELECT * FROM facts
+         WHERE lower(entity) = lower(?)
+           AND superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+           ${excludeClause}
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(...params) as Record<string, unknown> | undefined;
+    return row ? this.rowToEntry(row) : null;
+  }
+
+  /**
+   * Auto-link a newly stored fact to related facts at write time (Issue #154).
+   *
+   * Steps:
+   *   1. Known-entity matching + IP NER → RELATES_TO edges to entity anchor facts.
+   *   2. Temporal co-occurrence — facts in the same session with entity/tag overlap
+   *      get weak RELATES_TO edges.
+   *   3. Supersession detection — if entity+key matches an existing fact with a
+   *      different value, create a SUPERSEDES edge and (when autoSupersede is true)
+   *      mark the old fact as superseded and reduce its confidence.
+   *
+   * Returns { linkedCount, supersededIds } for use in the response message.
+   */
+  autoLinkEntities(
+    newFactId: string,
+    text: string,
+    entity: string | null,
+    key: string | null,
+    sessionId: string | null,
+    cfg: { coOccurrenceWeight: number; autoSupersede: boolean },
+    scope?: string | null,
+    scopeTarget?: string | null,
+  ): { linkedCount: number; supersededIds: string[] } {
+    let linkedCount = 0;
+    const supersededIds: string[] = [];
+
+    // Step 1: Known-entity + IP matching
+    const knownEntities = this.getKnownEntities();
+    const mentions = this.extractEntitiesFromText(text, knownEntities);
+
+    for (const { entity: mentionedEntity, weight } of mentions) {
+      const anchor = this.findEntityAnchor(mentionedEntity, newFactId);
+      if (!anchor) continue;
+      // Avoid duplicate links (don't recreate if link already exists)
+      const existing = this.liveDb
+        .prepare(
+          `SELECT id FROM memory_links
+           WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+        )
+        .get(newFactId, anchor.id);
+      if (!existing) {
+        this.createLink(newFactId, anchor.id, "RELATED_TO", weight);
+        linkedCount++;
+      }
+    }
+
+    // Step 2: Temporal co-occurrence — other facts from the same session
+    if (sessionId) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      // Look for facts stored in the same session (via source_sessions column)
+      // Also accept entity or tag overlap as qualifying co-occurrence signal
+      const escapedSessionId = sessionId.replace(/[%_]/g, '\\$&');
+      const recentRows = this.liveDb
+        .prepare(
+          `SELECT * FROM facts
+           WHERE id != ?
+             AND superseded_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)
+             AND source_sessions IS NOT NULL
+             AND (',' || source_sessions || ',' LIKE ? ESCAPE '\\')
+           ORDER BY created_at DESC
+           LIMIT 20`,
+        )
+        .all(
+          newFactId,
+          nowSec,
+          `%,${escapedSessionId},%`,
+        ) as Array<Record<string, unknown>>;
+
+      for (const row of recentRows) {
+        const coEntry = this.rowToEntry(row);
+        // Skip if already linked
+        const existing = this.liveDb
+          .prepare(
+            `SELECT id FROM memory_links
+             WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+          )
+          .get(newFactId, coEntry.id);
+        if (!existing) {
+          this.createLink(newFactId, coEntry.id, "RELATED_TO", cfg.coOccurrenceWeight);
+          linkedCount++;
+        }
+      }
+    }
+
+    // Step 3: Supersession detection
+    if (entity?.trim() && key?.trim()) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const scopeClause = scope
+        ? scopeTarget != null
+          ? "AND scope = ? AND scope_target = ?"
+          : "AND scope = ? AND scope_target IS NULL"
+        : "";
+      const baseParams: unknown[] = [entity.trim(), key.trim(), newFactId, nowSec];
+      const scopeParams: unknown[] = scope
+        ? scopeTarget != null
+          ? [scope, scopeTarget]
+          : [scope]
+        : [];
+      const conflicting = this.liveDb
+        .prepare(
+          `SELECT * FROM facts
+           WHERE lower(entity) = lower(?)
+             AND lower(key) = lower(?)
+             AND id != ?
+             AND superseded_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)
+             ${scopeClause}
+           ORDER BY created_at DESC`,
+        )
+        .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
+
+      const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) ?? null;
+
+      // Skip supersession entirely when new fact has no value — a valueless fact
+      // cannot meaningfully supersede an existing value.
+      if (newVal !== null) {
+        for (const row of conflicting) {
+          const oldFact = this.rowToEntry(row);
+          // Only create SUPERSEDES edge when value actually differs
+          if (oldFact.value !== null && newVal.toLowerCase() === oldFact.value.toLowerCase()) continue;
+
+          // Create SUPERSEDES link (new → old)
+          const alreadyLinked = this.liveDb
+            .prepare(
+              `SELECT id FROM memory_links
+               WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'SUPERSEDES'`,
+            )
+            .get(newFactId, oldFact.id);
+          if (!alreadyLinked) {
+            this.createLink(newFactId, oldFact.id, "SUPERSEDES", 1.0);
+
+            if (cfg.autoSupersede) {
+              // Mark old fact as superseded
+              this.supersede(oldFact.id, newFactId);
+              
+              // Only reduce confidence if no contradiction was already recorded
+              // (detectContradictions already applied -0.2 penalty)
+              const existingContradiction = this.liveDb
+                .prepare(
+                  `SELECT id FROM contradictions
+                   WHERE fact_id_new = ? AND fact_id_old = ?`,
+                )
+                .get(newFactId, oldFact.id);
+              if (!existingContradiction) {
+                this.updateConfidence(oldFact.id, -0.2);
+              }
+              supersededIds.push(oldFact.id);
+            }
+          }
+        }
+      }
+    }
+
+    return { linkedCount, supersededIds };
+  }
+
   close(): void {
     try {
       this.db.close();
