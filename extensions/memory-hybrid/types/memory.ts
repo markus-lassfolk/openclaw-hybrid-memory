@@ -54,6 +54,12 @@ export type MemoryEntry = {
   lastReinforcedAt?: number | null;
   /** Array of user praise quotes that reinforced this fact. */
   reinforcedQuotes?: string[] | null;
+  /**
+   * Future-date decay freeze: epoch seconds until which confidence decay is paused.
+   * Set when the fact text contains a future date (reminder, deadline, event).
+   * Null = no freeze (normal decay applies).
+   */
+  decayFreezeUntil?: number | null;
 };
 
 /** Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */
