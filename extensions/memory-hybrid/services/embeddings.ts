@@ -336,6 +336,7 @@ export function createEmbeddingProvider(
   if (provider === "onnx") {
     // ONNX runtime not yet implemented — fall back to OpenAI if key available
     if (apiKey) {
+      console.warn("memory-hybrid: ONNX embedding provider is not yet implemented. Falling back to OpenAI. Your data will be sent to OpenAI's cloud API.");
       const openaiClient = new OpenAI({ apiKey });
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       return new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
