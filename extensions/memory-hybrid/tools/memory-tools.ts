@@ -468,6 +468,10 @@ export function registerMemoryTools(
           const rawDepth = typeof expandDepthParam === "number" ? expandDepthParam : cfg.retrieval.graphWalkDepth;
           const depth = Math.min(rawDepth, cfg.graphRetrieval.maxExpandDepth);
           const seedInputs = results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry }));
+          const originalBackendMap = new Map<string, "sqlite" | "lancedb">();
+          for (const r of results) {
+            originalBackendMap.set(r.entry.id, r.backend);
+          }
           const expanded = expandGraph(factsDb, seedInputs, {
             maxDepth: depth,
             maxExpandedResults: cfg.graphRetrieval.maxExpandedResults,
@@ -478,7 +482,8 @@ export function registerMemoryTools(
           // Re-build results from expanded output (preserves scores and dedup).
           const newResults: SearchResult[] = [];
           for (const e of expanded) {
-            newResults.push({ entry: e.entry, score: e.score, backend: "sqlite" });
+            const backend = e.expansionSource === "direct" ? (originalBackendMap.get(e.factId) ?? "sqlite") : "sqlite";
+            newResults.push({ entry: e.entry, score: e.score, backend });
             expansionMeta.set(e.factId, {
               expansionSource: e.expansionSource,
               hopCount: e.hopCount,
