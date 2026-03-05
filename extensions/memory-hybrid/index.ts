@@ -43,7 +43,7 @@ import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType, type ContradictionRecord } from "./backends/facts-db.js";
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { deepMerge } from "./cli/handlers.js";
-import { Embeddings, safeEmbed } from "./services/embeddings.js";
+import { Embeddings, safeEmbed, type EmbeddingProvider } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, createPendingLLMWarnings } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
@@ -68,6 +68,18 @@ import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-r
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
 import { findShortestPath, resolveInput, formatPath } from "./services/shortest-path.js";
 export type { ShortestPathResult, PathStep, ShortestPathLookup } from "./services/shortest-path.js";
+import {
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
+} from "./services/knowledge-gaps.js";
+export type { GapFact, SuggestedLink, KnowledgeGapReport, GapMode, GapFactsDB, GapVectorDB, GapEmbeddings } from "./services/knowledge-gaps.js";
+import { detectClusters, generateClusterLabel } from "./services/topic-clusters.js";
+export type { TopicCluster, ClusterDetectionResult, ClusterDetectionOptions, ClusterFactLookup } from "./services/topic-clusters.js";
+import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "./services/retrieval-aliases.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -196,12 +208,13 @@ let resolvedLancePath: string;
 let resolvedSqlitePath: string;
 let factsDb: FactsDB;
 let vectorDb: VectorDB;
-let embeddings: Embeddings;
+let embeddings: EmbeddingProvider;
 let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
+let aliasDb: AliasDB | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -264,10 +277,11 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
+    aliasDb = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -287,6 +301,7 @@ const memoryHybridPlugin = {
       wal = dbContext.wal;
       proposalsDb = dbContext.proposalsDb;
       eventLog = dbContext.eventLog;
+      aliasDb = dbContext.aliasDb;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -342,6 +357,7 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       proposalsDb,
       resolvedSqlitePath,
@@ -366,6 +382,7 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       currentAgentIdRef,
       lastProgressiveIndexIds,
@@ -484,6 +501,21 @@ export const _testing = {
   findShortestPath,
   resolveInput,
   formatPath,
+  // Knowledge gap analysis (Issue #141)
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
+  // Topic cluster detection (Issue #146)
+  detectClusters,
+  generateClusterLabel,
+  // Retrieval aliases (Issue #149)
+  AliasDB,
+  generateAliases,
+  storeAliases,
+  searchAliasStrategy,
 };
 
 export { versionInfo } from "./versionInfo.js";

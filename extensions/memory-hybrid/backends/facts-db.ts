@@ -174,6 +174,9 @@ export class FactsDB {
 
     // ---- Topic cluster storage (Issue #146) ----
     this.migrateClusterTables();
+
+    // ---- Future-date decay freeze (#144) ----
+    this.migrateDecayFreezeColumn();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -351,6 +354,18 @@ export class FactsDB {
     if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
       this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
     }
+  }
+
+  /** Add decay_freeze_until column for future-date freeze protection (#144). */
+  private migrateDecayFreezeColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "decay_freeze_until")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN decay_freeze_until INTEGER DEFAULT NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_freeze ON facts(decay_freeze_until) WHERE decay_freeze_until IS NOT NULL`,
+    );
   }
 
   /**
@@ -703,6 +718,8 @@ export class FactsDB {
       scope?: "global" | "user" | "agent" | "session";
       /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
       scopeTarget?: string | null;
+      /** Future-date freeze: epoch seconds until which confidence decay is paused (#144). */
+      decayFreezeUntil?: number | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -750,10 +767,19 @@ export class FactsDB {
           : JSON.stringify(sourceSessionsRaw);
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
+    // Fix #2: guard against NaN/non-finite values passed in from external callers
+    const rawFreeze = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
+    const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
+    // Fix #1: ensure expires_at covers the full freeze period so the fact is not pruned
+    // before the freeze expires
+    const adjustedExpiresAt =
+      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil
+        ? decayFreezeUntil
+        : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -766,7 +792,7 @@ export class FactsDB {
         entry.source,
         nowSec,
         decayClass,
-        expiresAt,
+        adjustedExpiresAt,
         nowSec,
         confidence,
         summary,
@@ -783,6 +809,7 @@ export class FactsDB {
         successCount,
         lastValidated,
         sourceSessionsStr,
+        decayFreezeUntil,
       );
 
     return {
@@ -790,7 +817,7 @@ export class FactsDB {
       id,
       createdAt: nowSec,
       decayClass,
-      expiresAt,
+      expiresAt: adjustedExpiresAt,
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
@@ -806,6 +833,8 @@ export class FactsDB {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
+      // normalize to null (not undefined) to match rowToEntry() behaviour
+      decayFreezeUntil: decayFreezeUntil,
     };
   }
 
@@ -1331,6 +1360,7 @@ export class FactsDB {
           return null;
         }
       })(),
+      decayFreezeUntil: (row.decay_freeze_until as number) ?? null,
     };
   }
 
@@ -1604,14 +1634,16 @@ export class FactsDB {
       .prepare(
         `DELETE FROM memory_links
          WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?
+           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
          )
          AND link_type != 'DERIVED_FROM'`
       )
-      .run(nowSec);
+      .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
-      .run(nowSec);
+      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+      .run({ now: nowSec });
     return result.changes;
   }
 
@@ -1653,7 +1685,8 @@ export class FactsDB {
            AND expires_at > @now
            AND last_confirmed_at IS NOT NULL
            AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
-           AND confidence > 0.1`,
+           AND confidence > 0.1
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`,
       )
       .run({ now: nowSec });
 
@@ -1663,13 +1696,15 @@ export class FactsDB {
         `DELETE FROM memory_links
          WHERE target_fact_id IN (
            SELECT id FROM facts WHERE confidence < 0.1
+             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
          )
          AND link_type != 'DERIVED_FROM'`
       )
-      .run();
+      .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
-      .run();
+      .prepare(`DELETE FROM facts WHERE confidence < 0.1
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+      .run({ now: nowSec });
     return result.changes;
   }
 
@@ -1711,6 +1746,34 @@ export class FactsDB {
     quotes.push(newSnippet.slice(0, 200));
     if (quotes.length > 10) quotes = quotes.slice(-10);
     return JSON.stringify(quotes);
+  }
+
+  /**
+   * Boost the confidence of a fact by a delta, clamped at maxConfidence.
+   * Also increments reinforced_count and updates last_reinforced_at.
+   * Returns true if the fact was found and updated.
+   */
+  boostConfidence(id: string, delta: number, maxConfidence = 1.0): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const tx = this.liveDb.transaction(() => {
+      const row = this.liveDb
+        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+        .get(id) as { confidence: number } | undefined;
+      if (!row) return false;
+
+      const current = typeof row.confidence === "number" ? row.confidence : 1.0;
+      const boosted = Math.max(current, Math.min(maxConfidence, current + delta));
+
+      this.liveDb
+        .prepare(
+          `UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?`,
+        )
+        .run(boosted, nowSec, id);
+      return true;
+    });
+
+    return tx() as boolean;
   }
 
   /**

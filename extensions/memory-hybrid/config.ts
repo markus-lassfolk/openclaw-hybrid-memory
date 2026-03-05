@@ -278,10 +278,14 @@ export type ClustersConfig = {
   refreshIntervalDays: number;
   /** Reserved: Model for label generation; null = rule-based only (default: null). Currently not passed to detectClusters. */
   labelModel: string | null;
+};
+
 /** Memory health dashboard configuration (Issue #148). */
 export type HealthConfig = {
   /** Enable memory_health tool (default: true). */
   enabled: boolean;
+};
+
 /** Knowledge gap analysis configuration (Issue #141). */
 export type GapsConfig = {
   /** Enable the memory_gaps tool (default: true when graph is enabled). */
@@ -316,6 +320,8 @@ export type NightlyCycleConfig = {
   model?: string;
   /** Days before consolidating episodic events into facts (default: 7). */
   consolidateAfterDays: number;
+};
+
 /** Multi-hook retrieval aliases (Issue #149). */
 export type AliasesConfig = {
   /** Enable alias generation and embedding search (default: false). */
@@ -324,6 +330,8 @@ export type AliasesConfig = {
   maxAliases: number;
   /** Model for alias generation; when unset, runtime uses getDefaultCronModel(cfg, "nano"). */
   model?: string;
+};
+
 /** Shortest-path traversal configuration (Issue #140). */
 export type PathConfig = {
   /** Enable memory_path tool (default: true). */
@@ -1967,6 +1975,8 @@ export const hybridConfigSchema = {
       consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
         ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
         : 7,
+    };
+
     // Parse reinforcement config (Issue #147, default: enabled)
     const reinforcementRaw = cfg.reinforcement as Record<string, unknown> | undefined;
     const reinforcement: ReinforcementConfig = {
@@ -1987,6 +1997,8 @@ export const hybridConfigSchema = {
         typeof reinforcementRaw?.similarityThreshold === "number" && reinforcementRaw.similarityThreshold > 0 && reinforcementRaw.similarityThreshold <= 1
           ? reinforcementRaw.similarityThreshold
           : 0.85,
+    };
+
     // Parse knowledge gaps config (Issue #141)
     const gapsRaw = cfg.gaps as Record<string, unknown> | undefined;
     const gaps: GapsConfig = {
@@ -1997,6 +2009,8 @@ export const hybridConfigSchema = {
         gapsRaw.similarityThreshold <= 1
           ? gapsRaw.similarityThreshold
           : 0.8,
+    };
+
     // Parse aliases config (Issue #149, default: disabled)
     const aliasesRaw = cfg.aliases as Record<string, unknown> | undefined;
     const aliases: AliasesConfig = {
@@ -2006,6 +2020,8 @@ export const hybridConfigSchema = {
           ? Math.min(10, Math.floor(aliasesRaw.maxAliases))
           : 5,
       model: typeof aliasesRaw?.model === "string" ? aliasesRaw.model : undefined,
+    };
+
     // Parse path config (Issue #140, default: enabled, maxPathDepth: 10)
     const pathRaw = cfg.path as Record<string, unknown> | undefined;
     const path: PathConfig = {

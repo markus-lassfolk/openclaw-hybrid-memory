@@ -411,7 +411,7 @@ describe("storeAliases", () => {
 
     const mockEmbeddings = {
       embed: vi.fn().mockResolvedValue(unitVec()),
-    };
+    } as unknown as import("../services/embeddings.js").EmbeddingProvider;
 
     await storeAliases(factId, "Original fact", ENABLED_CFG, "test-model", mockOpenAI, mockEmbeddings, db);
 
@@ -423,7 +423,7 @@ describe("storeAliases", () => {
   it("is a no-op when config.enabled is false", async () => {
     const db = makeDb();
     const mockOpenAI = {} as unknown as import("openai").default;
-    const mockEmbeddings = { embed: vi.fn() };
+    const mockEmbeddings = { embed: vi.fn() } as unknown as import("../services/embeddings.js").EmbeddingProvider;
 
     await storeAliases(randomUUID(), "Fact", DISABLED_CFG, "test-model", mockOpenAI, mockEmbeddings, db);
 
@@ -453,7 +453,7 @@ describe("storeAliases", () => {
         if (callCount === 1) throw new Error("Embedding API down");
         return Promise.resolve(unitVec());
       }),
-    };
+    } as unknown as import("../services/embeddings.js").EmbeddingProvider;
 
     const warnings: string[] = [];
     await storeAliases(

@@ -6,6 +6,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
@@ -76,6 +77,7 @@ export type { ActiveTaskContext };
 export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  aliasDb?: AliasDB | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
   embeddings: EmbeddingProvider;
   mergeResults: typeof mergeResults;

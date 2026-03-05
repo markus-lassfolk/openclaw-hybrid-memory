@@ -14,7 +14,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry } from "../backends/event-log.js";
 import type { MemoryCategory } from "../types/memory.js";
@@ -262,7 +262,7 @@ export async function runEpisodicConsolidation(
 export async function runDreamCycle(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   eventLog: EventLog | null,
   config: DreamCycleConfig,
