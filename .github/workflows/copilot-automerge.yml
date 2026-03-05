@@ -1,0 +1,217 @@
+name: Copilot / Bot Automerge
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  automerge:
+    name: Automerge bot PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request'
+
+    steps:
+      - name: Automerge eligible bot PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // IMPORTANT: Keep this list in sync with auto-create-pr.yml
+            const BOT_AUTHORS = [
+              'copilot[bot]',
+              'cursor[bot]',
+              'cursor-agent',
+              'github-actions[bot]',
+            ];
+
+            const ELIGIBLE_PREFIXES = [
+              'copilot-fix/',
+              'cursor-agent/',
+              'bugfix/',
+              'fix/',
+              'hotfix/',
+            ];
+
+            // Collect candidate PR numbers to evaluate
+            let candidatePRNumbers = new Set();
+
+            if (context.eventName === 'pull_request') {
+              candidatePRNumbers.add(context.payload.pull_request.number);
+            }
+
+            if (context.eventName === 'workflow_run') {
+              const workflowRun = context.payload.workflow_run;
+              for (const pr of (workflowRun.pull_requests || [])) {
+                candidatePRNumbers.add(pr.number);
+              }
+            }
+
+            if (candidatePRNumbers.size === 0) {
+              console.log('No candidate PRs found, exiting.');
+              return;
+            }
+
+            for (const prNumber of candidatePRNumbers) {
+              console.log(`\n=== Evaluating PR #${prNumber} ===`);
+
+              const { data: pr } = await github.rest.pulls.get({
+                owner, repo, pull_number: prNumber,
+              });
+
+              if (pr.state !== 'open') {
+                console.log(`  PR #${prNumber} is not open, skipping.`);
+                continue;
+              }
+
+              // Check author is a known bot
+              const author = pr.user.login;
+              if (!BOT_AUTHORS.includes(author)) {
+                console.log(`  Author '${author}' is not a known bot, skipping.`);
+                continue;
+              }
+
+              // Check branch prefix
+              const branch = pr.head.ref;
+              const eligible = ELIGIBLE_PREFIXES.some(p => branch.startsWith(p));
+              if (!eligible) {
+                console.log(`  Branch '${branch}' does not match eligible prefixes, skipping.`);
+                continue;
+              }
+
+              console.log(`  PR #${prNumber} by ${author} on branch '${branch}' — evaluating checks...`);
+
+              // Fetch all check runs for the head SHA (paginated)
+              const allCheckRuns = await github.paginate(
+                github.rest.checks.listForRef,
+                { owner, repo, ref: pr.head.sha, per_page: 100 },
+                (response) => response.data.check_runs
+              );
+
+              // Only consider checks from the CI workflow so CodeQL/Labeler/etc. don't block automerge
+              const CI_JOB_NAME_PREFIXES = ['Type Check', 'Lint', 'Test'];
+              const runs = allCheckRuns.filter(r => {
+                if (r.name === 'Automerge bot PRs') return false;
+                return CI_JOB_NAME_PREFIXES.some(prefix => r.name.startsWith(prefix));
+              });
+
+              if (runs.length === 0) {
+                console.log('  No CI checks found yet, skipping.');
+                continue;
+              }
+
+              const pending = runs.filter(r => r.status !== 'completed');
+              if (pending.length > 0) {
+                console.log(`  ${pending.length} CI check(s) still pending, skipping.`);
+                continue;
+              }
+
+              const failed = runs.filter(r =>
+                r.conclusion !== 'success' &&
+                r.conclusion !== 'skipped' &&
+                r.conclusion !== 'neutral'
+              );
+
+              if (failed.length > 0) {
+                const names = failed.map(r => r.name).join(', ');
+                console.log(`  Failed checks: ${names}`);
+                const body = `❌ Auto-merge skipped — the following check(s) did not pass: **${names}**.\n\nPlease investigate and fix before this PR can be auto-merged.`;
+                
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: prNumber,
+                });
+                const botComment = comments.find(
+                  c => c.user.type === 'Bot' && c.body.includes('❌ Auto-merge skipped — the following check(s) did not pass:'),
+                );
+                
+                if (botComment) {
+                  await github.rest.issues.updateComment({
+                    owner, repo, comment_id: botComment.id, body,
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: prNumber, body,
+                  });
+                }
+                continue;
+              }
+
+              // Check for unresolved review threads (paginate through all threads)
+              const threadQuery = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        id
+                        isResolved
+                        comments(first: 1) {
+                          nodes { body author { login } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }`;
+
+              let allThreads = [];
+              let cursor = null;
+              do {
+                const result = await github.graphql(threadQuery, { owner, repo, number: prNumber, cursor });
+                const page = result.repository.pullRequest.reviewThreads;
+                allThreads = allThreads.concat(page.nodes);
+                cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+              } while (cursor);
+
+              const unresolvedThreads = allThreads.filter(t => !t.isResolved);
+
+              if (unresolvedThreads.length > 0) {
+                console.log(`  ${unresolvedThreads.length} unresolved review thread(s), skipping merge.`);
+                const body = `⚠️ Auto-merge skipped — ${unresolvedThreads.length} unresolved review thread(s). Please resolve all conversations before merge.`;
+                
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: prNumber,
+                });
+                const botComment = comments.find(
+                  c => c.user.type === 'Bot' && c.body.includes('⚠️ Auto-merge skipped — ') && c.body.includes('unresolved review thread(s)'),
+                );
+                
+                if (botComment) {
+                  await github.rest.issues.updateComment({
+                    owner, repo, comment_id: botComment.id, body,
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: prNumber, body,
+                  });
+                }
+                continue;
+              }
+
+              // All checks green, no unresolved threads — squash merge
+              console.log(`  All checks passed and no unresolved threads. Squash-merging PR #${prNumber}...`);
+              try {
+                await github.rest.pulls.merge({
+                  owner, repo, pull_number: prNumber,
+                  merge_method: 'squash',
+                  commit_title: `${pr.title} (#${prNumber})`,
+                });
+                console.log(`  PR #${prNumber} merged successfully.`);
+              } catch (err) {
+                console.log(`  Merge failed: ${err.message}`);
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: prNumber,
+                  body: `❌ Auto-merge failed: ${err.message}`,
+                });
+              }
+            }

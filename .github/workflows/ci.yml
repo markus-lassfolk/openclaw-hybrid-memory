@@ -2,7 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'bugfix/**'
+      - 'fix/**'
+      - 'hotfix/**'
+      - 'copilot-fix/**'
+      - 'cursor-agent/**'
   pull_request:
   workflow_call:
 
