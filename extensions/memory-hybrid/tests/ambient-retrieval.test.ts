@@ -9,7 +9,6 @@
  *   - generateTemporalQueries(): morning / afternoon / evening buckets
  *   - SessionSeenFacts: markSeen, hasBeenSeen, filterUnseen, size, clear
  *   - generateAmbientQueries(): multiQuery disabled, entity/temporal/context types, max cap
- *   - deduplicateByFactId(): deduplication, priority order, empty input
  *   - deduplicateResultsById(): generic helper with custom key extractor
  */
 
@@ -22,11 +21,10 @@ import {
   generateTemporalQueries,
   SessionSeenFacts,
   generateAmbientQueries,
-  deduplicateByFactId,
   deduplicateResultsById,
-  type AmbientConfig,
   type AmbientQuery,
 } from "../services/ambient-retrieval.js";
+import type { AmbientConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -447,46 +445,6 @@ describe("generateAmbientQueries — multiQuery enabled", () => {
     );
     const entityQ = result.find((q) => q.type === "entity" && q.entity === "production");
     expect(entityQ).toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// deduplicateByFactId
-// ---------------------------------------------------------------------------
-
-describe("deduplicateByFactId", () => {
-  it("returns empty array for no result sets", () => {
-    expect(deduplicateByFactId([])).toEqual([]);
-  });
-
-  it("returns all items from single result set", () => {
-    const set = [{ factId: "a" }, { factId: "b" }];
-    expect(deduplicateByFactId([set])).toEqual(set);
-  });
-
-  it("deduplicates across result sets — first occurrence wins", () => {
-    const s1 = [{ factId: "a", score: 0.9 }, { factId: "b", score: 0.8 }];
-    const s2 = [{ factId: "b", score: 0.5 }, { factId: "c", score: 0.7 }];
-    const result = deduplicateByFactId([s1, s2]);
-    const ids = result.map((r) => r.factId);
-    expect(ids).toEqual(["a", "b", "c"]);
-    // b from first set (score 0.8) wins over b from second set (score 0.5)
-    const bResult = result.find((r) => r.factId === "b");
-    expect((bResult as { score: number } | undefined)?.score).toBe(0.8);
-  });
-
-  it("handles completely disjoint result sets", () => {
-    const s1 = [{ factId: "x" }];
-    const s2 = [{ factId: "y" }];
-    const result = deduplicateByFactId([s1, s2]);
-    expect(result.map((r) => r.factId).sort()).toEqual(["x", "y"]);
-  });
-
-  it("handles empty inner result set", () => {
-    const s1 = [{ factId: "a" }];
-    const s2: { factId: string }[] = [];
-    const result = deduplicateByFactId([s1, s2]);
-    expect(result).toHaveLength(1);
   });
 });
 

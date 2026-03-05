@@ -16,7 +16,7 @@ import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/
 import { extractTags } from "../utils/tags.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
-import { cosineSimilarity } from "./reflection.js";
+import { cosineSimilarity } from "./ambient-retrieval.js";
 
 export interface ConsolidateOptions {
   threshold: number;

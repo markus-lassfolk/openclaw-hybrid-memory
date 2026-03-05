@@ -72,7 +72,12 @@ export function normalizeVector(v: number[]): number[] {
 }
 
 /**
- * Compute cosine similarity between two vectors.
+ * Compute cosine similarity between two PRE-NORMALIZED vectors.
+ * This is an optimized version that assumes both vectors are already unit-length.
+ * Returns the dot product, which equals cosine similarity for normalized vectors.
+ * 
+ * IMPORTANT: Use this ONLY when vectors are normalized via normalizeVector() first.
+ * For arbitrary (non-normalized) vectors, use cosineSimilarity from ambient-retrieval.ts instead.
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;

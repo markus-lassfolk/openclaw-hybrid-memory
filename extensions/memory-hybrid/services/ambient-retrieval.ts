@@ -11,6 +11,8 @@
  *   4. "context"  — User/channel context queries ("recent topics with [user]").
  */
 
+import type { AmbientConfig } from "../config.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -24,19 +26,6 @@ export interface AmbientQuery {
   type: AmbientQueryType;
   /** If type=entity, which entity triggered this query. */
   entity?: string;
-}
-
-export interface AmbientConfig {
-  /** Whether enhanced ambient retrieval is enabled (default: false). */
-  enabled: boolean;
-  /** When true, generate multiple queries per trigger (default: false). */
-  multiQuery: boolean;
-  /** Cosine distance threshold for topic-shift detection (0–1, default: 0.4). */
-  topicShiftThreshold: number;
-  /** Max queries to generate per retrieval trigger (2–4, default: 4). */
-  maxQueriesPerTrigger: number;
-  /** Token budget for ambient injection (default: 2000). */
-  budgetTokens: number;
 }
 
 export interface AmbientContext {
@@ -54,8 +43,14 @@ export interface AmbientContext {
 
 /**
  * Compute cosine similarity between two equal-length numeric vectors.
+ * This is the general-purpose version that handles arbitrary (non-normalized) vectors
+ * by computing magnitudes and normalizing internally.
+ * 
  * Returns a value in [-1, 1], where 1 = identical direction, -1 = opposite.
  * Returns 0 when either vector has zero magnitude or when lengths differ.
+ * 
+ * NOTE: For pre-normalized vectors, reflection.ts has an optimized version
+ * that skips magnitude computation (just computes dot product).
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length === 0 || a.length !== b.length) return 0;
@@ -308,29 +303,6 @@ export function generateAmbientQueries(
 // ---------------------------------------------------------------------------
 // Deduplication helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Deduplicate results from multiple queries by factId.
- * First occurrence wins (earlier queries take priority).
- *
- * @param resultSets - Arrays of results from each query. Each element must have `factId`.
- * @returns Flat deduplicated list, preserving priority order.
- */
-export function deduplicateByFactId<T extends { factId: string }>(
-  resultSets: T[][],
-): T[] {
-  const seen = new Set<string>();
-  const deduped: T[] = [];
-  for (const results of resultSets) {
-    for (const r of results) {
-      if (!seen.has(r.factId)) {
-        seen.add(r.factId);
-        deduped.push(r);
-      }
-    }
-  }
-  return deduped;
-}
 
 /**
  * Deduplicate results from multiple query runs by an arbitrary ID field.

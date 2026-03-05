@@ -690,10 +690,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
               // Generate additional queries (entity, temporal, context)
               const knownEntities = ctx.factsDb.getKnownEntities ? ctx.factsDb.getKnownEntities() : [];
+              const sessionKey = resolveSessionKey(e, api);
               const ambientQueries = generateAmbientQueries(
                 e.prompt,
                 ambientCfg,
-                {},
+                {
+                  userId: api.context?.userId,
+                  channelId: sessionKey,
+                  nowMs: Date.now(),
+                },
                 knownEntities,
               );
 
