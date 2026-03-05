@@ -20,7 +20,6 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { Embeddings } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryCategory } from "../config.js";
-import { TTL_DEFAULTS } from "../config.js";
 import { chunkTextByChars } from "../utils/text.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
@@ -48,7 +47,7 @@ export interface ExtractedFact {
   importance: number;
 }
 
-/** Per-session cursor: tracks how many bytes have been processed. */
+/** Per-session cursor: tracks how many characters have been processed. */
 export type SessionCursors = Record<string, number>;
 
 export interface ObserverRunResult {
@@ -259,7 +258,25 @@ export async function runPassiveObserver(
   const cursors = await loadCursors(cursorsPath);
   let cursorsChanged = false;
 
-  // Collect recent fact vectors for dedup (only once per run)
+  // Check if any session has new content before computing embeddings
+  let hasNewContent = false;
+  for (const filePath of files) {
+    try {
+      const rawContent = await readFile(filePath, "utf-8");
+      const sessionId = filePath.replace(/\\/g, "/").split("/").pop()!.replace(".jsonl", "");
+      const cursor = cursors[sessionId] ?? 0;
+      if (cursor < rawContent.length && rawContent.slice(cursor).trim()) {
+        hasNewContent = true;
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (!hasNewContent) return result;
+
+  // Collect recent fact vectors for dedup (only once per run, after confirming new content exists)
   const recentFacts = factsDb.getRecentFacts(7); // last 7 days
   const recentVectors: (number[] | null)[] = [];
   for (const f of recentFacts.slice(0, 200)) {
@@ -276,16 +293,6 @@ export async function runPassiveObserver(
     const sessionId = filePath.replace(/\\/g, "/").split("/").pop()!.replace(".jsonl", "");
     result.sessionsScanned++;
 
-    let fileSize: number;
-    try {
-      fileSize = statSync(filePath).size;
-    } catch {
-      continue;
-    }
-
-    const cursor = cursors[sessionId] ?? 0;
-    if (cursor >= fileSize) continue; // Nothing new
-
     let rawContent: string;
     try {
       rawContent = await readFile(filePath, "utf-8");
@@ -295,10 +302,13 @@ export async function runPassiveObserver(
       continue;
     }
 
-    // Get only new content since cursor (byte-based; UTF-8 safe for typical logs)
+    const cursor = cursors[sessionId] ?? 0;
+    const contentLength = rawContent.length;
+    if (cursor >= contentLength) continue; // Nothing new
+
     const newContent = rawContent.slice(cursor);
     if (!newContent.trim()) {
-      cursors[sessionId] = fileSize;
+      cursors[sessionId] = contentLength;
       cursorsChanged = true;
       continue;
     }
@@ -306,7 +316,7 @@ export async function runPassiveObserver(
     // Extract human-readable text from JSONL
     const textBlock = extractTextFromJsonlChunk(newContent);
     if (!textBlock.trim()) {
-      cursors[sessionId] = fileSize;
+      cursors[sessionId] = contentLength;
       cursorsChanged = true;
       continue;
     }
@@ -423,7 +433,7 @@ export async function runPassiveObserver(
     }
 
     // Update cursor for this session
-    cursors[sessionId] = fileSize;
+    cursors[sessionId] = contentLength;
     cursorsChanged = true;
   }
 
@@ -441,6 +451,3 @@ export async function runPassiveObserver(
 
   return result;
 }
-
-// Re-export for TTL_DEFAULTS usage (used in tests)
-export { TTL_DEFAULTS };
