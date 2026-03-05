@@ -251,7 +251,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
   private switched = false;
   private readonly onSwitch?: (err: unknown) => void;
   readonly dimensions: number;
-  readonly modelName: string;
+  modelName: string;
 
   constructor(
     primary: EmbeddingProvider,
@@ -275,6 +275,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       this.onSwitch?.(err);
       this.active = this.fallback;
       this.switched = true;
+      this.modelName = this.active.modelName;
       return this.active.embed(text);
     }
   }
@@ -289,6 +290,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       this.onSwitch?.(err);
       this.active = this.fallback;
       this.switched = true;
+      this.modelName = this.active.modelName;
       return this.active.embedBatch(texts);
     }
   }
@@ -313,7 +315,7 @@ export function createEmbeddingProvider(
       const openaiClient = new OpenAI({ apiKey });
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
-        const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
+        const fallback = new Embeddings(openaiClient, openaiModels, dimensions);
         return new FallbackEmbeddingProvider(primary, fallback, onFallback);
       } catch {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).
