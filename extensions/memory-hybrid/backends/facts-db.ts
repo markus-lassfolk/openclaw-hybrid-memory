@@ -3194,7 +3194,7 @@ export class FactsDB {
         )
         .all(entity.trim(), key.trim(), newFactId, nowSec) as Array<Record<string, unknown>>;
 
-      const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) || null;
+      const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) ?? null;
 
       // Skip supersession entirely when new fact has no value — a valueless fact
       // cannot meaningfully supersede an existing value.
