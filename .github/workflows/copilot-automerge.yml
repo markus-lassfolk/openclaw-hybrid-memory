@@ -91,16 +91,18 @@ jobs:
 
               console.log(`  PR #${prNumber} by ${author} on branch '${branch}' — evaluating checks...`);
 
-              // Fetch check runs for the head SHA
-              const { data: checkRuns } = await github.rest.checks.listForRef({
-                owner, repo,
-                ref: pr.head.sha,
-                per_page: 100,
-              });
+              // Fetch all check runs for the head SHA (paginated)
+              const allCheckRuns = await github.paginate(
+                github.rest.checks.listForRef,
+                { owner, repo, ref: pr.head.sha, per_page: 100 },
+                (response) => response.data.check_runs
+              );
 
-              const runs = checkRuns.check_runs.filter(r => {
-                // Exclude this workflow itself
-                return r.name !== 'Automerge bot PRs';
+              // Only consider checks from the CI workflow so CodeQL/Labeler/etc. don't block automerge
+              const CI_JOB_NAME_PREFIXES = ['Type Check', 'Lint', 'Test'];
+              const runs = allCheckRuns.filter(r => {
+                if (r.name === 'Automerge bot PRs') return false;
+                return CI_JOB_NAME_PREFIXES.some(prefix => r.name.startsWith(prefix));
               });
 
               if (runs.length === 0) {
@@ -110,7 +112,7 @@ jobs:
 
               const pending = runs.filter(r => r.status !== 'completed');
               if (pending.length > 0) {
-                console.log(`  ${pending.length} check(s) still pending, skipping.`);
+                console.log(`  ${pending.length} CI check(s) still pending, skipping.`);
                 continue;
               }
 
@@ -144,12 +146,14 @@ jobs:
                 continue;
               }
 
-              // Check for unresolved review threads
-              const query = `query($owner: String!, $repo: String!, $number: Int!) {
+              // Check for unresolved review threads (paginate through all threads)
+              const threadQuery = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
                 repository(owner: $owner, name: $repo) {
                   pullRequest(number: $number) {
-                    reviewThreads(first: 100) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
                       nodes {
+                        id
                         isResolved
                         comments(first: 1) {
                           nodes { body author { login } }
@@ -160,9 +164,16 @@ jobs:
                 }
               }`;
 
-              const result = await github.graphql(query, { owner, repo, number: prNumber });
-              const threads = result.repository.pullRequest.reviewThreads.nodes;
-              const unresolvedThreads = threads.filter(t => !t.isResolved);
+              let allThreads = [];
+              let cursor = null;
+              do {
+                const result = await github.graphql(threadQuery, { owner, repo, number: prNumber, cursor });
+                const page = result.repository.pullRequest.reviewThreads;
+                allThreads = allThreads.concat(page.nodes);
+                cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+              } while (cursor);
+
+              const unresolvedThreads = allThreads.filter(t => !t.isResolved);
 
               if (unresolvedThreads.length > 0) {
                 console.log(`  ${unresolvedThreads.length} unresolved review thread(s), skipping merge.`);

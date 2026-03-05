@@ -15,9 +15,11 @@ Closes #
 
 ## Quality Checklist
 
-- [ ] `npx tsc --noEmit` passes with no errors
-- [ ] `npm run lint` passes with no warnings
-- [ ] `npm test` passes (all tests green)
+Run from repo root (package lives under `extensions/memory-hybrid/`):
+
+- [ ] `cd extensions/memory-hybrid && npx tsc --noEmit` passes with no errors
+- [ ] `cd extensions/memory-hybrid && npm run lint` passes with no warnings
+- [ ] `cd extensions/memory-hybrid && npm test` passes (all tests green)
 - [ ] No secrets, credentials, or API keys committed
 - [ ] No `console.log` debug statements left in production code
 

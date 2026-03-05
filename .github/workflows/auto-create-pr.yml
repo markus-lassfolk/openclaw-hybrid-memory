@@ -36,15 +36,23 @@ jobs:
               'github-actions[bot]',
             ];
 
-            // Identify the pusher
+            // Identify the actor/sender/pusher (prefer non-spoofable identifiers)
+            const actor = context.actor;
+            const senderLogin = context.payload.sender?.login ?? '';
+            const senderType = context.payload.sender?.type ?? '';
             const pusher = context.payload.pusher?.name ?? '';
-            console.log(`Push to '${branch}' by '${pusher}'`);
+            console.log(
+              `Push to '${branch}' by actor='${actor}', sender='${senderLogin}', pusher='${pusher}', senderType='${senderType}'`
+            );
 
-            const isBot = BOT_AUTHORS.some(b => {
-              // pusher.name strips the [bot] suffix in some contexts — match exactly
-              const base = b.replace('[bot]', '');
-              return pusher === b || pusher === base;
-            });
+            const BOT_BASES = BOT_AUTHORS.map(b => b.replace('[bot]', ''));
+            const isKnownBotId = (id) =>
+              !!id && (BOT_AUTHORS.includes(id) || BOT_BASES.includes(id));
+            const isBot =
+              senderType === 'Bot' ||
+              isKnownBotId(actor) ||
+              isKnownBotId(senderLogin) ||
+              isKnownBotId(pusher);
 
             if (!isBot) {
               console.log('Pusher is not a known bot, skipping PR creation.');
