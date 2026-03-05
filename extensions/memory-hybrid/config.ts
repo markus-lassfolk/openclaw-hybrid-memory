@@ -1777,8 +1777,8 @@ export const hybridConfigSchema = {
       reflectWindowDays: typeof nightlyCycleRaw?.reflectWindowDays === "number" && nightlyCycleRaw.reflectWindowDays >= 1
         ? Math.min(90, Math.floor(nightlyCycleRaw.reflectWindowDays))
         : 7,
-      pruneMode: (nightlyCycleRaw?.pruneMode === "expired" || nightlyCycleRaw?.pruneMode === "decay")
-        ? nightlyCycleRaw.pruneMode as "expired" | "decay"
+      pruneMode: (nightlyCycleRaw?.pruneMode === "expired" || nightlyCycleRaw?.pruneMode === "decay" || nightlyCycleRaw?.pruneMode === "both")
+        ? nightlyCycleRaw.pruneMode as "expired" | "decay" | "both"
         : "both",
       model: typeof nightlyCycleRaw?.model === "string" && nightlyCycleRaw.model.trim().length > 0
         ? nightlyCycleRaw.model.trim()

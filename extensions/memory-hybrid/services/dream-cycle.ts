@@ -160,8 +160,9 @@ export async function runEpisodicConsolidation(
       .filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
-      // Still mark events consolidated so they don't pile up
-      eventLog.markConsolidated(groupEvents.map((e) => e.id), "skipped");
+      // Mark events as consolidated with a sentinel value to prevent re-processing
+      // Use a namespaced sentinel to distinguish from real fact IDs
+      eventLog.markConsolidated(groupEvents.map((e) => e.id), "__skipped_no_text__");
       eventsConsolidated += groupEvents.length;
       continue;
     }
