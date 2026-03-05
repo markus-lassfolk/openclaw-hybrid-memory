@@ -3081,18 +3081,21 @@ export class FactsDB {
    * Find the most recent active (non-superseded, non-expired) fact anchoring an entity.
    * Returns null if no such fact exists.
    */
-  findEntityAnchor(entity: string): MemoryEntry | null {
+  findEntityAnchor(entity: string, excludeId?: string): MemoryEntry | null {
     const nowSec = Math.floor(Date.now() / 1000);
+    const excludeClause = excludeId ? "AND id != ?" : "";
+    const params = excludeId ? [entity, nowSec, excludeId] : [entity, nowSec];
     const row = this.liveDb
       .prepare(
         `SELECT * FROM facts
          WHERE lower(entity) = lower(?)
            AND superseded_at IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
+           ${excludeClause}
          ORDER BY created_at DESC
          LIMIT 1`,
       )
-      .get(entity, nowSec) as Record<string, unknown> | undefined;
+      .get(...params) as Record<string, unknown> | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
@@ -3127,8 +3130,8 @@ export class FactsDB {
     const mentions = this.extractEntitiesFromText(text, knownEntities);
 
     for (const { entity: mentionedEntity, weight } of mentions) {
-      const anchor = this.findEntityAnchor(mentionedEntity);
-      if (!anchor || anchor.id === newFactId) continue;
+      const anchor = this.findEntityAnchor(mentionedEntity, newFactId);
+      if (!anchor) continue;
       // Avoid duplicate links (don't recreate if link already exists)
       const existing = this.liveDb
         .prepare(
@@ -3229,9 +3232,20 @@ export class FactsDB {
             this.createLink(newFactId, oldFact.id, "SUPERSEDES", 1.0);
 
             if (cfg.autoSupersede) {
-              // Mark old fact as superseded + reduce confidence
+              // Mark old fact as superseded
               this.supersede(oldFact.id, newFactId);
-              this.updateConfidence(oldFact.id, -0.2);
+              
+              // Only reduce confidence if no contradiction was already recorded
+              // (detectContradictions already applied -0.2 penalty)
+              const existingContradiction = this.liveDb
+                .prepare(
+                  `SELECT id FROM contradictions
+                   WHERE fact_id_new = ? AND fact_id_old = ?`,
+                )
+                .get(newFactId, oldFact.id);
+              if (!existingContradiction) {
+                this.updateConfidence(oldFact.id, -0.2);
+              }
               supersededIds.push(oldFact.id);
             }
           }
