@@ -112,7 +112,7 @@ export function packIntoBudget(
   for (const { entry } of entries) {
     const serialized = serializeFactForContext(entry);
     const tokens = estimateTokenCount(serialized);
-    if (tokensUsed + tokens > budgetTokens) continue;
+    if (tokensUsed + tokens > budgetTokens) break;
     packed.push(serialized);
     tokensUsed += tokens;
   }
