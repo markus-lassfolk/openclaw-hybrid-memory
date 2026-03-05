@@ -58,33 +58,6 @@ export interface ObserverRunResult {
   errors: number
 }
 
-// ---------------------------------------------------------------------------
-// Embedding cache — avoids re-embedding the same fact text on every tick
-// ---------------------------------------------------------------------------
-
-const _embeddingCache = new Map<string, number[]>()
-const EMBEDDING_CACHE_MAX = 500
-
-function getCachedEmbedding(text: string): number[] | undefined {
-  return _embeddingCache.get(text)
-}
-
-function setCachedEmbedding(text: string, vec: number[]): void {
-  if (_embeddingCache.size >= EMBEDDING_CACHE_MAX) {
-    // Evict oldest entry (Map preserves insertion order)
-    const firstKey = _embeddingCache.keys().next().value
-    if (firstKey !== undefined) _embeddingCache.delete(firstKey)
-  }
-  _embeddingCache.set(text, vec)
-}
-
-async function embedCached(embeddings: Embeddings, text: string): Promise<number[]> {
-  const cached = getCachedEmbedding(text)
-  if (cached) return cached
-  const vec = await embeddings.embed(text)
-  setCachedEmbedding(text, vec)
-  return vec
-}
 
 // ---------------------------------------------------------------------------
 // JSONL text extraction
@@ -120,6 +93,12 @@ export function extractTextFromJsonlChunk(chunk: string): string {
     // Plain string user message
     if (role === 'user' && typeof rawContent === 'string' && rawContent.trim()) {
       parts.push(`user: ${rawContent.trim().slice(0, MAX_MSG_LENGTH)}`)
+      continue
+    }
+
+    // Plain string assistant message
+    if (role === 'assistant' && typeof rawContent === 'string' && rawContent.trim()) {
+      parts.push(`assistant: ${rawContent.trim().slice(0, MAX_MSG_LENGTH)}`)
       continue
     }
 
@@ -356,7 +335,7 @@ export async function runPassiveObserver(
   const recentVectors: (number[] | null)[] = []
   for (const f of recentFacts.slice(0, 200)) {
     try {
-      recentVectors.push(normalizeVector(await embedCached(embeddings, f.text)))
+      recentVectors.push(normalizeVector(await embeddings.embed(f.text)))
     } catch {
       recentVectors.push(null)
     }
@@ -429,10 +408,10 @@ export async function runPassiveObserver(
       result.factsExtracted += filtered.length
 
       for (const fact of filtered) {
-        // Embed new fact for dedup check (use cache for repeated texts)
+        // Embed new fact for dedup check
         let vec: number[]
         try {
-          vec = await embedCached(embeddings, fact.text)
+          vec = await embeddings.embed(fact.text)
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: 'passive-observer-embed',
