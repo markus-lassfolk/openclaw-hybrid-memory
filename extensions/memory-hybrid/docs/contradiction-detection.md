@@ -125,7 +125,9 @@ updateConfidence(id: string, delta: number): number | null
 // Check if a fact is the target of any unresolved CONTRADICTS link.
 isContradicted(factId: string): boolean
 
-// Get contradiction records (all unresolved, or filtered by factId).
+// Get contradiction records.
+// With factId: returns ALL records (resolved and unresolved) involving that fact.
+// Without factId: returns only UNRESOLVED records across all facts.
 getContradictions(factId?: string): ContradictionRecord[]
 
 // Mark a contradiction resolved.
