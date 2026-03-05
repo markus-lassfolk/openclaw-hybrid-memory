@@ -165,7 +165,7 @@ jobs:
             body += `\n**Total:** ${files.length} files changed`
 
             // Update existing bot comment or create new one
-            const { data: comments } = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
