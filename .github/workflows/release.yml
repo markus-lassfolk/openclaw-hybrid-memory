@@ -11,69 +11,12 @@ on:
       - 'v*'
 
 jobs:
-  typecheck:
-    name: Type Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22-
-      - name: Install dependencies
-        run: cd extensions/memory-hybrid && npm install
-      - name: Type check
-        run: cd extensions/memory-hybrid && npx tsc --noEmit
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22-
-      - name: Install dependencies
-        run: cd extensions/memory-hybrid && npm install
-      - name: Lint
-        run: cd extensions/memory-hybrid && npm run lint
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22-
-      - name: Install dependencies
-        run: cd extensions/memory-hybrid && npm install
-      - name: Run tests
-        run: cd extensions/memory-hybrid && npm run test
+  ci:
+    uses: ./.github/workflows/ci.yml
 
   release:
     name: Create GitHub Release
-    needs: [typecheck, lint, test]
+    needs: [ci]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,11 +26,13 @@ jobs:
           fetch-depth: 0
       - name: Determine version tag
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
-            echo "tag=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=${INPUT_VERSION}" >> $GITHUB_OUTPUT
           fi
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
