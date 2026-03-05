@@ -296,12 +296,14 @@ describe("detectClusters: cluster properties", () => {
     // First run
     const firstResult = detectClusters(db, { minClusterSize: 3 });
     const firstId = firstResult.clusters[0].id;
+    const firstCreatedAt = firstResult.clusters[0].createdAt;
     const componentKey = firstResult.clusters[0].factIds.join(",");
 
     // Second run with existing IDs map
-    const existingClusterIds = new Map([[componentKey, firstId]]);
+    const existingClusterIds = new Map([[componentKey, { id: firstId, createdAt: firstCreatedAt }]]);
     const secondResult = detectClusters(db, { minClusterSize: 3, existingClusterIds });
     expect(secondResult.clusters[0].id).toBe(firstId);
+    expect(secondResult.clusters[0].createdAt).toBe(firstCreatedAt);
   });
 
   it("totalLinkedFacts counts all unique facts appearing in links", () => {
@@ -564,11 +566,13 @@ describe("Integration: FactsDB cluster methods", () => {
     // First detection
     const first = detectClusters(db, { minClusterSize: 3 });
     const firstId = first.clusters[0].id;
+    const firstCreatedAt = first.clusters[0].createdAt;
     const componentKey = first.clusters[0].factIds.join(",");
 
     // Second detection with stable ID map
-    const existingClusterIds = new Map([[componentKey, firstId]]);
+    const existingClusterIds = new Map([[componentKey, { id: firstId, createdAt: firstCreatedAt }]]);
     const second = detectClusters(db, { minClusterSize: 3, existingClusterIds });
     expect(second.clusters[0].id).toBe(firstId);
+    expect(second.clusters[0].createdAt).toBe(firstCreatedAt);
   });
 });

@@ -400,7 +400,16 @@ export function registerUtilityTools(
         const shouldSave = params.save !== false;
 
         try {
-          const result = detectClusters(factsDb, { minClusterSize });
+          // Build existingClusterIds map for stable IDs across re-runs
+          const existingClusters = factsDb.getClusters();
+          const existingClusterIds = new Map<string, { id: string; createdAt: number }>();
+          for (const cluster of existingClusters) {
+            const members = factsDb.getClusterMembers(cluster.id);
+            const componentKey = [...members].sort().join(",");
+            existingClusterIds.set(componentKey, { id: cluster.id, createdAt: cluster.createdAt });
+          }
+
+          const result = detectClusters(factsDb, { minClusterSize, existingClusterIds });
 
           if (shouldSave && result.clusters.length > 0) {
             factsDb.saveClusters(result.clusters);

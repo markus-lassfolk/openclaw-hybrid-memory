@@ -274,9 +274,9 @@ export type ClustersConfig = {
   enabled: boolean;
   /** Minimum number of facts to form a cluster (default: 3). */
   minClusterSize: number;
-  /** Days between full re-cluster runs; 0 = disabled (default: 7). */
+  /** Reserved: Days between full re-cluster runs; 0 = disabled (default: 7). Currently not used by any automatic scheduling. */
   refreshIntervalDays: number;
-  /** Model for label generation; null = rule-based only (default: null). */
+  /** Reserved: Model for label generation; null = rule-based only (default: null). Currently not passed to detectClusters. */
   labelModel: string | null;
 };
 

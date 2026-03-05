@@ -40,10 +40,10 @@ export interface ClusterDetectionOptions {
   /** Reserved: model for label generation; null = rule-based only (default: null). */
   labelModel?: string | null;
   /**
-   * Map from canonical component key (sorted IDs joined by ",") to existing cluster ID.
-   * Enables stable cluster IDs across incremental re-runs.
+   * Map from canonical component key (sorted IDs joined by ",") to existing cluster metadata.
+   * Enables stable cluster IDs and createdAt timestamps across incremental re-runs.
    */
-  existingClusterIds?: Map<string, string>;
+  existingClusterIds?: Map<string, { id: string; createdAt: number }>;
 }
 
 /** Result of a cluster detection run. */
@@ -249,7 +249,9 @@ export function detectClusters(
 
     const sortedIds = [...component].sort();
     const componentKey = sortedIds.join(",");
-    const clusterId = existingClusterIds?.get(componentKey) ?? randomUUID();
+    const existing = existingClusterIds?.get(componentKey);
+    const clusterId = existing?.id ?? randomUUID();
+    const createdAt = existing?.createdAt ?? now;
 
     // Load entries for label generation (skips missing/expired facts)
     const entries: MemoryEntry[] = [];
@@ -263,7 +265,7 @@ export function detectClusters(
       label: generateClusterLabel(entries),
       factIds: sortedIds,
       factCount: sortedIds.length,
-      createdAt: now,
+      createdAt,
       updatedAt: now,
     });
   }
