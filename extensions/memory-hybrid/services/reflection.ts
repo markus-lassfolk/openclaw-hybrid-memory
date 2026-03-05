@@ -72,9 +72,14 @@ export function normalizeVector(v: number[]): number[] {
 }
 
 /**
- * Compute cosine similarity between two vectors.
+ * Compute dot product between two PRE-NORMALIZED vectors.
+ * This is an optimized version that assumes both vectors are already unit-length.
+ * Returns the dot product, which equals cosine similarity for normalized vectors.
+ * 
+ * IMPORTANT: Use this ONLY when vectors are normalized via normalizeVector() first.
+ * For arbitrary (non-normalized) vectors, use cosineSimilarity from ambient-retrieval.ts instead.
  */
-export function cosineSimilarity(a: number[], b: number[]): number {
+export function dotProductSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   return a.reduce((s, x, i) => s + x * b[i], 0);
 }
@@ -228,7 +233,7 @@ export async function runReflection(
     let isDuplicate = false;
     for (const ev of existingVectors) {
       if (ev === null || ev.length === 0) continue;
-      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
       }
@@ -395,7 +400,7 @@ export async function runReflectionRules(
     let isDuplicate = false;
     for (const ev of existingVectors) {
       if (ev === null || ev.length === 0) continue;
-      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
       }
@@ -548,7 +553,7 @@ export async function runReflectionMeta(
     let isDuplicate = false;
     for (const ev of existingVectors) {
       if (ev === null || ev.length === 0) continue;
-      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
       }

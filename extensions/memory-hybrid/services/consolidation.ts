@@ -16,7 +16,7 @@ import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/
 import { extractTags } from "../utils/tags.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
-import { cosineSimilarity } from "./reflection.js";
+import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 
 export interface ConsolidateOptions {
   threshold: number;
@@ -113,7 +113,7 @@ export async function runConsolidate(
       const f = idToFact.get(id)!;
       try {
         const vec = await embeddings.embed(f.text);
-        vectors.push(vec);
+        vectors.push(normalizeVector(vec));
       } catch (err) {
         logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -135,7 +135,7 @@ export async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const score = cosineSimilarity(vi, vj);
+      const score = dotProductSimilarity(vi, vj);
       if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }

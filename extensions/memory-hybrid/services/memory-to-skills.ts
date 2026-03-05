@@ -12,7 +12,7 @@ import type { Embeddings } from "./embeddings.js";
 import type OpenAI from "openai";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { slugifyForSkill } from "../utils/text.js";
-import { normalizeVector, cosineSimilarity } from "./reflection.js";
+import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 import { unionFind, getRoot } from "./consolidation.js";
 import { chatCompleteWithRetry } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -322,7 +322,7 @@ export async function runMemoryToSkills(
     if (vectors[i].length === 0) continue;
     for (let j = i + 1; j < ids.length; j++) {
       if (vectors[j].length === 0) continue;
-      const sim = cosineSimilarity(vectors[i], vectors[j]);
+      const sim = dotProductSimilarity(vectors[i], vectors[j]);
       if (sim >= CLUSTER_SIMILARITY_THRESHOLD) edges.push([ids[i], ids[j]]);
     }
   }

@@ -250,6 +250,20 @@ export type SearchConfig = {
   hydeModel?: string;
 };
 
+/** Enhanced ambient retrieval with multi-query generation (Issue #156). */
+export type AmbientConfig = {
+  /** Enable enhanced ambient retrieval (default: false). */
+  enabled: boolean;
+  /** When true, generate 2-4 queries per trigger instead of one (default: false). */
+  multiQuery: boolean;
+  /** Cosine distance threshold for topic-shift detection, 0–1 (default: 0.4). */
+  topicShiftThreshold: number;
+  /** Max implicit queries generated per retrieval trigger, capped at 4 (default: 4). */
+  maxQueriesPerTrigger: number;
+  /** Token budget for ambient context injection (default: 2000). */
+  budgetTokens: number;
+};
+
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */
 export type RetrievalConfig = {
   /** Active retrieval strategies (default: ["semantic", "fts5", "graph"]). */
@@ -406,6 +420,8 @@ export type HybridMemoryConfig = {
   activeTask: ActiveTaskConfig;
   /** Vector store configuration (LanceDB schema validation and auto-repair, issue #128). */
   vector: VectorConfig;
+  /** Enhanced ambient retrieval with multi-query generation (Issue #156, default: disabled). */
+  ambient: AmbientConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1635,6 +1651,28 @@ export const hybridConfigSchema = {
       autoRepair: vectorRaw?.autoRepair === true,
     };
 
+    // Parse ambient retrieval config (Issue #156, default: disabled)
+    const ambientRaw = cfg.ambient as Record<string, unknown> | undefined;
+    const ambient: AmbientConfig = {
+      enabled: ambientRaw?.enabled === true,
+      multiQuery: ambientRaw?.multiQuery === true,
+      topicShiftThreshold:
+        typeof ambientRaw?.topicShiftThreshold === "number" &&
+        ambientRaw.topicShiftThreshold >= 0 &&
+        ambientRaw.topicShiftThreshold <= 2
+          ? ambientRaw.topicShiftThreshold
+          : 0.4,
+      maxQueriesPerTrigger:
+        typeof ambientRaw?.maxQueriesPerTrigger === "number" &&
+        ambientRaw.maxQueriesPerTrigger >= 1
+          ? Math.min(4, Math.floor(ambientRaw.maxQueriesPerTrigger))
+          : 4,
+      budgetTokens:
+        typeof ambientRaw?.budgetTokens === "number" && ambientRaw.budgetTokens > 0
+          ? Math.floor(ambientRaw.budgetTokens)
+          : 2000,
+    };
+
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
     const activeTask: ActiveTaskConfig = {
       enabled: activeTaskRaw?.enabled !== false,
@@ -1695,6 +1733,7 @@ export const hybridConfigSchema = {
           autoRepair: vectorRaw?.autoRepair === true,
         };
       })(),
+      ambient,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
