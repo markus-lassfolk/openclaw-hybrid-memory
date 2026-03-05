@@ -1,0 +1,30 @@
+version: 2
+
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/extensions/memory-hybrid'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    groups:
+      minor-and-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+    labels:
+      - 'dependencies'
+      - 'automated'
+    open-pull-requests-limit: 5
+    ignore:
+      # Major version bumps require manual review
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    labels:
+      - 'dependencies'
+      - 'automated'
