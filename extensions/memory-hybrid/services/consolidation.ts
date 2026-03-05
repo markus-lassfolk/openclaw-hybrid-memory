@@ -8,7 +8,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
@@ -88,7 +88,7 @@ export function isStructuredForConsolidation(
 export async function runConsolidate(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: ConsolidateOptions,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },

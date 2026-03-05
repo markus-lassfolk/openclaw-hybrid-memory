@@ -43,7 +43,7 @@ import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType, type ContradictionRecord } from "./backends/facts-db.js";
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { deepMerge } from "./cli/handlers.js";
-import { Embeddings, safeEmbed } from "./services/embeddings.js";
+import { Embeddings, type EmbeddingProvider, OllamaEmbeddingProvider, FallbackEmbeddingProvider, createEmbeddingProvider, safeEmbed } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, createPendingLLMWarnings } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
@@ -194,7 +194,7 @@ let resolvedLancePath: string;
 let resolvedSqlitePath: string;
 let factsDb: FactsDB;
 let vectorDb: VectorDB;
-let embeddings: Embeddings;
+let embeddings: EmbeddingProvider;
 let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
@@ -453,6 +453,9 @@ export const _testing = {
   EventLog,
   VectorDB,
   Embeddings,
+  OllamaEmbeddingProvider,
+  FallbackEmbeddingProvider,
+  createEmbeddingProvider,
   WriteAheadLog,
   // Classification (for tests)
   parseClassificationResponse,

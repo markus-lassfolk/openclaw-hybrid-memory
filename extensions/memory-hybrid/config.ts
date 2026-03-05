@@ -389,11 +389,18 @@ export type FutureDateProtectionConfig = {
 
 export type HybridMemoryConfig = {
   embedding: {
-    provider: "openai";
+    provider: "openai" | "ollama" | "onnx";
     model: string;
-    apiKey: string;
-    /** Optional ordered preference list (gateway fallback). First model defines vector dimension; all must have same dimension. */
+    /** Required for openai provider; optional for ollama/onnx. */
+    apiKey?: string;
+    /** Optional ordered preference list (openai gateway fallback). First model defines vector dimension; all must have same dimension. */
     models?: string[];
+    /** Vector dimensions for this model (required for ollama/onnx; auto-resolved for known openai models). */
+    dimensions: number;
+    /** Ollama endpoint URL (default: http://localhost:11434). Only used when provider='ollama'. */
+    endpoint?: string;
+    /** Number of texts to embed per batch call (default: 50). */
+    batchSize: number;
   };
   lanceDbPath: string;
   sqlitePath: string;
@@ -815,12 +822,32 @@ const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-ada-002": 1536,
   // Local / HuggingFace models that users may have previously generated vectors with
   "all-MiniLM-L6-v2": 384,
+  // Common Ollama embedding models
+  "nomic-embed-text": 768,
+  "mxbai-embed-large": 1024,
+  "all-minilm": 384,
+  "snowflake-arctic-embed": 1024,
+  "bge-m3": 1024,
+  "bge-large": 1024,
 };
 
-export function vectorDimsForModel(model: string): number {
+const OPENAI_MODELS = new Set([
+  "text-embedding-3-small",
+  "text-embedding-3-large",
+  "text-embedding-ada-002",
+]);
+
+export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
-  if (!dims) throw new Error(`Unsupported embedding model: ${model}`);
+  if (!dims) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`Unsupported embedding model: ${model}`);
+  }
   return dims;
+}
+
+function isOpenAIModel(model: string): boolean {
+  return OPENAI_MODELS.has(model);
 }
 
 function resolveEnvVars(value: string): string {
@@ -1005,22 +1032,60 @@ export const hybridConfigSchema = {
     }
 
     const embedding = cfg.embedding as Record<string, unknown> | undefined;
-    if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
-    }
-    const rawKey = (embedding.apiKey as string).trim();
-    if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
-      throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
+    const validProviders = ["openai", "ollama", "onnx"];
+    let embeddingProvider: "openai" | "ollama" | "onnx";
+    if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
+      embeddingProvider = embedding.provider as "openai" | "ollama" | "onnx";
+    } else if (embedding?.provider !== undefined) {
+      throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx.`);
+    } else {
+      if (embedding !== undefined) {
+        console.warn(`memory-hybrid: embedding.provider not set; defaulting to "openai". Set embedding.provider explicitly (openai, ollama, or onnx).`);
+      }
+      embeddingProvider = "openai";
     }
 
-    const singleModel = typeof embedding.model === "string" ? embedding.model : DEFAULT_MODEL;
-    const modelsRaw = Array.isArray(embedding.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
+    // apiKey is required for openai provider only
+    let resolvedApiKey: string | undefined;
+    if (embeddingProvider === "openai") {
+      if (!embedding || typeof embedding.apiKey !== "string") {
+        throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
+      }
+      const rawKey = (embedding.apiKey as string).trim();
+      if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
+        throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
+      }
+      resolvedApiKey = resolveEnvVars(rawKey);
+    } else if (embedding && typeof embedding.apiKey === "string" && (embedding.apiKey as string).trim().length >= 10) {
+      // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
+      resolvedApiKey = resolveEnvVars((embedding.apiKey as string).trim());
+    }
+
+    // Validate that model is specified for non-OpenAI providers
+    if (embeddingProvider !== "openai" && (!embedding || typeof embedding.model !== "string" || embedding.model.trim().length === 0)) {
+      throw new Error(`embedding.model is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`);
+    }
+    const singleModel = typeof embedding?.model === "string" ? embedding.model : DEFAULT_MODEL;
+    // Validate that OpenAI provider only uses OpenAI models
+    if (embeddingProvider === "openai" && !isOpenAIModel(singleModel)) {
+      throw new Error(`embedding.model '${singleModel}' is not a valid OpenAI model. When provider='openai', use one of: text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002.`);
+    }
+    const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
     let embeddingModels: string[] | undefined;
+    // Parse models for all providers (#6): for openai, these are the model preference list;
+    // for ollama/onnx, these are the OpenAI fallback model names (used when apiKey is set).
     if (modelsRaw.length > 0) {
       const valid: string[] = [];
       for (const m of modelsRaw) {
         try {
           vectorDimsForModel(m);
+          if (!isOpenAIModel(m)) {
+            const reason = embeddingProvider === "openai"
+              ? "only OpenAI models are allowed"
+              : "the models field must contain OpenAI fallback model names";
+            console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', ${reason} (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+            continue;
+          }
           valid.push(m);
         } catch {
           console.warn(`memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
@@ -1036,8 +1101,33 @@ export const hybridConfigSchema = {
         }
       }
     }
-    const model = embeddingModels?.[0] ?? singleModel;
-    vectorDimsForModel(model);
+    // For OpenAI, the models list is a preference list so use its first entry as the primary model.
+    // For Ollama/ONNX, models contains OpenAI fallback names — the primary model is always singleModel.
+    const model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
+
+    // Resolve vector dimensions: explicit config takes priority, then look up from known models
+    const configDimensions = typeof embedding?.dimensions === "number" && embedding.dimensions > 0
+      ? embedding.dimensions
+      : undefined;
+    let resolvedDimensions: number;
+    if (configDimensions !== undefined) {
+      resolvedDimensions = configDimensions;
+    } else if (embeddingProvider === "openai") {
+      resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
+    } else {
+      // Warn when falling back to 768 for an unknown ollama/onnx model (#5)
+      if (!EMBEDDING_DIMENSIONS[model]) {
+        console.warn(`memory-hybrid: embedding model '${model}' is not in the known-models list; defaulting to 768 dimensions. Set embedding.dimensions explicitly to suppress this warning.`);
+      }
+      resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for unknown ollama models
+    }
+
+    const resolvedEndpoint = typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
+      ? embedding.endpoint.trim()
+      : undefined;
+    const resolvedBatchSize = typeof embedding?.batchSize === "number" && embedding.batchSize > 0
+      ? Math.floor(embedding.batchSize)
+      : 50;
 
     // Parse custom categories
     const customCategories: string[] = Array.isArray(cfg.categories)
@@ -1798,10 +1888,13 @@ export const hybridConfigSchema = {
 
     return {
       embedding: {
-        provider: "openai",
+        provider: embeddingProvider,
         model,
-        apiKey: resolveEnvVars(embedding.apiKey),
+        apiKey: resolvedApiKey,
         models: embeddingModels,
+        dimensions: resolvedDimensions,
+        endpoint: resolvedEndpoint,
+        batchSize: resolvedBatchSize,
       },
       lanceDbPath:
         typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,

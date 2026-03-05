@@ -20,7 +20,7 @@ import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } f
 import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
@@ -250,7 +250,7 @@ function relativeTime(ms: number): string {
 export interface HandlerContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
@@ -644,7 +644,7 @@ export async function runVerifyForCli(
 
   log("\n───── Infrastructure ─────");
 
-  if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
+  if (cfg.embedding.provider === "openai" && (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10)) {
     issues.push("embedding.apiKey is missing, placeholder, or too short");
     loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
     fixes.push(`LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`);
@@ -658,8 +658,14 @@ export async function runVerifyForCli(
   }
   const openclawDir = join(homedir(), ".openclaw");
   const defaultConfigPath = join(openclawDir, "openclaw.json");
-  if (configOk) log(`${OK} Config: embedding.apiKey and model present`);
-  else log(`${FAIL} Config: issues found`);
+  if (configOk) {
+    const msg = cfg.embedding.provider === "openai"
+      ? "Config: embedding.apiKey and model present"
+      : "Config: embedding.model present";
+    log(`${OK} ${msg}`);
+  } else {
+    log(`${FAIL} Config: issues found`);
+  }
 
   // Check for unsupported agents.defaults.pruning config (#105)
   try {
@@ -731,7 +737,13 @@ export async function runVerifyForCli(
     log(`${OK} Embedding API: OK`);
   } catch (e) {
     issues.push(`Embedding API: ${String(e)}`);
-    fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
+    if (cfg.embedding.provider === "openai") {
+      fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
+    } else if (cfg.embedding.provider === "ollama") {
+      fixes.push(`Embedding API: Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and the model "${cfg.embedding.model}" is available. Run 'ollama pull ${cfg.embedding.model}' if needed.`);
+    } else {
+      fixes.push(`Embedding API: Check your ${cfg.embedding.provider} provider configuration and ensure the model "${cfg.embedding.model}" is accessible.`);
+    }
     log(`${FAIL} Embedding API: FAIL — ${String(e)}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }

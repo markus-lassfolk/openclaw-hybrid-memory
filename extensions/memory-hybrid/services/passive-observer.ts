@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { FactsDB } from '../backends/facts-db.js'
 import type { VectorDB } from '../backends/vector-db.js'
-import type { Embeddings } from './embeddings.js'
+import type { EmbeddingProvider } from './embeddings.js'
 import type OpenAI from 'openai'
 import type { MemoryCategory } from '../config.js'
 import { chunkTextByChars } from '../utils/text.js'
@@ -229,7 +229,7 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
 export async function runPassiveObserver(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   config: PassiveObserverConfig,
   allCategories: string[],

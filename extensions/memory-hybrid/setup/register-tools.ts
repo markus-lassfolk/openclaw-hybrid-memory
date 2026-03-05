@@ -12,7 +12,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { EventLog } from "../backends/event-log.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
@@ -33,7 +33,7 @@ export interface ToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;

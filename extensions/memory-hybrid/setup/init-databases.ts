@@ -9,8 +9,8 @@ import { CredentialsDB } from "../backends/credentials-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
-import { Embeddings } from "../services/embeddings.js";
-import { vectorDimsForModel, type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
+import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
+import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
@@ -55,12 +55,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   function defaultOpenAIClient(): OpenAI {
     if (gatewayBaseUrl) {
+      const key = gatewayToken ?? cfg.embedding.apiKey;
+      if (!key) throw new UnconfiguredProviderError("openai", "openai/*");
       return getOrCreate(`openai:gateway:${gatewayBaseUrl}`, () => new OpenAI({
-        apiKey: gatewayToken ?? cfg.embedding.apiKey ?? "unused",
+        apiKey: key,
         baseURL: gatewayBaseUrl,
       }));
     }
-    return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey }));
+    if (!cfg.embedding.apiKey) throw new UnconfiguredProviderError("openai", "openai/*");
+    return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey! }));
   }
 
   function resolveClient(model: string): { client: OpenAI; bareModel: string } {
@@ -107,7 +110,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
-      const apiKey = providerCfg.apiKey ?? "unused";
+      // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
+      const apiKey = providerCfg.apiKey ?? "no-key";
       const baseURL = providerCfg.baseURL;
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
@@ -145,7 +149,12 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   // Proxy that intercepts chat.completions.create and routes to the right provider client.
   // All other OpenAI methods (embeddings, etc.) are NOT proxied — embeddings use a separate client.
-  return new Proxy(new OpenAI({ apiKey: cfg.embedding.apiKey }), {
+  // The proxy base is only accessed for non-chat methods (not used by this plugin directly).
+  // Only create it with a real key when one is available; otherwise omit to avoid "unused" placeholder.
+  const proxyBase = cfg.embedding.apiKey
+    ? new OpenAI({ apiKey: cfg.embedding.apiKey })
+    : new OpenAI({ apiKey: gatewayToken ?? "no-direct-openai-key" });
+  return new Proxy(proxyBase, {
     get(target, prop, receiver) {
       if (prop === "chat") {
         return {
@@ -177,7 +186,7 @@ export interface HealthStatus {
 export interface DatabaseContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
@@ -209,15 +218,17 @@ export function initializeDatabases(
   const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
-  const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
   const factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
+  const vectorDim = cfg.embedding.dimensions;
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim, cfg.vector.autoRepair);
   vectorDb.setLogger(api.logger);
-  // Embeddings always use a direct OpenAI client (gateway does not proxy /v1/embeddings — issue #91)
-  const openaiForEmbeddings = new OpenAI({ apiKey: cfg.embedding.apiKey });
-  const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
-  const embeddings = new Embeddings(openaiForEmbeddings, embeddingModels);
+  // Create embedding provider from config (supports openai, ollama, onnx)
+  const embeddings = createEmbeddingProvider(cfg.embedding, (err) => {
+    api.logger.warn(
+      `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
+    );
+  });
 
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
@@ -333,18 +344,20 @@ export function initializeDatabases(
     try {
       await embeddings.embed("verify");
       health.embeddingsOk = true;
-      api.logger.info("memory-hybrid: embedding API check OK");
+      api.logger.info(`memory-hybrid: embedding check OK (provider=${cfg.embedding.provider}, model=${embeddings.modelName})`);
     } catch (e) {
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "embeddings",
         operation: "init-verify",
         phase: "initialization",
-        backend: "openai",
+        backend: cfg.embedding.provider,
       });
+      const hint = cfg.embedding.provider === "ollama"
+        ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
+        : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
       api.logger.error(
-        `memory-hybrid: ⚠️  EMBEDDING API CHECK FAILED — ${String(e)}. ` +
-          "Plugin will continue but semantic search will not work. " +
-          "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.",
+        `memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
+          `Plugin will continue but semantic search will not work. ${hint}`,
       );
     }
     if (cfg.credentials.enabled && credentialsDb) {

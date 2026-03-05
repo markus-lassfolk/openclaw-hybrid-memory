@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   DECAY_CLASSES,
   TTL_DEFAULTS,
@@ -224,6 +224,41 @@ describe("hybridConfigSchema.parse", () => {
     expect(() => hybridConfigSchema.parse(null)).toThrow();
     expect(() => hybridConfigSchema.parse([])).toThrow();
     expect(() => hybridConfigSchema.parse("string")).toThrow();
+  });
+
+  it("throws on invalid embedding.provider", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "foobar", model: "nomic-embed-text", dimensions: 768 },
+      }),
+    ).toThrow(/Invalid embedding\.provider/);
+  });
+
+  it("warns when embedding section present but provider is not set", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      hybridConfigSchema.parse({
+        embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+      });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/embedding\.provider not set/));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("does not warn about provider when embedding section is absent", () => {
+    // When no embedding section, defaults to openai silently (no warn needed)
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // This throws on apiKey, but the provider warn should NOT fire before that
+      expect(() => hybridConfigSchema.parse({})).toThrow(/apiKey/);
+      const warnCalls = warnSpy.mock.calls.filter((args) =>
+        typeof args[0] === "string" && args[0].includes("embedding.provider not set"),
+      );
+      expect(warnCalls).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("uses default model when not specified", () => {

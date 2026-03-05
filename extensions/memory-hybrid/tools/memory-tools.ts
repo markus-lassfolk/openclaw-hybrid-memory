@@ -15,7 +15,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
@@ -49,7 +49,7 @@ export interface PluginContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
