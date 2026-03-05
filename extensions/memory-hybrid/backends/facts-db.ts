@@ -2919,7 +2919,7 @@ export class FactsDB {
       if (!newFact || !oldFact) {
         // One or both facts deleted — treat as superseded
         this.resolveContradiction(c.id, "superseded");
-        if (oldFact) {
+        if (newFact && !oldFact) {
           this.supersede(c.factIdOld, c.factIdNew);
         }
         autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
