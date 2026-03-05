@@ -112,9 +112,9 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     findSimilarByEmbedding
   );
 
-  // Graph tools (memory linking and traversal)
+  // Graph tools (memory linking, traversal, and gap analysis)
   if (cfg.graph.enabled) {
-    registerGraphTools({ factsDb, cfg }, api);
+    registerGraphTools({ factsDb, vectorDb, embeddings, cfg }, api);
   }
 
   // Credential tools (secure credential storage and retrieval)

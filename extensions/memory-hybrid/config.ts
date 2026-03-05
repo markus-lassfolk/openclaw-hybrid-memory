@@ -282,6 +282,12 @@ export type ClustersConfig = {
 export type HealthConfig = {
   /** Enable memory_health tool (default: true). */
   enabled: boolean;
+/** Knowledge gap analysis configuration (Issue #141). */
+export type GapsConfig = {
+  /** Enable the memory_gaps tool (default: true when graph is enabled). */
+  enabled: boolean;
+  /** Minimum cosine similarity to suggest a missing link (default: 0.8). */
+  similarityThreshold: number;
 };
 
 /** GraphRAG retrieval configuration (Issue #145). */
@@ -534,6 +540,8 @@ export type HybridMemoryConfig = {
   clusters: ClustersConfig;
   /** Memory health dashboard (Issue #148, default: enabled). */
   health: HealthConfig;
+  /** Knowledge gap analysis — orphan/weak detection and suggested links (Issue #141, default: enabled). */
+  gaps: GapsConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1961,6 +1969,16 @@ export const hybridConfigSchema = {
         typeof reinforcementRaw?.similarityThreshold === "number" && reinforcementRaw.similarityThreshold > 0 && reinforcementRaw.similarityThreshold <= 1
           ? reinforcementRaw.similarityThreshold
           : 0.85,
+    // Parse knowledge gaps config (Issue #141)
+    const gapsRaw = cfg.gaps as Record<string, unknown> | undefined;
+    const gaps: GapsConfig = {
+      enabled: gapsRaw?.enabled !== false,
+      similarityThreshold:
+        typeof gapsRaw?.similarityThreshold === "number" &&
+        gapsRaw.similarityThreshold >= 0 &&
+        gapsRaw.similarityThreshold <= 1
+          ? gapsRaw.similarityThreshold
+          : 0.8,
     };
 
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
@@ -2050,6 +2068,7 @@ export const hybridConfigSchema = {
           enabled: healthRaw?.enabled !== false,
         };
       })(),
+      gaps,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

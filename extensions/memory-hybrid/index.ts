@@ -43,7 +43,7 @@ import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType, type ContradictionRecord } from "./backends/facts-db.js";
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { deepMerge } from "./cli/handlers.js";
-import { Embeddings, type EmbeddingProvider, OllamaEmbeddingProvider, FallbackEmbeddingProvider, createEmbeddingProvider, safeEmbed } from "./services/embeddings.js";
+import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, createPendingLLMWarnings } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
@@ -66,8 +66,15 @@ import {
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
-import { detectClusters, generateClusterLabel } from "./services/topic-clusters.js";
-export type { TopicCluster, ClusterDetectionResult, ClusterDetectionOptions, ClusterFactLookup } from "./services/topic-clusters.js";
+import {
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
+} from "./services/knowledge-gaps.js";
+export type { GapFact, SuggestedLink, KnowledgeGapReport, GapMode, GapFactsDB, GapVectorDB, GapEmbeddings } from "./services/knowledge-gaps.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -196,7 +203,7 @@ let resolvedLancePath: string;
 let resolvedSqlitePath: string;
 let factsDb: FactsDB;
 let vectorDb: VectorDB;
-let embeddings: EmbeddingProvider;
+let embeddings: Embeddings;
 let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
@@ -317,7 +324,6 @@ const memoryHybridPlugin = {
       currentAgentIdRef,
       pendingLLMWarnings,
       resolvedSqlitePath,
-      resolvedLancePath,
       timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
       buildToolScopeFilter,
       walWrite,
@@ -345,7 +351,6 @@ const memoryHybridPlugin = {
       credentialsDb,
       wal,
       proposalsDb,
-      eventLog,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,
@@ -457,9 +462,6 @@ export const _testing = {
   EventLog,
   VectorDB,
   Embeddings,
-  OllamaEmbeddingProvider,
-  FallbackEmbeddingProvider,
-  createEmbeddingProvider,
   WriteAheadLog,
   // Classification (for tests)
   parseClassificationResponse,
@@ -484,10 +486,14 @@ export const _testing = {
   // GraphRAG retrieval (Issue #145)
   expandGraph,
   formatLinkPath,
+  // Knowledge gap analysis (Issue #141)
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
   HOP_SCORE_DECAY,
-  // Topic cluster detection (Issue #146)
-  detectClusters,
-  generateClusterLabel,
 };
 
 export { versionInfo } from "./versionInfo.js";
