@@ -1763,7 +1763,7 @@ export class FactsDB {
       if (!row) return false;
 
       const current = typeof row.confidence === "number" ? row.confidence : 1.0;
-      const boosted = Math.max(current, Math.min(maxConfidence, current + delta));
+      const boosted = Math.min(maxConfidence, current + delta);
 
       this.liveDb
         .prepare(

@@ -119,8 +119,9 @@ function bfsComponent(
   const queue: string[] = [startId];
   visited.add(startId);
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  let head = 0;
+  while (head < queue.length) {
+    const current = queue[head++];
     component.push(current);
     const neighbors = adj.get(current);
     if (neighbors) {
