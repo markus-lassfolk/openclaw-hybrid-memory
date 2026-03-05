@@ -3102,7 +3102,7 @@ export class FactsDB {
              AND superseded_at IS NULL
              AND (expires_at IS NULL OR expires_at > ?)
              AND (
-               (source_sessions IS NOT NULL AND source_sessions LIKE ? ESCAPE '\\')
+               (source_sessions IS NOT NULL AND (',' || source_sessions || ',' LIKE ? ESCAPE '\\'))
                OR (entity IS NOT NULL AND entity = ?)
              )
            ORDER BY created_at DESC
@@ -3111,7 +3111,7 @@ export class FactsDB {
         .all(
           newFactId,
           nowSec,
-          `%${escapedSessionId}%`,
+          `%,${escapedSessionId},%`,
           entity ?? "__NO_ENTITY__",
         ) as Array<Record<string, unknown>>;
 
@@ -3163,13 +3163,13 @@ export class FactsDB {
           .get(newFactId, oldFact.id);
         if (!alreadyLinked) {
           this.createLink(newFactId, oldFact.id, "SUPERSEDES", 1.0);
-        }
 
-        if (cfg.autoSupersede) {
-          // Mark old fact as superseded + reduce confidence
-          this.supersede(oldFact.id, newFactId);
-          this.updateConfidence(oldFact.id, -0.2);
-          supersededIds.push(oldFact.id);
+          if (cfg.autoSupersede) {
+            // Mark old fact as superseded + reduce confidence
+            this.supersede(oldFact.id, newFactId);
+            this.updateConfidence(oldFact.id, -0.2);
+            supersededIds.push(oldFact.id);
+          }
         }
       }
     }
