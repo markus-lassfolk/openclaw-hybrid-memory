@@ -28,6 +28,7 @@ jobs:
             const repo = context.repo.repo;
             const branch = context.ref.replace('refs/heads/', '');
 
+            // IMPORTANT: Keep this list in sync with copilot-automerge.yml
             const BOT_AUTHORS = [
               'copilot[bot]',
               'cursor[bot]',

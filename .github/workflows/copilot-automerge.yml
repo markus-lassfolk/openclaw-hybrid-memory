@@ -27,6 +27,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
+            // IMPORTANT: Keep this list in sync with auto-create-pr.yml
             const BOT_AUTHORS = [
               'copilot[bot]',
               'cursor[bot]',
