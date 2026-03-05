@@ -373,16 +373,11 @@ export function registerMemoryTools(
           // to the full fused list when packed is empty (e.g. budget too small to pack any).
           const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
           results = [...entityResults];
-          const getByIdOpts = (asOfSec != null || scopeFilter)
-            ? { asOf: asOfSec ?? undefined, scopeFilter }
-            : undefined;
           const rrfResultCap = rrfOutput.packed.length > 0 ? rrfOutput.packed.length : rrfOutput.fused.length;
-          for (const fused of rrfOutput.fused.slice(0, rrfResultCap)) {
+          for (let i = 0; i < Math.min(rrfResultCap, rrfOutput.fused.length); i++) {
+            const fused = rrfOutput.fused[i];
             if (seenIds.has(fused.factId)) continue;
-            const entry = factsDb.getById(
-              fused.factId,
-              getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter } | undefined,
-            );
+            const entry = rrfOutput.entries[i];
             if (entry) {
               results.push({ entry, score: fused.finalScore, backend: "sqlite" });
               seenIds.add(fused.factId);

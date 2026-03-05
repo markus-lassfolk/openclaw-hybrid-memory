@@ -36,6 +36,8 @@ export interface OrchestratorResult {
   packed: string[];
   /** Total tokens used by the packed results (approximate: chars / 4). */
   tokensUsed: number;
+  /** Resolved MemoryEntry objects for each fused result (same order as fused array). */
+  entries: MemoryEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +112,7 @@ export function packIntoBudget(
   for (const { entry } of entries) {
     const serialized = serializeFactForContext(entry);
     const tokens = estimateTokenCount(serialized);
-    if (tokensUsed + tokens > budgetTokens) break;
+    if (tokensUsed + tokens > budgetTokens) continue;
     packed.push(serialized);
     tokensUsed += tokens;
   }
@@ -261,7 +263,7 @@ export async function runRetrievalPipeline(
   const fused = fuseResults(strategyMap, k);
 
   if (fused.length === 0) {
-    return { fused: [], packed: [], tokensUsed: 0 };
+    return { fused: [], packed: [], tokensUsed: 0, entries: [] };
   }
 
   // --- Build metadata map for post-RRF adjustments ---
@@ -310,5 +312,8 @@ export async function runRetrievalPipeline(
   // --- Token budget packing ---
   const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens);
 
-  return { fused: scopedFused, packed, tokensUsed };
+  // Extract resolved entries in final order for caller (avoids double lookup)
+  const resolvedEntries = orderedEntries.map((e) => e.entry);
+
+  return { fused: scopedFused, packed, tokensUsed, entries: resolvedEntries };
 }
