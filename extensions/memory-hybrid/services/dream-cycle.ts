@@ -281,21 +281,29 @@ export async function runDreamCycle(
   // ── Step 1: Prune ────────────────────────────────────────────────────────
   let factsPruned = 0;
   let factsDecayed = 0;
-  try {
-    if (config.pruneMode === "expired" || config.pruneMode === "both") {
+  if (config.pruneMode === "expired" || config.pruneMode === "both") {
+    try {
       factsPruned = factsDb.pruneExpired();
       logger.info(`memory-hybrid: dream-cycle — pruned ${factsPruned} expired facts`);
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — pruneExpired failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-prune-expired",
+        subsystem: "facts-db",
+      });
     }
-    if (config.pruneMode === "decay" || config.pruneMode === "both") {
+  }
+  if (config.pruneMode === "decay" || config.pruneMode === "both") {
+    try {
       factsDecayed = factsDb.decayConfidence();
       logger.info(`memory-hybrid: dream-cycle — decayed ${factsDecayed} facts`);
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — decayConfidence failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-decay",
+        subsystem: "facts-db",
+      });
     }
-  } catch (err) {
-    logger.warn(`memory-hybrid: dream-cycle — prune step failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-prune",
-      subsystem: "facts-db",
-    });
   }
 
   // ── Step 2: Episodic consolidation ───────────────────────────────────────
