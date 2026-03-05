@@ -47,7 +47,7 @@ export interface ExtractedFact {
   importance: number
 }
 
-/** Per-session cursor: tracks how many characters have been processed. */
+/** Per-session cursor: tracks byte offset into the session file. */
 export type SessionCursors = Record<string, number>
 
 export interface ObserverRunResult {
@@ -56,6 +56,34 @@ export interface ObserverRunResult {
   factsExtracted: number
   factsStored: number
   errors: number
+}
+
+// ---------------------------------------------------------------------------
+// Embedding cache — avoids re-embedding the same fact text on every tick
+// ---------------------------------------------------------------------------
+
+const _embeddingCache = new Map<string, number[]>()
+const EMBEDDING_CACHE_MAX = 500
+
+function getCachedEmbedding(text: string): number[] | undefined {
+  return _embeddingCache.get(text)
+}
+
+function setCachedEmbedding(text: string, vec: number[]): void {
+  if (_embeddingCache.size >= EMBEDDING_CACHE_MAX) {
+    // Evict oldest entry (Map preserves insertion order)
+    const firstKey = _embeddingCache.keys().next().value
+    if (firstKey !== undefined) _embeddingCache.delete(firstKey)
+  }
+  _embeddingCache.set(text, vec)
+}
+
+async function embedCached(embeddings: Embeddings, text: string): Promise<number[]> {
+  const cached = getCachedEmbedding(text)
+  if (cached) return cached
+  const vec = await embeddings.embed(text)
+  setCachedEmbedding(text, vec)
+  return vec
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +231,8 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
 
     const importanceRaw =
       typeof obj.importance === 'number' ? obj.importance : parseFloat(String(obj.importance))
-    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0
+    // Default to 0.5 when importance is missing/invalid so facts are not silently dropped
+    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.5
 
     const categoryRaw =
       typeof obj.category === 'string' ? obj.category.toLowerCase().trim() : 'fact'
@@ -230,6 +259,8 @@ export async function runPassiveObserver(
     fallbackModels?: string[]
     dbDir: string
     dryRun?: boolean
+    /** Fallback sessions dir from procedures config (used when config.sessionsDir is not set). */
+    proceduresSessionsDir?: string
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -242,15 +273,18 @@ export async function runPassiveObserver(
   }
 
   const sessionsDir =
-    config.sessionsDir ?? join(homedir(), '.openclaw', 'agents', 'main', 'sessions')
+    config.sessionsDir ??
+    opts.proceduresSessionsDir ??
+    join(homedir(), '.openclaw', 'agents', 'main', 'sessions')
+
   if (!existsSync(sessionsDir)) {
     logger.info(`memory-hybrid: passive-observer — sessions dir not found: ${sessionsDir}`)
     return result
   }
 
-  let files: string[]
+  let filePaths: string[]
   try {
-    files = readdirSync(sessionsDir)
+    filePaths = readdirSync(sessionsDir)
       .filter((f) => f.endsWith('.jsonl'))
       .map((f) => join(sessionsDir, f))
   } catch (err) {
@@ -263,36 +297,66 @@ export async function runPassiveObserver(
     return result
   }
 
-  if (files.length === 0) return result
+  if (filePaths.length === 0) return result
 
   const cursorsPath = getCursorsPath(opts.dbDir)
   const cursors = await loadCursors(cursorsPath)
   let cursorsChanged = false
 
-  // Check if any session has new content before computing embeddings
+  // ---------------------------------------------------------------------------
+  // Phase 1: scan all session files, count sessions, detect whether any have
+  // new content.  We read each file as a raw Buffer to use byte offsets
+  // consistently (avoids char-vs-byte mismatch for multi-byte encodings).
+  // ---------------------------------------------------------------------------
+  interface SessionInfo {
+    filePath: string
+    sessionId: string
+    rawBuf: Buffer
+    fileBytelen: number
+    cursor: number
+  }
+
+  const sessions: SessionInfo[] = []
   let hasNewContent = false
-  for (const filePath of files) {
+
+  for (const filePath of filePaths) {
+    const sessionId = filePath.replace(/\\/g, '/').split('/').pop()!.replace('.jsonl', '')
+    let rawBuf: Buffer
     try {
-      const rawContent = await readFile(filePath, 'utf-8')
-      const sessionId = filePath.replace(/\\/g, '/').split('/').pop()!.replace('.jsonl', '')
-      const cursor = cursors[sessionId] ?? 0
-      if (cursor < rawContent.length && rawContent.slice(cursor).trim()) {
-        hasNewContent = true
-        break
-      }
-    } catch {
+      rawBuf = await readFile(filePath)
+    } catch (err) {
+      logger.warn(`memory-hybrid: passive-observer — failed to read session ${sessionId}: ${err}`)
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'passive-observer-read',
+        subsystem: 'passive-observer',
+      })
+      result.errors++
       continue
     }
+
+    result.sessionsScanned++
+    const fileBytelen = rawBuf.length
+    const cursor = cursors[sessionId] ?? 0
+
+    if (cursor < fileBytelen) {
+      const newSlice = rawBuf.subarray(cursor).toString('utf-8')
+      if (newSlice.trim()) hasNewContent = true
+    }
+
+    sessions.push({ filePath, sessionId, rawBuf, fileBytelen, cursor })
   }
 
   if (!hasNewContent) return result
 
-  // Collect recent fact vectors for dedup (only once per run, after confirming new content exists)
+  // ---------------------------------------------------------------------------
+  // Phase 2: load recent fact vectors for dedup (only once per run, now that
+  // we know there is new content to process).
+  // ---------------------------------------------------------------------------
   const recentFacts = factsDb.getRecentFacts(7) // last 7 days
   const recentVectors: (number[] | null)[] = []
   for (const f of recentFacts.slice(0, 200)) {
     try {
-      recentVectors.push(normalizeVector(await embeddings.embed(f.text)))
+      recentVectors.push(normalizeVector(await embedCached(embeddings, f.text)))
     } catch {
       recentVectors.push(null)
     }
@@ -300,26 +364,15 @@ export async function runPassiveObserver(
 
   const prompt = loadPrompt('passive-observer')
 
-  for (const filePath of files) {
-    const sessionId = filePath.replace(/\\/g, '/').split('/').pop()!.replace('.jsonl', '')
-    result.sessionsScanned++
+  // ---------------------------------------------------------------------------
+  // Phase 3: process each session that has new content.
+  // ---------------------------------------------------------------------------
+  for (const { filePath, sessionId, rawBuf, fileBytelen, cursor } of sessions) {
+    if (cursor >= fileBytelen) continue // Nothing new
 
-    let rawContent: string
-    try {
-      rawContent = await readFile(filePath, 'utf-8')
-    } catch (err) {
-      logger.warn(`memory-hybrid: passive-observer — failed to read session ${sessionId}: ${err}`)
-      result.errors++
-      continue
-    }
-
-    const cursor = cursors[sessionId] ?? 0
-    const contentLength = rawContent.length
-    if (cursor >= contentLength) continue // Nothing new
-
-    const newContent = rawContent.slice(cursor)
+    const newContent = rawBuf.subarray(cursor).toString('utf-8')
     if (!newContent.trim()) {
-      cursors[sessionId] = contentLength
+      cursors[sessionId] = fileBytelen
       cursorsChanged = true
       continue
     }
@@ -327,7 +380,7 @@ export async function runPassiveObserver(
     // Extract human-readable text from JSONL
     const textBlock = extractTextFromJsonlChunk(newContent)
     if (!textBlock.trim()) {
-      cursors[sessionId] = contentLength
+      cursors[sessionId] = fileBytelen
       cursorsChanged = true
       continue
     }
@@ -376,10 +429,10 @@ export async function runPassiveObserver(
       result.factsExtracted += filtered.length
 
       for (const fact of filtered) {
-        // Embed new fact for dedup check
+        // Embed new fact for dedup check (use cache for repeated texts)
         let vec: number[]
         try {
-          vec = await embeddings.embed(fact.text)
+          vec = await embedCached(embeddings, fact.text)
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: 'passive-observer-embed',
@@ -411,7 +464,7 @@ export async function runPassiveObserver(
           continue
         }
 
-        // Store to SQLite
+        // Store to SQLite — tag with session scope so facts can be scoped to session lifecycle
         const stored = factsDb.store({
           text: fact.text,
           category: fact.category as MemoryCategory,
@@ -421,6 +474,8 @@ export async function runPassiveObserver(
           value: null,
           source: 'passive-observer',
           decayClass: 'session',
+          scope: 'session',
+          scopeTarget: sessionId,
           tags: ['passive-observer'],
         })
 
@@ -447,8 +502,8 @@ export async function runPassiveObserver(
       }
     }
 
-    // Update cursor for this session
-    cursors[sessionId] = contentLength
+    // Advance cursor to end of file (byte offset)
+    cursors[sessionId] = fileBytelen
     cursorsChanged = true
   }
 
