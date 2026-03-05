@@ -67,7 +67,6 @@ import {
 import {
   expandGraph,
   formatLinkPath,
-  deduplicateExpanded,
   HOP_SCORE_DECAY,
   type GraphExpandedResult,
   type LinkPathStep,
@@ -482,7 +481,6 @@ export const _testing = {
   // GraphRAG retrieval (Issue #145)
   expandGraph,
   formatLinkPath,
-  deduplicateExpanded,
   HOP_SCORE_DECAY,
 };
 

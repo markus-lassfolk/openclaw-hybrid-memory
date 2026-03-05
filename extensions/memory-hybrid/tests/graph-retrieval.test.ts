@@ -28,9 +28,6 @@
  *   - formatLinkPath: empty path returns empty string
  *   - formatLinkPath: single step formatted correctly
  *   - formatLinkPath: multi-step path formatted correctly
- *   - deduplicateExpanded: keeps shortest hop for duplicate factId
- *   - deduplicateExpanded: keeps higher score among same-hop duplicates
- *   - deduplicateExpanded: no-op when all factIds are unique
  *   - HOP_SCORE_DECAY: index 0 is 1.0 (no decay for direct)
  *   - Integration with FactsDB: real DB links traversed correctly
  */
@@ -42,7 +39,7 @@ import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 import type { MemoryEntry } from "../types/memory.js";
 
-const { expandGraph, formatLinkPath, deduplicateExpanded, HOP_SCORE_DECAY, FactsDB } = _testing;
+const { expandGraph, formatLinkPath, HOP_SCORE_DECAY, FactsDB } = _testing;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -606,49 +603,6 @@ describe("formatLinkPath", () => {
     expect(result).toContain("PART_OF");
     expect(result).toContain("CAUSED_BY");
     expect(result).toContain("→");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// deduplicateExpanded
-// ---------------------------------------------------------------------------
-
-describe("deduplicateExpanded", () => {
-  it("returns same array when all factIds are unique", () => {
-    const a = makeEntry("a");
-    const b = makeEntry("b");
-    const results = [
-      { factId: "a", entry: a, expansionSource: "direct" as const, hopCount: 0, linkPath: [], score: 0.9 },
-      { factId: "b", entry: b, expansionSource: "graph" as const, hopCount: 1, linkPath: [], score: 0.63 },
-    ];
-    const deduped = deduplicateExpanded(results);
-    expect(deduped).toHaveLength(2);
-  });
-
-  it("keeps shortest hop when same factId appears with different hop counts", () => {
-    const a = makeEntry("a");
-    const results = [
-      { factId: "a", entry: a, expansionSource: "graph" as const, hopCount: 2, linkPath: [], score: 0.35 },
-      { factId: "a", entry: a, expansionSource: "graph" as const, hopCount: 1, linkPath: [], score: 0.5 },
-    ];
-    const deduped = deduplicateExpanded(results);
-    expect(deduped).toHaveLength(1);
-    expect(deduped[0].hopCount).toBe(1);
-  });
-
-  it("keeps higher score when same hop count and same factId", () => {
-    const a = makeEntry("a");
-    const results = [
-      { factId: "a", entry: a, expansionSource: "graph" as const, hopCount: 1, linkPath: [], score: 0.4 },
-      { factId: "a", entry: a, expansionSource: "graph" as const, hopCount: 1, linkPath: [], score: 0.7 },
-    ];
-    const deduped = deduplicateExpanded(results);
-    expect(deduped).toHaveLength(1);
-    expect(deduped[0].score).toBeCloseTo(0.7);
-  });
-
-  it("handles empty input", () => {
-    expect(deduplicateExpanded([])).toHaveLength(0);
   });
 });
 

@@ -256,24 +256,3 @@ export function formatLinkPath(linkPath: LinkPathStep[]): string {
     .join(" \u2192 ");
 }
 
-/**
- * Deduplicate a list of GraphExpandedResults by factId, keeping the entry with
- * the lowest hopCount (shortest path) and highest score among ties.
- */
-export function deduplicateExpanded(
-  results: GraphExpandedResult[],
-): GraphExpandedResult[] {
-  const seen = new Map<string, GraphExpandedResult>();
-  for (const r of results) {
-    const existing = seen.get(r.factId);
-    if (!existing) {
-      seen.set(r.factId, r);
-    } else if (
-      r.hopCount < existing.hopCount ||
-      (r.hopCount === existing.hopCount && r.score > existing.score)
-    ) {
-      seen.set(r.factId, r);
-    }
-  }
-  return [...seen.values()];
-}

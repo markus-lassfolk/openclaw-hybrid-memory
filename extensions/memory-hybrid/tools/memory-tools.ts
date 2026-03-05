@@ -466,7 +466,7 @@ export function registerMemoryTools(
 
         if (useExpandGraph) {
           const rawDepth = typeof expandDepthParam === "number" ? expandDepthParam : cfg.retrieval.graphWalkDepth;
-          const depth = Math.min(rawDepth, cfg.graphRetrieval.maxExpandDepth);
+          const depth = Math.min(Math.max(0, rawDepth), cfg.graphRetrieval.maxExpandDepth);
           const seedInputs = results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry }));
           const originalBackendMap = new Map<string, "sqlite" | "lancedb">();
           for (const r of results) {
