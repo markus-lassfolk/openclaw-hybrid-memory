@@ -721,8 +721,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 knownEntities,
               );
 
-              // Skip index 0 (message query — already run above as the main recall)
-              const extraQueries = ambientQueries.slice(1);
+              // Skip message query (already run above as the main recall)
+              const extraQueries = ambientQueries.filter((q) => q.type !== "message");
               if (extraQueries.length > 0) {
                 const extraResultSets: SearchResult[][] = [candidates];
                 for (const q of extraQueries) {
