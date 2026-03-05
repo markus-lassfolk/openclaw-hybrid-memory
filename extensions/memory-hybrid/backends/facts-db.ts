@@ -171,6 +171,9 @@ export class FactsDB {
 
     // ---- Contradiction tracking (Issue #157) ----
     this.migrateContradictionsTable();
+
+    // ---- Future-date decay freeze (#144) ----
+    this.migrateDecayFreezeColumn();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -348,6 +351,18 @@ export class FactsDB {
     if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
       this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
     }
+  }
+
+  /** Add decay_freeze_until column for future-date freeze protection (#144). */
+  private migrateDecayFreezeColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "decay_freeze_until")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN decay_freeze_until INTEGER DEFAULT NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_freeze ON facts(decay_freeze_until) WHERE decay_freeze_until IS NOT NULL`,
+    );
   }
 
   /**
@@ -700,6 +715,8 @@ export class FactsDB {
       scope?: "global" | "user" | "agent" | "session";
       /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
       scopeTarget?: string | null;
+      /** Future-date freeze: epoch seconds until which confidence decay is paused (#144). */
+      decayFreezeUntil?: number | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -747,10 +764,11 @@ export class FactsDB {
           : JSON.stringify(sourceSessionsRaw);
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
+    const decayFreezeUntil = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -780,6 +798,7 @@ export class FactsDB {
         successCount,
         lastValidated,
         sourceSessionsStr,
+        decayFreezeUntil,
       );
 
     return {
@@ -803,6 +822,7 @@ export class FactsDB {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
+      decayFreezeUntil: decayFreezeUntil ?? undefined,
     };
   }
 
@@ -1328,6 +1348,7 @@ export class FactsDB {
           return null;
         }
       })(),
+      decayFreezeUntil: (row.decay_freeze_until as number) ?? null,
     };
   }
 
@@ -1650,7 +1671,8 @@ export class FactsDB {
            AND expires_at > @now
            AND last_confirmed_at IS NOT NULL
            AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
-           AND confidence > 0.1`,
+           AND confidence > 0.1
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`,
       )
       .run({ now: nowSec });
 

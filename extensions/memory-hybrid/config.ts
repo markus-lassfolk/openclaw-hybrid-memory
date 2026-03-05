@@ -349,6 +349,14 @@ export type ErrorReportingConfig = {
   botName?: string;
 };
 
+/** Future-date decay freeze protection (#144). */
+export type FutureDateProtectionConfig = {
+  /** When true, facts containing future dates have their decay frozen until that date passes. Default: true. */
+  enabled: boolean;
+  /** Maximum days to freeze decay (prevents absurdly long freezes). Default: 365. */
+  maxFreezeDays: number;
+};
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai";
@@ -422,6 +430,8 @@ export type HybridMemoryConfig = {
   vector: VectorConfig;
   /** Enhanced ambient retrieval with multi-query generation (Issue #156, default: disabled). */
   ambient: AmbientConfig;
+  /** Future-date decay freeze protection (#144). Enabled by default. */
+  futureDateProtection: FutureDateProtectionConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1692,6 +1702,16 @@ export const hybridConfigSchema = {
       },
     };
 
+    // Parse future-date protection config (enabled by default — it's a safety feature)
+    const fdpRaw = cfg.futureDateProtection as Record<string, unknown> | undefined;
+    const futureDateProtection: FutureDateProtectionConfig = {
+      enabled: fdpRaw?.enabled !== false, // default: true
+      maxFreezeDays:
+        typeof fdpRaw?.maxFreezeDays === "number" && fdpRaw.maxFreezeDays > 0
+          ? Math.floor(fdpRaw.maxFreezeDays)
+          : 365,
+    };
+
     return {
       embedding: {
         provider: "openai",
@@ -1734,6 +1754,7 @@ export const hybridConfigSchema = {
         };
       })(),
       ambient,
+      futureDateProtection,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

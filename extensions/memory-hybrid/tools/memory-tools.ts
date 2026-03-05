@@ -42,6 +42,7 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { detectFutureDate } from "../utils/date-detector.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -994,6 +995,8 @@ export function registerMemoryTools(
         }
         const nowSec = Math.floor(Date.now() / 1000);
         const storeSessionId = api.context?.sessionId ?? null;
+        // Detect future dates for decay freeze protection (#144)
+        const decayFreezeUntil = detectFutureDate(textToStore, cfg.futureDateProtection);
         const entry = factsDb.store({
           text: textToStore,
           category: category as MemoryCategory,
@@ -1008,6 +1011,7 @@ export function registerMemoryTools(
           scope,
           scopeTarget,
           sourceSessions: storeSessionId ?? undefined,
+          ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
