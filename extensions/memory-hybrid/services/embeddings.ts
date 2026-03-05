@@ -43,7 +43,7 @@ export class Embeddings implements EmbeddingProvider {
   /** Ordered list: try first model, on failure try next (all must produce same vector dimension). */
   private readonly models: string[];
   readonly dimensions: number;
-  readonly modelName: string;
+  modelName: string;
 
   constructor(
     clientOrApiKey: OpenAI | string,
@@ -57,6 +57,18 @@ export class Embeddings implements EmbeddingProvider {
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
+    
+    // Validate dimensions against known model limits
+    const modelMaxDimensions: Record<string, number> = {
+      "text-embedding-3-small": 1536,
+      "text-embedding-3-large": 3072,
+    };
+    for (const model of this.models) {
+      const maxDim = modelMaxDimensions[model];
+      if (maxDim !== undefined && this.dimensions > maxDim) {
+        throw new Error(`Dimensions ${this.dimensions} exceed maximum ${maxDim} for model ${model}`);
+      }
+    }
   }
 
   async embed(text: string): Promise<number[]> {
@@ -87,6 +99,7 @@ export class Embeddings implements EmbeddingProvider {
           if (firstKey !== undefined) this.cache.delete(firstKey);
         }
         this.cache.set(cacheKey, vector);
+        this.modelName = model;
         return vector;
       } catch (err) {
         lastErr = err instanceof Error ? err : new Error(String(err));
@@ -105,7 +118,34 @@ export class Embeddings implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    return Promise.all(texts.map((t) => this.embed(t)));
+    if (texts.length === 0) return [];
+    
+    const { withLLMRetry } = await import("./chat.js");
+    let lastErr: Error | undefined;
+    for (const model of this.models) {
+      try {
+        const supportsDimensions = model.startsWith("text-embedding-3-");
+        const resp = await withLLMRetry(
+          () => this.client.embeddings.create({
+            model,
+            input: texts,
+            ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
+          }),
+          { maxRetries: 2 },
+        );
+        this.modelName = model;
+        return resp.data.map((item) => item.embedding);
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        continue;
+      }
+    }
+    capturePluginError(lastErr!, {
+      subsystem: "embeddings",
+      operation: "embedBatch",
+      phase: "fallback-exhausted",
+    });
+    throw lastErr!;
   }
 }
 
@@ -162,7 +202,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         throw new Error(`Ollama embed response missing 'embeddings' array`);
       }
       if (data.embeddings.length !== batch.length) {
-        throw new Error(`Ollama embed returned ${data.embeddings.length} embeddings but expected ${batch.length}`);
+        throw new Error(`Ollama embed returned ${data.embeddings.length} embeddings for ${batch.length} inputs`);
       }
       allResults.push(...data.embeddings);
     }
