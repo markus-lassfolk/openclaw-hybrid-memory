@@ -824,6 +824,7 @@ export function registerMemoryTools(
                   supersedesId: classification.targetId,
                   scope,
                   scopeTarget,
+                  sourceSessions: api.context?.sessionId ?? undefined,
                 });
                 factsDb.supersede(classification.targetId, newEntry.id);
 
@@ -930,6 +931,7 @@ export function registerMemoryTools(
           }
         }
         const nowSec = Math.floor(Date.now() / 1000);
+        const storeSessionId = api.context?.sessionId ?? null;
         const entry = factsDb.store({
           text: textToStore,
           category: category as MemoryCategory,
@@ -943,6 +945,7 @@ export function registerMemoryTools(
           tags,
           scope,
           scopeTarget,
+          sourceSessions: storeSessionId ?? undefined,
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),

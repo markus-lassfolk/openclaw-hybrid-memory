@@ -3101,10 +3101,8 @@ export class FactsDB {
            WHERE id != ?
              AND superseded_at IS NULL
              AND (expires_at IS NULL OR expires_at > ?)
-             AND (
-               (source_sessions IS NOT NULL AND (',' || source_sessions || ',' LIKE ? ESCAPE '\\'))
-               OR (entity IS NOT NULL AND lower(entity) = lower(?))
-             )
+             AND source_sessions IS NOT NULL
+             AND (',' || source_sessions || ',' LIKE ? ESCAPE '\\')
            ORDER BY created_at DESC
            LIMIT 20`,
         )
@@ -3112,7 +3110,6 @@ export class FactsDB {
           newFactId,
           nowSec,
           `%,${escapedSessionId},%`,
-          entity ?? "__NO_ENTITY__",
         ) as Array<Record<string, unknown>>;
 
       for (const row of recentRows) {
@@ -3148,27 +3145,30 @@ export class FactsDB {
 
       const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) || null;
 
-      for (const row of conflicting) {
-        const oldFact = this.rowToEntry(row);
-        // Only create SUPERSEDES edge when value actually differs
-        if (newVal === null && oldFact.value === null) continue;
-        if (newVal !== null && oldFact.value !== null && newVal.toLowerCase() === oldFact.value.toLowerCase()) continue;
+      // Skip supersession entirely when new fact has no value — a valueless fact
+      // cannot meaningfully supersede an existing value.
+      if (newVal !== null) {
+        for (const row of conflicting) {
+          const oldFact = this.rowToEntry(row);
+          // Only create SUPERSEDES edge when value actually differs
+          if (oldFact.value !== null && newVal.toLowerCase() === oldFact.value.toLowerCase()) continue;
 
-        // Create SUPERSEDES link (new → old)
-        const alreadyLinked = this.liveDb
-          .prepare(
-            `SELECT id FROM memory_links
-             WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'SUPERSEDES'`,
-          )
-          .get(newFactId, oldFact.id);
-        if (!alreadyLinked) {
-          this.createLink(newFactId, oldFact.id, "SUPERSEDES", 1.0);
+          // Create SUPERSEDES link (new → old)
+          const alreadyLinked = this.liveDb
+            .prepare(
+              `SELECT id FROM memory_links
+               WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'SUPERSEDES'`,
+            )
+            .get(newFactId, oldFact.id);
+          if (!alreadyLinked) {
+            this.createLink(newFactId, oldFact.id, "SUPERSEDES", 1.0);
 
-          if (cfg.autoSupersede) {
-            // Mark old fact as superseded + reduce confidence
-            this.supersede(oldFact.id, newFactId);
-            this.updateConfidence(oldFact.id, -0.2);
-            supersededIds.push(oldFact.id);
+            if (cfg.autoSupersede) {
+              // Mark old fact as superseded + reduce confidence
+              this.supersede(oldFact.id, newFactId);
+              this.updateConfidence(oldFact.id, -0.2);
+              supersededIds.push(oldFact.id);
+            }
           }
         }
       }

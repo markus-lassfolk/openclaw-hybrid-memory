@@ -289,11 +289,16 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
 
   it("links to facts with same entity via entity co-occurrence", () => {
     const entity = "shared-entity";
+    const sessionId = "session-xyz";
     const factA = db.store({ text: "First fact", entity, key: null, value: null, category: "other", importance: 0.5, source: "test" });
+    // Populate source_sessions so the session-based co-occurrence query can find factA
+    (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
+      .prepare(`UPDATE facts SET source_sessions = ? WHERE id = ?`)
+      .run(sessionId, factA.id);
     const factB = db.store({ text: "Second fact", entity, key: null, value: null, category: "other", importance: 0.5, source: "test" });
 
-    // Same entity → co-occurrence query picks up factA
-    db.autoLinkEntities(factB.id, factB.text, entity, null, "session-xyz", cfg);
+    // Same session + same entity → co-occurrence query picks up factA
+    db.autoLinkEntities(factB.id, factB.text, entity, null, sessionId, cfg);
     const links = db.getLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id);
     expect(coLink).toBeDefined();
@@ -420,11 +425,11 @@ describe("autoLinkEntities — config variants", () => {
     const factB = db.store({ text: "Second", entity: null, key: null, value: null, category: "other", importance: 0.5, source: "test" });
 
     db.autoLinkEntities(factB.id, factB.text, null, null, sessionId, { coOccurrenceWeight: 0, autoSupersede: false });
-    // With weight 0 the link is still created (weight is clamped by createLink's max(0, min(1, s)))
+    // With weight 0 the link is still created (createLink inserts the row with strength=0)
     const links = db.getLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id);
-    // Link may or may not exist depending on implementation; at minimum should not throw
-    expect(true).toBe(true);
+    expect(coLink).toBeDefined();
+    expect(coLink!.strength).toBe(0);
   });
 });
 
