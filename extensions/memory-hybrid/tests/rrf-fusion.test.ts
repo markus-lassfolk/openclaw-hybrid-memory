@@ -14,7 +14,7 @@ const {
   RRF_K_DEFAULT,
   packIntoBudget,
   serializeFactForContext,
-  estimateTokenCount,
+  estimateTokens,
 } = _testing;
 
 // ---------------------------------------------------------------------------
@@ -398,15 +398,15 @@ describe("serializeFactForContext", () => {
 });
 
 // ---------------------------------------------------------------------------
-// estimateTokenCount
+// estimateTokens
 // ---------------------------------------------------------------------------
 
-describe("estimateTokenCount", () => {
+describe("estimateTokens", () => {
   it("estimates tokens as ceil(chars / 4)", () => {
-    expect(estimateTokenCount("abcd")).toBe(1);
-    expect(estimateTokenCount("abcde")).toBe(2);
-    expect(estimateTokenCount("")).toBe(0);
-    expect(estimateTokenCount("a".repeat(400))).toBe(100);
+    expect(estimateTokens("abcd")).toBe(1);
+    expect(estimateTokens("abcde")).toBe(2);
+    expect(estimateTokens("")).toBe(0);
+    expect(estimateTokens("a".repeat(400))).toBe(100);
   });
 });
 
@@ -421,6 +421,7 @@ describe("DEFAULT_RETRIEVAL_CONFIG", () => {
     expect(DEFAULT_RETRIEVAL_CONFIG.ambientBudgetTokens).toBe(2000);
     expect(DEFAULT_RETRIEVAL_CONFIG.explicitBudgetTokens).toBe(4000);
     expect(DEFAULT_RETRIEVAL_CONFIG.semanticTopK).toBe(20);
+    expect(DEFAULT_RETRIEVAL_CONFIG.fts5TopK).toBe(20);
     expect(DEFAULT_RETRIEVAL_CONFIG.graphWalkDepth).toBe(2);
     expect(DEFAULT_RETRIEVAL_CONFIG.strategies).toContain("semantic");
     expect(DEFAULT_RETRIEVAL_CONFIG.strategies).toContain("fts5");

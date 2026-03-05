@@ -260,6 +260,8 @@ export type RetrievalConfig = {
   graphWalkDepth: number;
   /** Top-K candidates from semantic search passed to RRF (default 20). */
   semanticTopK: number;
+  /** Top-K candidates from FTS5 search passed to RRF (default 20). */
+  fts5TopK: number;
 };
 
 /** Ingest workspace files: index markdown files as facts for search */
@@ -1577,6 +1579,10 @@ export const hybridConfigSchema = {
       semanticTopK:
         typeof retrievalRaw?.semanticTopK === "number" && retrievalRaw.semanticTopK > 0
           ? Math.floor(retrievalRaw.semanticTopK)
+          : 20,
+      fts5TopK:
+        typeof retrievalRaw?.fts5TopK === "number" && retrievalRaw.fts5TopK > 0
+          ? Math.floor(retrievalRaw.fts5TopK)
           : 20,
     };
 

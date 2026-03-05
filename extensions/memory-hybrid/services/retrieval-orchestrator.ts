@@ -22,6 +22,7 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
+import { estimateTokens } from "../utils/text.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +42,8 @@ export interface RetrievalConfig {
   graphWalkDepth: number;
   /** Top-K candidates from semantic search (default 20). */
   semanticTopK: number;
+  /** Top-K candidates from FTS5 search (default 20). */
+  fts5TopK: number;
 }
 
 /** Options for filtering facts during retrieval. */
@@ -78,16 +81,8 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   explicitBudgetTokens: 4000,
   graphWalkDepth: 2,
   semanticTopK: 20,
+  fts5TopK: 20,
 };
-
-// ---------------------------------------------------------------------------
-// Token estimation
-// ---------------------------------------------------------------------------
-
-/** Approximate token count from character count (chars / 4). */
-export function estimateTokenCount(text: string): number {
-  return Math.ceil(text.length / 4);
-}
 
 // ---------------------------------------------------------------------------
 // Fact serialization
@@ -137,7 +132,7 @@ export function packIntoBudget(
 
   for (const { entry } of entries) {
     const serialized = serializeFactForContext(entry);
-    const tokens = estimateTokenCount(serialized);
+    const tokens = estimateTokens(serialized);
     if (tokensUsed + tokens > budgetTokens) break;
     packed.push(serialized);
     tokensUsed += tokens;
@@ -266,7 +261,7 @@ export async function runRetrievalPipeline(
   nowSec: number = Math.floor(Date.now() / 1000),
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
-  const { strategies, semanticTopK } = config;
+  const { strategies, semanticTopK, fts5TopK } = config;
 
   // --- Run strategies in parallel ---
   const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];
@@ -275,7 +270,7 @@ export async function runRetrievalPipeline(
     strategyPromises.push(
       Promise.resolve([
         "fts5",
-        runFts5Strategy(db, query, semanticTopK, options),
+        runFts5Strategy(db, query, fts5TopK, options),
       ] as [string, RankedResult[]]),
     );
   }

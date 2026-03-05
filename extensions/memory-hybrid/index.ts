@@ -61,7 +61,6 @@ import {
   runRetrievalPipeline,
   packIntoBudget,
   serializeFactForContext,
-  estimateTokenCount,
   DEFAULT_RETRIEVAL_CONFIG,
 } from "./services/retrieval-orchestrator.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
@@ -466,7 +465,6 @@ export const _testing = {
   runRetrievalPipeline,
   packIntoBudget,
   serializeFactForContext,
-  estimateTokenCount,
   DEFAULT_RETRIEVAL_CONFIG,
 };
 
