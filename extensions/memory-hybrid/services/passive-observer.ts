@@ -12,7 +12,7 @@
  */
 
 import { existsSync, readdirSync } from 'node:fs'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { FactsDB } from '../backends/facts-db.js'
@@ -284,13 +284,12 @@ export async function runPassiveObserver(
 
   // ---------------------------------------------------------------------------
   // Phase 1: scan all session files, count sessions, detect whether any have
-  // new content.  We read each file as a raw Buffer to use byte offsets
-  // consistently (avoids char-vs-byte mismatch for multi-byte encodings).
+  // new content.  We use stat() to get file sizes without loading entire files
+  // into memory (files are read lazily in Phase 3 only when needed).
   // ---------------------------------------------------------------------------
   interface SessionInfo {
     filePath: string
     sessionId: string
-    rawBuf: Buffer
     fileBytelen: number
     cursor: number
   }
@@ -300,13 +299,14 @@ export async function runPassiveObserver(
 
   for (const filePath of filePaths) {
     const sessionId = filePath.replace(/\\/g, '/').split('/').pop()!.replace('.jsonl', '')
-    let rawBuf: Buffer
+    let fileBytelen: number
     try {
-      rawBuf = await readFile(filePath)
+      const stats = await stat(filePath)
+      fileBytelen = stats.size
     } catch (err) {
-      logger.warn(`memory-hybrid: passive-observer — failed to read session ${sessionId}: ${err}`)
+      logger.warn(`memory-hybrid: passive-observer — failed to stat session ${sessionId}: ${err}`)
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'passive-observer-read',
+        operation: 'passive-observer-stat',
         subsystem: 'passive-observer',
       })
       result.errors++
@@ -314,15 +314,13 @@ export async function runPassiveObserver(
     }
 
     result.sessionsScanned++
-    const fileBytelen = rawBuf.length
     const cursor = cursors[sessionId] ?? 0
 
     if (cursor < fileBytelen) {
-      const newSlice = rawBuf.subarray(cursor).toString('utf-8')
-      if (newSlice.trim()) hasNewContent = true
+      hasNewContent = true
     }
 
-    sessions.push({ filePath, sessionId, rawBuf, fileBytelen, cursor })
+    sessions.push({ filePath, sessionId, fileBytelen, cursor })
   }
 
   if (!hasNewContent) return result
@@ -346,8 +344,21 @@ export async function runPassiveObserver(
   // ---------------------------------------------------------------------------
   // Phase 3: process each session that has new content.
   // ---------------------------------------------------------------------------
-  for (const { filePath, sessionId, rawBuf, fileBytelen, cursor } of sessions) {
+  for (const { filePath, sessionId, fileBytelen, cursor } of sessions) {
     if (cursor >= fileBytelen) continue // Nothing new
+
+    let rawBuf: Buffer
+    try {
+      rawBuf = await readFile(filePath)
+    } catch (err) {
+      logger.warn(`memory-hybrid: passive-observer — failed to read session ${sessionId}: ${err}`)
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'passive-observer-read',
+        subsystem: 'passive-observer',
+      })
+      result.errors++
+      continue
+    }
 
     const newContent = rawBuf.subarray(cursor).toString('utf-8')
     if (!newContent.trim()) {
