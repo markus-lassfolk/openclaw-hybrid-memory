@@ -139,10 +139,11 @@ export class Embeddings implements EmbeddingProvider {
       
       const { withLLMRetry } = await import("./chat.js");
       let lastErr: Error | undefined;
+      let resp: Awaited<ReturnType<typeof this.client.embeddings.create>> | undefined;
       for (const model of this.models) {
         try {
           const supportsDimensions = model.startsWith("text-embedding-3-");
-          const resp = await withLLMRetry(
+          resp = await withLLMRetry(
             () => this.client.embeddings.create({
               model,
               input: batch,
@@ -150,16 +151,18 @@ export class Embeddings implements EmbeddingProvider {
             }),
             { maxRetries: 2 },
           );
-          if (resp.data.length !== batch.length) {
-            throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
-          }
           this.modelName = model;
-          allResults.push(...resp.data.map((item) => item.embedding));
           break;
         } catch (err) {
           lastErr = err instanceof Error ? err : new Error(String(err));
           continue;
         }
+      }
+      if (resp !== undefined) {
+        if (resp.data.length !== batch.length) {
+          throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
+        }
+        allResults.push(...resp.data.map((item) => item.embedding));
       }
       if (lastErr !== undefined && allResults.length === i) {
         capturePluginError(lastErr, {
