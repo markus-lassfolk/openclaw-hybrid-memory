@@ -66,6 +66,15 @@ import {
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
+import {
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
+} from "./services/knowledge-gaps.js";
+export type { GapFact, SuggestedLink, KnowledgeGapReport, GapMode, GapFactsDB, GapVectorDB, GapEmbeddings } from "./services/knowledge-gaps.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -477,6 +486,13 @@ export const _testing = {
   // GraphRAG retrieval (Issue #145)
   expandGraph,
   formatLinkPath,
+  // Knowledge gap analysis (Issue #141)
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
   HOP_SCORE_DECAY,
 };
 

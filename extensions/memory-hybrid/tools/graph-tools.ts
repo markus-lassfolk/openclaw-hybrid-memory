@@ -1,7 +1,7 @@
 /**
  * Graph Tool Registrations
  *
- * Tool definitions for memory link creation and graph exploration.
+ * Tool definitions for memory link creation, graph exploration, and knowledge gap analysis.
  * Extracted from index.ts for better modularity.
  */
 
@@ -11,10 +11,15 @@ import { stringEnum } from "openclaw/plugin-sdk";
 
 import type { FactsDB, MemoryLinkType } from "../backends/facts-db.js";
 import { MEMORY_LINK_TYPES } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { Embeddings } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { analyzeKnowledgeGaps, type GapMode } from "../services/knowledge-gaps.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
+  vectorDb: VectorDB;
+  embeddings: Embeddings;
   cfg: HybridMemoryConfig;
 }
 
@@ -27,7 +32,7 @@ export function registerGraphTools(
   ctx: PluginContext,
   api: ClawdbotPluginApi,
 ): void {
-  const { factsDb, cfg } = ctx;
+  const { factsDb, vectorDb, embeddings, cfg } = ctx;
 
   // Graph tools (when graph enabled)
   if (cfg.graph.enabled) {
@@ -137,5 +142,95 @@ export function registerGraphTools(
       },
       { name: "memory_graph" },
     );
+
+    // memory_gaps tool (when gaps detection is enabled)
+    if (cfg.gaps.enabled) {
+      api.registerTool(
+        {
+          name: "memory_gaps",
+          label: "Memory Gaps",
+          description:
+            "Detect knowledge gaps in the memory graph. Reports orphan facts (zero links), " +
+            "weak facts (only 1 link), and suggested connections between semantically similar " +
+            "but currently unlinked facts. Results are ranked by age × isolation score.",
+          parameters: Type.Object({
+            mode: Type.Optional(
+              stringEnum(["orphans", "weak", "all"] as const),
+            ),
+            limit: Type.Optional(
+              Type.Number({
+                description: "Max results per category (default: 20)",
+              }),
+            ),
+          }),
+          async execute(_toolCallId: string, params: Record<string, unknown>) {
+            const mode: GapMode = (params.mode as GapMode | undefined) ?? "all";
+            const limit =
+              typeof params.limit === "number" && params.limit > 0
+                ? Math.min(100, Math.floor(params.limit))
+                : 20;
+            const threshold = cfg.gaps.similarityThreshold;
+
+            const report = await analyzeKnowledgeGaps(
+              factsDb,
+              vectorDb,
+              embeddings,
+              mode,
+              limit,
+              threshold,
+            );
+
+            const lines: string[] = [];
+
+            if (report.orphans.length > 0) {
+              lines.push(`Orphan facts (${report.orphans.length} — zero links):`);
+              for (const g of report.orphans) {
+                lines.push(
+                  `  [${g.factId.slice(0, 8)}] score=${g.rankScore.toFixed(2)} "${g.text.slice(0, 70)}${g.text.length > 70 ? "…" : ""}"`,
+                );
+              }
+              lines.push("");
+            }
+
+            if (report.weak.length > 0) {
+              lines.push(`Weak facts (${report.weak.length} — only 1 link):`);
+              for (const g of report.weak) {
+                lines.push(
+                  `  [${g.factId.slice(0, 8)}] score=${g.rankScore.toFixed(2)} "${g.text.slice(0, 70)}${g.text.length > 70 ? "…" : ""}"`,
+                );
+              }
+              lines.push("");
+            }
+
+            if (report.suggestedLinks.length > 0) {
+              lines.push(`Suggested links (${report.suggestedLinks.length} — similar but unlinked):`);
+              for (const s of report.suggestedLinks) {
+                lines.push(
+                  `  sim=${s.similarity.toFixed(3)}: [${s.sourceId.slice(0, 8)}] "${s.sourceText.slice(0, 50)}${s.sourceText.length > 50 ? "…" : ""}" ↔ [${s.targetId.slice(0, 8)}] "${s.targetText.slice(0, 50)}${s.targetText.length > 50 ? "…" : ""}"`,
+                );
+              }
+              lines.push("");
+            }
+
+            if (lines.length === 0) {
+              lines.push("No knowledge gaps detected.");
+            }
+
+            return {
+              content: [{ type: "text", text: lines.join("\n") }],
+              details: {
+                mode,
+                limit,
+                threshold,
+                orphanCount: report.orphans.length,
+                weakCount: report.weak.length,
+                suggestedLinkCount: report.suggestedLinks.length,
+              },
+            };
+          },
+        },
+        { name: "memory_gaps" },
+      );
+    }
   }
 }

@@ -268,6 +268,14 @@ export type SearchConfig = {
   hydeModel?: string;
 };
 
+/** Knowledge gap analysis configuration (Issue #141). */
+export type GapsConfig = {
+  /** Enable the memory_gaps tool (default: true when graph is enabled). */
+  enabled: boolean;
+  /** Minimum cosine similarity to suggest a missing link (default: 0.8). */
+  similarityThreshold: number;
+};
+
 /** GraphRAG retrieval configuration (Issue #145). */
 export type GraphRetrievalConfig = {
   /** Enable GraphRAG expansion in memory_recall (default: true). */
@@ -456,6 +464,8 @@ export type HybridMemoryConfig = {
   ambient: AmbientConfig;
   /** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
   graphRetrieval: GraphRetrievalConfig;
+  /** Knowledge gap analysis — orphan/weak detection and suggested links (Issue #141, default: enabled). */
+  gaps: GapsConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -1749,6 +1759,18 @@ export const hybridConfigSchema = {
           : 20,
     };
 
+    // Parse knowledge gaps config (Issue #141)
+    const gapsRaw = cfg.gaps as Record<string, unknown> | undefined;
+    const gaps: GapsConfig = {
+      enabled: gapsRaw?.enabled !== false,
+      similarityThreshold:
+        typeof gapsRaw?.similarityThreshold === "number" &&
+        gapsRaw.similarityThreshold >= 0 &&
+        gapsRaw.similarityThreshold <= 1
+          ? gapsRaw.similarityThreshold
+          : 0.8,
+    };
+
     const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
     const activeTask: ActiveTaskConfig = {
       enabled: activeTaskRaw?.enabled !== false,
@@ -1812,6 +1834,7 @@ export const hybridConfigSchema = {
       })(),
       ambient,
       graphRetrieval,
+      gaps,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
