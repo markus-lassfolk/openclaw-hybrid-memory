@@ -7,6 +7,7 @@ import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
+import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { Embeddings } from "../services/embeddings.js";
 import { vectorDimsForModel, type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
@@ -181,6 +182,7 @@ export interface DatabaseContext {
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
+  eventLog: EventLog;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
@@ -295,6 +297,10 @@ export function initializeDatabases(
     proposalsDb = new ProposalsDB(proposalsPath);
     api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
   }
+
+  const eventLogPath = join(dirname(resolvedSqlitePath), "event-log.db");
+  const eventLog = new EventLog(eventLogPath);
+  api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
 
   // Load previously discovered categories so they remain available after restart
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
@@ -516,6 +522,7 @@ export function initializeDatabases(
     credentialsDb,
     wal,
     proposalsDb,
+    eventLog,
     resolvedLancePath,
     resolvedSqlitePath,
     health,
@@ -531,8 +538,9 @@ export function closeOldDatabases(context: {
   vectorDb?: VectorDB | null;
   credentialsDb?: CredentialsDB | null;
   proposalsDb?: ProposalsDB | null;
+  eventLog?: EventLog | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog } = context;
 
   if (typeof factsDb?.close === "function") {
     try {
@@ -560,6 +568,13 @@ export function closeOldDatabases(context: {
       proposalsDb.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "proposalsDb" });
+    }
+  }
+  if (eventLog) {
+    try {
+      eventLog.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "eventLog" });
     }
   }
 }

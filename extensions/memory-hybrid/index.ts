@@ -135,6 +135,7 @@ import { capturePluginError } from "./services/error-reporter.js";
 
 import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptValue } from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
+import { EventLog } from "./backends/event-log.js";
 
 // ============================================================================
 // Helper Functions
@@ -180,6 +181,7 @@ let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
+let eventLog: EventLog | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -241,9 +243,10 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog });
     credentialsDb = null;
     proposalsDb = null;
+    eventLog = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -262,6 +265,7 @@ const memoryHybridPlugin = {
       credentialsDb = dbContext.credentialsDb;
       wal = dbContext.wal;
       proposalsDb = dbContext.proposalsDb;
+      eventLog = dbContext.eventLog;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -424,6 +428,7 @@ export const _testing = {
   FactsDB,
   CredentialsDB,
   ProposalsDB,
+  EventLog,
   VectorDB,
   Embeddings,
   WriteAheadLog,
