@@ -674,7 +674,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           let promptEmbedding: number[] | null = null;
           if (ambientCfg.enabled && ambientCfg.multiQuery) {
             try {
-              promptEmbedding = await ctx.embeddings.embed(e.prompt.slice(0, 512));
+              promptEmbedding = await ctx.embeddings.embed(e.prompt);
             } catch {
               // Non-fatal — skip topic-shift detection when embedding fails
             }
