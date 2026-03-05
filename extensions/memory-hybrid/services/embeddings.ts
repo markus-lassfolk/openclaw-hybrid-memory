@@ -76,6 +76,7 @@ export class Embeddings implements EmbeddingProvider {
           () => this.client.embeddings.create({
             model,
             input: text,
+            dimensions: this.dimensions,
           }),
           { maxRetries: 2 },
         );
