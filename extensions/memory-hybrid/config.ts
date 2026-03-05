@@ -1012,6 +1012,9 @@ export const hybridConfigSchema = {
     } else if (embedding?.provider !== undefined) {
       throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx.`);
     } else {
+      if (embedding !== undefined) {
+        console.warn(`memory-hybrid: embedding.provider not set; defaulting to "openai". Set embedding.provider explicitly (openai, ollama, or onnx).`);
+      }
       embeddingProvider = "openai";
     }
 

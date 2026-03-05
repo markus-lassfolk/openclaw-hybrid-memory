@@ -239,6 +239,16 @@ describe("OllamaEmbeddingProvider", () => {
     await expect(p.embedBatch(["a", "b"])).rejects.toThrow(/returned 1 embeddings for 2 inputs/);
   });
 
+  it("embedBatch() throws on empty embeddings array in response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ embeddings: [] }),
+      text: async () => "",
+    } as Response));
+    const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 3 });
+    await expect(p.embedBatch(["a"])).rejects.toThrow(/empty 'embeddings' array/);
+  });
+
   it("respects custom endpoint", async () => {
     const vec = [0.9, 0.8];
     vi.stubGlobal("fetch", mockOllamaFetch([vec]));

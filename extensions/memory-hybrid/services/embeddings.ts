@@ -201,6 +201,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       if (!Array.isArray(data.embeddings)) {
         throw new Error(`Ollama embed response missing 'embeddings' array`);
       }
+      if (data.embeddings.length === 0) {
+        throw new Error(`Ollama embed returned empty 'embeddings' array (expected ${batch.length})`);
+      }
       if (data.embeddings.length !== batch.length) {
         throw new Error(`Ollama embed returned ${data.embeddings.length} embeddings for ${batch.length} inputs`);
       }
