@@ -222,6 +222,7 @@ export interface HybridMemCliRegistrationContext {
   openai: HandlerContext["openai"];
   cfg: HandlerContext["cfg"];
   credentialsDb: HandlerContext["credentialsDb"];
+  aliasDb: HandlerContext["aliasDb"];
   wal: HandlerContext["wal"];
   proposalsDb: HandlerContext["proposalsDb"];
   resolvedSqlitePath: string;
@@ -234,7 +235,7 @@ function buildCliContextServices(
   ctx: HybridMemCliRegistrationContext,
   api: ClawdbotPluginApi,
 ): CliContextServices {
-  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
   return {
@@ -245,7 +246,7 @@ function buildCliContextServices(
       if (!cfg.embedding?.apiKey) {
         return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
       }
-      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger);
+      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb);
     },
     runReflection: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
@@ -614,6 +615,7 @@ export function createHybridMemCliContext(
   return {
     factsDb: handlerCtx.factsDb,
     vectorDb: handlerCtx.vectorDb,
+    aliasDb: handlerCtx.aliasDb,
     versionInfo: services.versionInfo,
     embeddings: handlerCtx.embeddings,
     mergeResults: services.mergeResults,

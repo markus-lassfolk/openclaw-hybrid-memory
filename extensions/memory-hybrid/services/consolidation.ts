@@ -92,6 +92,7 @@ export async function runConsolidate(
   openai: OpenAI,
   opts: ConsolidateOptions,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  aliasDb?: import("./retrieval-aliases.js").AliasDB | null,
 ): Promise<ConsolidateResult> {
   const facts = factsDb.getFactsForConsolidation(opts.limit);
   let candidateFacts = opts.includeStructured
@@ -225,6 +226,7 @@ export async function runConsolidate(
     }
     for (const id of clusterIds) {
       factsDb.delete(id);
+      aliasDb?.deleteByFactId(id);
       deleted++;
     }
     merged++;

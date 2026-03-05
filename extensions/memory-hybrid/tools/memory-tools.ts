@@ -927,6 +927,7 @@ export function registerMemoryTools(
 
             if (classification.action === "DELETE" && classification.targetId) {
               factsDb.supersede(classification.targetId, null);
+              aliasDb?.deleteByFactId(classification.targetId);
               return {
                 content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
                 details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
@@ -961,6 +962,7 @@ export function registerMemoryTools(
                   sourceSessions: api.context?.sessionId ?? undefined,
                 });
                 factsDb.supersede(classification.targetId, newEntry.id);
+                aliasDb?.deleteByFactId(classification.targetId);
 
                 const finalImportance = Math.max(importance, oldFact.importance);
                 try {
@@ -1086,6 +1088,7 @@ export function registerMemoryTools(
         });
         if (supersedes?.trim()) {
           factsDb.supersede(supersedes.trim(), entry.id);
+          aliasDb?.deleteByFactId(supersedes.trim());
         }
 
         try {
@@ -1362,6 +1365,7 @@ export function registerMemoryTools(
             });
             api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
           }
+          aliasDb?.deleteByFactId(resolvedId);
 
           if (!sqlDeleted && !lanceDeleted) {
             if (lanceError) {
@@ -1439,6 +1443,7 @@ export function registerMemoryTools(
               });
               api.logger.warn(`memory-hybrid: LanceDB delete during supersede failed: ${err}`);
             }
+            aliasDb?.deleteByFactId(id);
             return {
               content: [
                 {

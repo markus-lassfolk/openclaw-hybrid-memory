@@ -403,6 +403,7 @@ export function initializeDatabases(
             vectorDb,
             embeddings,
             credentialsDb,
+            aliasDb,
             migrationFlagPath,
             markDone: false, // Flag already created atomically above
           });

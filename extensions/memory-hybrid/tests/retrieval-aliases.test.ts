@@ -48,8 +48,8 @@ import {
   generateAliases,
   storeAliases,
   searchAliasStrategy,
-  cosineSimilarity,
 } from "../services/retrieval-aliases.js";
+import { cosineSimilarity } from "../services/ambient-retrieval.js";
 import type { AliasesConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------

@@ -66,7 +66,6 @@ import {
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
 import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "./services/retrieval-aliases.js";
-import { cosineSimilarity as aliasCosine } from "./services/ambient-retrieval.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
@@ -346,6 +345,7 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       proposalsDb,
       resolvedSqlitePath,
@@ -370,6 +370,7 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       currentAgentIdRef,
       lastProgressiveIndexIds,
@@ -489,7 +490,6 @@ export const _testing = {
   generateAliases,
   storeAliases,
   searchAliasStrategy,
-  aliasCosine,
 };
 
 export { versionInfo } from "./versionInfo.js";
