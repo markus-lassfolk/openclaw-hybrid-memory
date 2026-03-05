@@ -26,6 +26,7 @@ import {
   VAULT_POINTER_PREFIX,
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
+import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 import {
   getMemoryCategories,
   DECAY_CLASSES,
@@ -292,18 +293,15 @@ export function registerMemoryTools(
           scopeFilter,
           ...(asOfSec != null ? { asOf: asOfSec } : {}),
         };
-        let sqliteResults: SearchResult[] = [];
+
+        // Entity-targeted lookup (always runs when entity filter is set; separate from RRF)
+        let entityResults: SearchResult[] = [];
         if (entity) {
-          sqliteResults = factsDb.lookup(entity, undefined, tag, recallOpts);
+          entityResults = factsDb.lookup(entity, undefined, tag, recallOpts);
         }
 
-        const ftsResults = factsDb.search(query, limit, {
-          ...recallOpts,
-          reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
-        });
-        sqliteResults = [...sqliteResults, ...ftsResults];
-
-        let lanceResults: SearchResult[] = [];
+        // Compute embedding for semantic strategy (with optional HyDE query expansion)
+        let queryVector: number[] | null = null;
         if (!tag) {
           try {
             addOperationBreadcrumb("search", "vector-recall");
@@ -336,21 +334,80 @@ export function registerMemoryTools(
                 api.logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);
               }
             }
-            const vector = await embeddings.embed(textToEmbed);
-            lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
-            lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+            queryVector = await embeddings.embed(textToEmbed);
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "search",
-              operation: "vector-recall",
+              operation: "vector-embed",
               phase: "runtime",
-              backend: "lancedb",
             });
-            api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
           }
         }
 
-        let results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
+        // RRF multi-strategy retrieval pipeline (Issue #152)
+        // When tag is set, skip semantic strategy (same behaviour as before).
+        let results: SearchResult[] = [];
+        try {
+          const rrfStrategies = tag
+            ? cfg.retrieval.strategies.filter((s) => s !== "semantic")
+            : cfg.retrieval.strategies;
+          const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
+          const rrfOutput = await runRetrievalPipeline(
+            query,
+            queryVector,
+            factsDb.getRawDb(),
+            vectorDb,
+            factsDb,
+            rrfConfig,
+            cfg.retrieval.explicitBudgetTokens,
+            Math.floor(Date.now() / 1000),
+            tag ?? undefined,
+            includeSuperseded,
+            scopeFilter,
+            asOfSec ?? undefined,
+          );
+
+          // Merge entity-lookup results first, then append RRF results (deduped).
+          // Use orderedEntries from packed to respect the token budget; fall back to
+          // iterating fused when packed is empty (e.g. budget too small).
+          const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
+          results = [...entityResults];
+          const getByIdOpts = (asOfSec != null || scopeFilter)
+            ? { asOf: asOfSec ?? undefined, scopeFilter }
+            : undefined;
+          for (const fused of rrfOutput.fused) {
+            if (seenIds.has(fused.factId)) continue;
+            const entry = factsDb.getById(
+              fused.factId,
+              getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter } | undefined,
+            );
+            if (entry) {
+              results.push({ entry, score: fused.finalScore, backend: "sqlite" });
+              seenIds.add(fused.factId);
+            }
+          }
+          results.sort((a, b) => b.score - a.score);
+          results = results.slice(0, limit);
+        } catch (err) {
+          // Fallback: use legacy FTS + vector merge if RRF pipeline fails
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "search",
+            operation: "rrf-pipeline",
+            phase: "runtime",
+          });
+          api.logger.warn(`memory-hybrid: RRF pipeline failed, falling back to legacy merge: ${err}`);
+          const ftsResults = factsDb.search(query, limit, {
+            ...recallOpts,
+            reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+          });
+          let lanceResults: SearchResult[] = [];
+          if (queryVector) {
+            lanceResults = await vectorDb.search(queryVector, limit * 3, 0.3);
+            lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+          }
+          results = mergeResults([...entityResults, ...ftsResults], lanceResults, limit, factsDb);
+        }
 
         // Exclude COLD tier when includeCold is false (Lance results may include cold facts)
         if (!includeCold && results.length > 0) {
@@ -975,7 +1032,8 @@ export function registerMemoryTools(
         walRemove(walEntryId, api.logger);
 
         // Contradiction detection (Issue #157): check for same entity+key, different value
-        const contradictions = factsDb.detectContradictions(entry.id, entity ?? null, key ?? null, value ?? null);
+        // Pass the stored fact's scope so detection stays within the same scope boundary.
+        const contradictions = factsDb.detectContradictions(entry.id, entity ?? null, key ?? null, value ?? null, entry.scope ?? null, entry.scopeTarget ?? null);
         for (const { contradictionId, oldFactId } of contradictions) {
           if (eventLog) {
             eventLog.append({

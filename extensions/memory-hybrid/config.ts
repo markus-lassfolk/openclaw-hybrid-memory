@@ -246,6 +246,24 @@ export type SearchConfig = {
   hydeModel?: string;
 };
 
+/** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */
+export type RetrievalConfig = {
+  /** Active retrieval strategies (default: ["semantic", "fts5", "graph"]). */
+  strategies: Array<"semantic" | "fts5" | "graph">;
+  /** RRF k constant (default 60). Higher = less rank-position sensitivity. */
+  rrf_k: number;
+  /** Token budget for ambient (auto-recall) context injection (default 2000). */
+  ambientBudgetTokens: number;
+  /** Token budget for explicit (tool call) context injection (default 4000). */
+  explicitBudgetTokens: number;
+  /** Max hops for graph walk spreading activation (default 2). Used when #145 is implemented. */
+  graphWalkDepth: number;
+  /** Top-K candidates from semantic search passed to RRF (default 20). */
+  semanticTopK: number;
+  /** Top-K candidates from FTS5 search passed to RRF (default 20). Independent of semanticTopK. */
+  fts5TopK: number;
+};
+
 /** Ingest workspace files: index markdown files as facts for search */
 export type IngestConfig = {
   /** Glob patterns relative to workspace (e.g. ["skills/**\/*.md", "TOOLS.md"]) */
@@ -372,6 +390,8 @@ export type HybridMemoryConfig = {
   ingest?: IngestConfig;
   /** Optional: search tweaks (HyDE query expansion) */
   search?: SearchConfig;
+  /** Multi-strategy RRF retrieval pipeline configuration (Issue #152). */
+  retrieval: RetrievalConfig;
   /** Optional: self-correction analysis — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
   selfCorrection?: SelfCorrectionConfig;
   /** Multi-agent memory scoping — dynamic agent detection and scope defaults (default: orchestratorId="main", defaultStoreScope="global") */
@@ -1528,6 +1548,44 @@ export const hybridConfigSchema = {
           }
         : undefined;
 
+    // Parse retrieval pipeline config (Issue #152: RRF scoring pipeline)
+    const retrievalRaw = cfg.retrieval as Record<string, unknown> | undefined;
+    const VALID_STRATEGIES = ["semantic", "fts5", "graph"] as const;
+    const parsedStrategies =
+      Array.isArray(retrievalRaw?.strategies)
+        ? (retrievalRaw.strategies as string[]).filter(
+            (s): s is "semantic" | "fts5" | "graph" =>
+              typeof s === "string" && VALID_STRATEGIES.includes(s as typeof VALID_STRATEGIES[number]),
+          )
+        : (["semantic", "fts5", "graph"] as Array<"semantic" | "fts5" | "graph">);
+    const retrieval: RetrievalConfig = {
+      strategies: parsedStrategies.length > 0 ? parsedStrategies : ["semantic", "fts5", "graph"],
+      rrf_k:
+        typeof retrievalRaw?.rrf_k === "number" && retrievalRaw.rrf_k > 0
+          ? Math.floor(retrievalRaw.rrf_k)
+          : 60,
+      ambientBudgetTokens:
+        typeof retrievalRaw?.ambientBudgetTokens === "number" && retrievalRaw.ambientBudgetTokens > 0
+          ? Math.floor(retrievalRaw.ambientBudgetTokens)
+          : 2000,
+      explicitBudgetTokens:
+        typeof retrievalRaw?.explicitBudgetTokens === "number" && retrievalRaw.explicitBudgetTokens > 0
+          ? Math.floor(retrievalRaw.explicitBudgetTokens)
+          : 4000,
+      graphWalkDepth:
+        typeof retrievalRaw?.graphWalkDepth === "number" && retrievalRaw.graphWalkDepth > 0
+          ? Math.floor(retrievalRaw.graphWalkDepth)
+          : 2,
+      semanticTopK:
+        typeof retrievalRaw?.semanticTopK === "number" && retrievalRaw.semanticTopK > 0
+          ? Math.floor(retrievalRaw.semanticTopK)
+          : 20,
+      fts5TopK:
+        typeof retrievalRaw?.fts5TopK === "number" && retrievalRaw.fts5TopK > 0
+          ? Math.floor(retrievalRaw.fts5TopK)
+          : 20,
+    };
+
     // Parse active task working memory config
     const activeTaskRaw = cfg.activeTask as Record<string, unknown> | undefined;
 
@@ -1618,6 +1676,7 @@ export const hybridConfigSchema = {
       languageKeywords,
       ingest,
       search,
+      retrieval,
       selfCorrection,
       multiAgent,
       errorReporting,

@@ -125,9 +125,14 @@ export function searchFts(
      * When omitted, all columns are searched.
      */
     columns?: Array<(typeof FTS_COLUMNS)[number]>;
+    /**
+     * When false (default), superseded and expired facts are excluded from results.
+     * Pass true only when explicitly querying historical/superseded content.
+     */
+    includeSuperseded?: boolean;
   } = {},
 ): FtsSearchResult[] {
-  const { limit = 20, entityFilter, tagFilter, columns } = options;
+  const { limit = 20, entityFilter, tagFilter, columns, includeSuperseded = false } = options;
 
   const ftsQuery = buildFts5Query(query);
   if (!ftsQuery) return [];
@@ -142,6 +147,11 @@ export function searchFts(
   const extraClauses: string[] = [];
   const params: Record<string, unknown> = { query: matchExpr, limit };
 
+  if (!includeSuperseded) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
+    params.nowSec = nowSec;
+  }
   if (entityFilter && entityFilter.trim()) {
     extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
     params.entityFilter = entityFilter.trim();
