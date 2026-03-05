@@ -535,7 +535,7 @@ export class FactsDB {
       .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`)
       .get() as { sql: string } | undefined;
     
-    if (tableInfo && tableInfo.sql.includes('target_fact_id') && tableInfo.sql.includes('ON DELETE CASCADE')) {
+    if (tableInfo && tableInfo.sql.includes('FOREIGN KEY (target_fact_id)') && tableInfo.sql.includes('ON DELETE CASCADE')) {
       // Table exists with old CASCADE FK - need to recreate it
       this.liveDb.exec(`
         CREATE TABLE memory_links_new (

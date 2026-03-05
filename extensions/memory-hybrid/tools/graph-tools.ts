@@ -66,6 +66,14 @@ export function registerGraphTools(
               details: { error: "target_not_found", id: targetFact },
             };
           }
+          if (linkType === "CONTRADICTS") {
+            const contradictionId = factsDb.recordContradiction(sourceFact, targetFact);
+            const msg = `Created bidirectional ${linkType} link from "${src.text.slice(0, 50)}${src.text.length > 50 ? "…" : ""}" to "${tgt.text.slice(0, 50)}${tgt.text.length > 50 ? "…" : ""}" and reduced confidence`;
+            return {
+              content: [{ type: "text", text: msg }],
+              details: { contradictionId, sourceFact, targetFact, linkType },
+            };
+          }
           const linkId = factsDb.createLink(sourceFact, targetFact, linkType, strength);
           const msg = `Created ${linkType} link from "${src.text.slice(0, 50)}${src.text.length > 50 ? "…" : ""}" to "${tgt.text.slice(0, 50)}${tgt.text.length > 50 ? "…" : ""}" (strength: ${strength})`;
           return {
