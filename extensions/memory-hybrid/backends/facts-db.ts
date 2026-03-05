@@ -28,6 +28,7 @@ export interface ContradictionRecord {
   detectedAt: string;
   resolved: boolean;
   resolution: "superseded" | "kept" | "merged" | null;
+  oldFactOriginalConfidence?: number;
 }
 
 export class FactsDB {
@@ -339,6 +340,14 @@ export class FactsDB {
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_new ON contradictions(fact_id_new)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_old ON contradictions(fact_id_old)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_resolved ON contradictions(resolved) WHERE resolved = 0`);
+    
+    // Add old_fact_original_confidence column if it doesn't exist (for unbiased comparison)
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(contradictions)`)
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
+      this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
+    }
   }
 
   /**
@@ -2785,12 +2794,18 @@ export class FactsDB {
     const detectedAt = new Date().toISOString();
 
     const tx = this.liveDb.transaction(() => {
+      // Get the old fact's current confidence before reducing it
+      const oldFactRow = this.liveDb
+        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+        .get(factIdOld) as { confidence: number } | undefined;
+      const originalConfidence = oldFactRow?.confidence ?? 1.0;
+
       this.liveDb
         .prepare(
-          `INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at, resolved, resolution)
-           VALUES (?, ?, ?, ?, 0, NULL)`,
+          `INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at, resolved, resolution, old_fact_original_confidence)
+           VALUES (?, ?, ?, ?, 0, NULL, ?)`,
         )
-        .run(id, factIdNew, factIdOld, detectedAt);
+        .run(id, factIdNew, factIdOld, detectedAt, originalConfidence);
 
       this.createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
 
@@ -2850,6 +2865,7 @@ export class FactsDB {
       detectedAt: r.detected_at as string,
       resolved: (r.resolved as number) === 1,
       resolution: (r.resolution as "superseded" | "kept" | "merged" | null) ?? null,
+      oldFactOriginalConfidence: r.old_fact_original_confidence as number | undefined,
     }));
   }
 
@@ -2903,18 +2919,23 @@ export class FactsDB {
       if (!newFact || !oldFact) {
         // One or both facts deleted — treat as superseded
         this.resolveContradiction(c.id, "superseded");
+        if (oldFact) {
+          this.supersede(c.factIdOld, c.factIdNew);
+        }
         autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
         continue;
       }
 
       const newConf = newFact.confidence ?? 1.0;
-      const oldConf = oldFact.confidence ?? 1.0;
+      // Use the original confidence before system reduction, if available
+      const oldConf = c.oldFactOriginalConfidence ?? oldFact.confidence ?? 1.0;
       const newIsNewer = newFact.createdAt >= oldFact.createdAt;
       const newIsHigherConf = newConf > oldConf;
       const newIsFromUser = newFact.source === "conversation" || newFact.source === "cli";
 
       if (newIsNewer && newIsHigherConf && newIsFromUser) {
         this.resolveContradiction(c.id, "superseded");
+        this.supersede(c.factIdOld, c.factIdNew);
         autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
       } else {
         ambiguous.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
