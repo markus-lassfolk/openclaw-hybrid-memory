@@ -196,6 +196,7 @@ export interface DatabaseContext {
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
+  initialized: Promise<void>;
 }
 
 /**
@@ -373,7 +374,7 @@ export function initializeDatabases(
 
   // Prerequisite checks (async, don't block plugin start): verify keys and model access
   // Health status can be queried by tools to fail gracefully instead of throwing at runtime.
-  void (async () => {
+  const initialized = (async () => {
     try {
       await embeddings.embed("verify");
       health.embeddingsOk = true;
@@ -579,6 +580,7 @@ export function initializeDatabases(
     resolvedLancePath,
     resolvedSqlitePath,
     health,
+    initialized,
   };
 }
 

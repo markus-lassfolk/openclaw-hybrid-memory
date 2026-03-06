@@ -21,6 +21,7 @@ export interface HealthPluginContext {
   cfg: HybridMemoryConfig;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
+  initialized?: Promise<void>;
 }
 
 export interface HealthReport {
@@ -302,6 +303,9 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
       parameters: Type.Object({}),
       async execute(_toolCallId: string, _params: Record<string, unknown>) {
         try {
+          if (ctx.initialized) {
+            await ctx.initialized;
+          }
           const report = buildHealthReport(factsDb, resolvedSqlitePath, resolvedLancePath, cfg);
 
           const lines: string[] = [
