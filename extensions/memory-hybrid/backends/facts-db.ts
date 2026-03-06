@@ -947,6 +947,12 @@ export class FactsDB {
       .run(id, nowSec, hit ? 1 : 0);
   }
 
+  /** Prune recall_log entries older than N days to prevent unbounded growth (Issue #148). */
+  pruneRecallLog(olderThanDays = 30): number {
+    const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 24 * 3600;
+    return this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes;
+  }
+
   /** Read the last stored embedding provider+model metadata (Issue #153). */
   getEmbeddingMeta(): { provider: string; model: string } | null {
     const row = this.liveDb

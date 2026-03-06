@@ -449,7 +449,8 @@ export async function runRetrievalPipeline(
         scopedFused.sort((a, b) => b.finalScore - a.finalScore);
       }
     } catch (err) {
-      console.warn("[retrieval] cluster boost failed:", err);
+      // Log via stderr without leaking query content; cluster boost is non-critical
+      console.error("[retrieval] cluster boost failed");
     }
   }
 
