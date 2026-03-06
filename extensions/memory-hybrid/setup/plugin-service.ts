@@ -331,7 +331,10 @@ export function createPluginService(ctx: PluginServiceContext) {
         })();
         const dbDir = dirname(resolvedSqlitePath);
 
+        let observerRunning = false;
         const runObserver = async () => {
+          if (observerRunning) return;
+          observerRunning = true;
           try {
             const result = await runPassiveObserver(
               factsDb,
@@ -356,6 +359,8 @@ export function createPluginService(ctx: PluginServiceContext) {
               subsystem: "plugin-service",
               operation: "passive-observer-run",
             });
+          } finally {
+            observerRunning = false;
           }
         };
 

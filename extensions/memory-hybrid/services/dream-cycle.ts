@@ -17,6 +17,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry } from "../backends/event-log.js";
+import { EVENT_SKIP_SENTINEL } from "../backends/event-log.js";
 import type { MemoryCategory } from "../types/memory.js";
 import {
   runReflection,
@@ -35,6 +36,8 @@ export interface DreamCycleConfig {
   reflectWindowDays: number;
   pruneMode: DreamCyclePruneMode;
   model: string;
+  /** Fallback models for LLM calls (reflection, rules). Derived from getLLMModelPreference by caller. */
+  fallbackModels?: string[];
   consolidateAfterDays: number;
 }
 
@@ -160,9 +163,9 @@ export async function runEpisodicConsolidation(
       .filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
-      // Mark events as consolidated with a sentinel value to prevent re-processing
-      // Use a namespaced sentinel to distinguish from real fact IDs
-      eventLog.markConsolidated(groupEvents.map((e) => e.id), "__skipped_no_text__");
+      // Mark events as consolidated with the skip sentinel to prevent re-processing.
+      // EVENT_SKIP_SENTINEL is a non-UUID string so it cannot be mistaken for a real fact ID.
+      eventLog.markConsolidated(groupEvents.map((e) => e.id), EVENT_SKIP_SENTINEL);
       eventsConsolidated += groupEvents.length;
       continue;
     }
@@ -351,7 +354,7 @@ export async function runDreamCycle(
         window: config.reflectWindowDays,
         dryRun: false,
         model: config.model,
-        fallbackModels: [],
+        fallbackModels: config.fallbackModels ?? [],
       },
       logger,
     );
@@ -374,7 +377,7 @@ export async function runDreamCycle(
         vectorDb,
         embeddings,
         openai,
-        { dryRun: false, model: config.model, fallbackModels: [] },
+        { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [] },
         logger,
       );
       rulesGenerated = rulesResult.rulesStored;

@@ -33,6 +33,12 @@ export interface EventLogEntry {
   createdAt: string;
 }
 
+/**
+ * Sentinel value for markConsolidated() when events are skipped (e.g., no extractable text).
+ * Uses a non-UUID format so it cannot be mistaken for a real fact ID in any query.
+ */
+export const EVENT_SKIP_SENTINEL = "SKIP:no_text";
+
 export class EventLog {
   private db: Database.Database;
   private readonly dbPath: string;
@@ -65,10 +71,8 @@ export class EventLog {
   }
 
   private get liveDb(): Database.Database {
-    if (!this.db.open) {
-      this.db = new Database(this.dbPath);
-      this.db.pragma("journal_mode = WAL");
-      this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    if (this.closed) {
+      throw new Error("EventLog is closed");
     }
     return this.db;
   }
@@ -176,7 +180,7 @@ export class EventLog {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /** Mark a set of events as consolidated into the given fact id. */
+  /** Mark a set of events as consolidated. Pass null for factId when events are skipped (e.g., no extractable text). */
   markConsolidated(eventIds: string[], factId: string): void {
     const stmt = this.liveDb.prepare(
       `UPDATE event_log SET consolidated_into = ? WHERE id = ?`,

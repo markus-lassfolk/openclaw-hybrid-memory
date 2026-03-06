@@ -192,7 +192,7 @@ export interface DatabaseContext {
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
-  eventLog: EventLog;
+  eventLog: EventLog | null;
   aliasDb: AliasDB | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
@@ -311,9 +311,14 @@ export function initializeDatabases(
     api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
   }
 
+  // EventLog: initialize only when at least one feature that writes to it is enabled.
+  // This avoids creating event-log.db for users who haven't opted in to episodic features.
+  const eventLogEnabled = cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede === true;
   const eventLogPath = join(dirname(resolvedSqlitePath), "event-log.db");
-  const eventLog = new EventLog(eventLogPath);
-  api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
+  const eventLog: EventLog | null = eventLogEnabled ? new EventLog(eventLogPath) : null;
+  if (eventLog) {
+    api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
+  }
 
   // Initialize alias DB (Issue #149)
   let aliasDb: AliasDB | null = null;

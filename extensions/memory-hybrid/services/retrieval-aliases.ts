@@ -206,6 +206,10 @@ export async function storeAliases(
 
   const aliases = await generateAliases(factText, openai, model, config.maxAliases);
 
+  // Delete any existing aliases for this fact before inserting fresh ones,
+  // making alias generation idempotent and bounding the table to maxAliases rows per fact.
+  aliasDb.deleteByFactId(factId);
+
   for (const alias of aliases) {
     try {
       const vec = await embeddings.embed(alias);

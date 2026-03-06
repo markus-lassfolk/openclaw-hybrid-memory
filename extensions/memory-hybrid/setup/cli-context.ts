@@ -294,7 +294,7 @@ function buildCliContextServices(
         }),
       ),
     runDreamCycle: () => {
-      const { defaultModel } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
       return runDreamCycle(
         factsDb,
@@ -308,6 +308,7 @@ function buildCliContextServices(
           reflectWindowDays: cfg.nightlyCycle.reflectWindowDays,
           pruneMode: cfg.nightlyCycle.pruneMode,
           model: dreamModel,
+          fallbackModels,
           consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
         },
         logSink,

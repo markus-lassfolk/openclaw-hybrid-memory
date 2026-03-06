@@ -132,32 +132,38 @@ describe("CONTRADICTS bidirectional", () => {
     expect(contradicts[0].targetFactId).toBe(factA.id);
   });
 
-  it("recordContradiction creates reverse link (old → new) for bidirectionality", () => {
+  it("recordContradiction creates only a directed link (new → old), not a reverse link", () => {
     const factA = storeFact("Alice is 30 years old", "alice", "age", "30");
     const factB = storeFact("Alice is 31 years old", "alice", "age", "31");
 
     db.recordContradiction(factB.id, factA.id);
 
+    // Only the directed new→old link should exist
     const outboundFromA = db.getLinksFrom(factA.id);
     const contradicts = outboundFromA.filter((l) => l.linkType === "CONTRADICTS");
-    expect(contradicts).toHaveLength(1);
-    expect(contradicts[0].targetFactId).toBe(factB.id);
+    expect(contradicts).toHaveLength(0); // No reverse link — old does NOT point to new
+
+    // The directed new→old link exists
+    const outboundFromB = db.getLinksFrom(factB.id);
+    const contradictsFromB = outboundFromB.filter((l) => l.linkType === "CONTRADICTS");
+    expect(contradictsFromB).toHaveLength(1);
+    expect(contradictsFromB[0].targetFactId).toBe(factA.id);
   });
 
-  it("detectContradictions creates bidirectional CONTRADICTS links", () => {
+  it("detectContradictions creates a single directed CONTRADICTS link (new → old)", () => {
     const factA = storeFact("Bob likes cats", "bob", "preference", "cats");
     const factB = storeFact("Bob likes dogs", "bob", "preference", "dogs");
 
     db.detectContradictions(factB.id, "bob", "preference", "dogs");
 
-    // Both directions should exist
+    // Only the directed new→old link should exist
     const fromB = db.getLinksFrom(factB.id).filter((l) => l.linkType === "CONTRADICTS");
     const fromA = db.getLinksFrom(factA.id).filter((l) => l.linkType === "CONTRADICTS");
 
     expect(fromB).toHaveLength(1);
     expect(fromB[0].targetFactId).toBe(factA.id);
-    expect(fromA).toHaveLength(1);
-    expect(fromA[0].targetFactId).toBe(factB.id);
+    // No reverse link from factA to factB — isContradicted() handles both directions via the contradictions table
+    expect(fromA).toHaveLength(0);
   });
 
   it("both facts are marked as contradicted after bidirectional link creation", () => {

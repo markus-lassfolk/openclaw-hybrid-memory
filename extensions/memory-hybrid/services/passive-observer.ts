@@ -152,6 +152,8 @@ export async function loadCursors(cursorsPath: string): Promise<SessionCursors> 
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const cursors: SessionCursors = {}
       for (const [k, v] of Object.entries(parsed)) {
+        // Skip the reserved _failures key
+        if (k === '_failures') continue
         if (typeof v === 'number' && v >= 0) {
           cursors[k] = v
         }
@@ -164,10 +166,37 @@ export async function loadCursors(cursorsPath: string): Promise<SessionCursors> 
   }
 }
 
-export async function saveCursors(cursorsPath: string, cursors: SessionCursors): Promise<void> {
+/** Load the consecutive-failure counts from the cursors file (stored under the '_failures' key). */
+export async function loadFailureCounts(cursorsPath: string): Promise<Record<string, number>> {
+  try {
+    const raw = await readFile(cursorsPath, 'utf-8')
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const failures = parsed._failures
+    if (failures && typeof failures === 'object' && !Array.isArray(failures)) {
+      const result: Record<string, number> = {}
+      for (const [k, v] of Object.entries(failures as Record<string, unknown>)) {
+        if (typeof v === 'number' && v >= 0) result[k] = v
+      }
+      return result
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+export async function saveCursors(
+  cursorsPath: string,
+  cursors: SessionCursors,
+  failures?: Record<string, number>,
+): Promise<void> {
   const dir = dirname(cursorsPath)
   await mkdir(dir, { recursive: true })
-  await writeFile(cursorsPath, JSON.stringify(cursors, null, 2), 'utf-8')
+  const payload: Record<string, unknown> = { ...cursors }
+  if (failures && Object.keys(failures).length > 0) {
+    payload._failures = failures
+  }
+  await writeFile(cursorsPath, JSON.stringify(payload, null, 2), 'utf-8')
 }
 
 // ---------------------------------------------------------------------------
@@ -211,8 +240,9 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
 
     const importanceRaw =
       typeof obj.importance === 'number' ? obj.importance : parseFloat(String(obj.importance))
-    // Default to 0.5 when importance is missing/invalid so facts are not silently dropped
-    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.5
+    // Default to 0.0 when importance is missing/invalid, forcing the LLM to explicitly assign
+    // a value above minImportance rather than silently passing the threshold.
+    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.0
 
     const categoryRaw =
       typeof obj.category === 'string' ? obj.category.toLowerCase().trim() : 'fact'
@@ -284,7 +314,12 @@ export async function runPassiveObserver(
 
   const cursorsPath = getCursorsPath(opts.dbDir)
   const cursors = await loadCursors(cursorsPath)
+  const failureCounts = await loadFailureCounts(cursorsPath)
   let cursorsChanged = false
+
+  // After this many consecutive LLM failures for the same session content, advance
+  // the cursor past it to prevent an infinite retry loop wasting LLM tokens.
+  const MAX_CONSECUTIVE_FAILURES = 3
 
   // ---------------------------------------------------------------------------
   // Phase 1: scan all session files, count sessions, detect whether any have
@@ -332,15 +367,33 @@ export async function runPassiveObserver(
   // ---------------------------------------------------------------------------
   // Phase 2: load recent fact vectors for dedup (only once per run, now that
   // we know there is new content to process).
+  // Cap at 50 facts and use embedBatch() to avoid sequential API calls.
   // ---------------------------------------------------------------------------
   const recentFacts = factsDb.getRecentFacts(7, { excludeCategories: [] }) // last 7 days
+  const recentFactsSlice = recentFacts.slice(0, 50)
   const recentVectors: (number[] | null)[] = []
   const recentFactIds: (string | null)[] = []
-  for (const f of recentFacts.slice(0, 200)) {
-    try {
-      recentVectors.push(normalizeVector(await embeddings.embed(f.text)))
-      recentFactIds.push(f.id)
-    } catch {
+
+  const PHASE2_TIMEOUT_MS = 30_000
+  try {
+    const batchPromise = embeddings.embedBatch(recentFactsSlice.map((f) => f.text))
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Phase 2 embedding timeout')), PHASE2_TIMEOUT_MS),
+    )
+    const batchVectors = await Promise.race([batchPromise, timeoutPromise])
+    for (let i = 0; i < recentFactsSlice.length; i++) {
+      try {
+        recentVectors.push(normalizeVector(batchVectors[i]))
+        recentFactIds.push(recentFactsSlice[i].id)
+      } catch {
+        recentVectors.push(null)
+        recentFactIds.push(null)
+      }
+    }
+  } catch (err) {
+    logger.warn(`memory-hybrid: passive-observer — Phase 2 embedding failed or timed out, dedup disabled: ${err}`)
+    // Fill with nulls so dedup is skipped but Phase 3 can still proceed
+    for (let i = 0; i < recentFactsSlice.length; i++) {
       recentVectors.push(null)
       recentFactIds.push(null)
     }
@@ -523,16 +576,30 @@ export async function runPassiveObserver(
       }
     }
 
-    // Advance cursor to end of file only if at least one chunk was successfully processed
+    // Advance cursor to end of file only if at least one chunk was successfully processed.
+    // On failure, increment the consecutive failure count. After MAX_CONSECUTIVE_FAILURES
+    // consecutive failures, advance the cursor anyway to prevent an infinite retry loop.
     if (anyChunkSucceeded) {
       cursors[sessionId] = fileBytelen
+      delete failureCounts[sessionId]
       cursorsChanged = true
+    } else {
+      const failures = (failureCounts[sessionId] ?? 0) + 1
+      failureCounts[sessionId] = failures
+      if (failures >= MAX_CONSECUTIVE_FAILURES) {
+        logger.warn(
+          `memory-hybrid: passive-observer — skipping session ${sessionId} after ${failures} consecutive failures (advancing cursor to avoid infinite retry)`,
+        )
+        cursors[sessionId] = fileBytelen
+        delete failureCounts[sessionId]
+        cursorsChanged = true
+      }
     }
   }
 
-  if (cursorsChanged) {
+  if (cursorsChanged || Object.keys(failureCounts).length > 0) {
     try {
-      await saveCursors(cursorsPath, cursors)
+      await saveCursors(cursorsPath, cursors, failureCounts)
     } catch (err) {
       logger.warn(`memory-hybrid: passive-observer — failed to save cursors: ${err}`)
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

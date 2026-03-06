@@ -277,13 +277,16 @@ export async function runRetrievalPipeline(
     );
   }
 
-  const strategyResults = await Promise.all(strategyPromises);
+  const strategyResults = await Promise.allSettled(strategyPromises);
 
-  // Build strategy map
+  // Build strategy map — ignore rejected (hung/failed) strategies so other results still return.
   const strategyMap = new Map<string, RankedResult[]>();
-  for (const [name, results] of strategyResults) {
-    if (results.length > 0) {
-      strategyMap.set(name, results);
+  for (const settled of strategyResults) {
+    if (settled.status === "fulfilled") {
+      const [name, results] = settled.value;
+      if (results.length > 0) {
+        strategyMap.set(name, results);
+      }
     }
   }
 
