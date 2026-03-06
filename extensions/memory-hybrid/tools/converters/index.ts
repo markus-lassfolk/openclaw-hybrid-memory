@@ -45,9 +45,9 @@ function allConverters(): Converter[] {
 /**
  * Find a converter for the given file path.
  *
- * Matches by file extension for unambiguous types (.csv, .json).
- * For YAML files, uses content sniffing to select the right converter
- * since multiple converters share the .yaml extension.
+ * Matches by file extension for unambiguous types (.csv).
+ * For YAML and JSON files, uses content sniffing to select the right converter
+ * since multiple converters share these extensions.
  */
 export function getConverter(filePath: string, content?: string): Converter | null {
   const ext = extname(filePath).toLowerCase();
@@ -58,7 +58,12 @@ export function getConverter(filePath: string, content?: string): Converter | nu
     return sniffYamlConverter(content, fileName);
   }
 
-  // For non-YAML extensions, first match wins
+  if (ext === ".json") {
+    if (content === undefined) return null;
+    return sniffJsonConverter(content);
+  }
+
+  // For non-YAML/JSON extensions, first match wins
   for (const converter of allConverters()) {
     if (converter.extensions.includes(ext)) {
       return converter;
@@ -99,4 +104,34 @@ function sniffYamlConverter(content: string, fileName: string): Converter | null
   }
 
   return null;
+}
+
+function sniffJsonConverter(content: string): Converter | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const obj = parsed as Record<string, unknown>;
+
+  // Zigbee2MQTT device database: object where keys look like IEEE addresses (0x...)
+  const keys = Object.keys(obj);
+  if (keys.length > 0 && keys.some((k) => k.startsWith("0x") || /^[0-9a-f]{16}$/i.test(k))) {
+    return zigbee2mqttConverter;
+  }
+
+  // Victron: has records/data arrays, or Victron-style fields
+  if (Array.isArray(obj["records"]) || Array.isArray(obj["data"])) {
+    return victronVrmConverter;
+  }
+  const keyStr = keys.join(" ").toLowerCase();
+  if (keyStr.includes("soc") || keyStr.includes("pv") || keyStr.includes("battery") || keyStr.includes("victron")) {
+    return victronVrmConverter;
+  }
+
+  // Default to Victron for unrecognized JSON
+  return victronVrmConverter;
 }

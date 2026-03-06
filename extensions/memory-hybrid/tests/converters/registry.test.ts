@@ -72,6 +72,24 @@ describe("converter registry", () => {
     expect(result.metadata["source"]).toBe("victron-vrm-converter");
   });
 
+  it("returns Zigbee2MQTT converter for .json device database", () => {
+    const jsonContent = JSON.stringify({
+      "0x00158d0003012345": {
+        friendly_name: "Living Room PIR",
+        model: "RTCGQ11LM",
+        manufacturer: "Aqara",
+      },
+      "0x000b57fffec6a1b2": {
+        friendly_name: "Garden Light",
+        model: "GL-C-008",
+      },
+    });
+    const converter = getConverter("/config/devices.json", jsonContent);
+    expect(converter).not.toBeNull();
+    const result = converter!.convert(jsonContent, "/config/devices.json");
+    expect(result.metadata["source"]).toBe("zigbee2mqtt-converter");
+  });
+
   it("supports registering custom converters", () => {
     const customConverter: Converter = {
       extensions: [".testfmt"],
