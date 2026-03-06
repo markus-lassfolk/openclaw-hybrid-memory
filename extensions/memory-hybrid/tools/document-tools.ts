@@ -73,10 +73,9 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         const isDryRun = params.dryRun === true;
 
         // --- Validate file ---
-        let fileSize: number;
+        let stat: ReturnType<typeof statSync>;
         try {
-          const stat = statSync(filePath);
-          fileSize = stat.size;
+          stat = statSync(filePath);
         } catch {
           return {
             content: [{ type: "text", text: `Error: File not found or inaccessible: ${filePath}` }],
@@ -84,6 +83,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           };
         }
 
+        const fileSize = stat.size;
         if (fileSize > docCfg.maxDocumentSize) {
           const maxMB = (docCfg.maxDocumentSize / 1024 / 1024).toFixed(0);
           const fileMB = (fileSize / 1024 / 1024).toFixed(1);
@@ -99,13 +99,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         }
 
         // --- Dedup check: hash the file path + mtime for a lightweight fingerprint ---
-        let mtimeMs = 0;
-        try {
-          const stat2 = statSync(filePath);
-          mtimeMs = stat2.mtimeMs;
-        } catch {
-          // fallback: mtime 0 if stat fails
-        }
+        const mtimeMs = stat.mtimeMs ?? 0;
         const fingerprint = createHash("sha256")
           .update(`${filePath}:${mtimeMs}:${fileSize}`)
           .digest("hex")
@@ -182,10 +176,20 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         }
 
         // --- Store each chunk ---
+        // Sanitize tag values from headings/filenames: tags are stored comma-separated, so commas would corrupt parseTags.
+        const tagSafe = (s: string): string => {
+          const t = s
+            .toLowerCase()
+            .replace(/\s+/g, "-")
+            .replace(/,/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "");
+          return t || s.toLowerCase();
+        };
         const fileName = basename(filePath);
         const sourceName = `document:${fingerprint}`;
         const baseTags: string[] = [
-          ...(docCfg.autoTag ? [fileName] : []),
+          ...(docCfg.autoTag ? [tagSafe(fileName)] : []),
           "document",
           ...extraTags,
         ];
@@ -194,9 +198,10 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         let errorCount = 0;
 
         for (const chunk of chunks) {
+          const headingTag = chunk.sectionHeading ? tagSafe(chunk.sectionHeading) : null;
           const chunkTags = [
             ...baseTags,
-            ...(chunk.sectionHeading ? [chunk.sectionHeading.toLowerCase().replace(/\s+/g, "-")] : []),
+            ...(headingTag ? [headingTag] : []),
             ...extractTags(chunk.text, title),
           ];
 
