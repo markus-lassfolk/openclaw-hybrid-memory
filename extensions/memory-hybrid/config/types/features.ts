@@ -113,6 +113,36 @@ export type FutureDateProtectionConfig = {
   maxFreezeDays: number;
 };
 
+/** Workflow tracking: structured tool-sequence capture and pattern learning (Issue #209). */
+export type WorkflowTrackingConfig = {
+  /** Enable workflow trace recording (default: false — opt-in). */
+  enabled: boolean;
+  /** Maximum traces recorded per day across all sessions (default: 100). */
+  maxTracesPerDay: number;
+  /** Days to retain traces before auto-pruning (default: 90). */
+  retentionDays: number;
+  /** Optional: model used for goal extraction from conversation context. */
+  goalExtractionModel?: string;
+};
+
+/** Workflow crystallization: auto-generate AgentSkill SKILL.md files from repeated patterns (Issue #208). */
+export type CrystallizationConfig = {
+  /** Enable crystallization cycle (default: false — opt-in). */
+  enabled: boolean;
+  /** Minimum usage count for a pattern to be considered (default: 5). */
+  minUsageCount: number;
+  /** Minimum success rate for a pattern to be considered (default: 0.7). */
+  minSuccessRate: number;
+  /** When true, auto-approve and write skills without human review (default: false). */
+  autoApprove: boolean;
+  /** Output directory for generated skills, ~ is expanded (default: '~/.openclaw/workspace/skills/auto'). */
+  outputDir: string;
+  /** Maximum number of approved crystallized skills (default: 50). */
+  maxCrystallized: number;
+  /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
+  pruneUnusedDays: number;
+};
+
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */
 export type DocumentsConfig = {
   /** Enable document ingestion tool (default: false — opt-in) */
@@ -129,4 +159,16 @@ export type DocumentsConfig = {
   autoTag: boolean;
   /** Optional allowlist of absolute directory paths; when set, ingestion only allows files under these paths */
   allowedPaths?: string[];
+};
+
+/** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210). */
+export type SelfExtensionConfig = {
+  /** Enable self-extension gap detection and proposal generation (default: false — opt-in). */
+  enabled: boolean;
+  /** Minimum times a gap must be observed before proposing a tool (default: 3). */
+  minGapFrequency: number;
+  /** Minimum number of tool calls saved to qualify as a gap (default: 2). */
+  minToolSavings: number;
+  /** Maximum number of pending proposals allowed at any time (default: 20). */
+  maxProposals: number;
 };
