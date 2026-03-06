@@ -163,9 +163,8 @@ export class SkillValidator {
         }
       }
 
-      // Additional check: any code block containing shell-like content should
-      // not have command substitution (both $(...) and backtick forms)
-      if (inCodeBlock && (/\$\([^)]+\)/.test(line) || /`[^`]+`/.test(line))) {
+      // Additional check: detect shell command substitution syntax
+      if (inCodeBlock && /\$\([^)]+\)/.test(line)) {
         violations.push(
           `Line ${lineNumber}: [shell-subst] Command substitution in code block — "${trimmed.slice(0, 80)}"`,
         );

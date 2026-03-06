@@ -61,8 +61,8 @@ const DEFAULT_OPTIONS: GapDetectorOptions = {
 // ---------------------------------------------------------------------------
 
 /** Derive a camel_case tool name from a sequence of tool names.
- *  e.g. ["memory_recall", "memory_recall", "memory_recall"] → "memory_bulk_recall"
- *       ["exec", "exec", "exec"]                            → "exec_batch"
+ *  e.g. ["memory_recall", "memory_recall", "memory_recall"] → "memory_recall_bulk"
+ *       ["exec", "exec", "exec"]                            → "exec_bulk"
  */
 export function deriveToolNameFromSequence(toolSequence: string[]): string {
   if (toolSequence.length === 0) return "memory_custom_tool";

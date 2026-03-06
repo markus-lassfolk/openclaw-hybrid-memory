@@ -289,7 +289,7 @@ export class WorkflowStore {
 
   getSuccessRate(toolSequence: string[], similarityThreshold = 0.8): number {
     const allRows = this.db
-      .prepare("SELECT tool_sequence, outcome FROM workflow_traces")
+      .prepare("SELECT tool_sequence, outcome FROM workflow_traces ORDER BY created_at DESC LIMIT 1000")
       .all() as { tool_sequence: string; outcome: string }[];
 
     let total = 0;
@@ -322,7 +322,7 @@ export class WorkflowStore {
   }): WorkflowPattern[] {
     const threshold = options?.similarityThreshold ?? 0.8;
     const allRows = this.db
-      .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC")
+      .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC LIMIT 1000")
       .all() as { goal: string; tool_sequence: string; outcome: string; duration_ms: number }[];
 
     // Cluster by similarity
