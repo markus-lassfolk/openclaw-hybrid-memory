@@ -160,7 +160,7 @@ export class ToolProposalStore {
   updateStatus(id: string, status: ToolProposalStatus): ToolProposal | null {
     const now = new Date().toISOString();
     const result = this.db
-      .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = 'proposed'")
       .run(status, now, id);
 
     if (result.changes === 0) return null;

@@ -79,7 +79,6 @@ export function sequenceDistance(a: string[], b: string[]): number {
   const n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
-  if (a === b) return 0;
   // prev[j] = edit distance for a[0..i-1] and b[0..j]; curr[j] for current row
   let prev = Array.from({ length: n + 1 }, (_, j) => j);
   let curr: number[] = new Array(n + 1);
@@ -179,7 +178,7 @@ export class WorkflowStore {
     const goal = input.goal.slice(0, 500);
     const toolSequence = input.toolSequence
       .slice(0, 100)
-      .map((t) => String(t).slice(0, 64));
+      .map((t) => String(t).replace(/[\n\r`]/g, "").slice(0, 64));
     const keywords = input.goalKeywords
       ? [...new Set(input.goalKeywords.map(k => k.toLowerCase().trim()).filter(k => k.length > 0))]
       : extractGoalKeywords(goal);
@@ -253,6 +252,9 @@ export class WorkflowStore {
     if (!filter?.goal && filter?.limit && filter.limit > 0) {
       query += " LIMIT ?";
       params.push(filter.limit);
+    } else if (filter?.goal) {
+      query += " LIMIT ?";
+      params.push(PATTERNS_QUERY_LIMIT);
     }
 
     const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
