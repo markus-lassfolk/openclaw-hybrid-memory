@@ -869,6 +869,7 @@ export function registerMemoryTools(
             try {
               addOperationBreadcrumb("vector", "store-credential-pointer");
               const vector = await embeddings.embed(pointerText);
+              factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vector))) {
                 await vectorDb.store({
                   text: pointerText,
@@ -877,7 +878,6 @@ export function registerMemoryTools(
                   category: "technical",
                   id: pointerEntry.id,
                 });
-                factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -990,9 +990,11 @@ export function registerMemoryTools(
 
                 const finalImportance = Math.max(importance, oldFact.importance);
                 try {
-                  if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                  if (vector) {
                     factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                    if (!(await vectorDb.hasDuplicate(vector))) {
+                      await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                    }
                   }
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1118,15 +1120,17 @@ export function registerMemoryTools(
 
         try {
           addOperationBreadcrumb("vector", "store-fact");
-          if (vector && !(await vectorDb.hasDuplicate(vector))) {
-            await vectorDb.store({
-              text: textToStore,
-              vector,
-              importance,
-              category,
-              id: entry.id,
-            });
+          if (vector) {
             factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            if (!(await vectorDb.hasDuplicate(vector))) {
+              await vectorDb.store({
+                text: textToStore,
+                vector,
+                importance,
+                category,
+                id: entry.id,
+              });
+            }
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {

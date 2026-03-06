@@ -468,7 +468,7 @@ export function initializeDatabases(
     void (async () => {
       const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
-        if (cfg.vector.autoRepair) {
+        if (cfg.vector.autoRepair || embeddingConfigChanged) {
           await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
         }
 

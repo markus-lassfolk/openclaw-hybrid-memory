@@ -99,6 +99,7 @@ export async function migrateCredentialsToVault(
       });
       try {
         const vector = await embeddings.embed(pointerText);
+        factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({
             text: pointerText,
@@ -107,7 +108,6 @@ export async function migrateCredentialsToVault(
             category: "technical",
             id: pointerEntry.id,
           });
-          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
         }
       } catch (e) {
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {

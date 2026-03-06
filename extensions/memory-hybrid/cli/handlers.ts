@@ -347,9 +347,9 @@ export async function runStoreForCli(
         });
         try {
           const vector = await embeddings.embed(pointerText);
+          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
           if (!(await vectorDb.hasDuplicate(vector))) {
             await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
-            factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
           }
         } catch (err) {
           log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -426,9 +426,9 @@ export async function runStoreForCli(
               factsDb.supersede(classification.targetId, newEntry.id);
               aliasDb?.deleteByFactId(classification.targetId);
               try {
+                factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
-                  factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                 }
               } catch (err) {
                 log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -469,9 +469,9 @@ export async function runStoreForCli(
     }
     try {
       const vector = await embeddings.embed(text);
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       if (!(await vectorDb.hasDuplicate(vector))) {
         await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: opts.category ?? "other", id: entry.id });
-        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       }
     } catch (err) {
       log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -1890,9 +1890,9 @@ export async function runExtractDailyForCli(
                 });
                 try {
                   const vector = await embeddings.embed(pointerText);
+                  factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(vector))) {
                     await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
-                    factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                   }
                 } catch (err) {
                   sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -1980,9 +1980,9 @@ export async function runExtractDailyForCli(
                   factsDb.supersede(classification.targetId, newEntry.id);
                   aliasDb?.deleteByFactId(classification.targetId);
                   try {
+                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                     if (!(await vectorDb.hasDuplicate(vecForStore))) {
                       await vectorDb.store({ text: trimmed, vector: vecForStore, importance: BATCH_STORE_IMPORTANCE, category, id: newEntry.id });
-                      factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                     }
                   } catch (err) {
                     sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -2002,9 +2002,9 @@ export async function runExtractDailyForCli(
       const entry = factsDb.store(storePayload);
       try {
         const vector = vecForStore ?? await embeddings.embed(trimmed);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({ text: trimmed, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
-          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         }
       } catch (err) {
         sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -2211,6 +2211,7 @@ export async function runBackfillForCli(
       });
       try {
         const vector = await embeddings.embed(fact.text);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({
             text: fact.text,
@@ -2219,7 +2220,6 @@ export async function runBackfillForCli(
             category: fact.category,
             id: entry.id,
           });
-          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         }
       } catch (err) {
         sink.warn(`memory-hybrid: backfill vector store failed for "${fact.text.slice(0, 50)}...": ${err}`);
@@ -2606,9 +2606,9 @@ export async function runDistillForCli(
             });
             try {
               const vector = await embeddings.embed(pointerText);
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
                 await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
-                factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
               }
             } catch (err) {
               capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-vector-store" });
