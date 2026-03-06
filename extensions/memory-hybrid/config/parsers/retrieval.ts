@@ -272,6 +272,9 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout
   const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 5000;
 
+  // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout
+  const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 5000;
+
   return {
     enabled,
     model,
