@@ -75,21 +75,44 @@ export function buildRerankPrompt(query: string, facts: ScoredFact[]): string {
 /**
  * Parse a JSON array of fact IDs from an LLM response.
  * Handles responses that wrap the JSON in prose or code fences.
+ * Uses candidate-based extraction (try each [...] substring) so that later
+ * bracketed text (e.g. "id-1 first because [it was relevant]") does not over-match.
  */
 export function parseRankedIds(response: string): string[] {
-  const match = response.match(/\[[\s\S]*?\]/);
-  if (!match) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(match[0]);
-  } catch (_err) {
-    return [];
+  const candidates: string[] = [];
+  let start = response.indexOf("[");
+  while (start !== -1) {
+    let end = response.indexOf("]", start + 1);
+    while (end !== -1) {
+      candidates.push(response.slice(start, end + 1));
+      end = response.indexOf("]", end + 1);
+    }
+    start = response.indexOf("[", start + 1);
   }
-
-  if (!Array.isArray(parsed)) return [];
-
-  return parsed.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    const stringIds = parsed.filter(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    );
+    const trimmed = stringIds.map((id) => id.trim());
+    // De-dupe by first occurrence to match lookup behavior.
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const id of trimmed) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        deduped.push(id);
+      }
+    }
+    return deduped;
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +126,8 @@ export function parseRankedIds(response: string): string[] {
  * @param facts - Ordered facts from RRF fusion (best-first). May be the full fused list.
  * @param config - Re-ranking configuration.
  * @param openai - OpenAI-compatible client for LLM calls.
- * @returns Re-ranked facts (at most outputCount). On any failure, returns original order.
+ * @returns On success, re-ranked facts (at most outputCount). On any failure (error,
+ *   timeout, or unparseable/empty response), returns the original list unchanged.
  */
 export async function rerankResults(
   query: string,
@@ -132,7 +156,7 @@ export async function rerankResults(
 
     const rankedIds = parseRankedIds(response);
 
-    // If LLM returned nothing useful, fall back to original order.
+    // If LLM returned nothing useful, fall back to original order (full list, same as error path).
     if (rankedIds.length === 0) {
       return facts;
     }

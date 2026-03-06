@@ -696,7 +696,12 @@ export async function runRetrievalPipeline(
       }
     } catch (err) {
       // Graceful degradation — re-ranking failure never blocks retrieval.
-      console.error("[retrieval] reranking failed:", err);
+      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      console.error("[retrieval] reranking failed:", message);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "reranking",
+      });
     }
   }
 

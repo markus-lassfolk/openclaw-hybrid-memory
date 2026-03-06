@@ -26,7 +26,7 @@
  *   rerankResults — fallback / error handling:
  *     - returns original facts on LLM timeout (no truncation)
  *     - returns original facts on LLM error
- *     - falls back to original order (sliced to outputCount) when LLM returns no valid IDs
+ *     - falls back to full original order when LLM returns no valid IDs (consistent with error path)
  *   Integration with retrieval pipeline:
  *     - runRetrievalPipeline works without reranking params (backward compat)
  *     - runRetrievalPipeline calls reranking when enabled and openai provided
@@ -191,6 +191,17 @@ describe("parseRankedIds", () => {
     const result = parseRankedIds('["id-1", "", "id-2"]');
     expect(result).toEqual(["id-1", "id-2"]);
   });
+
+  it("parses first valid array when response has bracketed prose after JSON", () => {
+    const response = '["id-1", "id-2"] I ranked id-1 first because [it was most relevant].';
+    const result = parseRankedIds(response);
+    expect(result).toEqual(["id-1", "id-2"]);
+  });
+
+  it("trims whitespace from IDs so lookup matches", () => {
+    const result = parseRankedIds('["  id-a  ", "id-b ", " id-c"]');
+    expect(result).toEqual(["id-a", "id-b", "id-c"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -342,21 +353,21 @@ describe("rerankResults — fallback on error", () => {
     expect(result.map((f) => f.factId)).toEqual(["fact-1", "fact-2"]);
   });
 
-  it("returns original facts sliced to outputCount when LLM returns empty array", async () => {
+  it("returns full original facts when LLM returns empty array (same as error fallback)", async () => {
     const openai = makeMockOpenAI("[]");
     const facts = Array.from({ length: 5 }, (_, i) => makeFact({ factId: `fact-${i + 1}` }));
     const cfg: RerankingConfig = { ...ENABLED_CFG, outputCount: 3 };
     const result = await rerankResults("query", facts, cfg, openai as never);
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(5);
     expect(result[0].factId).toBe("fact-1");
   });
 
-  it("returns original facts sliced to outputCount when LLM returns non-JSON response", async () => {
+  it("returns full original facts when LLM returns non-JSON response (same as error fallback)", async () => {
     const openai = makeMockOpenAI("I cannot rank these results.");
     const facts = Array.from({ length: 5 }, (_, i) => makeFact({ factId: `fact-${i + 1}` }));
     const cfg: RerankingConfig = { ...ENABLED_CFG, outputCount: 2 };
     const result = await rerankResults("query", facts, cfg, openai as never);
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(5);
     expect(result[0].factId).toBe("fact-1");
   });
 });
@@ -406,6 +417,7 @@ describe("Integration — runRetrievalPipeline with re-ranking", () => {
   });
 
   afterEach(() => {
+    factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
