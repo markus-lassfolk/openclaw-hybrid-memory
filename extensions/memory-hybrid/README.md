@@ -59,4 +59,3 @@ Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential`
 ## Credits
 
 Based on the design in **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (Clawdboss.ai). The plugin has since been extended with auto-capture, auto-recall, decay/TTL, auto-classify, token caps, consolidation, verify/uninstall CLI, and more — see the [repo README](../../README.md) and [docs/](../../docs/).
-// Fixed Council findings for PR 234

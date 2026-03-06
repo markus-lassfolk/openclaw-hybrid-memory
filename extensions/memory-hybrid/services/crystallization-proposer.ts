@@ -114,15 +114,20 @@ export class CrystallizationProposer {
             continue;
           }
 
-          // Write to disk first, then create and approve proposal (avoids orphaned pending proposals)
-          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
+          // Create proposal first, then approve, then write to disk (prevents orphaned files)
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
           });
-          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
+          const approved = this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
+          if (!approved) {
+            skipped++;
+            reasons.push(`Skipped '${result.skillName}': failed to approve proposal`);
+            continue;
+          }
+          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
           proposed++;
         } else {
           // Store as pending, awaiting human approval
@@ -189,17 +194,17 @@ export class CrystallizationProposer {
     });
     const outputPath = result.proposedOutputPath;
 
-    // Write to disk first, then approve in DB (ensures atomicity)
+    // Approve in DB first, then write to disk (prevents orphaned files)
+    const updated = this.crystallizationStore.approve(proposalId, outputPath);
+    if (!updated) {
+      return { success: false, message: "Failed to update proposal status" };
+    }
+
     try {
       this.writeSkillToDisk(outputPath, proposal.skillContent);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, message: `Failed to write skill: ${msg}` };
-    }
-
-    const updated = this.crystallizationStore.approve(proposalId, outputPath);
-    if (!updated) {
-      return { success: false, message: "Failed to update proposal status" };
     }
 
     return {
