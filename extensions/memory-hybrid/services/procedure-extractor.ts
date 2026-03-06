@@ -81,6 +81,16 @@ export type ParseSkipReason = "no_task_intent" | "fewer_than_2_steps";
 export function parseSessionJsonl(
   content: string,
   sessionId: string,
+  opts: { includeSkipReason: true },
+): ParsedSession | { skipReason: ParseSkipReason } | null;
+export function parseSessionJsonl(
+  content: string,
+  sessionId: string,
+  opts?: { includeSkipReason?: false },
+): ParsedSession | null;
+export function parseSessionJsonl(
+  content: string,
+  sessionId: string,
   opts?: { includeSkipReason?: boolean },
 ): ParsedSession | { skipReason: ParseSkipReason } | null {
   const lines = content.split("\n").filter((l) => l.trim());
@@ -278,7 +288,9 @@ export async function extractProceduresFromSessions(
       continue;
     }
     const sessionId = path.basename(filePath, ".jsonl");
-    const parsed = parseSessionJsonl(content, sessionId, verbose ? { includeSkipReason: true } : undefined);
+    const parsed = verbose
+      ? parseSessionJsonl(content, sessionId, { includeSkipReason: true })
+      : parseSessionJsonl(content, sessionId);
     if (parsed && "skipReason" in parsed) {
       if (verbose) logger.info(`procedure-extractor: skip ${sessionId}.jsonl — ${parsed.skipReason}`);
       continue;

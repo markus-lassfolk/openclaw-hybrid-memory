@@ -19,11 +19,12 @@ export async function runMemoryDiagnostics(opts: {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  aliasDb?: import("./retrieval-aliases.js").AliasDB | null;
   scopeFilter?: ScopeFilter | null;
   minScore?: number;
   autoRecallLimit?: number;
 }): Promise<MemoryDiagnosticsResult> {
-  const { factsDb, vectorDb, embeddings, scopeFilter, minScore = 0.3, autoRecallLimit = 10 } = opts;
+  const { factsDb, vectorDb, embeddings, aliasDb, scopeFilter, minScore = 0.3, autoRecallLimit = 10 } = opts;
   const markerText = `__hybrid_mem_diag__ ${randomUUID()}`;
   let markerId = "";
 
@@ -47,6 +48,7 @@ export async function runMemoryDiagnostics(opts: {
       category: entry.category,
       id: entry.id,
     });
+    factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
 
     const structuredResults = factsDb.search(markerText, 5, {
       tierFilter: "all",
@@ -80,6 +82,7 @@ export async function runMemoryDiagnostics(opts: {
       if (markerId) {
         factsDb.delete(markerId);
         await vectorDb.delete(markerId);
+        aliasDb?.deleteByFactId(markerId);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

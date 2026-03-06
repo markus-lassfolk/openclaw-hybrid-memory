@@ -8,7 +8,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
@@ -16,7 +16,7 @@ import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/
 import { extractTags } from "../utils/tags.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
-import { cosineSimilarity } from "./reflection.js";
+import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 
 export interface ConsolidateOptions {
   threshold: number;
@@ -82,19 +82,57 @@ export function isStructuredForConsolidation(
   return false;
 }
 
+function selectConsolidatedKeyValue(
+  facts: MemoryEntry[],
+): { key: string | null; value: string | null } {
+  if (facts.length === 0) return { key: null, value: null };
+  const highestConfidence = facts.reduce((best, f) => (f.confidence > best.confidence ? f : best), facts[0]);
+  const factsWithKey = facts.filter((f) => typeof f.key === "string" && f.key.trim().length > 0);
+  if (factsWithKey.length === 0) return { key: null, value: null };
+
+  const keyToBest = new Map<string, MemoryEntry>();
+  for (const fact of factsWithKey) {
+    const key = fact.key!.trim();
+    const prev = keyToBest.get(key);
+    if (!prev || fact.confidence > prev.confidence) {
+      keyToBest.set(key, fact);
+    }
+  }
+
+  const keys = [...keyToBest.keys()];
+  let selectedKey = keys[0];
+  if (keys.length > 1) {
+    selectedKey = keys.reduce((bestKey, candidate) => {
+      const bestFact = keyToBest.get(bestKey)!;
+      const candidateFact = keyToBest.get(candidate)!;
+      if (candidateFact.confidence > bestFact.confidence) return candidate;
+      if (candidateFact.confidence < bestFact.confidence) return bestKey;
+      return candidate.length > bestKey.length ? candidate : bestKey;
+    }, selectedKey);
+  }
+
+  const bestForKey = keyToBest.get(selectedKey)!;
+  const selectedValue =
+    (highestConfidence.key?.trim() === selectedKey && highestConfidence.value != null)
+      ? highestConfidence.value
+      : bestForKey.value ?? null;
+  return { key: selectedKey, value: selectedValue };
+}
+
 /**
  * Run consolidation: cluster similar facts and merge them with LLM.
  */
 export async function runConsolidate(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: ConsolidateOptions,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  aliasDb?: import("./retrieval-aliases.js").AliasDB | null,
 ): Promise<ConsolidateResult> {
   const facts = factsDb.getFactsForConsolidation(opts.limit);
-  let candidateFacts = opts.includeStructured
+  const candidateFacts = opts.includeStructured
     ? facts
     : facts.filter((f) => !isStructuredForConsolidation(f.text, f.entity, f.key));
   if (candidateFacts.length < 2) {
@@ -113,7 +151,7 @@ export async function runConsolidate(
       const f = idToFact.get(id)!;
       try {
         const vec = await embeddings.embed(f.text);
-        vectors.push(vec);
+        vectors.push(normalizeVector(vec));
       } catch (err) {
         logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -135,7 +173,7 @@ export async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
-      const score = cosineSimilarity(vi, vj);
+      const score = dotProductSimilarity(vi, vj);
       if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
   }
@@ -190,6 +228,7 @@ export async function runConsolidate(
       null as number | null,
     );
     const mergedTags = [...new Set(clusterFacts.flatMap((f) => f.tags ?? []))];
+    const { key: mergedKey, value: mergedValue } = selectConsolidatedKeyValue(clusterFacts);
 
     if (opts.dryRun) {
       logger.info(`memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`);
@@ -202,8 +241,8 @@ export async function runConsolidate(
       category,
       importance: BATCH_STORE_IMPORTANCE,
       entity: first?.entity ?? null,
-      key: null,
-      value: null,
+      key: mergedKey,
+      value: mergedValue,
       source: "conversation",
       sourceDate: maxSourceDate,
       tags: mergedTags.length > 0 ? mergedTags : undefined,
@@ -211,6 +250,7 @@ export async function runConsolidate(
     try {
       const vector = await embeddings.embed(mergedText);
       await vectorDb.store({ text: mergedText, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -219,8 +259,13 @@ export async function runConsolidate(
         factId: entry.id,
       });
     }
+    // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
+    for (const id of clusterIds) {
+      factsDb.createLink(entry.id, id, "DERIVED_FROM", 1.0);
+    }
     for (const id of clusterIds) {
       factsDb.delete(id);
+      aliasDb?.deleteByFactId(id);
       deleted++;
     }
     merged++;

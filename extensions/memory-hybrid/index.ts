@@ -40,14 +40,46 @@ import {
 import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
-import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
+import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType, type ContradictionRecord } from "./backends/facts-db.js";
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { deepMerge } from "./cli/handlers.js";
-import { Embeddings, safeEmbed } from "./services/embeddings.js";
+import { Embeddings, safeEmbed, type EmbeddingProvider } from "./services/embeddings.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, createPendingLLMWarnings } from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
+import { searchFts, rebuildFtsIndex, buildFts5Query } from "./services/fts-search.js";
+import {
+  fuseResults,
+  applyPostRrfAdjustments,
+  RRF_K_DEFAULT,
+  type RankedResult,
+  type FusedResult,
+  type FactMetadata,
+} from "./services/rrf-fusion.js";
+import {
+  runRetrievalPipeline,
+  packIntoBudget,
+  serializeFactForContext,
+  estimateTokenCount,
+  DEFAULT_RETRIEVAL_CONFIG,
+} from "./services/retrieval-orchestrator.js";
+import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
+export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
+import { findShortestPath, resolveInput, formatPath } from "./services/shortest-path.js";
+export type { ShortestPathResult, PathStep, ShortestPathLookup } from "./services/shortest-path.js";
+import {
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
+} from "./services/knowledge-gaps.js";
+export type { GapFact, SuggestedLink, KnowledgeGapReport, GapMode, GapFactsDB, GapVectorDB, GapEmbeddings } from "./services/knowledge-gaps.js";
+import { detectClusters, generateClusterLabel } from "./services/topic-clusters.js";
+export type { TopicCluster, ClusterDetectionResult, ClusterDetectionOptions, ClusterFactLookup } from "./services/topic-clusters.js";
+import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "./services/retrieval-aliases.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
@@ -109,7 +141,7 @@ import { classifyMemoryOperation, parseClassificationResponse, type MemoryClassi
 import { extractStructuredFields } from "./services/fact-extraction.js";
 import { getMemoryTriggers, detectCredentialPatterns, extractCredentialMatch, isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX, inferServiceFromText, SENSITIVE_PATTERNS } from "./services/auto-capture.js";
 import { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel } from "./services/auto-classifier.js";
-import { unionFind, getRoot, isStructuredForConsolidation } from "./services/consolidation.js";
+import { unionFind, getRoot, isStructuredForConsolidation, runConsolidate } from "./services/consolidation.js";
 import { shouldCapture as shouldCaptureUtil, detectCategory as detectCategoryUtil } from "./services/capture-utils.js";
 import { buildToolScopeFilter } from "./utils/scope-filter.js";
 import { walWrite, walRemove } from "./services/wal-helpers.js";
@@ -118,7 +150,7 @@ import {
   runReflectionRules,
   runReflectionMeta,
   normalizeVector,
-  cosineSimilarity,
+  dotProductSimilarity,
   parsePatternsFromReflectionResponse,
 } from "./services/reflection.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
@@ -135,6 +167,7 @@ import { capturePluginError } from "./services/error-reporter.js";
 
 import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptValue } from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
+import { EventLog } from "./backends/event-log.js";
 
 // ============================================================================
 // Helper Functions
@@ -175,11 +208,13 @@ let resolvedLancePath: string;
 let resolvedSqlitePath: string;
 let factsDb: FactsDB;
 let vectorDb: VectorDB;
-let embeddings: Embeddings;
+let embeddings: EmbeddingProvider;
 let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
+let eventLog: EventLog | null = null;
+let aliasDb: AliasDB | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -191,10 +226,11 @@ const timers = {
   languageKeywordsTimer: { value: null as ReturnType<typeof setInterval> | null },
   languageKeywordsStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
   postUpgradeTimeout: { value: null as ReturnType<typeof setTimeout> | null },
+  passiveObserverTimer: { value: null as ReturnType<typeof setInterval> | null },
 };
 
 /** Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
-let lastProgressiveIndexIds: string[] = [];
+const lastProgressiveIndexIds: string[] = [];
 
 /** Runtime-detected agent identity. Used for dynamic scope filtering and default store scope. */
 // Runtime-detected agent identity
@@ -227,7 +263,7 @@ let lastProgressiveIndexIds: string[] = [];
 // and tools will see the updated value (fixes pass-by-value bug from refactor).
 const currentAgentIdRef: { value: string | null } = { value: null };
 
-let restartPendingCleared = false;
+const restartPendingClearedRef: { value: boolean } = { value: false };
 
 const memoryHybridPlugin = {
   id: PLUGIN_ID,
@@ -241,9 +277,11 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb });
     credentialsDb = null;
     proposalsDb = null;
+    eventLog = null;
+    aliasDb = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -262,6 +300,8 @@ const memoryHybridPlugin = {
       credentialsDb = dbContext.credentialsDb;
       wal = dbContext.wal;
       proposalsDb = dbContext.proposalsDb;
+      eventLog = dbContext.eventLog;
+      aliasDb = dbContext.aliasDb;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -287,6 +327,7 @@ const memoryHybridPlugin = {
       wal,
       credentialsDb,
       proposalsDb,
+      eventLog,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -316,8 +357,10 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       proposalsDb,
+      eventLog,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,
@@ -340,10 +383,11 @@ const memoryHybridPlugin = {
       openai,
       cfg,
       credentialsDb,
+      aliasDb,
       wal,
       currentAgentIdRef,
       lastProgressiveIndexIds,
-      restartPendingCleared,
+      restartPendingClearedRef,
       resolvedSqlitePath,
       walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
       walRemove: (id, logger) => walRemove(wal, id, logger),
@@ -367,6 +411,7 @@ const memoryHybridPlugin = {
         PLUGIN_ID,
         factsDb,
         vectorDb,
+        embeddings,
         credentialsDb,
         proposalsDb,
         wal,
@@ -409,6 +454,7 @@ export const _testing = {
   isCredentialLike,
   inferServiceFromText,
   isStructuredForConsolidation,
+  runConsolidate,
   normalizeSuggestedLabel,
   unionFind,
   getRoot,
@@ -424,6 +470,7 @@ export const _testing = {
   FactsDB,
   CredentialsDB,
   ProposalsDB,
+  EventLog,
   VectorDB,
   Embeddings,
   WriteAheadLog,
@@ -433,9 +480,46 @@ export const _testing = {
   // Reflection parsing (for tests) - re-exported from service
   parsePatternsFromReflectionResponse,
   normalizeVector,
-  cosineSimilarity,
+  dotProductSimilarity,
+  // FTS5 search service (Issue #151)
+  searchFts,
+  rebuildFtsIndex,
+  buildFts5Query,
+  // RRF scoring pipeline (Issue #152)
+  fuseResults,
+  applyPostRrfAdjustments,
+  RRF_K_DEFAULT,
+  runRetrievalPipeline,
+  packIntoBudget,
+  serializeFactForContext,
+  estimateTokenCount,
+  DEFAULT_RETRIEVAL_CONFIG,
+  // GraphRAG retrieval (Issue #145)
+  expandGraph,
+  formatLinkPath,
+  HOP_SCORE_DECAY,
+  // Shortest-path traversal (Issue #140)
+  findShortestPath,
+  resolveInput,
+  formatPath,
+  // Knowledge gap analysis (Issue #141)
+  analyzeKnowledgeGaps,
+  detectOrphans,
+  detectWeak,
+  detectSuggestedLinks,
+  computeIsolationScore,
+  computeRankScore,
+  // Topic cluster detection (Issue #146)
+  detectClusters,
+  generateClusterLabel,
+  // Retrieval aliases (Issue #149)
+  AliasDB,
+  generateAliases,
+  storeAliases,
+  searchAliasStrategy,
 };
 
 export { versionInfo } from "./versionInfo.js";
 export { sanitizeMessagesForClaude, type MessageLike } from "./utils/sanitize-messages.js";
+export type { ContradictionRecord } from "./backends/facts-db.js";
 export default memoryHybridPlugin;

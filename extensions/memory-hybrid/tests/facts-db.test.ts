@@ -125,6 +125,29 @@ describe("FactsDB.getById", () => {
   });
 });
 
+describe("FactsDB.getByIds", () => {
+  it("returns entries when id count exceeds SQLite parameter limits", () => {
+    const storedIds: string[] = [];
+    for (let i = 0; i < 1100; i++) {
+      const entry = db.store({
+        text: `Batch fact ${i}`,
+        category: "fact",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      storedIds.push(entry.id);
+    }
+
+    const found = db.getByIds(storedIds);
+    expect(found.size).toBe(storedIds.length);
+    expect(found.get(storedIds[0])?.text).toBe("Batch fact 0");
+    expect(found.get(storedIds[1099])?.text).toBe("Batch fact 1099");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Count
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import { stringEnum } from "openclaw/plugin-sdk";
 import type { FactsDB, MemoryLinkType } from "../backends/facts-db.js";
 import { MEMORY_LINK_TYPES } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { findShortestPath, resolveInput, formatPath } from "../services/shortest-path.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -36,7 +37,7 @@ export function registerGraphTools(
         name: "memory_link",
         label: "Memory Link",
         description:
-          "Create a typed relationship between two memories. Link types: SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON.",
+          "Create a typed relationship between two memories. Link types: SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON, CONTRADICTS (bidirectional), INSTANCE_OF (type taxonomy), DERIVED_FROM (provenance).",
         parameters: Type.Object({
           sourceFact: Type.String({ description: "ID of the source fact" }),
           targetFact: Type.String({ description: "ID of the target fact" }),
@@ -64,6 +65,14 @@ export function registerGraphTools(
             return {
               content: [{ type: "text", text: `Target fact not found: ${targetFact}` }],
               details: { error: "target_not_found", id: targetFact },
+            };
+          }
+          if (linkType === "CONTRADICTS") {
+            const contradictionId = factsDb.recordContradiction(sourceFact, targetFact);
+            const msg = `Created bidirectional ${linkType} link from "${src.text.slice(0, 50)}${src.text.length > 50 ? "…" : ""}" to "${tgt.text.slice(0, 50)}${tgt.text.length > 50 ? "…" : ""}" and reduced confidence`;
+            return {
+              content: [{ type: "text", text: msg }],
+              details: { contradictionId, sourceFact, targetFact, linkType },
             };
           }
           const linkId = factsDb.createLink(sourceFact, targetFact, linkType, strength);
@@ -128,6 +137,89 @@ export function registerGraphTools(
         },
       },
       { name: "memory_graph" },
+    );
+  }
+
+  // Shortest-path tool (when path is enabled)
+  if (cfg.path.enabled) {
+    api.registerTool(
+      {
+        name: "memory_path",
+        label: "Memory Path",
+        description:
+          "Find the shortest path between two memories via BFS on the memory graph. " +
+          "Both `from` and `to` accept a fact ID or an entity name (resolved automatically). " +
+          "Returns the chain of facts and link types, or reports no path within maxDepth.",
+        parameters: Type.Object({
+          from: Type.String({ description: "Start fact ID or entity name" }),
+          to: Type.String({ description: "End fact ID or entity name" }),
+          maxDepth: Type.Optional(
+            Type.Number({ description: `Max hops to traverse (default 5, max ${cfg.path.maxPathDepth})` }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { from, to, maxDepth = 5 } = params as {
+            from: string;
+            to: string;
+            maxDepth?: number;
+          };
+
+          const depthCap = Math.min(cfg.path.maxPathDepth, Math.max(1, Math.floor(maxDepth)));
+
+          const fromId = resolveInput(factsDb, from);
+          if (!fromId) {
+            return {
+              content: [{ type: "text", text: `Could not resolve start: "${from}" (not a known fact ID or entity name)` }],
+              details: { error: "from_not_found", from },
+            };
+          }
+
+          const toId = resolveInput(factsDb, to);
+          if (!toId) {
+            return {
+              content: [{ type: "text", text: `Could not resolve end: "${to}" (not a known fact ID or entity name)` }],
+              details: { error: "to_not_found", to },
+            };
+          }
+
+          const result = findShortestPath(factsDb, fromId, toId, { maxDepth: depthCap });
+
+          if (!result) {
+            return {
+              content: [{ type: "text", text: `No path found between "${from}" and "${to}" within ${depthCap} hops.` }],
+              details: { found: false, fromId, toId, maxDepth: depthCap },
+            };
+          }
+
+          const lines: string[] = [
+            `Path found: ${result.hops} hop${result.hops === 1 ? "" : "s"}`,
+            "",
+            formatPath(result.steps),
+            "",
+            "Chain:",
+          ];
+          for (let i = 0; i < result.chain.length; i++) {
+            const entry = result.chain[i];
+            const step = result.steps[i - 1];
+            if (step) {
+              lines.push(`  —[${step.linkType}]→`);
+            }
+            lines.push(`  [${entry.id.slice(0, 8)}…] ${entry.text.slice(0, 80)}${entry.text.length > 80 ? "…" : ""}`);
+          }
+
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: {
+              found: true,
+              fromId,
+              toId,
+              hops: result.hops,
+              steps: result.steps,
+            },
+          };
+        },
+      },
+      { name: "memory_path" },
     );
   }
 }

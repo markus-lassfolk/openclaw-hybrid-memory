@@ -24,7 +24,7 @@ describe("runContextAudit", () => {
 
   it("summarizes workspace token usage", async () => {
     const cfg = hybridConfigSchema.parse({
-      embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
     });
     const audit = await runContextAudit({ cfg, factsDb, workspaceRoot: tmpDir });
 

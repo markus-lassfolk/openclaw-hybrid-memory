@@ -48,12 +48,20 @@ export type MemoryEntry = {
   successCount?: number;
   lastValidated?: number | null;
   sourceSessions?: string | null;
+  /** Embedding model used to generate this fact's vector (if stored). */
+  embeddingModel?: string | null;
   /** Reinforcement tracking — number of times this fact was reinforced by user praise. */
   reinforcedCount?: number;
   /** When this fact was last reinforced (epoch seconds). */
   lastReinforcedAt?: number | null;
   /** Array of user praise quotes that reinforced this fact. */
   reinforcedQuotes?: string[] | null;
+  /**
+   * Future-date decay freeze: epoch seconds until which confidence decay is paused.
+   * Set when the fact text contains a future date (reminder, deadline, event).
+   * Null = no freeze (normal decay applies).
+   */
+  decayFreezeUntil?: number | null;
 };
 
 /** Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */

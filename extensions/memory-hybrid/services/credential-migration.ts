@@ -7,7 +7,7 @@ import { writeFileSync } from "fs";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type { MemoryCategory } from "../types/memory.js";
 import { tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "./auto-capture.js";
 import { extractTags } from "../utils/tags.js";
@@ -19,8 +19,9 @@ export const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrat
 export interface MigrateCredentialsOptions {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   credentialsDb: CredentialsDB;
+  aliasDb?: import("./retrieval-aliases.js").AliasDB | null;
   migrationFlagPath: string;
   markDone: boolean;
 }
@@ -39,7 +40,7 @@ export interface MigrateCredentialsResult {
 export async function migrateCredentialsToVault(
   opts: MigrateCredentialsOptions,
 ): Promise<MigrateCredentialsResult> {
-  const { factsDb, vectorDb, embeddings, credentialsDb, migrationFlagPath, markDone } = opts;
+  const { factsDb, vectorDb, embeddings, credentialsDb, aliasDb, migrationFlagPath, markDone } = opts;
   let migrated = 0;
   let skipped = 0;
   const errors: string[] = [];
@@ -70,7 +71,12 @@ export async function migrateCredentialsToVault(
         url: parsed.url,
         notes: parsed.notes,
       });
+      const stored = credentialsDb.get(parsed.service, parsed.type);
+      if (!stored || stored.value !== parsed.secretValue) {
+        throw new Error(`vault verification failed for ${parsed.service}:${parsed.type}`);
+      }
       factsDb.delete(entry.id);
+      aliasDb?.deleteByFactId(entry.id);
       try {
         await vectorDb.delete(entry.id);
       } catch (err) {
@@ -97,6 +103,7 @@ export async function migrateCredentialsToVault(
       });
       try {
         const vector = await embeddings.embed(pointerText);
+        factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({
             text: pointerText,

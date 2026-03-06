@@ -17,8 +17,19 @@ import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 
-export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON"] as const;
+export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF", "DERIVED_FROM"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
+
+/** A single contradiction record (from the contradictions table). */
+export interface ContradictionRecord {
+  id: string;
+  factIdNew: string;
+  factIdOld: string;
+  detectedAt: string;
+  resolved: boolean;
+  resolution: "superseded" | "kept" | "merged" | null;
+  oldFactOriginalConfidence?: number;
+}
 
 export class FactsDB {
   private db: Database.Database;
@@ -28,15 +39,19 @@ export class FactsDB {
   private supersededTextsCacheTime = 0;
   /** Cache TTL for superseded texts to avoid full table scan on every search. Increased to reduce thrashing. */
   private readonly SUPERSEDED_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
+  private knownEntitiesCache: string[] | null = null;
+  private knownEntitiesCacheTime = 0;
+  /** Cache TTL for known-entity list used by autoLinkEntities on every write. */
+  private readonly KNOWN_ENTITIES_CACHE_TTL_MS = 30_000; // 30 seconds
 
   /**
    * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
-   * Removes: NOT, AND, OR (uppercase), *, (, ), and quotes (already stripped).
+   * Removes: NOT, AND, OR, NEAR (case-insensitive), *, :, {, }, (, ), and quotes.
    */
   private sanitizeFTS5Query(query: string): string {
     return query
-      .replace(/['"*()]/g, "")
-      .replace(/\b(NOT|AND|OR)\b/g, "")
+      .replace(/['"*(){}:]/g, "")
+      .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
       .trim();
   }
 
@@ -62,7 +77,10 @@ export class FactsDB {
       )
     `);
 
-    // Create FTS5 virtual table for full-text search
+    // Create FTS5 virtual table for full-text search.
+    // NOTE: tags column is added later by migrateFtsTagsSupport() once the facts.tags
+    // column exists (via migrateTagsColumn). For brand-new databases the FTS5 starts
+    // without tags and is immediately upgraded by the migration sequence.
     this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         text,
@@ -70,13 +88,13 @@ export class FactsDB {
         entity,
         key,
         value,
-        content=facts,
-        content_rowid=rowid,
+        content='facts',
+        content_rowid='rowid',
         tokenize='porter unicode61'
       )
     `);
 
-    // Triggers to keep FTS in sync
+    // Triggers to keep FTS in sync (without tags — upgraded by migrateFtsTagsSupport)
     this.liveDb.exec(`
       CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
         INSERT INTO facts_fts(rowid, text, category, entity, key, value)
@@ -151,6 +169,25 @@ export class FactsDB {
 
     // ---- Memory scoping for procedures ----
     this.migrateProcedureScopeColumns();
+
+    // ---- FTS5 tags support (Issue #151) ----
+    this.migrateFtsTagsSupport();
+
+    // ---- Contradiction tracking (Issue #157) ----
+    this.migrateContradictionsTable();
+
+    // ---- Topic cluster storage (Issue #146) ----
+    this.migrateClusterTables();
+
+    // ---- Recall hit-rate tracking (Issue #148) ----
+    this.migrateRecallLog();
+
+    // ---- Embedding model tracking (Issue #153) ----
+    this.migrateEmbeddingModelColumn();
+    this.migrateEmbeddingMetaTable();
+
+    // ---- Future-date decay freeze (#144) ----
+    this.migrateDecayFreezeColumn();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -303,6 +340,150 @@ export class FactsDB {
     );
   }
 
+  /** Create contradictions table for tracking conflicting facts (Issue #157). */
+  private migrateContradictionsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS contradictions (
+        id TEXT PRIMARY KEY,
+        fact_id_new TEXT NOT NULL,
+        fact_id_old TEXT NOT NULL,
+        detected_at TEXT NOT NULL,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        resolution TEXT,
+        FOREIGN KEY (fact_id_new) REFERENCES facts(id) ON DELETE CASCADE,
+        FOREIGN KEY (fact_id_old) REFERENCES facts(id) ON DELETE CASCADE
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_new ON contradictions(fact_id_new)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_old ON contradictions(fact_id_old)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_resolved ON contradictions(resolved) WHERE resolved = 0`);
+    
+    // Add old_fact_original_confidence column if it doesn't exist (for unbiased comparison)
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(contradictions)`)
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
+      this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
+    }
+  }
+
+  /** Create recall_log table for memory_recall hit-rate tracking (Issue #148). */
+  private migrateRecallLog(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS recall_log (
+        id TEXT PRIMARY KEY,
+        occurred_at INTEGER NOT NULL,
+        hit INTEGER NOT NULL CHECK(hit IN (0, 1))
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_time ON recall_log(occurred_at)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_hit ON recall_log(hit)`);
+  }
+
+  /** Add embedding_model column to facts for tracking vector provenance (Issue #153). */
+  private migrateEmbeddingModelColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "embedding_model")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN embedding_model TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_embedding_model ON facts(embedding_model) WHERE embedding_model IS NOT NULL`,
+    );
+  }
+
+  /** Store active embedding provider+model metadata (Issue #153). */
+  private migrateEmbeddingMetaTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS embedding_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+  }
+
+  /** Add decay_freeze_until column for future-date freeze protection (#144). */
+  private migrateDecayFreezeColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "decay_freeze_until")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN decay_freeze_until INTEGER DEFAULT NULL`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_freeze ON facts(decay_freeze_until) WHERE decay_freeze_until IS NOT NULL`,
+    );
+  }
+
+  /**
+   * Migrate the FTS5 virtual table to include the `tags` column (Issue #151).
+   * FTS5 virtual tables cannot be altered, so we drop and recreate if tags are absent.
+   * The entire migration is wrapped in a transaction so a crash mid-migration leaves the
+   * DB in a consistent state (either old schema intact, or new schema + backfill complete).
+   */
+  private migrateFtsTagsSupport(): void {
+    const row = this.liveDb
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`)
+      .get() as { sql: string } | undefined;
+
+    // If the CREATE statement already contains 'tags', nothing to do.
+    if (row && row.sql && row.sql.includes("tags")) return;
+
+    // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
+    const migrate = this.liveDb.transaction(() => {
+      // Drop old triggers first (they reference the old column list).
+      this.liveDb.exec(`
+        DROP TRIGGER IF EXISTS facts_ai;
+        DROP TRIGGER IF EXISTS facts_ad;
+        DROP TRIGGER IF EXISTS facts_au;
+      `);
+
+      // Drop and recreate FTS5 with tags included.
+      this.liveDb.exec(`DROP TABLE IF EXISTS facts_fts`);
+      this.liveDb.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+          text,
+          category,
+          entity,
+          tags,
+          key,
+          value,
+          content='facts',
+          content_rowid='rowid',
+          tokenize='porter unicode61'
+        )
+      `);
+
+      // Recreate triggers with tags column.
+      this.liveDb.exec(`
+        CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+          INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+          VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+          INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
+          VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+          INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
+          VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+          INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+          VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+        END
+      `);
+
+      // Backfill existing facts into the new FTS index.
+      this.liveDb.exec(`
+        INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+        SELECT rowid, text, category, entity, tags, key, value FROM facts
+      `);
+    });
+    migrate();
+  }
+
   /**
    * Build SQL fragment for scope filtering. Uses named params @scopeUserId, @scopeAgentId, @scopeSessionId.
    * ⚠️ SECURITY: Callers MUST derive scope filter values from trusted runtime identity (authenticated user/agent/session).
@@ -420,18 +601,56 @@ export class FactsDB {
 
   /** Create memory_links table for graph-based spreading activation. */
   private migrateMemoryLinksTable(): void {
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS memory_links (
-        id TEXT PRIMARY KEY,
-        source_fact_id TEXT NOT NULL,
-        target_fact_id TEXT NOT NULL,
-        link_type TEXT NOT NULL,
-        strength REAL NOT NULL DEFAULT 1.0,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_fact_id) REFERENCES facts(id) ON DELETE CASCADE
-      )
-    `);
+    const tableExists = this.liveDb
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_links'`)
+      .get();
+
+    if (tableExists) {
+      // Use PRAGMA foreign_key_list to check for a CASCADE FK on target_fact_id.
+      // This is immune to DDL formatting variations across plugin versions.
+      const fkList = this.liveDb
+        .prepare(`PRAGMA foreign_key_list(memory_links)`)
+        .all() as Array<{ table: string; from: string; on_delete: string }>;
+      const hasTargetCascade = fkList.some(
+        (fk) => fk.from === "target_fact_id" && fk.on_delete.toUpperCase() === "CASCADE",
+      );
+
+      if (hasTargetCascade) {
+        // Table exists with old CASCADE FK on target_fact_id — recreate without it.
+        const recreate = this.liveDb.transaction(() => {
+          this.liveDb.exec(`
+            CREATE TABLE memory_links_new (
+              id TEXT PRIMARY KEY,
+              source_fact_id TEXT NOT NULL,
+              target_fact_id TEXT NOT NULL,
+              link_type TEXT NOT NULL,
+              strength REAL NOT NULL DEFAULT 1.0,
+              created_at INTEGER NOT NULL,
+              FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+            )
+          `);
+          this.liveDb.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
+          this.liveDb.exec(`DROP TABLE memory_links`);
+          this.liveDb.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
+        });
+        recreate();
+      }
+      // If table exists without CASCADE on target, no migration needed.
+    } else {
+      // Table doesn't exist — create it fresh.
+      this.liveDb.exec(`
+        CREATE TABLE memory_links (
+          id TEXT PRIMARY KEY,
+          source_fact_id TEXT NOT NULL,
+          target_fact_id TEXT NOT NULL,
+          link_type TEXT NOT NULL,
+          strength REAL NOT NULL DEFAULT 1.0,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+        )
+      `);
+    }
+
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type)`);
@@ -526,20 +745,24 @@ export class FactsDB {
 
     if (cnt === 0) return;
 
-    this.liveDb.exec(`
-      UPDATE facts
-      SET created_at = created_at / 1000
-      WHERE created_at > ${MS_THRESHOLD}
-    `);
+    this.liveDb
+      .prepare(
+        `UPDATE facts
+         SET created_at = created_at / 1000
+         WHERE created_at > ?`,
+      )
+      .run(MS_THRESHOLD);
 
     // last_confirmed_at may have been seeded from ms-based created_at
     // by the migrateDecayColumns migration (created_at → last_confirmed_at).
-    this.liveDb.exec(`
-      UPDATE facts
-      SET last_confirmed_at = last_confirmed_at / 1000
-      WHERE last_confirmed_at IS NOT NULL
-        AND last_confirmed_at > ${MS_THRESHOLD}
-    `);
+    this.liveDb
+      .prepare(
+        `UPDATE facts
+         SET last_confirmed_at = last_confirmed_at / 1000
+         WHERE last_confirmed_at IS NOT NULL
+           AND last_confirmed_at > ?`,
+      )
+      .run(MS_THRESHOLD);
   }
 
   store(
@@ -561,10 +784,14 @@ export class FactsDB {
       successCount?: number;
       lastValidated?: number | null;
       sourceSessions?: string | null;
+      /** Embedding model used to generate this fact's vector (if any). */
+      embeddingModel?: string | null;
       /** Memory scope — global, user, agent, or session. Default global. */
       scope?: "global" | "user" | "agent" | "session";
       /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
       scopeTarget?: string | null;
+      /** Future-date freeze: epoch seconds until which confidence decay is paused (#144). */
+      decayFreezeUntil?: number | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -588,6 +815,7 @@ export class FactsDB {
     const importance = entry.importance ?? 0.7;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
+    const embeddingModel = entry.embeddingModel ?? null;
     const normHash = normalizedHash(entry.text);
     const sourceDate = entry.sourceDate ?? null;
     const tags = entry.tags ?? null;
@@ -612,10 +840,19 @@ export class FactsDB {
           : JSON.stringify(sourceSessionsRaw);
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
+    // Fix #2: guard against NaN/non-finite values passed in from external callers
+    const rawFreeze = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
+    const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
+    // Fix #1: ensure expires_at covers the full freeze period so the fact is not pruned
+    // before the freeze expires
+    const adjustedExpiresAt =
+      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil
+        ? decayFreezeUntil
+        : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -628,10 +865,11 @@ export class FactsDB {
         entry.source,
         nowSec,
         decayClass,
-        expiresAt,
+        adjustedExpiresAt,
         nowSec,
         confidence,
         summary,
+        embeddingModel,
         normHash,
         sourceDate,
         tagsStr,
@@ -645,6 +883,7 @@ export class FactsDB {
         successCount,
         lastValidated,
         sourceSessionsStr,
+        decayFreezeUntil,
       );
 
     return {
@@ -652,10 +891,11 @@ export class FactsDB {
       id,
       createdAt: nowSec,
       decayClass,
-      expiresAt,
+      expiresAt: adjustedExpiresAt,
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
+      embeddingModel,
       sourceDate,
       scope,
       scopeTarget: scopeTarget ?? undefined,
@@ -668,6 +908,8 @@ export class FactsDB {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
+      // normalize to null (not undefined) to match rowToEntry() behaviour
+      decayFreezeUntil: decayFreezeUntil,
     };
   }
 
@@ -698,6 +940,49 @@ export class FactsDB {
       }
     });
     tx();
+  }
+
+  /** Record a memory_recall invocation outcome for hit-rate tracking (Issue #148). */
+  logRecall(hit: boolean, occurredAtSec?: number): void {
+    const id = randomUUID();
+    const nowSec = occurredAtSec ?? Math.floor(Date.now() / 1000);
+    this.liveDb
+      .prepare(`INSERT INTO recall_log (id, occurred_at, hit) VALUES (?, ?, ?)`)
+      .run(id, nowSec, hit ? 1 : 0);
+  }
+
+  /** Prune recall_log entries older than N days to prevent unbounded growth (Issue #148). */
+  pruneRecallLog(olderThanDays = 30): number {
+    const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 24 * 3600;
+    return this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes;
+  }
+
+  /** Read the last stored embedding provider+model metadata (Issue #153). */
+  getEmbeddingMeta(): { provider: string; model: string } | null {
+    const row = this.liveDb
+      .prepare(`SELECT provider, model FROM embedding_meta WHERE id = 1`)
+      .get() as { provider: string; model: string } | undefined;
+    if (!row) return null;
+    return { provider: row.provider, model: row.model };
+  }
+
+  /** Persist the active embedding provider+model metadata (Issue #153). */
+  setEmbeddingMeta(provider: string, model: string): void {
+    const nowSec = Math.floor(Date.now() / 1000);
+    this.liveDb
+      .prepare(
+        `INSERT INTO embedding_meta (id, provider, model, updated_at)
+         VALUES (1, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, model = excluded.model, updated_at = excluded.updated_at`,
+      )
+      .run(provider, model, nowSec);
+  }
+
+  /** Record which embedding model generated the stored vector for a fact (Issue #153). */
+  setEmbeddingModel(id: string, model: string | null): void {
+    this.liveDb
+      .prepare(`UPDATE facts SET embedding_model = ? WHERE id = ?`)
+      .run(model, id);
   }
 
   /** Get HOT-tier facts for session context, capped by token budget. */
@@ -939,10 +1224,13 @@ export class FactsDB {
     entity: string,
     key?: string,
     tag?: string,
-    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null },
+    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null; limit?: number },
   ): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
+    const limit = typeof options?.limit === "number" && options.limit > 0
+      ? Math.floor(options.limit)
+      : null;
     const temporalFilter =
       asOf != null
         ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
@@ -955,10 +1243,11 @@ export class FactsDB {
         : "";
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
     const { clause: scopeClause, params: scopeParamsArr } = this.scopeFilterClausePositional(scopeFilter);
+    const limitClause = limit ? " LIMIT ?" : "";
 
     const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`;
 
     const params = key
       ? tagParam !== null
@@ -975,7 +1264,8 @@ export class FactsDB {
         : asOf != null
           ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
           : [...[entity, nowSec], ...scopeParamsArr];
-    const rows = this.liveDb.prepare(base).all(...params) as Array<
+    const finalParams = limit ? [...params, limit] : params;
+    const rows = this.liveDb.prepare(base).all(...finalParams) as Array<
       Record<string, unknown>
     >;
 
@@ -1023,6 +1313,17 @@ export class FactsDB {
   }
 
   delete(id: string): boolean {
+    // Explicitly clean up contradictions (defense-in-depth; ON DELETE CASCADE on facts also handles this,
+    // but explicit cleanup ensures correctness regardless of FK enforcement state at the call site).
+    this.liveDb
+      .prepare(`DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?`)
+      .run(id, id);
+    // Manually clean up links where this fact is the target, except DERIVED_FROM links
+    // (DERIVED_FROM links are preserved for provenance tracking even after source facts are deleted)
+    this.liveDb
+      .prepare(`DELETE FROM memory_links WHERE target_fact_id = ? AND link_type != 'DERIVED_FROM'`)
+      .run(id);
+    
     const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
   }
@@ -1170,6 +1471,7 @@ export class FactsDB {
       successCount: (row.success_count as number) ?? undefined,
       lastValidated: (row.last_validated as number) ?? undefined,
       sourceSessions: (row.source_sessions as string) ?? undefined,
+      embeddingModel: (row.embedding_model as string) ?? null,
       reinforcedCount: (row.reinforced_count as number) ?? 0,
       lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
       reinforcedQuotes: (() => {
@@ -1187,6 +1489,7 @@ export class FactsDB {
           return null;
         }
       })(),
+      decayFreezeUntil: (row.decay_freeze_until as number) ?? null,
     };
   }
 
@@ -1213,11 +1516,10 @@ export class FactsDB {
     return this.getById(id);
   }
 
-  /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
-  getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
-    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    const entry = this.rowToEntry(row);
+  private applyLookupFilters(
+    entry: MemoryEntry,
+    options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
+  ): MemoryEntry | null {
     const asOf = options?.asOf;
     if (asOf != null) {
       const vf = entry.validFrom ?? entry.createdAt;
@@ -1236,6 +1538,40 @@ export class FactsDB {
       if (!matches) return null;
     }
     return entry;
+  }
+
+  /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
+  getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
+    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const entry = this.rowToEntry(row);
+    return this.applyLookupFilters(entry, options);
+  }
+
+  /** Batch get facts by id. Returns a Map of id → entry after asOf/scope filtering. */
+  getByIds(
+    ids: string[],
+    options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
+  ): Map<string, MemoryEntry> {
+    const result = new Map<string, MemoryEntry>();
+    if (ids.length === 0) return result;
+    const uniqueIds = Array.from(new Set(ids));
+    // SQLite has a SQLITE_LIMIT_VARIABLE_NUMBER limit (default 999, often 32766).
+    // Batch in chunks of 500 to stay well within that limit for any configuration.
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = this.liveDb
+        .prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`)
+        .all(...chunk) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const entry = this.rowToEntry(row);
+        const filtered = this.applyLookupFilters(entry, options);
+        if (filtered) result.set(filtered.id, filtered);
+      }
+    }
+    return result;
   }
 
   /** Create a typed link between two facts. Returns link id. */
@@ -1310,7 +1646,10 @@ export class FactsDB {
     }));
   }
 
-  /** BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set). */
+  /** BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set).
+   * CONTRADICTS links are excluded from traversal — they would otherwise pollute graph-based recall
+   * with unrelated contradicted facts and cause traversal explosion when a fact has many contradictions.
+   */
   getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
     if (factIds.length === 0 || maxDepth < 1) return [...factIds];
     const seen = new Set<string>(factIds);
@@ -1319,10 +1658,10 @@ export class FactsDB {
       const next: string[] = [];
       for (const id of frontier) {
         const out = this.liveDb
-          .prepare(`SELECT target_fact_id FROM memory_links WHERE source_fact_id = ?`)
+          .prepare(`SELECT target_fact_id FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS'`)
           .all(id) as Array<{ target_fact_id: string }>;
         const in_ = this.liveDb
-          .prepare(`SELECT source_fact_id FROM memory_links WHERE target_fact_id = ?`)
+          .prepare(`SELECT source_fact_id FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS'`)
           .all(id) as Array<{ source_fact_id: string }>;
         for (const r of out) {
           if (!seen.has(r.target_fact_id)) {
@@ -1455,14 +1794,36 @@ export class FactsDB {
 
   pruneExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
-      .run(nowSec);
+      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+      .run({ now: nowSec });
     return result.changes;
   }
 
   /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
   pruneSessionScope(sessionId: string): number {
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run(sessionId);
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?`)
       .run(sessionId);
@@ -1489,13 +1850,26 @@ export class FactsDB {
            AND expires_at > @now
            AND last_confirmed_at IS NOT NULL
            AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
-           AND confidence > 0.1`,
+           AND confidence > 0.1
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`,
       )
       .run({ now: nowSec });
 
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE target_fact_id IN (
+           SELECT id FROM facts WHERE confidence < 0.1
+             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+         )
+         AND link_type != 'DERIVED_FROM'`
+      )
+      .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE confidence < 0.1`)
-      .run();
+      .prepare(`DELETE FROM facts WHERE confidence < 0.1
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+      .run({ now: nowSec });
     return result.changes;
   }
 
@@ -1537,6 +1911,34 @@ export class FactsDB {
     quotes.push(newSnippet.slice(0, 200));
     if (quotes.length > 10) quotes = quotes.slice(-10);
     return JSON.stringify(quotes);
+  }
+
+  /**
+   * Boost the confidence of a fact by a delta, clamped at maxConfidence.
+   * Also increments reinforced_count and updates last_reinforced_at.
+   * Returns true if the fact was found and updated.
+   */
+  boostConfidence(id: string, delta: number, maxConfidence = 1.0): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const tx = this.liveDb.transaction(() => {
+      const row = this.liveDb
+        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+        .get(id) as { confidence: number } | undefined;
+      if (!row) return false;
+
+      const current = typeof row.confidence === "number" ? row.confidence : 1.0;
+      const boosted = Math.min(maxConfidence, current + delta);
+
+      this.liveDb
+        .prepare(
+          `UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?`,
+        )
+        .run(boosted, nowSec, id);
+      return true;
+    });
+
+    return tx() as boolean;
   }
 
   /**
@@ -1969,6 +2371,15 @@ export class FactsDB {
       this.applyPragmas();
     }
     return this.db;
+  }
+
+  /**
+   * Expose the underlying better-sqlite3 Database for services that require direct
+   * SQL access (e.g. the FTS5 search service used by the RRF retrieval pipeline).
+   * Returned instance is the same live handle used internally (with auto-reopen).
+   */
+  getRawDb(): Database.Database {
+    return this.liveDb;
   }
 
   // ---------- Procedural memory: procedures table CRUD ----------
@@ -2600,6 +3011,14 @@ export class FactsDB {
 
     if (conditions.length === 0) return 0;
 
+    // Clean up links where deleted facts are targets (except DERIVED_FROM)
+    const linkCleanupQuery = `DELETE FROM memory_links
+      WHERE target_fact_id IN (
+        SELECT id FROM facts WHERE ${conditions.join(' OR ')}
+      )
+      AND link_type != 'DERIVED_FROM'`;
+    this.liveDb.prepare(linkCleanupQuery).run(...params);
+
     const query = `DELETE FROM facts WHERE ${conditions.join(' OR ')}`;
     const result = this.liveDb.prepare(query).run(...params);
     return result.changes;
@@ -2624,6 +3043,728 @@ export class FactsDB {
       )
       .all(minImportance, thresholdSec, nowSec) as Record<string, unknown>[];
     return rows.map((r) => this.rowToEntry(r));
+  }
+
+  // ============================================================================
+  // Contradiction Detection (Issue #157)
+  // ============================================================================
+
+  /**
+   * Update a fact's confidence by `delta` (negative to reduce), with a floor of 0.1.
+   * Returns the new confidence value, or null if the fact was not found.
+   */
+  updateConfidence(id: string, delta: number): number | null {
+    // Atomic single-statement UPDATE with RETURNING-like pattern.
+    // No explicit transaction wrapper needed — better-sqlite3 is synchronous,
+    // and this method is also called from within recordContradiction's transaction
+    // where a nested transaction() call would throw.
+    const row = this.liveDb
+      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+      .get(id) as { confidence: number } | undefined;
+    if (!row) return null;
+    const current = row.confidence ?? 1.0;
+    const updated = Math.max(0.1, Math.min(1.0, current + delta));
+    this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
+    return updated;
+  }
+
+  /**
+   * Find active (non-superseded, non-expired) facts with the same entity and key but a
+   * different value. Returns facts ordered newest-first.
+   *
+   * When `scope` is provided, only facts in the same scope (and same scope_target when
+   * non-null) are returned, preventing cross-scope contradiction detection.
+   */
+  findConflictingFacts(
+    entity: string,
+    key: string,
+    value: string,
+    excludeFactId: string,
+    scope?: string | null,
+    scopeTarget?: string | null,
+  ): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const scopeClause = scope
+      ? scopeTarget != null
+        ? "AND scope = ? AND scope_target = ?"
+        : "AND scope = ? AND scope_target IS NULL"
+      : "";
+    const baseParams: unknown[] = [entity, key, value, excludeFactId, nowSec];
+    const scopeParams: unknown[] = scope
+      ? scopeTarget != null
+        ? [scope, scopeTarget]
+        : [scope]
+      : [];
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts
+         WHERE lower(entity) = lower(?)
+           AND lower(key) = lower(?)
+           AND lower(value) != lower(?)
+           AND id != ?
+           AND superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+           ${scopeClause}
+         ORDER BY created_at DESC`,
+      )
+      .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.rowToEntry(r));
+  }
+
+  /**
+   * Record a contradiction between two facts:
+   *   1. Insert a row into the `contradictions` table.
+   *   2. Create a CONTRADICTS link from newFactId → oldFactId in memory_links.
+   *   3. Reduce confidence on the old fact by 0.2 (floor at 0.1).
+   *
+   * Returns the new contradiction record id.
+   */
+  recordContradiction(factIdNew: string, factIdOld: string): string {
+    const id = randomUUID();
+    const detectedAt = new Date().toISOString();
+
+    const tx = this.liveDb.transaction(() => {
+      // Get the old fact's current confidence before reducing it
+      const oldFactRow = this.liveDb
+        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+        .get(factIdOld) as { confidence: number } | undefined;
+      const originalConfidence = oldFactRow?.confidence ?? 1.0;
+
+      this.liveDb
+        .prepare(
+          `INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at, resolved, resolution, old_fact_original_confidence)
+           VALUES (?, ?, ?, ?, 0, NULL, ?)`,
+        )
+        .run(id, factIdNew, factIdOld, detectedAt, originalConfidence);
+
+      // Store a single directed link (new→old). getContradictedIds queries both directions.
+      this.createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
+
+      this.updateConfidence(factIdOld, -0.2);
+    });
+    tx();
+    return id;
+  }
+
+  /**
+   * Detect contradictions for a newly stored fact and record them.
+   * Only runs when entity, key, and value are all non-empty.
+   *
+   * Pass `scope` and `scopeTarget` (from the new fact) to restrict detection to the same
+   * memory scope, preventing cross-scope contradiction detection.
+   *
+   * Returns an array of { contradictionId, oldFactId } for each contradiction found.
+   */
+  detectContradictions(
+    newFactId: string,
+    entity: string | null | undefined,
+    key: string | null | undefined,
+    value: string | null | undefined,
+    scope?: string | null,
+    scopeTarget?: string | null,
+  ): Array<{ contradictionId: string; oldFactId: string }> {
+    if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
+
+    const conflicting = this.findConflictingFacts(entity.trim(), key.trim(), value.trim(), newFactId, scope, scopeTarget);
+    const results: Array<{ contradictionId: string; oldFactId: string }> = [];
+
+    for (const old of conflicting) {
+      // findConflictingFacts already filters by different value, but guard for safety
+      if (old.value?.toLowerCase() === value.trim().toLowerCase()) continue;
+      const contradictionId = this.recordContradiction(newFactId, old.id);
+      results.push({ contradictionId, oldFactId: old.id });
+    }
+
+    return results;
+  }
+
+  /**
+   * Get contradiction records involving a specific fact (as new or old).
+   * If no factId given, returns all unresolved contradictions.
+   */
+  getContradictions(factId?: string): ContradictionRecord[] {
+    const rows = factId
+      ? (this.liveDb
+          .prepare(
+            `SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC`,
+          )
+          .all(factId, factId) as Array<Record<string, unknown>>)
+      : (this.liveDb
+          .prepare(
+            `SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC`,
+          )
+          .all() as Array<Record<string, unknown>>);
+    return rows.map((r) => ({
+      id: r.id as string,
+      factIdNew: r.fact_id_new as string,
+      factIdOld: r.fact_id_old as string,
+      detectedAt: r.detected_at as string,
+      resolved: (r.resolved as number) === 1,
+      resolution: (r.resolution as "superseded" | "kept" | "merged" | null) ?? null,
+      oldFactOriginalConfidence: r.old_fact_original_confidence as number | undefined,
+    }));
+  }
+
+  /**
+   * Mark a contradiction as resolved with the given strategy.
+   * Returns true if the record was found and updated.
+   */
+  resolveContradiction(
+    contradictionId: string,
+    resolution: "superseded" | "kept" | "merged",
+  ): boolean {
+    const result = this.liveDb
+      .prepare(
+        `UPDATE contradictions SET resolved = 1, resolution = ? WHERE id = ? AND resolved = 0`,
+      )
+      .run(resolution, contradictionId);
+    return result.changes > 0;
+  }
+
+  /**
+   * Check if a fact is involved in any active (unresolved) contradiction,
+   * either as the old or the new fact.
+   */
+  isContradicted(factId: string): boolean {
+    const row = this.liveDb
+      .prepare(
+        `SELECT 1 FROM contradictions WHERE (fact_id_old = ? OR fact_id_new = ?) AND resolved = 0 LIMIT 1`,
+      )
+      .get(factId, factId);
+    return row != null;
+  }
+
+  /**
+   * Batch check: return the subset of factIds that are involved in any
+   * active (unresolved) contradiction (as old or new fact).
+   * Processes in chunks of 499 to stay within SQLite's default
+   * SQLITE_LIMIT_VARIABLE_NUMBER (999) when doubling the parameter list for the UNION.
+   */
+  getContradictedIds(factIds: string[]): Set<string> {
+    if (factIds.length === 0) return new Set();
+    const result = new Set<string>();
+    // Each chunk is used twice in the UNION query, so keep chunk ≤ 499 (total ≤ 998).
+    const CHUNK = 499;
+    for (let i = 0; i < factIds.length; i += CHUNK) {
+      const chunk = factIds.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = this.liveDb
+        .prepare(
+          `SELECT fact_id_old AS id FROM contradictions WHERE fact_id_old IN (${placeholders}) AND resolved = 0
+           UNION
+           SELECT fact_id_new AS id FROM contradictions WHERE fact_id_new IN (${placeholders}) AND resolved = 0`,
+        )
+        .all(...chunk, ...chunk) as Array<{ id: string }>;
+      for (const r of rows) result.add(r.id);
+    }
+    return result;
+  }
+
+  /**
+   * Nightly resolution stub (Issue #157 / foundation for #143 Dream Cycle).
+   *
+   * For each unresolved contradiction pair, applies auto-resolution when the
+   * newer fact is clearly more authoritative (higher confidence, newer, from an
+   * explicit user store).  Ambiguous cases are returned for future LLM resolution.
+   */
+  resolveContradictions(): {
+    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  } {
+    const unresolved = this.getContradictions();
+    const autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }> = [];
+    const ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }> = [];
+
+    for (const c of unresolved) {
+      const newFact = this.getById(c.factIdNew);
+      const oldFact = this.getById(c.factIdOld);
+
+      if (!newFact && !oldFact) {
+        // Both facts deleted — resolve as superseded, nothing further to do
+        this.resolveContradiction(c.id, "superseded");
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        continue;
+      }
+
+      if (!newFact && oldFact) {
+        // New/contradicting fact was deleted; old fact survives — keep it and restore confidence
+        this.resolveContradiction(c.id, "kept");
+        if (c.oldFactOriginalConfidence != null) {
+          this.liveDb
+            .prepare(`UPDATE facts SET confidence = ? WHERE id = ?`)
+            .run(c.oldFactOriginalConfidence, c.factIdOld);
+        }
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        continue;
+      }
+
+      if (newFact && !oldFact) {
+        // Old fact was deleted; new fact is authoritative — supersede
+        this.resolveContradiction(c.id, "superseded");
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        continue;
+      }
+
+      // Both facts exist — compare them (all single-null cases handled above with continue)
+      const resolvedNew = newFact!;
+      const resolvedOld = oldFact!;
+      const newConf = resolvedNew.confidence ?? 1.0;
+      // Use the original confidence before system reduction, if available
+      const oldConf = c.oldFactOriginalConfidence ?? resolvedOld.confidence ?? 1.0;
+      const newIsNewer = resolvedNew.createdAt >= resolvedOld.createdAt;
+      const newIsHigherConf = newConf > oldConf;
+      const newIsFromUser = resolvedNew.source === "conversation" || resolvedNew.source === "cli";
+
+      if (newIsNewer && newIsHigherConf && newIsFromUser) {
+        this.resolveContradiction(c.id, "superseded");
+        this.supersede(c.factIdOld, c.factIdNew);
+        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+      } else {
+        ambiguous.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+      }
+    }
+
+    return { autoResolved, ambiguous };
+  }
+
+  /** Count of unresolved contradictions. */
+  contradictionsCount(): number {
+    try {
+      const row = this.liveDb
+        .prepare(`SELECT COUNT(*) as cnt FROM contradictions WHERE resolved = 0`)
+        .get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "count-contradictions",
+        severity: "info",
+        subsystem: "facts",
+      });
+      return 0;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auto-linking helpers (Issue #154)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Return all distinct non-null entity names for active (non-superseded) facts.
+   * Used by entity-matching auto-linker at write time.
+   */
+  getKnownEntities(): string[] {
+    const now = Date.now();
+    if (this.knownEntitiesCache !== null && now - this.knownEntitiesCacheTime < this.KNOWN_ENTITIES_CACHE_TTL_MS) {
+      return this.knownEntitiesCache;
+    }
+    const rows = this.liveDb
+      .prepare(
+        `SELECT DISTINCT entity FROM facts WHERE entity IS NOT NULL AND superseded_at IS NULL`,
+      )
+      .all() as Array<{ entity: string }>;
+    this.knownEntitiesCache = rows.map((r) => r.entity);
+    this.knownEntitiesCacheTime = now;
+    return this.knownEntitiesCache;
+  }
+
+  /**
+   * Extract entity mentions from a fact's text using:
+   *   1. Known-entity matching — exact word-boundary (weight 1.0) or substring (weight 0.7).
+   *   2. Simple NER — IPv4 regex (weight 0.5).
+   *
+   * Returns unique {entity, weight} pairs sorted by descending weight.
+   */
+  extractEntitiesFromText(
+    text: string,
+    knownEntities: string[],
+  ): Array<{ entity: string; weight: number }> {
+    const seen = new Map<string, number>();
+    const lowerText = text.toLowerCase();
+
+    for (const entity of knownEntities) {
+      if (!entity) continue;
+      const lowerEntity = entity.toLowerCase();
+
+      // Exact whole-word match
+      const escapedForRegex = lowerEntity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const wordBoundaryRe = new RegExp(`\\b${escapedForRegex}\\b`);
+      if (wordBoundaryRe.test(lowerText)) {
+        const current = seen.get(entity) ?? 0;
+        if (current < 1.0) seen.set(entity, 1.0);
+        continue;
+      }
+
+      // Substring match (no word boundary required)
+      if (lowerText.includes(lowerEntity)) {
+        const current = seen.get(entity) ?? 0;
+        if (current < 0.7) seen.set(entity, 0.7);
+      }
+    }
+
+    // IPv4 NER
+    const ipRe = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;
+    let m: RegExpExecArray | null;
+    while ((m = ipRe.exec(text)) !== null) {
+      const ip = m[0];
+      if (!seen.has(ip)) seen.set(ip, 0.5);
+    }
+
+    return Array.from(seen.entries())
+      .map(([entity, weight]) => ({ entity, weight }))
+      .sort((a, b) => b.weight - a.weight);
+  }
+
+  /**
+   * Find the most recent active (non-superseded, non-expired) fact anchoring an entity.
+   * Returns null if no such fact exists.
+   */
+  findEntityAnchor(entity: string, excludeId?: string): MemoryEntry | null {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const excludeClause = excludeId ? "AND id != ?" : "";
+    const params = excludeId ? [entity, nowSec, excludeId] : [entity, nowSec];
+    const row = this.liveDb
+      .prepare(
+        `SELECT * FROM facts
+         WHERE lower(entity) = lower(?)
+           AND superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+           ${excludeClause}
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(...params) as Record<string, unknown> | undefined;
+    return row ? this.rowToEntry(row) : null;
+  }
+
+  /**
+   * Detect INSTANCE_OF patterns in fact text and create INSTANCE_OF links.
+   *
+   * Matches patterns:
+   *   - "is a <type>" / "is an <type>"
+   *   - "type of <type>"
+   *   - "kind of <type>"
+   *
+   * When a match is found and the type noun is a known entity with an anchor fact,
+   * creates an INSTANCE_OF link from newFactId → anchor fact.
+   *
+   * Returns the number of INSTANCE_OF links created.
+   */
+  autoDetectInstanceOf(newFactId: string, text: string, knownEntities?: string[]): number {
+    const patterns = [
+      /\bis\s+an?\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+      /\btype\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+      /\bkind\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+    ];
+
+    const candidates = new Set<string>();
+    for (const pattern of patterns) {
+      let match: RegExpExecArray | null;
+      // Reset lastIndex before each use (global flag)
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(text)) !== null) {
+        const typeName = match[1].trim().toLowerCase();
+        if (typeName.length >= 2) candidates.add(typeName);
+      }
+    }
+
+    if (candidates.size === 0) return 0;
+
+    const entities = knownEntities ?? this.getKnownEntities();
+    const knownEntitiesSet = new Set(entities.map((e) => e.toLowerCase()));
+    let linked = 0;
+
+    for (const typeName of candidates) {
+      // Only link to types that are known entities in the knowledge base
+      if (!knownEntitiesSet.has(typeName)) continue;
+      const anchor = this.findEntityAnchor(typeName, newFactId);
+      if (!anchor) continue;
+      // Avoid duplicate INSTANCE_OF links
+      const existing = this.liveDb
+        .prepare(
+          `SELECT id FROM memory_links
+           WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'INSTANCE_OF'`,
+        )
+        .get(newFactId, anchor.id);
+      if (!existing) {
+        this.createLink(newFactId, anchor.id, "INSTANCE_OF", 1.0);
+        linked++;
+      }
+    }
+
+    return linked;
+  }
+
+  /**
+   * Auto-link a newly stored fact to related facts at write time (Issue #154).
+   *
+   * Steps:
+   *   1. Known-entity matching + IP NER → RELATES_TO edges to entity anchor facts.
+   *   2. Temporal co-occurrence — facts in the same session with entity/tag overlap
+   *      get weak RELATES_TO edges.
+   *   3. Supersession detection — if entity+key matches an existing fact with a
+   *      different value, create a SUPERSEDES edge and (when autoSupersede is true)
+   *      mark the old fact as superseded and reduce its confidence.
+   *   4. INSTANCE_OF auto-detection — matches "is a/an X", "type of X", and "kind of X" patterns.
+   *
+   * Returns { linkedCount, supersededIds } for use in the response message.
+   */
+  autoLinkEntities(
+    newFactId: string,
+    text: string,
+    entity: string | null,
+    key: string | null,
+    sessionId: string | null,
+    cfg: { coOccurrenceWeight: number; autoSupersede: boolean },
+    scope?: string | null,
+    scopeTarget?: string | null,
+  ): { linkedCount: number; supersededIds: string[] } {
+    let linkedCount = 0;
+    const supersededIds: string[] = [];
+
+    // Step 1: Known-entity + IP matching
+    const knownEntities = this.getKnownEntities();
+    const mentions = this.extractEntitiesFromText(text, knownEntities);
+
+    for (const { entity: mentionedEntity, weight } of mentions) {
+      const anchor = this.findEntityAnchor(mentionedEntity, newFactId);
+      if (!anchor) continue;
+      // Avoid duplicate links (don't recreate if link already exists)
+      const existing = this.liveDb
+        .prepare(
+          `SELECT id FROM memory_links
+           WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+        )
+        .get(newFactId, anchor.id);
+      if (!existing) {
+        this.createLink(newFactId, anchor.id, "RELATED_TO", weight);
+        linkedCount++;
+      }
+    }
+
+    // Step 2: Temporal co-occurrence — other facts from the same session
+    if (sessionId) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      // Look for facts stored in the same session (via source_sessions column)
+      // Also accept entity or tag overlap as qualifying co-occurrence signal
+      const escapedSessionId = sessionId.replace(/[\\%_]/g, '\\$&');
+      const recentRows = this.liveDb
+        .prepare(
+          `SELECT * FROM facts
+           WHERE id != ?
+             AND superseded_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)
+             AND source_sessions IS NOT NULL
+             AND ((',' || source_sessions || ',' LIKE ? ESCAPE '\\') OR source_sessions LIKE ? ESCAPE '\\')
+           ORDER BY created_at DESC
+           LIMIT 20`,
+        )
+        .all(
+          newFactId,
+          nowSec,
+          `%,${escapedSessionId},%`,
+          `%"${escapedSessionId}"%`,
+        ) as Array<Record<string, unknown>>;
+
+      for (const row of recentRows) {
+        const coEntry = this.rowToEntry(row);
+        // Skip if already linked
+        const existing = this.liveDb
+          .prepare(
+            `SELECT id FROM memory_links
+             WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+          )
+          .get(newFactId, coEntry.id);
+        if (!existing) {
+          this.createLink(newFactId, coEntry.id, "RELATED_TO", cfg.coOccurrenceWeight);
+          linkedCount++;
+        }
+      }
+    }
+
+    // Step 3: Supersession detection
+    if (entity?.trim() && key?.trim()) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const scopeClause = scope
+        ? scopeTarget != null
+          ? "AND scope = ? AND scope_target = ?"
+          : "AND scope = ? AND scope_target IS NULL"
+        : "";
+      const baseParams: unknown[] = [entity.trim(), key.trim(), newFactId, nowSec];
+      const scopeParams: unknown[] = scope
+        ? scopeTarget != null
+          ? [scope, scopeTarget]
+          : [scope]
+        : [];
+      const conflicting = this.liveDb
+        .prepare(
+          `SELECT * FROM facts
+           WHERE lower(entity) = lower(?)
+             AND lower(key) = lower(?)
+             AND id != ?
+             AND superseded_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)
+             ${scopeClause}
+           ORDER BY created_at DESC`,
+        )
+        .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
+
+      const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) ?? null;
+
+      // Skip supersession entirely when new fact has no value — a valueless fact
+      // cannot meaningfully supersede an existing value.
+      if (newVal !== null) {
+        for (const row of conflicting) {
+          const oldFact = this.rowToEntry(row);
+          // Only create SUPERSEDES edge when value actually differs
+          if (oldFact.value !== null && newVal.toLowerCase() === oldFact.value.toLowerCase()) continue;
+
+          // Create SUPERSEDES link (new → old)
+          const alreadyLinked = this.liveDb
+            .prepare(
+              `SELECT id FROM memory_links
+               WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'SUPERSEDES'`,
+            )
+            .get(newFactId, oldFact.id);
+          if (!alreadyLinked) {
+            this.createLink(newFactId, oldFact.id, "SUPERSEDES", 1.0);
+
+            if (cfg.autoSupersede) {
+              // Mark old fact as superseded
+              this.supersede(oldFact.id, newFactId);
+              
+              // Only reduce confidence if no contradiction was already recorded
+              // (detectContradictions already applied -0.2 penalty)
+              const existingContradiction = this.liveDb
+                .prepare(
+                  `SELECT id FROM contradictions
+                   WHERE fact_id_new = ? AND fact_id_old = ?`,
+                )
+                .get(newFactId, oldFact.id);
+              if (!existingContradiction) {
+                this.updateConfidence(oldFact.id, -0.2);
+              }
+              supersededIds.push(oldFact.id);
+            }
+          }
+        }
+      }
+    }
+
+    // Step 4: INSTANCE_OF auto-detection
+    linkedCount += this.autoDetectInstanceOf(newFactId, text, knownEntities);
+
+    return { linkedCount, supersededIds };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Topic cluster storage (Issue #146)
+  // ---------------------------------------------------------------------------
+
+  /** Create clusters and cluster_members tables for topic cluster storage. */
+  private migrateClusterTables(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS clusters (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        fact_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS cluster_members (
+        cluster_id TEXT NOT NULL REFERENCES clusters(id) ON DELETE CASCADE,
+        fact_id TEXT NOT NULL,
+        PRIMARY KEY (cluster_id, fact_id)
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_cluster_members_fact ON cluster_members(fact_id)`);
+  }
+
+  /**
+   * Get all unique fact IDs that participate in at least one memory link
+   * (as source or target). Used by cluster detection.
+   */
+  getAllLinkedFactIds(): string[] {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT DISTINCT id FROM (
+          SELECT source_fact_id AS id FROM memory_links
+          UNION
+          SELECT target_fact_id AS id FROM memory_links
+        )`,
+      )
+      .all() as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Get all edges from memory_links as sourceFactId/targetFactId pairs.
+   * Used for building the cluster adjacency map in a single query.
+   */
+  getAllLinks(): Array<{ sourceFactId: string; targetFactId: string }> {
+    const rows = this.liveDb
+      .prepare(`SELECT source_fact_id, target_fact_id FROM memory_links`)
+      .all() as Array<{ source_fact_id: string; target_fact_id: string }>;
+    return rows.map((r) => ({
+      sourceFactId: r.source_fact_id,
+      targetFactId: r.target_fact_id,
+    }));
+  }
+
+  /**
+   * Persist detected clusters, replacing all existing cluster data.
+   * Runs in a single transaction for atomicity.
+   */
+  saveClusters(clusters: Array<{ id: string; label: string; factIds: string[]; factCount: number; createdAt: number; updatedAt: number }>): void {
+    const insertCluster = this.liveDb.prepare(
+      `INSERT OR REPLACE INTO clusters (id, label, fact_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const insertMember = this.liveDb.prepare(
+      `INSERT OR IGNORE INTO cluster_members (cluster_id, fact_id) VALUES (?, ?)`,
+    );
+
+    this.liveDb.transaction(() => {
+      // Replace all clusters
+      this.liveDb.exec(`DELETE FROM cluster_members`);
+      this.liveDb.exec(`DELETE FROM clusters`);
+      for (const cluster of clusters) {
+        insertCluster.run(cluster.id, cluster.label, cluster.factCount, cluster.createdAt, cluster.updatedAt);
+        for (const factId of cluster.factIds) {
+          insertMember.run(cluster.id, factId);
+        }
+      }
+    })();
+  }
+
+  /** Get all stored clusters (without member IDs). Sorted by fact_count desc. */
+  getClusters(): Array<{ id: string; label: string; factCount: number; createdAt: number; updatedAt: number }> {
+    const rows = this.liveDb
+      .prepare(`SELECT id, label, fact_count, created_at, updated_at FROM clusters ORDER BY fact_count DESC`)
+      .all() as Array<{ id: string; label: string; fact_count: number; created_at: number; updated_at: number }>;
+    return rows.map((r) => ({
+      id: r.id,
+      label: r.label,
+      factCount: r.fact_count,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  /** Get member fact IDs for a specific cluster. */
+  getClusterMembers(clusterId: string): string[] {
+    const rows = this.liveDb
+      .prepare(`SELECT fact_id FROM cluster_members WHERE cluster_id = ?`)
+      .all(clusterId) as Array<{ fact_id: string }>;
+    return rows.map((r) => r.fact_id);
+  }
+
+  /** Get the cluster ID that a given fact belongs to (null if not in any cluster). */
+  getFactClusterId(factId: string): string | null {
+    const row = this.liveDb
+      .prepare(`SELECT cluster_id FROM cluster_members WHERE fact_id = ?`)
+      .get(factId) as { cluster_id: string } | undefined;
+    return row?.cluster_id ?? null;
   }
 
   close(): void {

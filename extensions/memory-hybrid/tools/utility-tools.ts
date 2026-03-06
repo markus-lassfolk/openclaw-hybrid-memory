@@ -5,16 +5,18 @@ import type OpenAI from "openai";
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { resolveReflectionModelAndFallbacks } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { detectClusters } from "../services/topic-clusters.js";
+import { analyzeKnowledgeGaps } from "../services/knowledge-gaps.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   wal: WriteAheadLog | null;
@@ -25,7 +27,7 @@ export interface PluginContext {
 export type RunReflectionFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
   opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[] },
@@ -35,7 +37,7 @@ export type RunReflectionFn = (
 export type RunReflectionRulesFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
@@ -44,7 +46,7 @@ export type RunReflectionRulesFn = (
 export type RunReflectionMetaFn = (
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void }
@@ -355,5 +357,173 @@ export function registerUtilityTools(
       },
     },
     { name: "memory_reflect_meta" },
+  );
+
+  // memory_clusters
+  api.registerTool(
+    {
+      name: "memory_clusters",
+      label: "Memory Clusters",
+      description:
+        "Detect and return topic clusters — groups of densely interconnected facts forming natural knowledge domains. Runs BFS connected-component analysis on the memory graph. Returns cluster labels, sizes, and member fact IDs.",
+      parameters: Type.Object({
+        minClusterSize: Type.Optional(
+          Type.Number({
+            description: "Minimum facts to form a cluster (default from config, typically 3)",
+            minimum: 2,
+          }),
+        ),
+        save: Type.Optional(
+          Type.Boolean({
+            description: "Persist detected clusters to the database (default: true)",
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const clustersCfg = cfg.clusters;
+        if (!clustersCfg.enabled) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Topic cluster detection is disabled. Set clusters.enabled: true in plugin config.",
+              },
+            ],
+            details: { error: "clusters_disabled" },
+          };
+        }
+
+        const minClusterSize =
+          typeof params.minClusterSize === "number" && params.minClusterSize >= 2
+            ? Math.floor(params.minClusterSize)
+            : clustersCfg.minClusterSize;
+
+        const shouldSave = params.save !== false;
+
+        try {
+          // Build existingClusterIds map for stable IDs across re-runs
+          const existingClusters = factsDb.getClusters();
+          const existingClusterIds = new Map<string, { id: string; createdAt: number }>();
+          for (const cluster of existingClusters) {
+            const members = factsDb.getClusterMembers(cluster.id);
+            const componentKey = [...members].sort().join(",");
+            existingClusterIds.set(componentKey, { id: cluster.id, createdAt: cluster.createdAt });
+          }
+
+          const result = detectClusters(factsDb, { minClusterSize, existingClusterIds });
+
+          if (shouldSave) {
+            factsDb.saveClusters(result.clusters);
+          }
+
+          const summary = result.clusters
+            .map((c) => `  • ${c.label} (${c.factCount} facts)`)
+            .join("\n");
+
+          const text =
+            result.clusters.length === 0
+              ? `No topic clusters found (need at least ${minClusterSize} interconnected facts per cluster). Total linked facts: ${result.totalLinkedFacts}.`
+              : `Found ${result.clusters.length} topic cluster(s) from ${result.totalLinkedFacts} linked facts (${result.isolatedFacts} below threshold):\n${summary}`;
+
+          return {
+            content: [{ type: "text", text }],
+            details: {
+              clusterCount: result.clusters.length,
+              totalLinkedFacts: result.totalLinkedFacts,
+              isolatedFacts: result.isolatedFacts,
+              clusters: result.clusters.map((c) => ({
+                id: c.id,
+                label: c.label,
+                factCount: c.factCount,
+                factIds: c.factIds,
+              })),
+            },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "clusters",
+            operation: "memory_clusters",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory_clusters" },
+  );
+
+  // memory_gaps
+  api.registerTool(
+    {
+      name: "memory_gaps",
+      label: "Memory Gaps",
+      description:
+        "Analyze the memory graph to surface knowledge gaps (orphans, weakly linked facts, suggested links).",
+      parameters: Type.Object({
+        mode: Type.Optional(
+          Type.Union(
+            [Type.Literal("orphans"), Type.Literal("weak"), Type.Literal("all")],
+            { description: "Which gap types to return (default: all)." },
+          ),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max items per category (default: 20).",
+            minimum: 1,
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        if (!cfg.gaps.enabled) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Knowledge gap analysis is disabled. Set gaps.enabled: true in plugin config.",
+              },
+            ],
+            details: { error: "gaps_disabled" },
+          };
+        }
+
+        const mode =
+          params.mode === "orphans" || params.mode === "weak" || params.mode === "all"
+            ? params.mode
+            : "all";
+        const limit =
+          typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0
+            ? Math.min(200, Math.floor(params.limit))
+            : 20;
+
+        try {
+          const report = await analyzeKnowledgeGaps(
+            factsDb,
+            vectorDb,
+            embeddings,
+            mode,
+            limit,
+            cfg.gaps.similarityThreshold,
+          );
+
+          const lines: string[] = [
+            `Knowledge gaps (${mode})`,
+            `  Orphans: ${report.orphans.length}`,
+            `  Weak links: ${report.weak.length}`,
+            `  Suggested links: ${report.suggestedLinks.length}`,
+          ];
+
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: report,
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "gaps",
+            operation: "memory_gaps",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory_gaps" },
   );
 }

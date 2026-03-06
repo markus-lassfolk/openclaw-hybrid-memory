@@ -14,7 +14,8 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EventLog } from "../backends/event-log.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
@@ -25,6 +26,9 @@ import {
   VAULT_POINTER_PREFIX,
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
+import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
+import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
 import {
   getMemoryCategories,
   DECAY_CLASSES,
@@ -45,10 +49,12 @@ export interface PluginContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
-  embeddings: Embeddings;
+  aliasDb?: AliasDB | null;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
+  eventLog: EventLog | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
@@ -82,7 +88,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
 
   api.registerTool(
     {
@@ -145,6 +151,19 @@ export function registerMemoryTools(
             description: "Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
           }),
         ),
+        expandGraph: Type.Optional(
+          Type.Boolean({
+            description:
+              "When true, run BFS graph expansion from the top results: related facts up to expandDepth hops are included. " +
+              "Direct matches score higher than expanded ones. Default: false (or graphRetrieval.defaultExpand from config).",
+          }),
+        ),
+        expandDepth: Type.Optional(
+          Type.Number({
+            description:
+              "Number of BFS hops to expand when expandGraph=true (default: 2, max: graphRetrieval.maxExpandDepth from config).",
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
@@ -176,6 +195,8 @@ export function registerMemoryTools(
           userId,
           agentId,
           sessionId,
+          expandGraph: expandGraphParam,
+          expandDepth: expandDepthParam,
         } = params as {
           query?: string;
           id?: string | number;
@@ -188,6 +209,8 @@ export function registerMemoryTools(
           userId?: string;
           agentId?: string;
           sessionId?: string;
+          expandGraph?: boolean;
+          expandDepth?: number;
         };
         const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
 
@@ -198,6 +221,16 @@ export function registerMemoryTools(
         // Accepting arbitrary scope filters allows users to access other users' private memories.
         // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
         const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+        const logRecall = (hit: boolean) => {
+          const maybeFactsDb = factsDb as { logRecall?: (hit: boolean) => void };
+          if (typeof maybeFactsDb.logRecall === "function") {
+            try {
+              maybeFactsDb.logRecall(hit);
+            } catch {
+              // Non-fatal: recall logging should never break recall
+            }
+          }
+        };
 
         // Fetch by id (fact id or 1-based index from last progressive index)
         if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -226,6 +259,7 @@ export function registerMemoryTools(
             if (entry) {
               // Access boost — update recall_count and last_accessed on fetch by id
               factsDb.refreshAccessedFacts([entry.id]);
+              logRecall(true);
               const text = `[${entry.category}] ${entry.text}`;
               return {
                 content: [
@@ -255,6 +289,7 @@ export function registerMemoryTools(
               };
             }
           }
+          logRecall(false);
           return {
             content: [
               {
@@ -271,6 +306,7 @@ export function registerMemoryTools(
 
         const query = typeof queryParam === "string" && queryParam.trim().length > 0 ? queryParam.trim() : null;
         if (!query) {
+          logRecall(false);
           return {
             content: [
               {
@@ -290,18 +326,16 @@ export function registerMemoryTools(
           scopeFilter,
           ...(asOfSec != null ? { asOf: asOfSec } : {}),
         };
-        let sqliteResults: SearchResult[] = [];
+
+        // Entity-targeted lookup (always runs when entity filter is set; separate from RRF)
+        let entityResults: SearchResult[] = [];
         if (entity) {
-          sqliteResults = factsDb.lookup(entity, undefined, tag, recallOpts);
+          entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
         }
 
-        const ftsResults = factsDb.search(query, limit, {
-          ...recallOpts,
-          reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
-        });
-        sqliteResults = [...sqliteResults, ...ftsResults];
-
-        let lanceResults: SearchResult[] = [];
+        // Compute embedding for semantic strategy (with optional HyDE query expansion)
+        let queryVector: number[] | null = null;
+        let semanticWarning: string | null = null;
         if (!tag) {
           try {
             addOperationBreadcrumb("search", "vector-recall");
@@ -334,21 +368,88 @@ export function registerMemoryTools(
                 api.logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);
               }
             }
-            const vector = await embeddings.embed(textToEmbed);
-            lanceResults = await vectorDb.search(vector, limit * 3, 0.3);
-            lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+            queryVector = await embeddings.embed(textToEmbed);
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "search",
-              operation: "vector-recall",
+              operation: "vector-embed",
               phase: "runtime",
-              backend: "lancedb",
             });
-            api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+            semanticWarning = "Semantic search unavailable due to embedding failure; results may be incomplete.";
           }
         }
 
-        let results = mergeResults(sqliteResults, lanceResults, limit, factsDb);
+        // RRF multi-strategy retrieval pipeline (Issue #152)
+        // When tag is set, skip semantic strategy (same behaviour as before).
+        let results: SearchResult[] = [];
+        try {
+          const rrfStrategies = tag
+            ? cfg.retrieval.strategies.filter((s) => s !== "semantic")
+            : cfg.retrieval.strategies;
+          const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
+          const rrfOutput = await runRetrievalPipeline(
+            query,
+            queryVector,
+            factsDb.getRawDb(),
+            vectorDb,
+            factsDb,
+            rrfConfig,
+            cfg.retrieval.explicitBudgetTokens,
+            Math.floor(Date.now() / 1000),
+            tag ?? undefined,
+            includeSuperseded,
+            scopeFilter,
+            asOfSec ?? undefined,
+            cfg.aliases?.enabled ? aliasDb : null,
+            cfg.clusters,
+          );
+
+          // Merge entity-lookup results first, then append RRF results (deduped).
+          // When packed is non-empty, only include fused results whose factId was packed
+          // (avoids including items beyond the token budget). Fall back to the full fused
+          // list when packed is empty (e.g. budget too small to pack any).
+          // Use a factId→entry Map so entry lookup never depends on loop index alignment.
+          const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
+          results = [...entityResults];
+          const entryByFactId = new Map<string, MemoryEntry>();
+          for (let i = 0; i < rrfOutput.fused.length; i++) {
+            const e = rrfOutput.entries[i];
+            if (e) entryByFactId.set(rrfOutput.fused[i].factId, e);
+          }
+          const packedFactIdSet = rrfOutput.packed.length > 0
+            ? new Set(rrfOutput.packedFactIds)
+            : null;
+          for (const fusedResult of rrfOutput.fused) {
+            if (packedFactIdSet && !packedFactIdSet.has(fusedResult.factId)) continue;
+            if (seenIds.has(fusedResult.factId)) continue;
+            const entry = entryByFactId.get(fusedResult.factId);
+            if (entry) {
+              results.push({ entry, score: fusedResult.finalScore, backend: "sqlite" });
+              seenIds.add(fusedResult.factId);
+            }
+          }
+          results.sort((a, b) => b.score - a.score);
+          results = results.slice(0, limit);
+        } catch (err) {
+          // Fallback: use legacy FTS + vector merge if RRF pipeline fails
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "search",
+            operation: "rrf-pipeline",
+            phase: "runtime",
+          });
+          api.logger.warn(`memory-hybrid: RRF pipeline failed, falling back to legacy merge: ${err}`);
+          const ftsResults = factsDb.search(query, limit, {
+            ...recallOpts,
+            reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+          });
+          let lanceResults: SearchResult[] = [];
+          if (queryVector) {
+            lanceResults = await vectorDb.search(queryVector, limit * 3, 0.3);
+            lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+          }
+          results = mergeResults([...entityResults, ...ftsResults], lanceResults, limit, factsDb);
+        }
 
         // Exclude COLD tier when includeCold is false (Lance results may include cold facts)
         if (!includeCold && results.length > 0) {
@@ -370,8 +471,48 @@ export function registerMemoryTools(
           results = filtered.slice(0, limit);
         }
 
-        // Graph traversal — expand results with connected facts when enabled
-        if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
+        // Resolve whether to run GraphRAG expansion for this call.
+        const useExpandGraph =
+          cfg.graphRetrieval.enabled &&
+          cfg.graph.enabled &&
+          results.length > 0 &&
+          (expandGraphParam ?? cfg.graphRetrieval.defaultExpand);
+
+        // GraphRAG expansion — BFS from seed results with path tracking and ranked scoring.
+        // When expandGraph=true, replaces the legacy flat-score graph traversal.
+        type ExpandedMeta = { expansionSource: "direct" | "graph"; hopCount: number; linkPath: string } | undefined;
+        const expansionMeta = new Map<string, ExpandedMeta>();
+
+        if (useExpandGraph) {
+          const rawDepth = typeof expandDepthParam === "number" ? expandDepthParam : cfg.retrieval.graphWalkDepth;
+          const depth = Math.min(Math.max(0, rawDepth), cfg.graphRetrieval.maxExpandDepth);
+          const seedInputs = results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry }));
+          const originalBackendMap = new Map<string, "sqlite" | "lancedb">();
+          for (const r of results) {
+            originalBackendMap.set(r.entry.id, r.backend);
+          }
+          const expanded = expandGraph(factsDb, seedInputs, {
+            maxDepth: depth,
+            maxExpandedResults: cfg.graphRetrieval.maxExpandedResults,
+            scopeFilter: scopeFilter ?? undefined,
+            asOf: asOfSec ?? undefined,
+          });
+
+          // Re-build results from expanded output (preserves scores and dedup).
+          const newResults: SearchResult[] = [];
+          for (const e of expanded) {
+            const backend = e.expansionSource === "direct" ? (originalBackendMap.get(e.factId) ?? "sqlite") : "sqlite";
+            newResults.push({ entry: e.entry, score: e.score, backend });
+            expansionMeta.set(e.factId, {
+              expansionSource: e.expansionSource,
+              hopCount: e.hopCount,
+              linkPath: formatLinkPath(e.linkPath),
+            });
+          }
+          newResults.sort((a, b) => b.score - a.score);
+          results = newResults.slice(0, limit);
+        } else if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
+          // Legacy flat-score graph traversal (backward compatible, no path annotation).
           const initialIds = new Set(results.map((r) => r.entry.id));
           const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
           const extraIds = connectedIds.filter((id) => !initialIds.has(id));
@@ -379,11 +520,7 @@ export function registerMemoryTools(
           for (const id of extraIds) {
             const entry = factsDb.getById(id, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
             if (entry) {
-              results.push({
-                entry,
-                score: 0.45,
-                backend: "sqlite",
-              });
+              results.push({ entry, score: 0.45, backend: "sqlite" });
             }
           }
           results.sort((a, b) => b.score - a.score);
@@ -391,41 +528,70 @@ export function registerMemoryTools(
         }
 
         if (results.length === 0) {
+          logRecall(false);
           return {
-            content: [{ type: "text", text: "No relevant memories found." }],
-            details: { count: 0 },
+            content: [{
+              type: "text",
+              text: semanticWarning
+                ? `No relevant memories found.\n\n⚠️ ${semanticWarning}`
+                : "No relevant memories found.",
+            }],
+            details: { count: 0, warning: semanticWarning ?? undefined },
           };
         }
 
+        const contradictionStatus = new Map<string, boolean>();
+        for (const r of results) {
+          contradictionStatus.set(r.entry.id, factsDb.isContradicted(r.entry.id));
+        }
+
+        logRecall(true);
         const text = results
-          .map(
-            (r, i) =>
-              `${i + 1}. [${r.backend}/${r.entry.category}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%)`,
-          )
+          .map((r, i) => {
+            const contradicted = contradictionStatus.get(r.entry.id) ?? false;
+            const contradictedPrefix = contradicted ? "[⚠️ CONTRADICTED] " : "";
+            const meta = expansionMeta.get(r.entry.id);
+            const expansionSuffix =
+              meta && meta.expansionSource === "graph"
+                ? ` [graph+${meta.hopCount}hop${meta.linkPath ? `: ${meta.linkPath}` : ""}]`
+                : "";
+            return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}`;
+          })
           .join("\n");
 
-        const sanitized = results.map((r) => ({
-          id: r.entry.id,
-          text: r.entry.text,
-          category: r.entry.category,
-          entity: r.entry.entity,
-          importance: r.entry.importance,
-          score: r.score,
-          backend: r.backend,
-          tags: r.entry.tags?.length ? r.entry.tags : undefined,
-          sourceDate: r.entry.sourceDate
-            ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
-            : undefined,
-        }));
+        const sanitized = results.map((r) => {
+          const meta = expansionMeta.get(r.entry.id);
+          return {
+            id: r.entry.id,
+            text: r.entry.text,
+            category: r.entry.category,
+            entity: r.entry.entity,
+            importance: r.entry.importance,
+            score: r.score,
+            backend: r.backend,
+            tags: r.entry.tags?.length ? r.entry.tags : undefined,
+            sourceDate: r.entry.sourceDate
+              ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+              : undefined,
+            contradicted: contradictionStatus.get(r.entry.id) || undefined,
+            ...(meta
+              ? {
+                  expansionSource: meta.expansionSource,
+                  hopCount: meta.hopCount,
+                  linkPath: meta.linkPath || undefined,
+                }
+              : {}),
+          };
+        });
 
         return {
           content: [
             {
               type: "text",
-              text: `Found ${results.length} memories:\n\n${text}`,
+              text: `Found ${results.length} memories:\n\n${text}${semanticWarning ? `\n\n⚠️ ${semanticWarning}` : ""}`,
             },
           ],
-          details: { count: results.length, memories: sanitized },
+          details: { count: results.length, memories: sanitized, warning: semanticWarning ?? undefined },
         };
   }
 
@@ -703,6 +869,7 @@ export function registerMemoryTools(
             try {
               addOperationBreadcrumb("vector", "store-credential-pointer");
               const vector = await embeddings.embed(pointerText);
+              factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vector))) {
                 await vectorDb.store({
                   text: pointerText,
@@ -784,6 +951,7 @@ export function registerMemoryTools(
 
             if (classification.action === "DELETE" && classification.targetId) {
               factsDb.supersede(classification.targetId, null);
+              aliasDb?.deleteByFactId(classification.targetId);
               return {
                 content: [{ type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` }],
                 details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
@@ -815,13 +983,18 @@ export function registerMemoryTools(
                   supersedesId: classification.targetId,
                   scope,
                   scopeTarget,
+                  sourceSessions: api.context?.sessionId ?? undefined,
                 });
                 factsDb.supersede(classification.targetId, newEntry.id);
+                aliasDb?.deleteByFactId(classification.targetId);
 
                 const finalImportance = Math.max(importance, oldFact.importance);
                 try {
-                  if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                  if (vector) {
+                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                    if (!(await vectorDb.hasDuplicate(vector))) {
+                      await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                    }
                   }
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -921,6 +1094,7 @@ export function registerMemoryTools(
           }
         }
         const nowSec = Math.floor(Date.now() / 1000);
+        const storeSessionId = api.context?.sessionId ?? null;
         const entry = factsDb.store({
           text: textToStore,
           category: category as MemoryCategory,
@@ -934,24 +1108,29 @@ export function registerMemoryTools(
           tags,
           scope,
           scopeTarget,
+          sourceSessions: storeSessionId ?? undefined,
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
         });
         if (supersedes?.trim()) {
           factsDb.supersede(supersedes.trim(), entry.id);
+          aliasDb?.deleteByFactId(supersedes.trim());
         }
 
         try {
           addOperationBreadcrumb("vector", "store-fact");
-          if (vector && !(await vectorDb.hasDuplicate(vector))) {
-            await vectorDb.store({
-              text: textToStore,
-              vector,
-              importance,
-              category,
-              id: entry.id,
-            });
+          if (vector) {
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            if (!(await vectorDb.hasDuplicate(vector))) {
+              await vectorDb.store({
+                text: textToStore,
+                vector,
+                importance,
+                category,
+                id: entry.id,
+              });
+            }
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -964,6 +1143,47 @@ export function registerMemoryTools(
         }
 
         walRemove(walEntryId, api.logger);
+
+        // Issue #149: generate and store retrieval aliases (non-blocking)
+        if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
+          const aliasModel =
+            cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+          void storeAliases(
+            entry.id,
+            textToStore,
+            cfg.aliases,
+            aliasModel,
+            openai,
+            embeddings,
+            aliasDb,
+            (msg) => api.logger.warn(msg),
+          ).catch((err) => {
+            api.logger.warn(`memory-hybrid: alias generation failed: ${err}`);
+          });
+        }
+
+        // Contradiction detection (Issue #157): check for same entity+key, different value
+        // Pass the stored fact's scope so detection stays within the same scope boundary.
+        const contradictions = factsDb.detectContradictions(entry.id, entity ?? null, key ?? null, value ?? null, entry.scope ?? null, entry.scopeTarget ?? null);
+        for (const { contradictionId, oldFactId } of contradictions) {
+          if (eventLog) {
+            eventLog.append({
+              sessionId: api.context?.sessionId ?? "unknown",
+              timestamp: new Date().toISOString(),
+              eventType: "correction",
+              content: {
+                type: "contradiction_detected",
+                contradictionId,
+                newFactId: entry.id,
+                oldFactId,
+                entity: entity ?? null,
+                key: key ?? null,
+                newValue: value ?? null,
+              },
+              entities: entity ? [entity] : undefined,
+            });
+          }
+        }
 
         // Auto-link to similar facts when enabled
         let autoLinked = 0;
@@ -981,10 +1201,41 @@ export function registerMemoryTools(
           }
         }
 
+        // Entity-based auto-linking (Issue #154): known-entity matching, IP NER,
+        // temporal co-occurrence, and supersession detection.
+        let entityAutoLinked = 0;
+        let autoSupersededIds: string[] = [];
+        if (cfg.graph.enabled && cfg.graph.autoLink) {
+          const sessionId = api.context?.sessionId ?? null;
+          const result = factsDb.autoLinkEntities(
+            entry.id,
+            textToStore,
+            entity ?? null,
+            key ?? null,
+            sessionId,
+            {
+              coOccurrenceWeight: cfg.graph.coOccurrenceWeight,
+              autoSupersede: cfg.graph.autoSupersede,
+            },
+            entry.scope ?? null,
+            entry.scopeTarget ?? null,
+          );
+          entityAutoLinked = result.linkedCount;
+          autoSupersededIds = result.supersededIds;
+          if (autoSupersededIds.length > 0) {
+            api.logger.info?.(
+              `memory-hybrid: autoSupersede — superseded [${autoSupersededIds.join(", ")}] with ${entry.id}`,
+            );
+          }
+        }
+
+        const totalLinked = autoLinked + entityAutoLinked;
         const storedMsg =
           `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]` +
           (supersedes?.trim() ? " (supersedes previous fact)" : "") +
-          (autoLinked > 0 ? ` (linked to ${autoLinked} related fact${autoLinked === 1 ? "" : "s"})` : "");
+          (totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : "") +
+          (autoSupersededIds.length > 0 ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})` : "") +
+          (contradictions.length > 0 ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})` : "");
 
         return {
           content: [
@@ -999,7 +1250,9 @@ export function registerMemoryTools(
             backend: "both",
             decayClass: entry.decayClass,
             ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
-            ...(autoLinked > 0 ? { autoLinked } : {}),
+            ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
+            ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
+            ...(contradictions.length > 0 ? { contradictions: contradictions.map((c) => ({ contradictionId: c.contradictionId, oldFactId: c.oldFactId })) } : {}),
           },
         };
         } catch (err) {
@@ -1142,6 +1395,7 @@ export function registerMemoryTools(
             });
             api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
           }
+          aliasDb?.deleteByFactId(resolvedId);
 
           if (!sqlDeleted && !lanceDeleted) {
             if (lanceError) {
@@ -1219,6 +1473,7 @@ export function registerMemoryTools(
               });
               api.logger.warn(`memory-hybrid: LanceDB delete during supersede failed: ${err}`);
             }
+            aliasDb?.deleteByFactId(id);
             return {
               content: [
                 {

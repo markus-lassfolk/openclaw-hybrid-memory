@@ -41,6 +41,7 @@ import { runContextAudit } from "../services/context-audit.js";
 export type ManageContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
   embeddings: EmbeddingProvider;
   mergeResults: typeof mergeResults;
@@ -95,6 +96,10 @@ export type ManageContext = {
     | { ok: true; path: string; topLanguages: string[]; languagesAdded: number }
     | { ok: false; error: string }
   >;
+  runResolveContradictions: () => Promise<{
+    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  }>;
   runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
   runSelfCorrectionRun: (opts: {
     extractPath?: string;
@@ -136,12 +141,14 @@ export type ManageContext = {
   runExtractReinforcement?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
   runGenerateAutoSkills?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
+  runDreamCycle?: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
   const {
     factsDb,
     vectorDb,
+    aliasDb,
     versionInfo,
     embeddings,
     mergeResults: merge,
@@ -185,6 +192,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runGenerateAutoSkills,
     runGenerateProposals,
     resolvePath,
+    runDreamCycle,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
@@ -528,6 +536,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         factsDb,
         vectorDb,
         embeddings,
+        aliasDb,
         minScore: cfg.autoRecall?.minScore ?? 0.3,
         autoRecallLimit: cfg.autoRecall?.limit ?? 10,
       });
@@ -1211,6 +1220,54 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         throw err;
       }
       console.log(`Reflection (meta) complete: extracted ${res.metaExtracted} meta-patterns, stored ${res.metaStored} ${dryRun ? "(dry-run)" : ""}`);
+    }));
+
+  if (runDreamCycle) {
+    mem
+      .command("dream-cycle")
+      .description("Run nightly dream cycle: prune expired/decayed facts, consolidate old episodic events, reflect to extract patterns, optionally extract rules")
+      .action(withExit(async () => {
+        let res;
+        try {
+          res = await runDreamCycle();
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle" });
+          throw err;
+        }
+        if (res.skipped) {
+          console.log("Dream cycle skipped (nightlyCycle.enabled = false in config).");
+          return;
+        }
+        console.log(`Dream cycle complete: ${res.digestSummary}`);
+        console.log(`  Facts pruned: ${res.factsPruned}`);
+        console.log(`  Facts decayed: ${res.factsDecayed}`);
+        console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
+        console.log(`  Patterns found: ${res.patternsFound}`);
+        console.log(`  Rules generated: ${res.rulesGenerated}`);
+      }));
+  }
+
+  mem
+    .command("resolve-contradictions")
+    .description("Resolve unresolved contradictions (auto-resolve obvious cases, report ambiguous pairs)")
+    .action(withExit(async () => {
+      let res;
+      try {
+        res = await ctx.runResolveContradictions();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "resolve-contradictions" });
+        throw err;
+      }
+      console.log(`Contradictions resolved: ${res.autoResolved.length} auto-resolved, ${res.ambiguous.length} ambiguous.`);
+      if (res.ambiguous.length > 0) {
+        console.log("Ambiguous pairs (manual review recommended):");
+        for (const a of res.ambiguous.slice(0, 10)) {
+          console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+        }
+        if (res.ambiguous.length > 10) {
+          console.log(`  ...and ${res.ambiguous.length - 10} more`);
+        }
+      }
     }));
 
   mem

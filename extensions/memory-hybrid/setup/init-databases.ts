@@ -7,14 +7,17 @@ import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
+import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
-import { Embeddings } from "../services/embeddings.js";
-import { vectorDimsForModel, type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
+import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
+import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { AliasDB } from "../services/retrieval-aliases.js";
+import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -54,12 +57,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   function defaultOpenAIClient(): OpenAI {
     if (gatewayBaseUrl) {
+      const key = gatewayToken ?? cfg.embedding.apiKey;
+      if (!key) throw new UnconfiguredProviderError("openai", "openai/*");
       return getOrCreate(`openai:gateway:${gatewayBaseUrl}`, () => new OpenAI({
-        apiKey: gatewayToken ?? cfg.embedding.apiKey ?? "unused",
+        apiKey: key,
         baseURL: gatewayBaseUrl,
       }));
     }
-    return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey }));
+    if (!cfg.embedding.apiKey) throw new UnconfiguredProviderError("openai", "openai/*");
+    return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey! }));
   }
 
   function resolveClient(model: string): { client: OpenAI; bareModel: string } {
@@ -106,7 +112,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
-      const apiKey = providerCfg.apiKey ?? "unused";
+      // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
+      const apiKey = providerCfg.apiKey ?? "no-key";
       const baseURL = providerCfg.baseURL;
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
@@ -144,7 +151,11 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   // Proxy that intercepts chat.completions.create and routes to the right provider client.
   // All other OpenAI methods (embeddings, etc.) are NOT proxied — embeddings use a separate client.
-  return new Proxy(new OpenAI({ apiKey: cfg.embedding.apiKey }), {
+  // The proxy base is only accessed for non-chat methods (not used by this plugin directly).
+  // Only create it with a real key when one is available; otherwise omit to avoid "unused" placeholder.
+  const proxyBaseKey = cfg.embedding.apiKey ?? gatewayToken ?? "";
+  const proxyBase: OpenAI = proxyBaseKey ? new OpenAI({ apiKey: proxyBaseKey }) : ({} as OpenAI);
+  return new Proxy(proxyBase, {
     get(target, prop, receiver) {
       if (prop === "chat") {
         return {
@@ -176,14 +187,17 @@ export interface HealthStatus {
 export interface DatabaseContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
+  eventLog: EventLog | null;
+  aliasDb: AliasDB | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
+  initialized: Promise<void>;
 }
 
 /**
@@ -207,15 +221,17 @@ export function initializeDatabases(
   const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
-  const vectorDim = vectorDimsForModel(cfg.embedding.model);
 
   const factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
+  const vectorDim = cfg.embedding.dimensions;
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim, cfg.vector.autoRepair);
   vectorDb.setLogger(api.logger);
-  // Embeddings always use a direct OpenAI client (gateway does not proxy /v1/embeddings — issue #91)
-  const openaiForEmbeddings = new OpenAI({ apiKey: cfg.embedding.apiKey });
-  const embeddingModels = cfg.embedding.models?.length ? cfg.embedding.models : [cfg.embedding.model];
-  const embeddings = new Embeddings(openaiForEmbeddings, embeddingModels);
+  // Create embedding provider from config (supports openai, ollama, onnx)
+  const embeddings = createEmbeddingProvider(cfg.embedding, (err) => {
+    api.logger.warn(
+      `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
+    );
+  });
 
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
@@ -296,6 +312,25 @@ export function initializeDatabases(
     api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
   }
 
+  // Initialize EventLog when nightlyCycle is enabled (episodic consolidation, nightly
+  // contradiction resolution) or graph.autoSupersede is on (contradiction events). This avoids creating event-log.db for
+  // users who don't need it.
+  let eventLog: EventLog | null = null;
+  if (cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede) {
+    const eventLogPath = join(dirname(resolvedSqlitePath), "event-log.db");
+    eventLog = new EventLog(eventLogPath);
+    api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
+  }
+
+  // Initialize alias DB (Issue #149)
+  let aliasDb: AliasDB | null = null;
+  if (cfg.aliases?.enabled) {
+    const aliasPath = join(dirname(resolvedSqlitePath), "aliases.db");
+    const aliasLancePath = join(dirname(resolvedSqlitePath), "aliases.lance");
+    aliasDb = new AliasDB(aliasPath, aliasLancePath, cfg.embedding.dimensions);
+    api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath}, ${aliasLancePath})`);
+  }
+
   // Load previously discovered categories so they remain available after restart
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   if (existsSync(discoveredPath)) {
@@ -314,6 +349,23 @@ export function initializeDatabases(
     }
   }
 
+  // Track embedding provider+model changes to trigger re-embedding (Issue #153).
+  const currentEmbeddingMeta = { provider: cfg.embedding.provider, model: cfg.embedding.model };
+  let embeddingConfigChanged = false;
+  try {
+    const previousEmbeddingMeta = factsDb.getEmbeddingMeta();
+    embeddingConfigChanged = Boolean(
+      previousEmbeddingMeta &&
+      (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
+        previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
+    );
+    if (!previousEmbeddingMeta || embeddingConfigChanged) {
+      factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
+    }
+  } catch (err) {
+    api.logger.warn(`memory-hybrid: failed to read embedding metadata (non-fatal): ${err}`);
+  }
+
   // Health status tracking for verification checks
   const health: HealthStatus = {
     embeddingsOk: false,
@@ -323,22 +375,24 @@ export function initializeDatabases(
 
   // Prerequisite checks (async, don't block plugin start): verify keys and model access
   // Health status can be queried by tools to fail gracefully instead of throwing at runtime.
-  void (async () => {
+  const initialized = (async () => {
     try {
       await embeddings.embed("verify");
       health.embeddingsOk = true;
-      api.logger.info("memory-hybrid: embedding API check OK");
+      api.logger.info(`memory-hybrid: embedding check OK (provider=${cfg.embedding.provider}, model=${embeddings.modelName})`);
     } catch (e) {
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "embeddings",
         operation: "init-verify",
         phase: "initialization",
-        backend: "openai",
+        backend: cfg.embedding.provider,
       });
+      const hint = cfg.embedding.provider === "ollama"
+        ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
+        : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
       api.logger.error(
-        `memory-hybrid: ⚠️  EMBEDDING API CHECK FAILED — ${String(e)}. ` +
-          "Plugin will continue but semantic search will not work. " +
-          "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.",
+        `memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
+          `Plugin will continue but semantic search will not work. ${hint}`,
       );
     }
     if (cfg.credentials.enabled && credentialsDb) {
@@ -369,15 +423,25 @@ export function initializeDatabases(
       let shouldMigrate = false;
       try {
         const handle = await open(migrationFlagPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
-        await handle.writeFile("1", "utf8");
-        await handle.close();
-        shouldMigrate = true; // We won the race, proceed with migration
+        try {
+          await handle.writeFile("1", "utf8");
+          shouldMigrate = true; // We won the race, proceed with migration
+        } finally {
+          await handle.close().catch(() => { /* ignore close errors */ });
+        }
       } catch (err: any) {
         if (err.code === "EEXIST") {
           // Another process already created the flag - skip migration
           shouldMigrate = false;
         } else {
-          throw err; // Unexpected error
+          shouldMigrate = false;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "credentials",
+            operation: "migration-flag-create",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: failed to create migration flag (skipping migration): ${err}`);
         }
       }
       if (shouldMigrate) {
@@ -387,6 +451,7 @@ export function initializeDatabases(
             vectorDb,
             embeddings,
             credentialsDb,
+            aliasDb,
             migrationFlagPath,
             markDone: false, // Flag already created atomically above
           });
@@ -407,19 +472,28 @@ export function initializeDatabases(
         }
       }
     }
-  })();
+  })().catch((err: unknown) => {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "init",
+      operation: "async-initialization",
+      phase: "initialization",
+    });
+    api.logger.warn(`memory-hybrid: async initialization encountered an error: ${err}`);
+  });
 
-  // Schema validation and optional auto-repair re-embedding (issue #128).
+  // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.
   // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
-  if (cfg.vector.autoRepair) {
+  if (cfg.vector.autoRepair || embeddingConfigChanged) {
     void (async () => {
       const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
-        await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
+        if (cfg.vector.autoRepair || embeddingConfigChanged) {
+          await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
+        }
 
         // Check if there's an incomplete re-embedding from a previous run
-        let needsReembedding = vectorDb.wasRepaired;
+        let needsReembedding = embeddingConfigChanged || (cfg.vector.autoRepair && vectorDb.wasRepaired);
         let completedIds = new Set<string>();
 
         if (!needsReembedding && existsSync(reembedProgressPath)) {
@@ -440,9 +514,11 @@ export function initializeDatabases(
         if (needsReembedding) {
           const initialGeneration = vectorDb.getCloseGeneration();
           api.logger.info(
-            vectorDb.wasRepaired
-              ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
-              : "memory-hybrid: resuming re-embedding after hot reload...",
+            embeddingConfigChanged
+              ? `memory-hybrid: embedding config changed (${currentEmbeddingMeta.provider}/${currentEmbeddingMeta.model}) — re-embedding existing facts...`
+              : vectorDb.wasRepaired
+                ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
+                : "memory-hybrid: resuming re-embedding after hot reload...",
           );
           const facts = factsDb.getAll({ includeSuperseded: false });
           let reembedded = completedIds.size;
@@ -476,6 +552,7 @@ export function initializeDatabases(
                   importance: fact.importance ?? 0.5,
                   category: fact.category,
                 });
+                factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
               }
               completedIds.add(fact.id);
               reembedded++;
@@ -495,15 +572,15 @@ export function initializeDatabases(
           }
 
           api.logger.info(
-            `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts after auto-repair`,
+            `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts during re-embedding pass`,
           );
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "vector-schema-repair-reembed",
+          operation: "vector-reembed",
           subsystem: "vector",
         });
-        api.logger.warn(`memory-hybrid: VectorDB auto-repair re-embedding failed: ${err}`);
+        api.logger.warn(`memory-hybrid: re-embedding failed: ${err}`);
       }
     })();
   }
@@ -516,9 +593,12 @@ export function initializeDatabases(
     credentialsDb,
     wal,
     proposalsDb,
+    eventLog,
+    aliasDb,
     resolvedLancePath,
     resolvedSqlitePath,
     health,
+    initialized,
   };
 }
 
@@ -531,8 +611,12 @@ export function closeOldDatabases(context: {
   vectorDb?: VectorDB | null;
   credentialsDb?: CredentialsDB | null;
   proposalsDb?: ProposalsDB | null;
+  eventLog?: EventLog | null;
+  aliasDb?: AliasDB | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb } = context;
+
+  invalidateClusterCache();
 
   if (typeof factsDb?.close === "function") {
     try {
@@ -560,6 +644,20 @@ export function closeOldDatabases(context: {
       proposalsDb.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "proposalsDb" });
+    }
+  }
+  if (eventLog) {
+    try {
+      eventLog.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "eventLog" });
+    }
+  }
+  if (aliasDb) {
+    try {
+      aliasDb.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "aliasDb" });
     }
   }
 }

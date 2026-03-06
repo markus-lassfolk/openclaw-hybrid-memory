@@ -8,8 +8,13 @@ import { _testing } from "../index.js";
 const { FactsDB, VectorDB } = _testing;
 
 class FakeEmbeddings {
+  readonly dimensions = 3;
+  readonly modelName = "fake-model";
   async embed(_text: string): Promise<number[]> {
     return [0.1, 0.2, 0.3];
+  }
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    return texts.map(() => [0.1, 0.2, 0.3]);
   }
 }
 
