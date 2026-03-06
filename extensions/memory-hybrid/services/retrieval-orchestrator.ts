@@ -491,7 +491,7 @@ export async function runRetrievalPipeline(
           }),
         );
       }
-    } catch {
+    } catch (_err) {
       // Graceful degradation — expansion failure never blocks retrieval
     }
   }

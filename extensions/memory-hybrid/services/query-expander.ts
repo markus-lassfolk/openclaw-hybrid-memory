@@ -88,7 +88,8 @@ export function parseExpansionsFromResponse(response: string, maxVariants: numbe
   let parsed: unknown;
   try {
     parsed = JSON.parse(match[0]);
-  } catch {
+  } catch (_err) {
+    // JSON parse failed — response was not valid JSON
     return [];
   }
 
@@ -160,8 +161,10 @@ export class QueryExpander {
       const result = [query, ...filtered];
       this.cache.set(cacheKey, result);
       return result;
-    } catch {
+    } catch (err) {
       // Graceful degradation — any LLM failure returns original query only.
+      // Log would go here if logger was passed in; for now, silently degrade.
+      void err;
       return [query];
     }
   }
