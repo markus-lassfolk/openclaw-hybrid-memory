@@ -124,11 +124,12 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         let markdown: string;
         let title: string;
         try {
-          // Try native converter first (includes password redaction for smart home configs)
-          const fileContent = readFileSync(filePath, "utf-8");
-          const nativeConverter = getConverter(filePath, fileContent);
+          // Check if a native converter exists for this file extension
+          const nativeConverter = getConverter(filePath);
           
           if (nativeConverter) {
+            // Only read file content if a native converter can handle it
+            const fileContent = readFileSync(filePath, "utf-8");
             const result = nativeConverter.convert(fileContent, filePath);
             markdown = result.markdown;
             title = result.title;

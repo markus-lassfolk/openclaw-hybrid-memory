@@ -74,9 +74,9 @@ export function getConverter(filePath: string, content?: string): Converter | nu
 }
 
 function sniffYamlConverter(content: string, fileName: string): Converter | null {
-  // Zigbee2MQTT: must be configuration.yaml with both mqtt: and serial: at root
+  // Zigbee2MQTT: must be configuration.yaml or configuration.yml with both mqtt: and serial: at root
   if (
-    fileName === "configuration.yaml" &&
+    (fileName === "configuration.yaml" || fileName === "configuration.yml") &&
     /^mqtt:/m.test(content) &&
     /^serial:/m.test(content)
   ) {
