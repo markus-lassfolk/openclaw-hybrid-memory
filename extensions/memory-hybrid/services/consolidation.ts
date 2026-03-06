@@ -105,15 +105,15 @@ function selectConsolidatedKeyValue(
     selectedKey = keys.reduce((bestKey, candidate) => {
       const bestFact = keyToBest.get(bestKey)!;
       const candidateFact = keyToBest.get(candidate)!;
-      if (candidate.length > bestKey.length) return candidate;
-      if (candidate.length < bestKey.length) return bestKey;
-      return candidateFact.confidence > bestFact.confidence ? candidate : bestKey;
+      if (candidateFact.confidence > bestFact.confidence) return candidate;
+      if (candidateFact.confidence < bestFact.confidence) return bestKey;
+      return candidate.length > bestKey.length ? candidate : bestKey;
     }, selectedKey);
   }
 
   const bestForKey = keyToBest.get(selectedKey)!;
   const selectedValue =
-    (highestConfidence.key === selectedKey && highestConfidence.value != null)
+    (highestConfidence.key?.trim() === selectedKey && highestConfidence.value != null)
       ? highestConfidence.value
       : bestForKey.value ?? null;
   return { key: selectedKey, value: selectedValue };

@@ -120,7 +120,8 @@ function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
     const lower = entity.toLowerCase().trim();
     if (lower.length < 2 || seen.has(lower)) continue;
     seen.add(lower);
-    const prefix = lower.slice(0, ENTITY_PREFIX_LEN);
+    const firstWordMatch = lower.match(/^[a-z0-9][a-z0-9_-]*/);
+    const prefix = firstWordMatch ? firstWordMatch[0].slice(0, ENTITY_PREFIX_LEN) : lower.slice(0, ENTITY_PREFIX_LEN);
     const list = prefixMap.get(prefix);
     if (list) list.push(lower);
     else prefixMap.set(prefix, [lower]);
