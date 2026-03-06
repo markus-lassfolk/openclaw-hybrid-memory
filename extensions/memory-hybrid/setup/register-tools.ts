@@ -25,6 +25,8 @@ import { registerPersonaTools } from "../tools/persona-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import type { IssueStore } from "../backends/issue-store.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
+import { registerWorkflowTools } from "../tools/workflow-tools.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import {
   registerUtilityTools,
@@ -49,6 +51,7 @@ export interface ToolsContext {
   pendingLLMWarnings: PendingLLMWarnings;
   aliasDb?: AliasDB | null;
   issueStore?: IssueStore | null;
+  workflowStore?: WorkflowStore | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -95,6 +98,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     eventLog,
     aliasDb,
     issueStore,
+    workflowStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -180,5 +184,10 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Issue lifecycle tracking (always enabled — lightweight, Issue #137)
   if (issueStore) {
     registerIssueTools({ issueStore }, api);
+  }
+
+  // Workflow pattern tool (always registered when store available; recording is gated by cfg, Issue #209)
+  if (workflowStore) {
+    registerWorkflowTools({ workflowStore }, api);
   }
 }

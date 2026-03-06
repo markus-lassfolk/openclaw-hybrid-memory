@@ -168,6 +168,8 @@ import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptVa
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { IssueStore } from "./backends/issue-store.js";
+import { WorkflowStore, sequenceDistance, sequenceSimilarity, extractGoalKeywords, hashToolSequence } from "./backends/workflow-store.js";
+import { WorkflowTracker, _resetRateLimitForTest } from "./services/workflow-tracker.js";
 import { VerificationStore, shouldAutoClassify, VerificationError } from "./services/verification-store.js";
 import { ProvenanceService } from "./services/provenance.js";
 
@@ -213,6 +215,7 @@ let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
 
 let issueStore: IssueStore | null = null;
+let workflowStore: WorkflowStore | null = null;
 let provenanceService: ProvenanceService | null = null;
 let pythonBridge: PythonBridge | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
@@ -277,13 +280,14 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, provenanceService });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
 
     issueStore = null;
+    workflowStore = null;
     provenanceService = null;
     // pythonBridge shutdown will be added by #206
     if (pythonBridge) {
@@ -311,6 +315,7 @@ const memoryHybridPlugin = {
       eventLog = dbContext.eventLog;
       aliasDb = dbContext.aliasDb;
       issueStore = dbContext.issueStore;
+      workflowStore = dbContext.workflowStore;
       provenanceService = dbContext.provenanceService;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
@@ -345,6 +350,7 @@ const memoryHybridPlugin = {
       proposalsDb,
       eventLog,
       issueStore,
+      workflowStore,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -532,6 +538,14 @@ export const _testing = {
   searchAliasStrategy,
   // Issue lifecycle tracking (Issue #137)
   IssueStore,
+  // Workflow trace tracking (Issue #209)
+  WorkflowStore,
+  WorkflowTracker,
+  sequenceDistance,
+  sequenceSimilarity,
+  extractGoalKeywords,
+  hashToolSequence,
+  _resetRateLimitForTest,
   // Verification store for critical facts (Issue #162)
   VerificationStore,
   shouldAutoClassify,

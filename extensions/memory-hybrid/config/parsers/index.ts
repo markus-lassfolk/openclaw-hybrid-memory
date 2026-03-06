@@ -54,6 +54,7 @@ import {
   parseMemoryToSkillsConfig,
   parseMultiAgentConfig,
   parseErrorReportingConfig,
+  parseWorkflowTrackingConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -385,6 +386,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     aliases: parseAliasesConfig(cfg),
     path: parsePathConfig(cfg),
     documents: parseDocumentsConfig(cfg),
+    workflowTracking: parseWorkflowTrackingConfig(cfg),
     contextualVariants: parseContextualVariantsConfig(cfg),
     queryExpansion: parseQueryExpansionConfig(cfg),
     reranking: parseRerankingConfig(cfg),
