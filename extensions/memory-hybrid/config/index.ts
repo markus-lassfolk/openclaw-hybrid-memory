@@ -943,7 +943,9 @@ function resolveEnvVars(value: string): string {
   // Environment variable names are short; 256 chars is generous.
   return value.replace(/\$\{([^}]{1,256})\}/g, (_, envVar: string) => {
     const trimmed = envVar.trim();
-    if (!trimmed) return "";
+    if (!trimmed) {
+      throw new Error("Environment variable name cannot be empty or whitespace in '${...}'");
+    }
     const envValue = process.env[trimmed];
     if (!envValue) throw new Error(`Environment variable ${trimmed} is not set`);
     return envValue;
