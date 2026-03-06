@@ -160,6 +160,7 @@ import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.j
 import { registerTools } from "./setup/register-tools.js";
 import { registerLifecycleHooks, type HooksContext } from "./setup/register-hooks.js";
 import { capturePluginError } from "./services/error-reporter.js";
+import { PythonBridge } from "./services/python-bridge.js";
 
 // Backend Imports (extracted from god file for maintainability)
 
@@ -208,8 +209,9 @@ let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
+
 let issueStore: IssueStore | null = null;
-// pythonBridge will be added by #206
+let pythonBridge: PythonBridge | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -277,8 +279,13 @@ const memoryHybridPlugin = {
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
+
     issueStore = null;
     // pythonBridge shutdown will be added by #206
+    if (pythonBridge) {
+      pythonBridge.shutdown().catch(() => {});
+      pythonBridge = null;
+    }
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -311,6 +318,14 @@ const memoryHybridPlugin = {
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
     );
 
+    // ========================================================================
+    // Python Bridge (lazy — only when documents.enabled, spawns on first use)
+    // ========================================================================
+
+    // Initialized lazily — PythonBridge only spawns the subprocess on first convert() call
+    pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
+
+    // ========================================================================
     // Tools
 
     try {
@@ -337,6 +352,7 @@ const memoryHybridPlugin = {
       runReflection,
       runReflectionRules,
       runReflectionMeta,
+      pythonBridge,
     }, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:tools" });
@@ -413,6 +429,7 @@ const memoryHybridPlugin = {
         resolvedSqlitePath,
         api,
         timers,
+        pythonBridge,
       })
     );
     } catch (err) {

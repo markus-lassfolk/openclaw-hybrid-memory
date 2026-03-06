@@ -24,6 +24,8 @@ import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerPersonaTools } from "../tools/persona-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import type { IssueStore } from "../backends/issue-store.js";
+import { registerDocumentTools } from "../tools/document-tools.js";
+import type { PythonBridge } from "../services/python-bridge.js";
 import {
   registerUtilityTools,
   type RunReflectionFn,
@@ -48,6 +50,7 @@ export interface ToolsContext {
   aliasDb?: AliasDB | null;
   issueStore?: IssueStore | null;
   resolvedSqlitePath: string;
+  pythonBridge?: PythonBridge | null;
   timers: {
     proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
   };
@@ -104,6 +107,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     runReflection,
     runReflectionRules,
     runReflectionMeta,
+    pythonBridge,
   } = ctx;
 
   // Memory tools (core recall, store, forget operations)
@@ -167,6 +171,11 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     (operation, data) => walWrite(wal, operation, data, api.logger),
     (id) => walRemove(wal, id, api.logger)
   );
+
+  // Document ingestion tool (opt-in, requires Python + markitdown)
+  if (cfg.documents.enabled && pythonBridge) {
+    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge }, api);
+  }
 
   // Issue lifecycle tracking (always enabled — lightweight, Issue #137)
   if (issueStore) {
