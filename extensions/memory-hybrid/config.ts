@@ -1328,13 +1328,13 @@ export const hybridConfigSchema = {
           if (!multiModelRoles.includes(o.role as "general" | "domain" | "query" | "custom")) return false;
           return true;
         }).map((o) => ({
-          name: (o as Record<string, unknown>).name as string,
-          provider: (o as Record<string, unknown>).provider as "openai" | "ollama" | "onnx",
-          dimensions: (o as Record<string, unknown>).dimensions as number,
-          role: (o as Record<string, unknown>).role as "general" | "domain" | "query" | "custom",
-          ...(typeof (o as Record<string, unknown>).apiKey === "string" ? { apiKey: (o as Record<string, unknown>).apiKey as string } : {}),
-          ...(typeof (o as Record<string, unknown>).endpoint === "string" ? { endpoint: (o as Record<string, unknown>).endpoint as string } : {}),
-          ...((o as Record<string, unknown>).enabled === false ? { enabled: false } : {}),
+          name: (o as unknown as Record<string, unknown>).name as string,
+          provider: (o as unknown as Record<string, unknown>).provider as "openai" | "ollama" | "onnx",
+          dimensions: (o as unknown as Record<string, unknown>).dimensions as number,
+          role: (o as unknown as Record<string, unknown>).role as "general" | "domain" | "query" | "custom",
+          ...(typeof (o as unknown as Record<string, unknown>).apiKey === "string" ? { apiKey: (o as unknown as Record<string, unknown>).apiKey as string } : {}),
+          ...(typeof (o as unknown as Record<string, unknown>).endpoint === "string" ? { endpoint: (o as unknown as Record<string, unknown>).endpoint as string } : {}),
+          ...((o as unknown as Record<string, unknown>).enabled === false ? { enabled: false } : {}),
         }))
       : [];
 
