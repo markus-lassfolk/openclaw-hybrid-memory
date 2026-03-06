@@ -114,6 +114,11 @@ export class CrystallizationProposer {
             continue;
           }
 
+          // Sanitize skill name for output path (same as approveProposal) to prevent path traversal
+          const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
+          const safeName = result.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+          const outputPath = `${outputDir}/${safeName}/SKILL.md`;
+
           // Create proposal, write to disk, THEN approve in DB (ensures atomicity)
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
@@ -121,8 +126,8 @@ export class CrystallizationProposer {
             skillContent: result.skillContent,
             patternSnapshot,
           });
-          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
-          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
+          this.writeSkillToDisk(outputPath, result.skillContent);
+          this.crystallizationStore.approve(proposal.id, outputPath);
           proposed++;
         } else {
           // Store as pending, awaiting human approval
