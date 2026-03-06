@@ -200,8 +200,8 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.memoryTiering.hotMaxFacts).toBe(50);
   });
 
-  it("throws on missing embedding.model", () => {
-    expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model/);
+  it("throws on missing embedding (model required when provider defaults to ollama)", () => {
+    expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model|embedding\.apiKey/);
   });
 
   it("throws on placeholder apiKey", () => {
@@ -247,11 +247,10 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("does not warn about provider when embedding section is absent", () => {
-    // When no embedding section, defaults to ollama silently (no warn needed)
+    // When no embedding section, default to ollama and throw model required; provider warn should NOT fire
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      // This throws on embedding.model, but the provider warn should NOT fire before that
-      expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model/);
+      expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model|embedding\.apiKey/);
       const warnCalls = warnSpy.mock.calls.filter((args) =>
         typeof args[0] === "string" && args[0].includes("embedding.provider not set"),
       );

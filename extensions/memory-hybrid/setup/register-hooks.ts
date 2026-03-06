@@ -44,6 +44,7 @@ export interface HooksContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => import("../config.js").MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
+  issueStore: import("../backends/issue-store.js").IssueStore | null;
 }
 
 /**
@@ -72,6 +73,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       shouldCapture: ctx.shouldCapture,
       detectCategory: ctx.detectCategory,
       pendingLLMWarnings: ctx.pendingLLMWarnings,
+      issueStore: ctx.issueStore,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:context" });

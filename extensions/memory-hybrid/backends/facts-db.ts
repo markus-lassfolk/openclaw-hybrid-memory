@@ -188,6 +188,15 @@ export class FactsDB {
 
     // ---- Future-date decay freeze (#144) ----
     this.migrateDecayFreezeColumn();
+
+    // ---- Multi-model embeddings (Issue #158) ----
+    this.migrateFactEmbeddingsTable();
+
+    // ---- Contextual variants (Issue #159) ----
+    this.migrateFactVariantsTable();
+
+    // ---- Provenance tracing (Issue #163) ----
+    this.migrateProvenanceColumns();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -414,6 +423,225 @@ export class FactsDB {
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_freeze ON facts(decay_freeze_until) WHERE decay_freeze_until IS NOT NULL`,
     );
+  }
+
+  /**
+   * Create the fact_embeddings table for multi-model embedding storage (Issue #158).
+   * Idempotent — safe to call on existing databases.
+   */
+  private migrateFactEmbeddingsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS fact_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fact_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        variant TEXT NOT NULL DEFAULT 'canonical',
+        embedding BLOB NOT NULL,
+        dimensions INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(fact_id, model, variant),
+        FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+      )
+    `);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_embeddings_fact_id ON fact_embeddings(fact_id)`,
+    );
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_embeddings_model ON fact_embeddings(model)`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contextual variants storage (Issue #159)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create the fact_variants table for contextual variant text storage (Issue #159).
+   * Idempotent — safe to call on existing databases.
+   */
+  private migrateFactVariantsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS fact_variants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fact_id TEXT NOT NULL,
+        variant_type TEXT NOT NULL DEFAULT 'contextual',
+        variant_text TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+      )
+    `);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_variants_fact_id ON fact_variants(fact_id)`,
+    );
+  }
+
+  /** Add provenance columns to facts table (Issue #163). All nullable. Use provenance_session (not source_session) to avoid confusion with source_sessions. */
+  private migrateProvenanceColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("provenance_session")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN provenance_session TEXT`);
+      if (colNames.has("source_session")) {
+        this.liveDb.exec(`UPDATE facts SET provenance_session = source_session WHERE source_session IS NOT NULL`);
+      }
+    }
+    if (!colNames.has("source_turn")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_turn INTEGER`);
+    }
+    if (!colNames.has("extraction_method")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN extraction_method TEXT`);
+    }
+    if (!colNames.has("extraction_confidence")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN extraction_confidence REAL`);
+    }
+  }
+
+  /**
+   * Store a contextual variant text for a fact.
+   * Returns the new row id.
+   */
+  storeVariant(factId: string, variantType: string, variantText: string): number {
+    const result = this.liveDb
+      .prepare(
+        `INSERT INTO fact_variants (fact_id, variant_type, variant_text)
+         VALUES (?, ?, ?)`,
+      )
+      .run(factId, variantType, variantText);
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Retrieve all variants stored for a given fact.
+   */
+  getVariants(
+    factId: string,
+  ): Array<{ id: number; variantType: string; variantText: string; createdAt: string }> {
+    return (
+      this.liveDb
+        .prepare(
+          `SELECT id, variant_type, variant_text, created_at FROM fact_variants WHERE fact_id = ?`,
+        )
+        .all(factId) as Array<{
+        id: number;
+        variant_type: string;
+        variant_text: string;
+        created_at: string;
+      }>
+    ).map((r) => ({
+      id: r.id,
+      variantType: r.variant_type,
+      variantText: r.variant_text,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * Check whether a fact already has variants stored (to avoid re-processing).
+   */
+  hasVariants(factId: string): boolean {
+    const row = this.liveDb
+      .prepare(`SELECT 1 FROM fact_variants WHERE fact_id = ? LIMIT 1`)
+      .get(factId);
+    return row !== undefined;
+  }
+
+  /**
+   * Delete all variants for a fact (called when a fact is deleted).
+   * Normally handled by ON DELETE CASCADE, but exposed for explicit use.
+   */
+  deleteVariants(factId: string): void {
+    this.liveDb.prepare(`DELETE FROM fact_variants WHERE fact_id = ?`).run(factId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Multi-model embedding storage (Issue #158)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Store or replace an embedding vector for a fact+model+variant combination.
+   * The embedding is stored as a BLOB (raw Float32Array bytes for portability).
+   */
+  storeEmbedding(
+    factId: string,
+    model: string,
+    variant: string,
+    embedding: Float32Array,
+    dimensions: number,
+  ): void {
+    const blob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+    this.liveDb
+      .prepare(
+        `INSERT INTO fact_embeddings (fact_id, model, variant, embedding, dimensions)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(fact_id, model, variant) DO UPDATE SET
+           embedding = excluded.embedding,
+           dimensions = excluded.dimensions,
+           created_at = datetime('now')`,
+      )
+      .run(factId, model, variant, blob, dimensions);
+  }
+
+  /**
+   * Copy a Buffer (which may have unaligned byteOffset) into a Float32Array.
+   * Node.js Buffers from better-sqlite3 can share a pooled ArrayBuffer with
+   * byteOffset not divisible by 4, which would make Float32Array constructor throw.
+   */
+  private static bufferToFloat32Array(buf: Buffer): Float32Array {
+    const byteLen = buf.byteLength;
+    const ab = new ArrayBuffer(byteLen);
+    new Uint8Array(ab).set(new Uint8Array(buf.buffer, buf.byteOffset, byteLen));
+    return new Float32Array(ab);
+  }
+
+  /**
+   * Retrieve all embeddings stored for a given fact (all models/variants).
+   */
+  getEmbeddings(
+    factId: string,
+  ): Array<{ model: string; variant: string; embedding: Float32Array }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT model, variant, embedding FROM fact_embeddings WHERE fact_id = ?`,
+      )
+      .all(factId) as Array<{ model: string; variant: string; embedding: Buffer }>;
+    return rows.map((r) => ({
+      model: r.model,
+      variant: r.variant,
+      embedding: FactsDB.bufferToFloat32Array(r.embedding),
+    }));
+  }
+
+  /**
+   * Retrieve embeddings for a specific model. When limit is set, returns the most recent
+   * (by fact_embeddings.id DESC) to avoid excluding recent facts when capping for performance.
+   */
+  getEmbeddingsByModel(
+    model: string,
+    limit?: number,
+  ): Array<{ factId: string; embedding: Float32Array }> {
+    const sql =
+      limit != null
+        ? `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical' ORDER BY id DESC LIMIT ?`
+        : `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical'`;
+    const rows = (limit != null
+      ? this.liveDb.prepare(sql).all(model, limit)
+      : this.liveDb.prepare(sql).all(model)) as Array<{ fact_id: string; embedding: Buffer }>;
+    return rows.map((r) => ({
+      factId: r.fact_id,
+      embedding: FactsDB.bufferToFloat32Array(r.embedding),
+    }));
+  }
+
+  /**
+   * Delete all embeddings for a fact (called when a fact is deleted).
+   * Normally handled by the ON DELETE CASCADE FK, but exposed for explicit use.
+   */
+  deleteEmbeddings(factId: string): void {
+    this.liveDb
+      .prepare(`DELETE FROM fact_embeddings WHERE fact_id = ?`)
+      .run(factId);
   }
 
   /**
@@ -2921,6 +3149,14 @@ export class FactsDB {
     return row?.count ?? 0;
   }
 
+  /** Count non-superseded facts with the given source string. Used for document dedup checks. */
+  countBySource(source: string): number {
+    const row = this.liveDb
+      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = ?`)
+      .get(source) as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
   /** Get language keywords count */
   languageKeywordsCount(): number {
     const filePath = getLanguageKeywordsFilePath();
@@ -3066,6 +3302,39 @@ export class FactsDB {
     const updated = Math.max(0.1, Math.min(1.0, current + delta));
     this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
     return updated;
+  }
+
+  /**
+   * Set a fact's confidence to a specific value (clamped to 0.1–1 to match updateConfidence floor).
+   * Returns the new confidence value, or null if the fact was not found.
+   */
+  setConfidenceTo(id: string, value: number): number | null {
+    const row = this.liveDb
+      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+      .get(id) as { confidence: number } | undefined;
+    if (!row) return null;
+    const updated = Math.max(0.1, Math.min(1, value));
+    this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
+    return updated;
+  }
+
+  /**
+   * Add a tag to a fact (no-op if already present or fact missing).
+   */
+  addTag(id: string, tag: string): void {
+    const trimmed = tag.trim();
+    const normalized = trimmed.toLowerCase();
+    // Reject tags that would break the comma-separated storage format.
+    if (!normalized || normalized.includes(",")) return;
+    const row = this.liveDb
+      .prepare(`SELECT tags FROM facts WHERE id = ?`)
+      .get(id) as { tags: string | null } | undefined;
+    if (!row) return;
+    const tags = parseTags(row.tags);
+    // Case-insensitive duplicate check (existing tags may be mixed-case in storage).
+    if (tags.some((t) => t.toLowerCase() === normalized)) return;
+    tags.push(normalized);
+    this.liveDb.prepare(`UPDATE facts SET tags = ? WHERE id = ?`).run(serializeTags(tags), id);
   }
 
   /**
