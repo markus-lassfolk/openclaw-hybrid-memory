@@ -34,6 +34,15 @@ export interface AliasSearchResult {
 }
 
 const ALIAS_LANCE_TABLE = "fact_aliases";
+const LANCE_ALIAS_SEARCH_THRESHOLD = 1000;
+
+function normalizeFactId(factId: string): string {
+  return factId.trim().toLowerCase();
+}
+
+function quoteSqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
 
 class AliasVectorIndex {
   private db: lancedb.Connection | null = null;
@@ -123,10 +132,11 @@ class AliasVectorIndex {
   async store(entry: { id: string; factId: string; aliasText: string; vector: number[] }): Promise<void> {
     try {
       await this.ensureInitialized();
+      const normalizedFactId = normalizeFactId(entry.factId);
       await this.getTable().add([
         {
           id: entry.id,
-          factId: entry.factId,
+          factId: normalizedFactId,
           aliasText: entry.aliasText,
           vector: entry.vector,
           createdAt: Math.floor(Date.now() / 1000),
@@ -185,7 +195,8 @@ class AliasVectorIndex {
         console.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
         return;
       }
-      await this.getTable().delete(`factId = '${factId.toLowerCase()}'`);
+      const normalizedFactId = normalizeFactId(factId);
+      await this.getTable().delete(`factId = ${quoteSqlString(normalizedFactId)}`);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "alias-vector-delete",
@@ -218,6 +229,7 @@ class AliasVectorIndex {
 export class AliasDB {
   private db: Database.Database;
   private aliasIndex: AliasVectorIndex;
+  private aliasCountCache: number | null = null;
 
   constructor(dbPath: string, aliasLancePath: string, vectorDim: number) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -240,37 +252,50 @@ export class AliasDB {
   /** Store a single alias with its embedding. Returns the generated row id. */
   store(factId: string, aliasText: string, embedding: number[]): string {
     const id = randomUUID();
+    const normalizedFactId = normalizeFactId(factId);
     const floatArray = Float32Array.from(embedding);
     const blob = Buffer.from(floatArray.buffer.slice(0));
     this.db
       .prepare(
         `INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`,
       )
-      .run(id, factId, aliasText, blob);
-    void this.aliasIndex.store({ id, factId, aliasText, vector: embedding });
+      .run(id, normalizedFactId, aliasText, blob);
+    if (this.aliasCountCache != null) {
+      this.aliasCountCache += 1;
+    }
+    void this.aliasIndex.store({ id, factId: normalizedFactId, aliasText, vector: embedding });
     return id;
   }
 
   /** Return all alias rows (without embedding) for a given fact. */
   getByFactId(factId: string): AliasRow[] {
+    const normalizedFactId = normalizeFactId(factId);
     return this.db
       .prepare(
-        `SELECT id, factId, aliasText FROM fact_aliases WHERE factId = ?`,
+        `SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`,
       )
-      .all(factId) as AliasRow[];
+      .all(normalizedFactId) as AliasRow[];
   }
 
   /** Delete all aliases for a fact (e.g., when the fact is superseded). */
   deleteByFactId(factId: string): void {
-    this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(factId);
+    const normalizedFactId = normalizeFactId(factId);
+    const deletion = this.db
+      .prepare(`DELETE FROM fact_aliases WHERE factId COLLATE NOCASE = ?`)
+      .run(normalizedFactId);
+    if (this.aliasCountCache != null) {
+      this.aliasCountCache = Math.max(0, this.aliasCountCache - deletion.changes);
+    }
     void this.aliasIndex.deleteByFactId(factId);
   }
 
   /** Total alias count. */
   count(): number {
+    if (this.aliasCountCache != null) return this.aliasCountCache;
     const row = this.db
       .prepare(`SELECT COUNT(*) as n FROM fact_aliases`)
       .get() as { n: number };
+    this.aliasCountCache = row.n;
     return row.n;
   }
 
@@ -287,7 +312,7 @@ export class AliasDB {
     minScore: number,
   ): Promise<AliasSearchResult[]> {
     const aliasCount = this.count();
-    if (aliasCount >= 1000) {
+    if (aliasCount >= LANCE_ALIAS_SEARCH_THRESHOLD) {
       // Prefer LanceDB vector search for larger datasets; fallback to linear scan on errors.
       try {
         return await this.aliasIndex.search(queryVector, limit, minScore);

@@ -430,7 +430,14 @@ export function initializeDatabases(
           // Another process already created the flag - skip migration
           shouldMigrate = false;
         } else {
-          throw err; // Unexpected error
+          shouldMigrate = false;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "credentials",
+            operation: "migration-flag-create",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: failed to create migration flag (skipping migration): ${err}`);
         }
       }
       if (shouldMigrate) {
@@ -461,7 +468,14 @@ export function initializeDatabases(
         }
       }
     }
-  })();
+  })().catch((err) => {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "init",
+      operation: "async-initialization",
+      phase: "initialization",
+    });
+    api.logger.warn(`memory-hybrid: async initialization encountered an error: ${err}`);
+  });
 
   // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.

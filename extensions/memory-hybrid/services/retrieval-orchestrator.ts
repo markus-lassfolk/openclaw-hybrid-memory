@@ -244,8 +244,8 @@ function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactL
 type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number };
 
 class ClusterCache {
-  private clusterCache: ClusterCacheEntry | null = null;
-  private clusterCacheLinkCount: number | null = null;
+  private readonly clusterCache = new WeakMap<object, ClusterCacheEntry>();
+  private readonly clusterCacheLinkCount = new WeakMap<object, number | null>();
   private readonly ttlMs: number;
 
   constructor(ttlMs = 5 * 60 * 1000) {
@@ -257,10 +257,13 @@ class ClusterCache {
     minClusterSize?: number,
   ): Map<string, string> {
     const now = Date.now();
+    const cacheKey = factsDb as object;
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
-    if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
-      if (linkCount == null || linkCount === this.clusterCacheLinkCount) {
-        return this.clusterCache.clusters;
+    const cached = this.clusterCache.get(cacheKey);
+    const cachedLinkCount = this.clusterCacheLinkCount.get(cacheKey) ?? null;
+    if (cached && now - cached.timestamp < this.ttlMs) {
+      if (linkCount == null || linkCount === cachedLinkCount) {
+        return cached.clusters;
       }
     }
 
@@ -272,14 +275,14 @@ class ClusterCache {
       }
     }
 
-    this.clusterCache = { clusters: clusterByFact, timestamp: now };
-    this.clusterCacheLinkCount = linkCount;
+    this.clusterCache.set(cacheKey, { clusters: clusterByFact, timestamp: now });
+    this.clusterCacheLinkCount.set(cacheKey, linkCount);
     return clusterByFact;
   }
 
   invalidate(): void {
-    this.clusterCache = null;
-    this.clusterCacheLinkCount = null;
+    // WeakMap cache entries are isolated per FactsDB instance and naturally
+    // cleaned up when the instance becomes unreachable.
   }
 }
 
