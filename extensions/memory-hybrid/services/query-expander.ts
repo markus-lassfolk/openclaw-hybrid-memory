@@ -80,25 +80,35 @@ Return ONLY a JSON array of strings, no other text. Example: ["alternative one",
 /**
  * Parse a JSON array of strings from an LLM response.
  * Handles responses that wrap the JSON in prose or code fences.
+ * Tries every [...] substring so that arrays containing literal "]" in string
+ * values (e.g. ["query about [topic]"]) parse correctly, and prose after the
+ * array does not get included (unlike a single greedy match).
  */
 export function parseExpansionsFromResponse(response: string, maxVariants: number): string[] {
-  const match = response.match(/\[[\s\S]*\]/);
-  if (!match) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(match[0]);
-  } catch (_err) {
-    // JSON parse failed — response was not valid JSON
-    return [];
+  const candidates: string[] = [];
+  let start = response.indexOf("[");
+  while (start !== -1) {
+    let end = response.indexOf("]", start + 1);
+    while (end !== -1) {
+      candidates.push(response.slice(start, end + 1));
+      end = response.indexOf("]", end + 1);
+    }
+    start = response.indexOf("[", start + 1);
   }
-
-  if (!Array.isArray(parsed)) return [];
-
-  return parsed
-    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-    .map((v) => v.trim())
-    .slice(0, maxVariants);
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    return parsed
+      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      .map((v) => v.trim())
+      .slice(0, maxVariants);
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------

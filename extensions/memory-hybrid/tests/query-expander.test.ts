@@ -147,6 +147,12 @@ describe("parseExpansionsFromResponse", () => {
     const result = parseExpansionsFromResponse("[]", 5);
     expect(result).toEqual([]);
   });
+
+  it("parses array when string values contain literal ] (e.g. [topic])", () => {
+    const response = 'Here is the list: ["query about [topic]", "other phrase"]';
+    const result = parseExpansionsFromResponse(response, 5);
+    expect(result).toEqual(["query about [topic]", "other phrase"]);
+  });
 });
 
 // ---------------------------------------------------------------------------

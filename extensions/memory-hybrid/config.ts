@@ -1298,6 +1298,30 @@ export const hybridConfigSchema = {
       ? Math.floor(embedding.batchSize)
       : 50;
 
+    // Parse multi-model embedding config (Issue #158)
+    const multiModelsRaw = embedding?.multiModels;
+    const multiModelProviders = ["openai", "ollama", "onnx"] as const;
+    const multiModelRoles = ["general", "domain", "query", "custom"] as const;
+    const parsedMultiModels: EmbeddingModelConfig[] = Array.isArray(multiModelsRaw)
+      ? (multiModelsRaw as unknown[]).filter((item): item is EmbeddingModelConfig => {
+          if (!item || typeof item !== "object") return false;
+          const o = item as Record<string, unknown>;
+          if (typeof o.name !== "string" || o.name.trim().length === 0) return false;
+          if (!multiModelProviders.includes(o.provider as "openai" | "ollama" | "onnx")) return false;
+          if (typeof o.dimensions !== "number" || o.dimensions <= 0) return false;
+          if (!multiModelRoles.includes(o.role as "general" | "domain" | "query" | "custom")) return false;
+          return true;
+        }).map((o) => ({
+          name: (o as Record<string, unknown>).name as string,
+          provider: (o as Record<string, unknown>).provider as "openai" | "ollama" | "onnx",
+          dimensions: (o as Record<string, unknown>).dimensions as number,
+          role: (o as Record<string, unknown>).role as "general" | "domain" | "query" | "custom",
+          ...(typeof (o as Record<string, unknown>).apiKey === "string" ? { apiKey: (o as Record<string, unknown>).apiKey as string } : {}),
+          ...(typeof (o as Record<string, unknown>).endpoint === "string" ? { endpoint: (o as Record<string, unknown>).endpoint as string } : {}),
+          ...((o as Record<string, unknown>).enabled === false ? { enabled: false } : {}),
+        }))
+      : [];
+
     // Parse custom categories
     const customCategories: string[] = Array.isArray(cfg.categories)
       ? (cfg.categories as string[]).filter((c) => typeof c === "string" && c.length > 0)
@@ -2239,6 +2263,7 @@ export const hybridConfigSchema = {
         dimensions: resolvedDimensions,
         endpoint: resolvedEndpoint,
         batchSize: resolvedBatchSize,
+        multiModels: parsedMultiModels.length > 0 ? parsedMultiModels : undefined,
       },
       lanceDbPath:
         typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,

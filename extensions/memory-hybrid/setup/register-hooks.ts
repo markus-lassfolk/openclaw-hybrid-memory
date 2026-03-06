@@ -44,7 +44,7 @@ export interface HooksContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => import("../config.js").MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
-  issueStore: import("../backends/issue-store.js").IssueStore;
+  issueStore: import("../backends/issue-store.js").IssueStore | null;
 }
 
 /**

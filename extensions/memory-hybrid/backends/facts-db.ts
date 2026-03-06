@@ -558,6 +558,18 @@ export class FactsDB {
   }
 
   /**
+   * Copy a Buffer (which may have unaligned byteOffset) into a Float32Array.
+   * Node.js Buffers from better-sqlite3 can share a pooled ArrayBuffer with
+   * byteOffset not divisible by 4, which would make Float32Array constructor throw.
+   */
+  private static bufferToFloat32Array(buf: Buffer): Float32Array {
+    const byteLen = buf.byteLength;
+    const ab = new ArrayBuffer(byteLen);
+    new Uint8Array(ab).set(new Uint8Array(buf.buffer, buf.byteOffset, byteLen));
+    return new Float32Array(ab);
+  }
+
+  /**
    * Retrieve all embeddings stored for a given fact (all models/variants).
    */
   getEmbeddings(
@@ -571,7 +583,7 @@ export class FactsDB {
     return rows.map((r) => ({
       model: r.model,
       variant: r.variant,
-      embedding: new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
+      embedding: FactsDB.bufferToFloat32Array(r.embedding),
     }));
   }
 
@@ -589,7 +601,7 @@ export class FactsDB {
       .all(model) as Array<{ fact_id: string; embedding: Buffer }>;
     return rows.map((r) => ({
       factId: r.fact_id,
-      embedding: new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
+      embedding: FactsDB.bufferToFloat32Array(r.embedding),
     }));
   }
 

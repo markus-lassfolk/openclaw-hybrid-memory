@@ -16,6 +16,7 @@ import {
   OllamaEmbeddingProvider,
   type EmbeddingProvider,
 } from "./embeddings.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // EmbeddingRegistry
@@ -106,7 +107,8 @@ export class EmbeddingRegistry {
   /**
    * Embed text with ALL registered models (primary + additional).
    * Returns a Map from model name → Float32Array.
-   * On partial failure, the error is thrown so callers can decide how to handle it.
+   * On partial failure, reports each error via capturePluginError and returns
+   * whatever succeeded so callers get partial results instead of losing all data.
    */
   async embedAll(text: string): Promise<Map<string, Float32Array>> {
     const result = new Map<string, Float32Array>();
@@ -128,10 +130,10 @@ export class EmbeddingRegistry {
           const [name, vec] = s.value;
           result.set(name, vec);
         } else {
-          // Re-throw: partial failure in multi-model embed should not go silently
-          throw s.reason instanceof Error
-            ? s.reason
-            : new Error(String(s.reason));
+          capturePluginError(
+            s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
+            { subsystem: "embedding-registry", operation: "embedAll" },
+          );
         }
       }
     }

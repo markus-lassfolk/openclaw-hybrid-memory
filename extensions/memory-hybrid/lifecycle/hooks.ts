@@ -83,7 +83,7 @@ export interface LifecycleContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
-  issueStore: import("../backends/issue-store.js").IssueStore;
+  issueStore: import("../backends/issue-store.js").IssueStore | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -800,7 +800,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
         // Ambient issue retrieval (Issue #137): surface past resolved issues when error-like context detected
         let issueBlock = "";
-        if (ambientCfg.enabled) {
+        if (ambientCfg.enabled && ctx.issueStore) {
           try {
             const issueResults = searchAmbientIssues(e.prompt, ctx.issueStore);
             if (issueResults.openIssues.length > 0 || issueResults.resolvedIssues.length > 0) {
