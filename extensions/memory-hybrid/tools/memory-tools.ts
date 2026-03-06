@@ -340,12 +340,12 @@ export function registerMemoryTools(
           try {
             addOperationBreadcrumb("search", "vector-recall");
             let textToEmbed = query;
-            if (cfg.search?.hydeEnabled) {
+            if (cfg.queryExpansion.enabled) {
               try {
                 const cronCfg = getCronModelConfig(cfg);
                 const pref = getLLMModelPreference(cronCfg, "nano");
-                const hydeModel = cfg.search.hydeModel ?? pref[0];
-                const fallbackModels = cfg.search.hydeModel ? [] : pref.slice(1);
+                const hydeModel = cfg.queryExpansion.model ?? pref[0];
+                const fallbackModels = cfg.queryExpansion.model ? [] : pref.slice(1);
                 const hydeContent = await chatCompleteWithRetry({
                   model: hydeModel,
                   fallbackModels,
@@ -354,7 +354,7 @@ export function registerMemoryTools(
                   maxTokens: 150,
                   openai,
                   label: "HyDE",
-                  timeoutMs: 25_000,
+                  timeoutMs: cfg.queryExpansion.timeoutMs,
                   pendingWarnings: pendingLLMWarnings,
                 });
                 const hydeText = hydeContent.trim();
@@ -365,7 +365,7 @@ export function registerMemoryTools(
                   operation: "hyde-generation",
                   phase: "runtime",
                 });
-                api.logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);
+                api.logger.warn(`memory-hybrid: HyDE/query-expansion generation failed, using raw query: ${err}`);
               }
             }
             queryVector = await embeddings.embed(textToEmbed);
