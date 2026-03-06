@@ -166,7 +166,7 @@ describe("CONTRADICTS bidirectional", () => {
     expect(fromA).toHaveLength(0);
   });
 
-  it("both facts are marked as contradicted after bidirectional link creation", () => {
+  it("both facts are marked as contradicted via contradiction table after directed link creation", () => {
     const factA = storeFact("City is Paris", "city", "name", "Paris");
     const factB = storeFact("City is London", "city", "name", "London");
 

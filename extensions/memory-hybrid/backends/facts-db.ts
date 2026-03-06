@@ -1523,7 +1523,8 @@ export class FactsDB {
   }
 
   /** BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set).
-   *  Excludes CONTRADICTS links to prevent traversal explosion from contradiction graph pollution. */
+   *  Excludes CONTRADICTS links to prevent BFS from traversing contradiction clusters: a fact with
+   *  many contradictions could produce a very large expansion that is not semantically related to the query. */
   getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
     if (factIds.length === 0 || maxDepth < 1) return [...factIds];
     const seen = new Set<string>(factIds);

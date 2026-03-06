@@ -152,7 +152,8 @@ export async function loadCursors(cursorsPath: string): Promise<SessionCursors> 
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const cursors: SessionCursors = {}
       for (const [k, v] of Object.entries(parsed)) {
-        // Skip the reserved _failures key
+        // Skip the reserved '_failures' key — it stores per-session consecutive failure counts,
+        // not a byte offset. See loadFailureCounts() for how it is read.
         if (k === '_failures') continue
         if (typeof v === 'number' && v >= 0) {
           cursors[k] = v
