@@ -135,6 +135,23 @@ describe("memory_ingest_document", () => {
     expect(result.details.errorCount).toBe(0);
   });
 
+  it("rejects non-absolute path", async () => {
+    const api = makeMockApi();
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: makeCfg() as never,
+        embeddings: makeMockEmbeddings() as never,
+        pythonBridge: makeMockBridge() as never,
+      },
+      api as never,
+    );
+    const tool = api.getTool("memory_ingest_document");
+    const result = await (tool!.execute as AnyFn)("tc-rel", { path: "relative/path.pdf" });
+    expect(result.details.error).toBe("path_not_absolute");
+  });
+
   it("returns error when file does not exist", async () => {
     const api = makeMockApi();
     const bridge = makeMockBridge();

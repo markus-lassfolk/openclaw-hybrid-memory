@@ -27,6 +27,7 @@ import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,15 +205,23 @@ async function runMultiModelSemanticStrategies(
   const settled = await Promise.allSettled(embedTasks);
   for (const s of settled) {
     if (s.status === "rejected") {
-      console.error(`[retrieval] multi-model embed failed for a model:`, s.reason);
+      capturePluginError(
+        s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
+        { subsystem: "retrieval", operation: "multi-model-embed" },
+      );
       continue;
     }
     const { name, queryVec } = s.value;
     const candidates = factsDbWithEmbeddings.getEmbeddingsByModel(name);
     if (candidates.length === 0) continue;
 
-    // Compute cosine similarity for all stored embeddings
-    const scored = candidates
+    // Cap candidates per model to avoid O(models * facts) work on large DBs
+    const maxCandidatesPerModel = Math.max(topK * 10, 500);
+    const limitedCandidates =
+      candidates.length > maxCandidatesPerModel ? candidates.slice(0, maxCandidatesPerModel) : candidates;
+
+    // Compute cosine similarity for the bounded candidate set
+    const scored = limitedCandidates
       .map(({ factId, embedding }) => ({
         factId,
         score: cosineSimilarity(queryVec, embedding),

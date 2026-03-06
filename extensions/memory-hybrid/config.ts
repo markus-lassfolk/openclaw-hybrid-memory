@@ -491,6 +491,8 @@ export type DocumentsConfig = {
   maxDocumentSize: number;
   /** Automatically add filename as a tag to ingested facts (default: true) */
   autoTag: boolean;
+  /** Optional allowlist of absolute directory paths; when set, ingestion only allows files under these paths */
+  allowedPaths?: string[];
 };
 
 /**
@@ -2163,12 +2165,15 @@ export const hybridConfigSchema = {
           ? documentsRaw.pythonPath.trim()
           : "python3",
       chunkSize,
-      chunkOverlap: Math.min(chunkOverlap, chunkSize - 102),
+      chunkOverlap: Math.min(chunkOverlap, Math.max(0, chunkSize - 100)),
       maxDocumentSize:
         typeof documentsRaw?.maxDocumentSize === "number" && documentsRaw.maxDocumentSize > 0
           ? Math.floor(documentsRaw.maxDocumentSize)
           : 50 * 1024 * 1024,
       autoTag: documentsRaw?.autoTag !== false,
+      allowedPaths: Array.isArray(documentsRaw?.allowedPaths)
+        ? (documentsRaw.allowedPaths as string[]).filter((p) => typeof p === "string" && p.trim().length > 0).map((p) => p.trim())
+        : undefined,
     };
 
     // Parse contextual variants config (Issue #159, default: disabled)

@@ -382,33 +382,34 @@ const memoryHybridPlugin = {
       throw err;
     }
 
-    // Lifecycle Hooks
-
-    try {
-      registerLifecycleHooks({
-      factsDb,
-      vectorDb,
-      embeddings,
-      openai,
-      cfg,
-      credentialsDb,
-      aliasDb,
-      wal,
-      currentAgentIdRef,
-      lastProgressiveIndexIds,
-      restartPendingClearedRef,
-      resolvedSqlitePath,
-      walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
-      walRemove: (id, logger) => walRemove(wal, id, logger),
-      findSimilarByEmbedding,
-      shouldCapture,
-      detectCategory,
-      pendingLLMWarnings,
-      issueStore,
-    }, api);
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:hooks" });
-      throw err;
+    // Lifecycle Hooks (only when issue store is available)
+    if (issueStore) {
+      try {
+        registerLifecycleHooks({
+          factsDb,
+          vectorDb,
+          embeddings,
+          openai,
+          cfg,
+          credentialsDb,
+          aliasDb,
+          wal,
+          currentAgentIdRef,
+          lastProgressiveIndexIds,
+          restartPendingClearedRef,
+          resolvedSqlitePath,
+          walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+          walRemove: (id, logger) => walRemove(wal, id, logger),
+          findSimilarByEmbedding,
+          shouldCapture,
+          detectCategory,
+          pendingLLMWarnings,
+          issueStore,
+        }, api);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:hooks" });
+        throw err;
+      }
     }
 
     // Service

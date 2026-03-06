@@ -72,7 +72,7 @@ export class ContextualVariantGenerator {
     }
     this.callTimestamps.push(now);
 
-    const count = Math.max(1, Math.min(this.config.maxVariantsPerFact, 2));
+    const count = Math.max(1, this.config.maxVariantsPerFact);
     const prompt = VARIANT_PROMPT_TEMPLATE.replace("{text}", text)
       .replace("{category}", category)
       .replace("{count}", String(count));
