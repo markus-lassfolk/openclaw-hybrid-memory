@@ -496,11 +496,15 @@ export async function runPassiveObserver(
         try {
           vec = await embeddings.embed(fact.text)
         } catch (err) {
+          logger.warn(
+            `memory-hybrid: passive-observer — embed failed for fact: ${fact.text.slice(0, 80)}... (${err})`,
+          )
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: 'passive-observer-embed',
             severity: 'info',
             subsystem: 'passive-observer',
           })
+          result.errors++
           continue
         }
 
