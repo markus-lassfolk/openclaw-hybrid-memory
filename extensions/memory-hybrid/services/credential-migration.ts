@@ -71,6 +71,10 @@ export async function migrateCredentialsToVault(
         url: parsed.url,
         notes: parsed.notes,
       });
+      const stored = credentialsDb.get(parsed.service, parsed.type);
+      if (!stored || stored.value !== parsed.secretValue) {
+        throw new Error(`vault verification failed for ${parsed.service}:${parsed.type}`);
+      }
       factsDb.delete(entry.id);
       aliasDb?.deleteByFactId(entry.id);
       try {
