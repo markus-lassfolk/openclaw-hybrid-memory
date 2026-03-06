@@ -113,7 +113,12 @@ export class IssueStore {
     const existing = this.get(id);
     if (!existing) throw new Error(`Issue not found: ${id}`);
 
-    const allowed = ISSUE_TRANSITIONS[existing.status];
+    const allowed = ISSUE_TRANSITIONS[existing.status as keyof typeof ISSUE_TRANSITIONS];
+    if (!allowed) {
+      throw new Error(
+        `Unknown issue status in database: "${existing.status}". Cannot transition to "${newStatus}".`,
+      );
+    }
     if (!allowed.includes(newStatus)) {
       throw new Error(
         `Invalid transition: ${existing.status} → ${newStatus}. Allowed: ${allowed.join(", ") || "none"}`,
@@ -152,6 +157,12 @@ export class IssueStore {
     }
 
     query += " ORDER BY created_at DESC";
+    // When no tag filter, push LIMIT into SQL to avoid loading all rows
+    const hasTagFilter = filter?.tags && filter.tags.length > 0;
+    if (!hasTagFilter && filter?.limit && filter.limit > 0) {
+      query += " LIMIT ?";
+      params.push(filter.limit);
+    }
 
     const rows = this.db.prepare(query).all(...params) as any[];
     let results = rows.map((r) => this.rowToIssue(r));

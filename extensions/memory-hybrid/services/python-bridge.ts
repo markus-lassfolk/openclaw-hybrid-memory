@@ -12,7 +12,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -175,7 +175,7 @@ export class PythonBridge {
 
   async convert(filePath: string): Promise<ConvertResult> {
     await this.ensureStarted();
-    const uri = filePath.startsWith("file://") ? filePath : `file://${filePath}`;
+    const uri = filePath.startsWith("file://") ? filePath : pathToFileURL(filePath).href;
     const result = await this.send<ConvertResult>("convert", { uri }, 60_000);
     return result;
   }

@@ -1,5 +1,4 @@
 import type OpenAI from "openai";
-import type Database from "better-sqlite3";
 import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -26,10 +25,6 @@ export interface MonthlyReviewReport {
 const RECOMMENDATION_PROMPT =
   "You are a knowledge base analyst. Given this knowledge base statistics, generate 5-10 actionable recommendations for improvement. Focus on coverage gaps, quality issues, and maintenance priorities.";
 
-function getRawDb(factsDb: FactsDB): Database.Database {
-  return (factsDb as unknown as { liveDb: Database.Database }).liveDb;
-}
-
 function parseLines(text: string): string[] {
   return text
     .split("\n")
@@ -52,7 +47,7 @@ export class MonthlyReviewService {
   async runReview(): Promise<MonthlyReviewReport> {
     const now = new Date();
     const nowSec = Math.floor(now.getTime() / 1000);
-    const rawDb = getRawDb(this.factsDb);
+    const rawDb = this.factsDb.getRawDb();
     const factsByCategory = this.factsDb.statsBreakdownByCategory();
     const totalFacts = Object.values(factsByCategory).reduce((sum, n) => sum + n, 0);
 

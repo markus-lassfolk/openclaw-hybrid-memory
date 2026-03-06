@@ -195,9 +195,6 @@ export class FactsDB {
     // ---- Contextual variants (Issue #159) ----
     this.migrateFactVariantsTable();
 
-    // ---- Verification store for critical facts (Issue #162) ----
-    this.migrateVerifiedFactsTable();
-
     // ---- Provenance tracing (Issue #163) ----
     this.migrateProvenanceColumns();
   }
@@ -478,26 +475,6 @@ export class FactsDB {
     );
   }
 
-  /** Create verified_facts table for high-trust storage tier (Issue #162). Uses ON DELETE CASCADE so FactsDB.delete/prune do not fail when a fact has verified_facts rows. */
-  private migrateVerifiedFactsTable(): void {
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS verified_facts (
-        id TEXT PRIMARY KEY,
-        fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
-        canonical_text TEXT NOT NULL,
-        checksum TEXT NOT NULL,
-        verified_at TEXT NOT NULL,
-        verified_by TEXT NOT NULL,
-        next_verification TEXT,
-        version INTEGER DEFAULT 1,
-        previous_version_id TEXT,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
-      CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
-    `);
-  }
-
   /** Add provenance columns to facts table (Issue #163). All nullable. Use provenance_session (not source_session) to avoid confusion with source_sessions. */
   private migrateProvenanceColumns(): void {
     const cols = this.liveDb
@@ -637,17 +614,20 @@ export class FactsDB {
   }
 
   /**
-   * Retrieve all embeddings for a specific model across all facts.
-   * Used for bulk vector similarity search at retrieval time.
+   * Retrieve embeddings for a specific model. When limit is set, returns the most recent
+   * (by fact_embeddings.id DESC) to avoid excluding recent facts when capping for performance.
    */
   getEmbeddingsByModel(
     model: string,
+    limit?: number,
   ): Array<{ factId: string; embedding: Float32Array }> {
-    const rows = this.liveDb
-      .prepare(
-        `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical'`,
-      )
-      .all(model) as Array<{ fact_id: string; embedding: Buffer }>;
+    const sql =
+      limit != null
+        ? `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical' ORDER BY id DESC LIMIT ?`
+        : `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical'`;
+    const rows = (limit != null
+      ? this.liveDb.prepare(sql).all(model, limit)
+      : this.liveDb.prepare(sql).all(model)) as Array<{ fact_id: string; embedding: Buffer }>;
     return rows.map((r) => ({
       factId: r.fact_id,
       embedding: FactsDB.bufferToFloat32Array(r.embedding),
@@ -3325,7 +3305,7 @@ export class FactsDB {
   }
 
   /**
-   * Set a fact's confidence to a specific value (clamped to 0–1).
+   * Set a fact's confidence to a specific value (clamped to 0.1–1 to match updateConfidence floor).
    * Returns the new confidence value, or null if the fact was not found.
    */
   setConfidenceTo(id: string, value: number): number | null {
@@ -3333,7 +3313,7 @@ export class FactsDB {
       .prepare(`SELECT confidence FROM facts WHERE id = ?`)
       .get(id) as { confidence: number } | undefined;
     if (!row) return null;
-    const updated = Math.max(0, Math.min(1, value));
+    const updated = Math.max(0.1, Math.min(1, value));
     this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
     return updated;
   }

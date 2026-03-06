@@ -215,8 +215,14 @@ describe("parseVerdict", () => {
     expect(parseVerdict("I don't know")).toBe("UNCERTAIN");
   });
 
-  it("CONFIRMED takes precedence when both CONFIRMED and REJECTED appear", () => {
-    expect(parseVerdict("CONFIRMED but also REJECTED")).toBe("CONFIRMED");
+  it("REJECTED takes precedence when both appear (avoids 'REJECTED because ... CONFIRM' misclassification)", () => {
+    expect(parseVerdict("REJECTED because the transcript does not CONFIRM this")).toBe("REJECTED");
+    expect(parseVerdict("CONFIRMED but also REJECTED")).toBe("REJECTED");
+  });
+
+  it("NOT CONFIRMED / UNCONFIRMED do not return CONFIRMED", () => {
+    expect(parseVerdict("NOT CONFIRMED, treat as UNCERTAIN")).toBe("UNCERTAIN");
+    expect(parseVerdict("UNCONFIRMED")).toBe("UNCERTAIN");
   });
 });
 

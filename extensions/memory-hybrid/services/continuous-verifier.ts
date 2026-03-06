@@ -72,13 +72,20 @@ export function buildVerificationPrompt(
 
 /**
  * Parse the LLM response into one of the three outcome labels.
- * Looks for CONFIRMED / STALE / UNCERTAIN anywhere in the response (case-insensitive).
+ * Uses word-boundary checks and excludes negations (e.g. "NOT CONFIRMED", "UNCONFIRMED")
+ * so that responses like "UNCONFIRMED" are not misclassified as CONFIRMED.
  * Falls back to UNCERTAIN for unrecognised responses.
  */
 export function parseVerificationOutcome(response: string): VerificationOutcome {
-  const upper = response.toUpperCase();
-  if (upper.includes("CONFIRMED")) return "CONFIRMED";
-  if (upper.includes("STALE")) return "STALE";
+  const trimmed = response.trim();
+  if (
+    /\bCONFIRMED\b/i.test(trimmed) &&
+    !/\bNOT\s+CONFIRMED\b/i.test(trimmed) &&
+    !/\bUNCONFIRMED\b/i.test(trimmed)
+  ) {
+    return "CONFIRMED";
+  }
+  if (/\bSTALE\b/i.test(trimmed)) return "STALE";
   return "UNCERTAIN";
 }
 

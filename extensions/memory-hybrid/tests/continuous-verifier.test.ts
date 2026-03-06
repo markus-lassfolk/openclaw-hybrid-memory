@@ -156,8 +156,13 @@ describe("parseVerificationOutcome", () => {
   });
 
   it("prefers CONFIRMED over STALE when both appear (CONFIRMED checked first)", () => {
-    // CONFIRMED appears first in the check order
     expect(parseVerificationOutcome("CONFIRMED but maybe STALE")).toBe("CONFIRMED");
+  });
+
+  it("NOT CONFIRMED and UNCONFIRMED do not return CONFIRMED", () => {
+    expect(parseVerificationOutcome("NOT CONFIRMED – no recent data")).toBe("UNCERTAIN");
+    expect(parseVerificationOutcome("UNCONFIRMED")).toBe("UNCERTAIN");
+    expect(parseVerificationOutcome("The fact is unconfirmed")).toBe("UNCERTAIN");
   });
 });
 

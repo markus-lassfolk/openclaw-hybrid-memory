@@ -6,7 +6,7 @@
  */
 
 import Database from "better-sqlite3";
-import { mkdirSync, appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -383,11 +383,8 @@ export class VerificationStore {
 
   private writeBackup(entry: Record<string, unknown>): void {
     try {
-      if (!existsSync(this.backupPath)) {
-        writeFileSync(this.backupPath, "", { mode: 0o600 });
-      }
       const line = JSON.stringify({ ...entry, ts: new Date().toISOString() }) + "\n";
-      appendFileSync(this.backupPath, line, "utf8");
+      appendFileSync(this.backupPath, line, { encoding: "utf8", mode: 0o600 });
     } catch (err) {
       if (!this.hasLoggedBackupError) {
         this.hasLoggedBackupError = true;

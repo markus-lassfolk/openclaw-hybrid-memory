@@ -214,16 +214,12 @@ async function runMultiModelSemanticStrategies(
       continue;
     }
     const { name, queryVec } = s.value;
-    const candidates = factsDbWithEmbeddings.getEmbeddingsByModel(name);
+    const maxCandidatesPerModel = Math.max(topK * 10, 500);
+    const candidates = factsDbWithEmbeddings.getEmbeddingsByModel(name, maxCandidatesPerModel);
     if (candidates.length === 0) continue;
 
-    // Cap candidates per model to avoid O(models * facts) work on large DBs
-    const maxCandidatesPerModel = Math.max(topK * 10, 500);
-    const limitedCandidates =
-      candidates.length > maxCandidatesPerModel ? candidates.slice(0, maxCandidatesPerModel) : candidates;
-
-    // Compute cosine similarity for the bounded candidate set
-    const scored = limitedCandidates
+    // Compute cosine similarity for the bounded candidate set (already limited at DB with ORDER BY id DESC)
+    const scored = candidates
       .map(({ factId, embedding }) => ({
         factId,
         score: cosineSimilarity(queryVec, embedding),
@@ -259,7 +255,7 @@ function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 
 /** Minimal interface for fact_embeddings access (satisfied by FactsDB). */
 export interface FactsDbWithEmbeddings {
-  getEmbeddingsByModel(model: string): Array<{ factId: string; embedding: Float32Array }>;
+  getEmbeddingsByModel(model: string, limit?: number): Array<{ factId: string; embedding: Float32Array }>;
 }
 
 /**

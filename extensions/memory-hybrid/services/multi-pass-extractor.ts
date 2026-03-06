@@ -42,8 +42,8 @@ export interface CandidateFact {
   pass: 1 | 2;
 }
 
-/** A fact that survived Pass 3 verification (or when verificationPass is disabled). */
-export interface VerifiedFact {
+/** A fact that survived Pass 3 verification (or when verificationPass is disabled). Named ExtractedFact to avoid collision with verification-store.VerifiedFact. */
+export interface ExtractedFact {
   text: string;
   category: string;
   importance: number;
@@ -58,7 +58,7 @@ export interface VerifiedFact {
 }
 
 export interface MultiPassExtractionResult {
-  facts: VerifiedFact[];
+  facts: ExtractedFact[];
   /** Total candidates from Pass 1. */
   explicitCount: number;
   /** Total candidates from Pass 2. */
@@ -190,11 +190,22 @@ export function parseCandidateFacts(response: string, pass: 1 | 2): CandidateFac
   return facts;
 }
 
-/** Parse the Pass 3 LLM verdict response. Defaults to UNCERTAIN for unrecognised responses. */
+/**
+ * Parse the Pass 3 LLM verdict response. Defaults to UNCERTAIN for unrecognised responses.
+ * Checks REJECTED before CONFIRMED and uses word-boundary + negation exclusion so that
+ * "REJECTED because the transcript does not CONFIRM this" returns REJECTED, and
+ * "NOT CONFIRMED" does not return CONFIRMED.
+ */
 export function parseVerdict(response: string): ExtractionVerdict {
-  const upper = response.toUpperCase();
-  if (upper.includes("CONFIRMED")) return "CONFIRMED";
-  if (upper.includes("REJECTED")) return "REJECTED";
+  const trimmed = response.trim();
+  if (/\bREJECTED\b/i.test(trimmed)) return "REJECTED";
+  if (
+    /\bCONFIRMED\b/i.test(trimmed) &&
+    !/\bNOT\s+CONFIRMED\b/i.test(trimmed) &&
+    !/\bUNCONFIRMED\b/i.test(trimmed)
+  ) {
+    return "CONFIRMED";
+  }
   return "UNCERTAIN";
 }
 
@@ -303,7 +314,7 @@ export class MultiPassExtractor {
 
     const allCandidates = [...pass1Candidates, ...pass2Candidates];
 
-    let facts: VerifiedFact[];
+    let facts: ExtractedFact[];
     let rejectedCount = 0;
 
     if (this.verificationPass && allCandidates.length > 0) {

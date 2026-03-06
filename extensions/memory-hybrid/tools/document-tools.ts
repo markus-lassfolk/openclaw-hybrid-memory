@@ -8,8 +8,8 @@
 
 import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
-import { basename, isAbsolute, resolve } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 
 import type { FactsDB } from "../backends/facts-db.js";
@@ -76,12 +76,28 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
             details: { error: "path_not_absolute", path: filePath },
           };
         }
-        const resolvedPath = resolve(filePath);
+        // Resolve symlinks so allowedPaths cannot be escaped via symlinks; use relative() for cross-platform containment
+        let realPath: string;
+        try {
+          realPath = realpathSync.native(filePath);
+        } catch (err: unknown) {
+          const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+          const isNotFound = code === "ENOENT";
+          return {
+            content: [{ type: "text", text: `Error: ${isNotFound ? "File not found" : "Path does not exist or is not accessible"}. Got: ${filePath}` }],
+            details: { error: isNotFound ? "file_not_found" : "path_inaccessible", path: filePath },
+          };
+        }
         const allowedPaths = docCfg.allowedPaths;
         if (allowedPaths && allowedPaths.length > 0) {
           const underAllowed = allowedPaths.some((root) => {
-            const resolvedRoot = resolve(root);
-            return resolvedPath === resolvedRoot || resolvedPath.startsWith(resolvedRoot + "/");
+            try {
+              const realRoot = realpathSync.native(resolve(root));
+              const rel = relative(realRoot, realPath);
+              return rel === "" || (!rel.startsWith("..") && !rel.includes(".."));
+            } catch {
+              return false;
+            }
           });
           if (!underAllowed) {
             return {
@@ -91,7 +107,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
                   text: `Error: Path is not under any allowed directory. Allowed: ${allowedPaths.join(", ")}`,
                 },
               ],
-              details: { error: "path_not_allowed", path: resolvedPath, allowedPaths },
+              details: { error: "path_not_allowed", path: realPath, allowedPaths },
             };
           }
         }
@@ -113,11 +129,11 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         // --- Validate file ---
         let stat: ReturnType<typeof statSync>;
         try {
-          stat = statSync(resolvedPath);
+          stat = statSync(realPath);
         } catch {
           return {
-            content: [{ type: "text", text: `Error: File not found or inaccessible: ${resolvedPath}` }],
-            details: { error: "file_not_found", path: resolvedPath },
+            content: [{ type: "text", text: `Error: File not found or inaccessible: ${realPath}` }],
+            details: { error: "file_not_found", path: realPath },
           };
         }
 
@@ -139,7 +155,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         // --- Dedup check: hash the resolved path + mtime for a lightweight fingerprint ---
         const mtimeMs = stat.mtimeMs ?? 0;
         const fingerprint = createHash("sha256")
-          .update(`${resolvedPath}:${mtimeMs}:${fileSize}`)
+          .update(`${realPath}:${mtimeMs}:${fileSize}`)
           .digest("hex")
           .slice(0, 16);
 
@@ -161,7 +177,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         let markdown: string;
         let title: string;
         try {
-          const result = await pythonBridge.convert(resolvedPath);
+          const result = await pythonBridge.convert(realPath);
           markdown = result.markdown;
           title = result.title;
         } catch (err) {
@@ -173,14 +189,14 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           const msg = err instanceof Error ? err.message : String(err);
           return {
             content: [{ type: "text", text: `Error converting document: ${msg}` }],
-            details: { error: "conversion_failed", path: resolvedPath },
+            details: { error: "conversion_failed", path: realPath },
           };
         }
 
         if (!markdown || !markdown.trim()) {
           return {
             content: [{ type: "text", text: "Document converted but produced no text content." }],
-            details: { error: "empty_content", path: resolvedPath },
+            details: { error: "empty_content", path: realPath },
           };
         }
 
@@ -193,7 +209,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         if (chunks.length === 0) {
           return {
             content: [{ type: "text", text: "Document produced no storable chunks after chunking." }],
-            details: { error: "no_chunks", path: resolvedPath },
+            details: { error: "no_chunks", path: realPath },
           };
         }
 
@@ -224,7 +240,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
             .replace(/^-|-$/g, "");
           return t || s.toLowerCase();
         };
-        const fileName = basename(resolvedPath);
+        const fileName = basename(realPath);
         const sourceName = `document:${fingerprint}`;
         const baseTags: string[] = [
           ...(docCfg.autoTag ? [headingTagSafe(fileName)] : []),

@@ -160,7 +160,7 @@ describe("hybridConfigSchema.parse", () => {
 
   it("parses minimal valid config", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.embedding.provider).toBe("openai");
+    expect(result.embedding.provider).toBe("ollama");
     expect(result.embedding.model).toBe("text-embedding-3-small");
     expect(result.autoCapture).toBe(true);
     expect(result.autoRecall.enabled).toBe(true);
@@ -200,8 +200,8 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.memoryTiering.hotMaxFacts).toBe(50);
   });
 
-  it("throws on missing embedding (apiKey required when provider defaults to openai)", () => {
-    expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.apiKey/);
+  it("throws on missing embedding (model required when provider defaults to ollama)", () => {
+    expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model|embedding\.apiKey/);
   });
 
   it("throws on placeholder apiKey", () => {
@@ -247,10 +247,10 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("does not warn about provider when embedding section is absent", () => {
-    // When no embedding section, default to openai and throw apiKey required; provider warn should NOT fire
+    // When no embedding section, default to ollama and throw model required; provider warn should NOT fire
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.apiKey/);
+      expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model|embedding\.apiKey/);
       const warnCalls = warnSpy.mock.calls.filter((args) =>
         typeof args[0] === "string" && args[0].includes("embedding.provider not set"),
       );

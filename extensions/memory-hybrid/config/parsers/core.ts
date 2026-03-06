@@ -37,7 +37,12 @@ export const OPENAI_MODELS = new Set([
   "text-embedding-ada-002",
 ]);
 
+const MAX_ENV_RESOLVE_LENGTH = 10000;
+
 export function resolveEnvVars(value: string): string {
+  if (value.length > MAX_ENV_RESOLVE_LENGTH) {
+    throw new Error(`Config value too long for environment variable resolution (max ${MAX_ENV_RESOLVE_LENGTH} chars).`);
+  }
   // Use [^}]+ not (.*?) to avoid ReDoS (js/polynomial-redos): no backtracking on malicious input.
   return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
     const name = String(envVar).trim();
