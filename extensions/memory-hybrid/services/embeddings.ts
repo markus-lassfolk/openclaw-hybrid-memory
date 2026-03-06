@@ -34,6 +34,10 @@ function hashText(text: string): string {
   return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
+function makeCacheKey(model: string, text: string): string {
+  return `${model}:${hashText(text)}`;
+}
+
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
@@ -86,16 +90,16 @@ export class Embeddings implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
-    const cacheKey = hashText(text);
-    const cached = this.cache.get(cacheKey);
-    if (cached !== undefined) {
-      this.cache.delete(cacheKey);
-      this.cache.set(cacheKey, cached);
-      return cached;
-    }
-
     let lastErr: Error | undefined;
     for (const model of this.models) {
+      const cacheKey = makeCacheKey(model, text);
+      const cached = this.cache.get(cacheKey);
+      if (cached !== undefined) {
+        this.cache.delete(cacheKey);
+        this.cache.set(cacheKey, cached);
+        this.modelName = model;
+        return cached;
+      }
       try {
         const supportsDimensions = model.startsWith("text-embedding-3-");
         const resp = await withLLMRetry(
