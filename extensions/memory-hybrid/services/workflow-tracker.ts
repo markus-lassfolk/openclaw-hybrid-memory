@@ -54,12 +54,13 @@ export class WorkflowTracker {
    */
   push(sessionId: string, toolName: string): void {
     if (!this.cfg.enabled) return;
+    const sanitized = String(toolName).replace(/[\r\n\t`]/g, "").trim().slice(0, 64);
+    if (!sanitized) return;
     let buf = this.sessions.get(sessionId);
     if (!buf) {
       buf = { sessionId, toolCalls: [], startedAt: Date.now() };
       this.sessions.set(sessionId, buf);
     }
-    const sanitized = toolName.replace(/[\n\r`]/g, "");
     buf.toolCalls.push(sanitized);
   }
 
