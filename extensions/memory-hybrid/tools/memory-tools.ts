@@ -221,6 +221,16 @@ export function registerMemoryTools(
         // Accepting arbitrary scope filters allows users to access other users' private memories.
         // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
         const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+        const logRecall = (hit: boolean) => {
+          const maybeFactsDb = factsDb as { logRecall?: (hit: boolean) => void };
+          if (typeof maybeFactsDb.logRecall === "function") {
+            try {
+              maybeFactsDb.logRecall(hit);
+            } catch {
+              // Non-fatal: recall logging should never break recall
+            }
+          }
+        };
 
         // Fetch by id (fact id or 1-based index from last progressive index)
         if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -249,6 +259,7 @@ export function registerMemoryTools(
             if (entry) {
               // Access boost — update recall_count and last_accessed on fetch by id
               factsDb.refreshAccessedFacts([entry.id]);
+              logRecall(true);
               const text = `[${entry.category}] ${entry.text}`;
               return {
                 content: [
@@ -278,6 +289,7 @@ export function registerMemoryTools(
               };
             }
           }
+          logRecall(false);
           return {
             content: [
               {
@@ -294,6 +306,7 @@ export function registerMemoryTools(
 
         const query = typeof queryParam === "string" && queryParam.trim().length > 0 ? queryParam.trim() : null;
         if (!query) {
+          logRecall(false);
           return {
             content: [
               {
@@ -515,6 +528,7 @@ export function registerMemoryTools(
         }
 
         if (results.length === 0) {
+          logRecall(false);
           return {
             content: [{
               type: "text",
@@ -531,6 +545,7 @@ export function registerMemoryTools(
           contradictionStatus.set(r.entry.id, factsDb.isContradicted(r.entry.id));
         }
 
+        logRecall(true);
         const text = results
           .map((r, i) => {
             const contradicted = contradictionStatus.get(r.entry.id) ?? false;

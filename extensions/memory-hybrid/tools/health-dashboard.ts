@@ -14,6 +14,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { detectClusters } from "../services/topic-clusters.js";
 
 export interface HealthPluginContext {
   factsDb: FactsDB;
@@ -34,6 +35,9 @@ export interface HealthReport {
   staleFacts: number;
   avgLinksPerFact: number;
   totalLinks: number;
+  retrievalHitRate7d: number;
+  topClusters: Array<{ id: string; label: string; factCount: number }>;
+  unresolvedContradictions: number;
   lastReflectionAt: string | null;
   lastPruneAt: string | null;
   storageSizeBytes: {
@@ -78,6 +82,7 @@ export function buildHealthReport(
   factsDb: FactsDB,
   resolvedSqlitePath: string,
   resolvedLancePath: string,
+  cfg?: Pick<HybridMemoryConfig, "clusters">,
 ): HealthReport {
   const db = factsDb.getRawDb();
   const nowSec = Math.floor(Date.now() / 1000);
@@ -190,6 +195,39 @@ export function buildHealthReport(
   const avgLinksPerFact =
     activeFacts > 0 ? Math.round((totalLinks * 2 * 1000) / activeFacts) / 1000 : 0;
 
+  // Retrieval hit rate in the last 7 days
+  const sevenDaysAgo = nowSec - 7 * 24 * 60 * 60;
+  const recallRow = db
+    .prepare(
+      `SELECT COUNT(*) AS total, SUM(hit) AS hits
+       FROM recall_log
+       WHERE occurred_at >= ?`,
+    )
+    .get(sevenDaysAgo) as { total: number; hits: number | null };
+  const recallTotal = recallRow.total ?? 0;
+  const recallHits = recallRow.hits ?? 0;
+  const retrievalHitRate7d =
+    recallTotal > 0 ? Math.round((recallHits / recallTotal) * 1000) / 1000 : 0;
+
+  // Unresolved contradictions
+  const contradictionRow = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM contradictions WHERE resolved = 0`)
+    .get() as { cnt: number };
+  const unresolvedContradictions = contradictionRow.cnt;
+
+  // Top clusters (detect live)
+  let topClusters: Array<{ id: string; label: string; factCount: number }> = [];
+  if (cfg?.clusters?.enabled) {
+    const clusters = detectClusters(factsDb, {
+      minClusterSize: cfg.clusters.minClusterSize,
+    }).clusters;
+    topClusters = clusters.slice(0, 5).map((c) => ({
+      id: c.id,
+      label: c.label,
+      factCount: c.factCount,
+    }));
+  }
+
   // Last reflection timestamp
   const reflRow = db
     .prepare(
@@ -232,6 +270,9 @@ export function buildHealthReport(
     staleFacts,
     avgLinksPerFact,
     totalLinks,
+    retrievalHitRate7d,
+    topClusters,
+    unresolvedContradictions,
     lastReflectionAt,
     lastPruneAt,
     storageSizeBytes: {
@@ -261,7 +302,7 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
       parameters: Type.Object({}),
       async execute(_toolCallId: string, _params: Record<string, unknown>) {
         try {
-          const report = buildHealthReport(factsDb, resolvedSqlitePath, resolvedLancePath);
+          const report = buildHealthReport(factsDb, resolvedSqlitePath, resolvedLancePath, cfg);
 
           const lines: string[] = [
             `Memory Health Dashboard (${report.generatedAt})`,
@@ -270,6 +311,8 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
             `Stale facts (confidence < 0.3, non-permanent): ${report.staleFacts}`,
             `Orphan facts (no links): ${report.orphanFacts}`,
             `Avg confidence: ${report.avgConfidence.toFixed(3)}`,
+            `Retrieval hit rate (7d): ${(report.retrievalHitRate7d * 100).toFixed(1)}%`,
+            `Unresolved contradictions: ${report.unresolvedContradictions}`,
             ``,
             `Links: ${report.totalLinks} total, ${report.avgLinksPerFact.toFixed(2)} avg per active fact`,
             ``,
@@ -282,6 +325,9 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
             `Tiers: ${Object.entries(report.tierDistribution)
               .map(([k, v]) => `${k}=${v}`)
               .join(", ")}`,
+            `Top clusters: ${report.topClusters.length > 0
+              ? report.topClusters.map((c) => `${c.label}(${c.factCount})`).join(", ")
+              : "none"}`,
             ``,
             `Last reflection: ${report.lastReflectionAt ?? "never"}`,
             `Last prune: ${report.lastPruneAt ?? "none recorded"}`,

@@ -179,6 +179,9 @@ export class FactsDB {
     // ---- Topic cluster storage (Issue #146) ----
     this.migrateClusterTables();
 
+    // ---- Recall hit-rate tracking (Issue #148) ----
+    this.migrateRecallLog();
+
     // ---- Future-date decay freeze (#144) ----
     this.migrateDecayFreezeColumn();
   }
@@ -358,6 +361,19 @@ export class FactsDB {
     if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
       this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
     }
+  }
+
+  /** Create recall_log table for memory_recall hit-rate tracking (Issue #148). */
+  private migrateRecallLog(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS recall_log (
+        id TEXT PRIMARY KEY,
+        occurred_at INTEGER NOT NULL,
+        hit INTEGER NOT NULL CHECK(hit IN (0, 1))
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_time ON recall_log(occurred_at)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_hit ON recall_log(hit)`);
   }
 
   /** Add decay_freeze_until column for future-date freeze protection (#144). */
@@ -887,6 +903,15 @@ export class FactsDB {
       }
     });
     tx();
+  }
+
+  /** Record a memory_recall invocation outcome for hit-rate tracking (Issue #148). */
+  logRecall(hit: boolean, occurredAtSec?: number): void {
+    const id = randomUUID();
+    const nowSec = occurredAtSec ?? Math.floor(Date.now() / 1000);
+    this.liveDb
+      .prepare(`INSERT INTO recall_log (id, occurred_at, hit) VALUES (?, ?, ?)`)
+      .run(id, nowSec, hit ? 1 : 0);
   }
 
   /** Get HOT-tier facts for session context, capped by token budget. */
