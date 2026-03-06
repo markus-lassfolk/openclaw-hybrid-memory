@@ -254,9 +254,6 @@ export class WorkflowStore {
     if (!filter?.goal && filter?.limit && filter.limit > 0) {
       query += " LIMIT ?";
       params.push(filter.limit);
-    } else if (filter?.goal) {
-      query += " LIMIT ?";
-      params.push(PATTERNS_QUERY_LIMIT);
     } else {
       query += " LIMIT ?";
       params.push(PATTERNS_QUERY_LIMIT);
