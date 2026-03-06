@@ -2921,14 +2921,6 @@ export class FactsDB {
     return row?.count ?? 0;
   }
 
-  /** Count non-superseded facts with the given source string. Used for document dedup checks. */
-  countBySource(source: string): number {
-    const row = this.liveDb
-      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = ?`)
-      .get(source) as { count: number } | undefined;
-    return row?.count ?? 0;
-  }
-
   /** Get language keywords count */
   languageKeywordsCount(): number {
     const filePath = getLanguageKeywordsFilePath();

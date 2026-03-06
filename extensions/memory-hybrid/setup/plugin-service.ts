@@ -36,7 +36,6 @@ export interface PluginServiceContext {
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   api: ClawdbotPluginApi;
-  pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -483,9 +482,6 @@ export function createPluginService(ctx: PluginServiceContext) {
         if (!completed) {
           api.logger.warn("memory-hybrid: passive-observer shutdown timed out; closing databases anyway");
         }
-      }
-      if (ctx.pythonBridge) {
-        await ctx.pythonBridge.shutdown();
       }
       factsDb.close();
       vectorDb.close();

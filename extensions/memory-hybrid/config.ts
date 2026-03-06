@@ -463,22 +463,6 @@ export type FutureDateProtectionConfig = {
   maxFreezeDays: number;
 };
 
-/** Document ingestion via MarkItDown Python bridge (Issue #206). */
-export type DocumentsConfig = {
-  /** Enable document ingestion tool (default: false — opt-in) */
-  enabled: boolean;
-  /** Python executable path (default: "python3") */
-  pythonPath: string;
-  /** Max characters per chunk when splitting markdown (default: 2000) */
-  chunkSize: number;
-  /** Overlap characters (heading context) carried into each chunk (default: 200) */
-  chunkOverlap: number;
-  /** Max document size in bytes before rejection (default: 50 * 1024 * 1024 = 50 MB) */
-  maxDocumentSize: number;
-  /** Automatically add filename as a tag to ingested facts (default: true) */
-  autoTag: boolean;
-};
-
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai" | "ollama" | "onnx";
@@ -586,8 +570,6 @@ export type HybridMemoryConfig = {
   aliases: AliasesConfig;
   /** Shortest-path traversal between memories via BFS (Issue #140, default: enabled). */
   path: PathConfig;
-  /** Document ingestion via MarkItDown Python bridge (Issue #206, default: disabled). */
-  documents: DocumentsConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -2102,29 +2084,6 @@ export const hybridConfigSchema = {
           : 365,
     };
 
-    // Parse documents config (Issue #206, default: disabled)
-    const documentsRaw = cfg.documents as Record<string, unknown> | undefined;
-    const documents: DocumentsConfig = {
-      enabled: documentsRaw?.enabled === true,
-      pythonPath:
-        typeof documentsRaw?.pythonPath === "string" && documentsRaw.pythonPath.trim().length > 0
-          ? documentsRaw.pythonPath.trim()
-          : "python3",
-      chunkSize:
-        typeof documentsRaw?.chunkSize === "number" && documentsRaw.chunkSize >= 100
-          ? Math.floor(documentsRaw.chunkSize)
-          : 2000,
-      chunkOverlap:
-        typeof documentsRaw?.chunkOverlap === "number" && documentsRaw.chunkOverlap >= 0
-          ? Math.floor(documentsRaw.chunkOverlap)
-          : 200,
-      maxDocumentSize:
-        typeof documentsRaw?.maxDocumentSize === "number" && documentsRaw.maxDocumentSize > 0
-          ? Math.floor(documentsRaw.maxDocumentSize)
-          : 50 * 1024 * 1024,
-      autoTag: documentsRaw?.autoTag !== false,
-    };
-
     return {
       embedding: {
         provider: embeddingProvider,
@@ -2185,7 +2144,6 @@ export const hybridConfigSchema = {
       gaps,
       aliases,
       path,
-      documents,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
