@@ -153,11 +153,6 @@ export class IssueStore {
 
     query += " ORDER BY created_at DESC";
 
-    if (filter?.limit && filter.limit > 0) {
-      query += " LIMIT ?";
-      params.push(filter.limit);
-    }
-
     const rows = this.db.prepare(query).all(...params) as any[];
     let results = rows.map((r) => this.rowToIssue(r));
 
@@ -167,6 +162,11 @@ export class IssueStore {
       results = results.filter((issue) =>
         filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)),
       );
+    }
+
+    // Apply limit after all filtering is complete
+    if (filter?.limit && filter.limit > 0) {
+      results = results.slice(0, filter.limit);
     }
 
     return results;

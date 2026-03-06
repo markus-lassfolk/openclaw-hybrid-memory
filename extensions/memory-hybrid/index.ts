@@ -388,6 +388,7 @@ const memoryHybridPlugin = {
       shouldCapture,
       detectCategory,
       pendingLLMWarnings,
+      issueStore,
     }, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:hooks" });

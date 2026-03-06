@@ -55,6 +55,7 @@ import {
   detectTopicShift,
   deduplicateResultsById,
   SessionSeenFacts,
+  searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
 
 export interface LifecycleContext {
@@ -82,6 +83,7 @@ export interface LifecycleContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
+  issueStore: import("../backends/issue-store.js").IssueStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -786,6 +788,22 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     `memory-hybrid: ambient multi-query — ran ${extraQueries.length} extra queries, merged to ${candidates.length} candidates`,
                   );
                 }
+              }
+
+              // Ambient issue retrieval (Issue #137): surface past resolved issues when error-like context detected
+              try {
+                const issueResults = searchAmbientIssues(e.prompt, ctx.issueStore);
+                if (issueResults.openIssues.length > 0 || issueResults.resolvedIssues.length > 0) {
+                  api.logger.info?.(
+                    `memory-hybrid: ambient issue retrieval — found ${issueResults.openIssues.length} open + ${issueResults.resolvedIssues.length} resolved issues`,
+                  );
+                }
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "ambient-issue-retrieval",
+                  subsystem: "auto-recall",
+                });
+                api.logger.warn(`memory-hybrid: ambient issue retrieval failed: ${err}`);
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
