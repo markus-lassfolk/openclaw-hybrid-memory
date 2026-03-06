@@ -116,7 +116,7 @@ describe("MEMORY_LINK_TYPES", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CONTRADICTS — bidirectional enforcement
+// CONTRADICTS — unidirectional enforcement
 // ---------------------------------------------------------------------------
 
 describe("CONTRADICTS unidirectional", () => {
