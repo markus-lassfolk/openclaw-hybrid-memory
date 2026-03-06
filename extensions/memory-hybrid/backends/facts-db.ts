@@ -3325,6 +3325,36 @@ export class FactsDB {
   }
 
   /**
+   * Set a fact's confidence to a specific value (clamped to 0–1).
+   * Returns the new confidence value, or null if the fact was not found.
+   */
+  setConfidenceTo(id: string, value: number): number | null {
+    const row = this.liveDb
+      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+      .get(id) as { confidence: number } | undefined;
+    if (!row) return null;
+    const updated = Math.max(0, Math.min(1, value));
+    this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
+    return updated;
+  }
+
+  /**
+   * Add a tag to a fact (no-op if already present or fact missing).
+   */
+  addTag(id: string, tag: string): void {
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    const row = this.liveDb
+      .prepare(`SELECT tags FROM facts WHERE id = ?`)
+      .get(id) as { tags: string | null } | undefined;
+    if (!row) return;
+    const tags = parseTags(row.tags);
+    if (tags.includes(trimmed)) return;
+    tags.push(trimmed);
+    this.liveDb.prepare(`UPDATE facts SET tags = ? WHERE id = ?`).run(serializeTags(tags), id);
+  }
+
+  /**
    * Find active (non-superseded, non-expired) facts with the same entity and key but a
    * different value. Returns facts ordered newest-first.
    *
