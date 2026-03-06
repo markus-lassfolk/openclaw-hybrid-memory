@@ -349,7 +349,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
     enabled,
     consent,
     mode,
-    dsn: dsnRaw || DEFAULT_GLITCHTIP_DSN,
+    dsn: mode === "community" ? (dsnRaw || DEFAULT_GLITCHTIP_DSN) : (dsnRaw || undefined),
     environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
     sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
       ? errorReportingRaw.sampleRate
