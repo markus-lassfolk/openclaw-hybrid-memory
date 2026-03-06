@@ -3162,7 +3162,6 @@ export class FactsDB {
       if (newFact && !oldFact) {
         // Old fact was deleted; new fact is authoritative — supersede
         this.resolveContradiction(c.id, "superseded");
-        this.supersede(c.factIdOld, c.factIdNew);
         autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
         continue;
       }
@@ -3406,7 +3405,7 @@ export class FactsDB {
       const nowSec = Math.floor(Date.now() / 1000);
       // Look for facts stored in the same session (via source_sessions column)
       // Also accept entity or tag overlap as qualifying co-occurrence signal
-      const escapedSessionId = sessionId.replace(/[%_]/g, '\\$&');
+      const escapedSessionId = sessionId.replace(/[\\%_]/g, '\\$&');
       const recentRows = this.liveDb
         .prepare(
           `SELECT * FROM facts

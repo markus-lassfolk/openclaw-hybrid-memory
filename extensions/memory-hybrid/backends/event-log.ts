@@ -130,7 +130,7 @@ export class EventLog {
   getBySession(sessionId: string, limit = 1000): EventLogEntry[] {
     const rows = this.liveDb
       .prepare(
-        `SELECT * FROM event_log WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?`,
+        `SELECT * FROM event_log WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?`,
       )
       .all(sessionId, limit) as Record<string, unknown>[];
     return rows.map((r) => this.rowToEntry(r));
@@ -301,7 +301,7 @@ export class EventLog {
 
   /** True if the database connection is still open. */
   isOpen(): boolean {
-    return !this.closed;
+    return !this.closed && this.db.open;
   }
 
   close(): void {

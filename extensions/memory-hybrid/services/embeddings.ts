@@ -5,6 +5,7 @@
 import OpenAI from "openai";
 import { createHash } from "node:crypto";
 import { capturePluginError } from "./error-reporter.js";
+import { withLLMRetry } from "./chat.js";
 
 /** Full embedding provider interface — implementations must expose these. */
 export interface EmbeddingProvider {
@@ -93,7 +94,6 @@ export class Embeddings implements EmbeddingProvider {
       return cached;
     }
 
-    const { withLLMRetry } = await import("./chat.js");
     let lastErr: Error | undefined;
     for (const model of this.models) {
       try {
@@ -137,7 +137,6 @@ export class Embeddings implements EmbeddingProvider {
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize);
       
-      const { withLLMRetry } = await import("./chat.js");
       let lastErr: Error | undefined;
       let resp: Awaited<ReturnType<typeof this.client.embeddings.create>> | undefined;
       for (const model of this.models) {
@@ -265,6 +264,12 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     fallback: EmbeddingProvider | null,
     onSwitch?: (err: unknown) => void,
   ) {
+    if (fallback && fallback.dimensions !== primary.dimensions) {
+      throw new Error(
+        `Primary (${primary.modelName}: ${primary.dimensions}d) and fallback ` +
+        `(${fallback.modelName}: ${fallback.dimensions}d) must have matching dimensions`,
+      );
+    }
     this.active = primary;
     this.primary = primary;
     this.fallback = fallback;
@@ -285,7 +290,12 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         this.switched = false;
         this.modelName = this.active.modelName;
         return result;
-      } catch (_err) {
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "embeddings",
+          operation: "fallback-retry-primary",
+          phase: "embed",
+        });
         // Primary still failing — continue using fallback
       }
     }
@@ -295,6 +305,11 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     try {
       return await this.active.embed(text);
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "embeddings",
+        operation: "fallback-switch",
+        phase: "embed",
+      });
       this.onSwitch?.(err);
       this.active = this.fallback;
       this.switched = true;
@@ -316,7 +331,12 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         this.switched = false;
         this.modelName = this.active.modelName;
         return result;
-      } catch (_err) {
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "embeddings",
+          operation: "fallback-retry-primary",
+          phase: "embedBatch",
+        });
         // Primary still failing — continue using fallback
       }
     }
@@ -326,6 +346,11 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     try {
       return await this.active.embedBatch(texts);
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "embeddings",
+        operation: "fallback-switch",
+        phase: "embedBatch",
+      });
       this.onSwitch?.(err);
       this.active = this.fallback;
       this.switched = true;
