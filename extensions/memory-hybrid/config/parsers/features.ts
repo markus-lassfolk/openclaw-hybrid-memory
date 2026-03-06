@@ -10,6 +10,9 @@ import type {
   ReinforcementConfig,
   FutureDateProtectionConfig,
   DocumentsConfig,
+  WorkflowTrackingConfig,
+  CrystallizationConfig,
+  SelfExtensionConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -340,5 +343,71 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
       : 1.0,
     botId,
     botName,
+  };
+}
+
+export function parseWorkflowTrackingConfig(cfg: Record<string, unknown>): WorkflowTrackingConfig {
+  const raw = cfg.workflowTracking as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    maxTracesPerDay:
+      typeof raw?.maxTracesPerDay === "number" && raw.maxTracesPerDay > 0
+        ? Math.floor(raw.maxTracesPerDay)
+        : 100,
+    retentionDays:
+      typeof raw?.retentionDays === "number" && raw.retentionDays > 0
+        ? Math.floor(raw.retentionDays)
+        : 90,
+    goalExtractionModel:
+      typeof raw?.goalExtractionModel === "string" && raw.goalExtractionModel.trim().length > 0
+        ? raw.goalExtractionModel.trim()
+        : undefined,
+  };
+}
+
+export function parseCrystallizationConfig(cfg: Record<string, unknown>): CrystallizationConfig {
+  const raw = cfg.crystallization as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    minUsageCount:
+      typeof raw?.minUsageCount === "number" && raw.minUsageCount > 0
+        ? Math.floor(raw.minUsageCount)
+        : 5,
+    minSuccessRate:
+      typeof raw?.minSuccessRate === "number" && raw.minSuccessRate >= 0 && raw.minSuccessRate <= 1
+        ? raw.minSuccessRate
+        : 0.7,
+    autoApprove: raw?.autoApprove === true,
+    outputDir:
+      typeof raw?.outputDir === "string" && raw.outputDir.trim().length > 0
+        ? raw.outputDir.trim()
+        : "~/.openclaw/workspace/skills/auto",
+    maxCrystallized:
+      typeof raw?.maxCrystallized === "number" && raw.maxCrystallized > 0
+        ? Math.floor(raw.maxCrystallized)
+        : 50,
+    pruneUnusedDays:
+      typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0
+        ? Math.floor(raw.pruneUnusedDays)
+        : 30,
+  };
+}
+
+export function parseSelfExtensionConfig(cfg: Record<string, unknown>): SelfExtensionConfig {
+  const raw = cfg.selfExtension as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    minGapFrequency:
+      typeof raw?.minGapFrequency === "number" && raw.minGapFrequency > 0
+        ? Math.floor(raw.minGapFrequency)
+        : 3,
+    minToolSavings:
+      typeof raw?.minToolSavings === "number" && raw.minToolSavings > 0
+        ? Math.floor(raw.minToolSavings)
+        : 2,
+    maxProposals:
+      typeof raw?.maxProposals === "number" && raw.maxProposals > 0
+        ? Math.floor(raw.maxProposals)
+        : 20,
   };
 }

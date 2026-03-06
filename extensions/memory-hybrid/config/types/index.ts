@@ -50,6 +50,9 @@ import type {
   ReinforcementConfig,
   FutureDateProtectionConfig,
   DocumentsConfig,
+  WorkflowTrackingConfig,
+  CrystallizationConfig,
+  SelfExtensionConfig,
 } from "./features.js";
 
 import type {
@@ -362,6 +365,12 @@ export type HybridMemoryConfig = {
   path: PathConfig;
   /** Document ingestion via MarkItDown Python bridge (Issue #206, default: disabled). */
   documents: DocumentsConfig;
+  /** Workflow tracking: tool-sequence capture and pattern learning (Issue #209, default: disabled). */
+  workflowTracking: WorkflowTrackingConfig;
+  /** Workflow crystallization: auto-generate AgentSkill SKILL.md files from repeated patterns (Issue #208, default: disabled). */
+  crystallization: CrystallizationConfig;
+  /** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210, default: disabled). */
+  selfExtension: SelfExtensionConfig;
   /** Contextual variant generation at index time (Issue #159, default: disabled). */
   contextualVariants: ContextualVariantsConfig;
   /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */

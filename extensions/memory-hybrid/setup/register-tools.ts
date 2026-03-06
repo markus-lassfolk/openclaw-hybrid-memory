@@ -25,6 +25,12 @@ import { registerPersonaTools } from "../tools/persona-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import type { IssueStore } from "../backends/issue-store.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
+import { registerWorkflowTools } from "../tools/workflow-tools.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
+import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import {
   registerUtilityTools,
@@ -49,6 +55,9 @@ export interface ToolsContext {
   pendingLLMWarnings: PendingLLMWarnings;
   aliasDb?: AliasDB | null;
   issueStore?: IssueStore | null;
+  workflowStore?: WorkflowStore | null;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -95,6 +104,9 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     eventLog,
     aliasDb,
     issueStore,
+    workflowStore,
+    crystallizationStore,
+    toolProposalStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -180,5 +192,20 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Issue lifecycle tracking (always enabled — lightweight, Issue #137)
   if (issueStore) {
     registerIssueTools({ issueStore }, api);
+  }
+
+  // Workflow pattern tool (always registered when store available; recording is gated by cfg, Issue #209)
+  if (workflowStore) {
+    registerWorkflowTools({ workflowStore }, api);
+  }
+
+  // Crystallization tools (register when store available; crystallization gated by cfg, Issue #208)
+  if (crystallizationStore && workflowStore) {
+    registerCrystallizationTools({ crystallizationStore, workflowStore, cfg }, api);
+  }
+
+  // Self-extension tools (register when store available; analysis gated by cfg, Issue #210)
+  if (toolProposalStore && workflowStore) {
+    registerSelfExtensionTools({ toolProposalStore, workflowStore, cfg }, api);
   }
 }
