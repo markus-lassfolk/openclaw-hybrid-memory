@@ -26,6 +26,7 @@ import type { RetrievalConfig, ClustersConfig } from "../config.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
+import type { EmbeddingRegistry } from "./embedding-registry.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -177,6 +178,80 @@ async function runSemanticStrategy(
 }
 
 /**
+ * Run multi-model semantic search using EmbeddingRegistry (Issue #158).
+ * Queries the fact_embeddings SQLite table for each additional model via cosine
+ * similarity approximation, then returns per-model ranked results.
+ *
+ * This returns a Map from strategy label → RankedResult[], so each model
+ * participates as a separate RRF strategy (same pattern as "semantic", "fts5").
+ */
+async function runMultiModelSemanticStrategies(
+  factsDbWithEmbeddings: FactsDbWithEmbeddings,
+  registry: EmbeddingRegistry,
+  queryText: string,
+  topK: number,
+): Promise<Map<string, RankedResult[]>> {
+  const result = new Map<string, RankedResult[]>();
+  const models = registry.getModels();
+  if (models.length === 0) return result;
+
+  // Embed query with all additional models in parallel
+  const embedTasks = models.map(async (cfg) => {
+    const queryVec = await registry.embed(queryText, cfg.name);
+    return { name: cfg.name, queryVec };
+  });
+
+  const settled = await Promise.allSettled(embedTasks);
+  for (const s of settled) {
+    if (s.status === "rejected") {
+      console.error(`[retrieval] multi-model embed failed for a model:`, s.reason);
+      continue;
+    }
+    const { name, queryVec } = s.value;
+    const candidates = factsDbWithEmbeddings.getEmbeddingsByModel(name);
+    if (candidates.length === 0) continue;
+
+    // Compute cosine similarity for all stored embeddings
+    const scored = candidates
+      .map(({ factId, embedding }) => ({
+        factId,
+        score: cosineSimilarity(queryVec, embedding),
+      }))
+      .filter((r) => r.score >= 0.3)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK);
+
+    if (scored.length > 0) {
+      result.set(`semantic:${name}`, scored.map((r, i) => ({
+        factId: r.factId,
+        rank: i + 1,
+        source: `semantic:${name}` as const,
+      })));
+    }
+  }
+  return result;
+}
+
+/** Compute cosine similarity between two Float32Arrays. Returns [-1, 1]. */
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length === 0 || a.length !== b.length) return 0;
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  if (denom === 0) return 0;
+  return dot / denom;
+}
+
+/** Minimal interface for fact_embeddings access (satisfied by FactsDB). */
+export interface FactsDbWithEmbeddings {
+  getEmbeddingsByModel(model: string): Array<{ factId: string; embedding: Float32Array }>;
+}
+
+/**
  * Graph walk strategy using GraphRAG expansion (Issue #152).
  * Expands from seed facts found by other strategies.
  */
@@ -313,6 +388,9 @@ export function invalidateClusterCache(): void {
  * @param includeSuperseded - Whether to include superseded facts (default false).
  * @param scopeFilter - Scope constraints applied when resolving fused fact IDs.
  * @param asOf - Temporal filter applied when resolving fused fact IDs.
+ * @param embeddingRegistry - Optional multi-model registry (Issue #158). When provided and
+ *   has additional models registered, each model contributes a separate RRF strategy.
+ * @param factsDbForEmbeddings - Optional access to fact_embeddings table (Issue #158).
  */
 export async function runRetrievalPipeline(
   query: string,
@@ -329,6 +407,8 @@ export async function runRetrievalPipeline(
   asOf?: number,
   aliasDb?: AliasDB | null,
   clustersConfig?: ClustersConfig,
+  embeddingRegistry?: EmbeddingRegistry | null,
+  factsDbForEmbeddings?: FactsDbWithEmbeddings | null,
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
   const { strategies, semanticTopK, fts5TopK } = config;
@@ -386,6 +466,31 @@ export async function runRetrievalPipeline(
     const [name, results] = settled.value;
     if (results.length > 0) {
       strategyMap.set(name, results);
+    }
+  }
+
+  // Issue #158: multi-model semantic strategies — each additional model is a separate RRF lane.
+  // Only runs when registry has additional models and we have access to the fact_embeddings table.
+  if (
+    strategies.includes("semantic") &&
+    embeddingRegistry &&
+    embeddingRegistry.isMultiModel() &&
+    factsDbForEmbeddings
+  ) {
+    try {
+      const multiModelResults = await runMultiModelSemanticStrategies(
+        factsDbForEmbeddings,
+        embeddingRegistry,
+        query,
+        semanticTopK,
+      );
+      for (const [strategyName, results] of multiModelResults) {
+        if (results.length > 0) {
+          strategyMap.set(strategyName, results);
+        }
+      }
+    } catch (err) {
+      console.error("[retrieval] multi-model semantic strategy failed:", err);
     }
   }
 

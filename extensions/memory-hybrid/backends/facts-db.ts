@@ -188,6 +188,9 @@ export class FactsDB {
 
     // ---- Future-date decay freeze (#144) ----
     this.migrateDecayFreezeColumn();
+
+    // ---- Multi-model embeddings (Issue #158) ----
+    this.migrateFactEmbeddingsTable();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -414,6 +417,106 @@ export class FactsDB {
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_freeze ON facts(decay_freeze_until) WHERE decay_freeze_until IS NOT NULL`,
     );
+  }
+
+  /**
+   * Create the fact_embeddings table for multi-model embedding storage (Issue #158).
+   * Idempotent — safe to call on existing databases.
+   */
+  private migrateFactEmbeddingsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS fact_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fact_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        variant TEXT NOT NULL DEFAULT 'canonical',
+        embedding BLOB NOT NULL,
+        dimensions INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(fact_id, model, variant),
+        FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+      )
+    `);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_embeddings_fact_id ON fact_embeddings(fact_id)`,
+    );
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_embeddings_model ON fact_embeddings(model)`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Multi-model embedding storage (Issue #158)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Store or replace an embedding vector for a fact+model+variant combination.
+   * The embedding is stored as a BLOB (raw Float32Array bytes for portability).
+   */
+  storeEmbedding(
+    factId: string,
+    model: string,
+    variant: string,
+    embedding: Float32Array,
+    dimensions: number,
+  ): void {
+    const blob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+    this.liveDb
+      .prepare(
+        `INSERT INTO fact_embeddings (fact_id, model, variant, embedding, dimensions)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(fact_id, model, variant) DO UPDATE SET
+           embedding = excluded.embedding,
+           dimensions = excluded.dimensions,
+           created_at = datetime('now')`,
+      )
+      .run(factId, model, variant, blob, dimensions);
+  }
+
+  /**
+   * Retrieve all embeddings stored for a given fact (all models/variants).
+   */
+  getEmbeddings(
+    factId: string,
+  ): Array<{ model: string; variant: string; embedding: Float32Array }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT model, variant, embedding FROM fact_embeddings WHERE fact_id = ?`,
+      )
+      .all(factId) as Array<{ model: string; variant: string; embedding: Buffer }>;
+    return rows.map((r) => ({
+      model: r.model,
+      variant: r.variant,
+      embedding: new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
+    }));
+  }
+
+  /**
+   * Retrieve all embeddings for a specific model across all facts.
+   * Used for bulk vector similarity search at retrieval time.
+   */
+  getEmbeddingsByModel(
+    model: string,
+  ): Array<{ factId: string; embedding: Float32Array }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical'`,
+      )
+      .all(model) as Array<{ fact_id: string; embedding: Buffer }>;
+    return rows.map((r) => ({
+      factId: r.fact_id,
+      embedding: new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
+    }));
+  }
+
+  /**
+   * Delete all embeddings for a fact (called when a fact is deleted).
+   * Normally handled by the ON DELETE CASCADE FK, but exposed for explicit use.
+   */
+  deleteEmbeddings(factId: string): void {
+    this.liveDb
+      .prepare(`DELETE FROM fact_embeddings WHERE fact_id = ?`)
+      .run(factId);
   }
 
   /**

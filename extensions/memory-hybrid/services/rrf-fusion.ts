@@ -18,8 +18,8 @@ export interface RankedResult {
   factId: string;
   /** 1-based rank within the strategy's result list (1 = best). */
   rank: number;
-  /** Which strategy produced this result. */
-  source: "semantic" | "fts5" | "graph" | "aliases";
+  /** Which strategy produced this result. Additional strategies (e.g. multi-model semantic) use string keys. */
+  source: "semantic" | "fts5" | "graph" | "aliases" | (string & {});
 }
 
 /** A fused result after RRF combining and post-RRF score adjustments. */
