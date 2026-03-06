@@ -604,7 +604,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                       maxTokens: 150,
                       openai: ctx.openai,
                       label: opts?.hydeLabel ?? "HyDE",
-                      timeoutMs: 25_000,
+                      timeoutMs: ctx.cfg.queryExpansion.timeoutMs,
                       signal: directiveAbort.signal,
                       pendingWarnings: ctx.pendingLLMWarnings,
                     });
