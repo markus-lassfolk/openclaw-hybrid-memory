@@ -3343,14 +3343,16 @@ export class FactsDB {
    */
   addTag(id: string, tag: string): void {
     const trimmed = tag.trim();
-    if (!trimmed) return;
+    const normalized = trimmed.toLowerCase();
+    // Reject tags that would break the comma-separated storage format.
+    if (!normalized || normalized.includes(",")) return;
     const row = this.liveDb
       .prepare(`SELECT tags FROM facts WHERE id = ?`)
       .get(id) as { tags: string | null } | undefined;
     if (!row) return;
     const tags = parseTags(row.tags);
-    if (tags.includes(trimmed)) return;
-    tags.push(trimmed);
+    if (tags.includes(normalized)) return;
+    tags.push(normalized);
     this.liveDb.prepare(`UPDATE facts SET tags = ? WHERE id = ?`).run(serializeTags(tags), id);
   }
 

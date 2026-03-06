@@ -9,6 +9,7 @@
 
 import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
+import { capturePluginError } from "./error-reporter.js";
 import type { VerificationStore, VerifiedFact } from "./verification-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 
@@ -96,6 +97,8 @@ export class ContinuousVerifier {
   private readonly openai: OpenAI;
   private readonly model: string;
   private readonly timeoutMs: number;
+  private readonly cycleDays: number | undefined;
+  private lastRunDate: number | null = null;
 
   constructor(
     store: VerificationStore,
@@ -108,6 +111,7 @@ export class ContinuousVerifier {
     this.openai = openai;
     this.model = options?.verificationModel ?? DEFAULT_MODEL;
     this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.cycleDays = options?.cycleDays;
   }
 
   /**
@@ -169,31 +173,39 @@ export class ContinuousVerifier {
       errors: 0,
     };
 
+    if (this.cycleDays !== undefined && this.lastRunDate !== null) {
+      const elapsedDays = (Date.now() - this.lastRunDate) / (24 * 60 * 60 * 1000);
+      if (elapsedDays < this.cycleDays) return result;
+    }
+
     let due: VerifiedFact[];
     try {
-      due = await this.store.listDueForReverification();
+      due = this.store.listDueForReverification();
     } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "continuous-verifier",
+        operation: "listDueForReverification",
+      });
       result.errors++;
       return result;
+    }
+
+    const recentEntries = this.factsDb.getRecentFacts(RECENT_FACTS_DAYS);
+    const recentByEntity = new Map<string, string[]>();
+    for (const e of recentEntries) {
+      const entity = e.entity?.toLowerCase() ?? "";
+      if (!recentByEntity.has(entity)) recentByEntity.set(entity, []);
+      recentByEntity.get(entity)!.push(e.text);
     }
 
     for (const fact of due) {
       result.checked++;
       try {
-        // Gather recent facts about the same entity.
         const underlying = this.factsDb.getById(fact.factId);
         const entity = underlying?.entity ?? null;
+        const entityKey = entity?.toLowerCase() ?? "";
+        const recentFacts = recentByEntity.get(entityKey) ?? [];
 
-        const recentEntries = this.factsDb.getRecentFacts(RECENT_FACTS_DAYS);
-        const recentFacts = recentEntries
-          .filter((e) =>
-            entity !== null
-              ? e.entity?.toLowerCase() === entity.toLowerCase()
-              : false,
-          )
-          .map((e) => e.text);
-
-        // Call LLM via private method so errors can be counted separately.
         let outcome: VerificationOutcome;
         try {
           outcome = await this._callLLM(
@@ -201,36 +213,42 @@ export class ContinuousVerifier {
             entity ?? fact.factId,
             recentFacts,
           );
-        } catch {
-          // LLM error — count it and treat the fact as UNCERTAIN.
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "continuous-verifier",
+            operation: "verify-fact",
+            metadata: { factId: fact.factId },
+          });
           result.errors++;
           outcome = "UNCERTAIN";
         }
 
         if (outcome === "CONFIRMED") {
-          // Update verified_at and next_verification by creating a new version
-          // with the same text (re-attesting the existing canonical text).
-          await this.store.update(fact.id, fact.canonicalText, "system");
+          this.store.update(fact.id, fact.canonicalText, "system");
           result.confirmed++;
         } else if (outcome === "STALE") {
-          // Reduce confidence to STALE_CONFIDENCE in FactsDB.
           if (underlying) {
             this.factsDb.setConfidenceTo(underlying.id, STALE_CONFIDENCE);
             this.factsDb.addTag(underlying.id, "needs-verification");
           }
           result.stale++;
         } else {
-          // UNCERTAIN — tag for review, leave confidence unchanged.
           if (underlying) {
             this.factsDb.addTag(underlying.id, "review-needed");
           }
           result.uncertain++;
         }
-      } catch {
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "continuous-verifier",
+          operation: "runCycle-per-fact",
+          metadata: { factId: fact.factId },
+        });
         result.errors++;
       }
     }
 
+    this.lastRunDate = Date.now();
     return result;
   }
 }

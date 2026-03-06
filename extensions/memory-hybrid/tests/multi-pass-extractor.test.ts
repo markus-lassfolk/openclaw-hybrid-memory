@@ -129,7 +129,7 @@ describe("parseCandidateFacts", () => {
     const facts = parseCandidateFacts(json, 1);
     expect(facts).toHaveLength(1);
     expect(facts[0].text).toBe("Fact A");
-    expect(facts[0].category).toBe("preferences");
+    expect(facts[0].category).toBe("preference");
     expect(facts[0].importance).toBe(0.8);
     expect(facts[0].pass).toBe(1);
   });

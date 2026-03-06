@@ -10,7 +10,7 @@ export type PassiveObserverConfig = {
   maxCharsPerChunk: number;
   /** Min importance score 0–1 to store a fact (default: 0.5) */
   minImportance: number;
-  /** Cosine similarity threshold above which a new fact is considered a duplicate (default: 0.85) */
+  /** Cosine similarity threshold above which a new fact is considered a duplicate (default: 0.92) */
   deduplicationThreshold: number;
   /** Override sessions directory (default: procedures.sessionsDir) */
   sessionsDir?: string;

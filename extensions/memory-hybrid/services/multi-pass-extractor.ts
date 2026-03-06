@@ -24,6 +24,7 @@
 
 import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -85,10 +86,22 @@ export interface MultiPassExtractorOptions {
 // Prompts
 // ---------------------------------------------------------------------------
 
+const EXTRACTION_CATEGORIES = "preference, fact, decision, entity, pattern, rule, other";
+
+/** Valid category set for normalization (matches DEFAULT_MEMORY_CATEGORIES). */
+const VALID_CATEGORIES = new Set<string>(["preference", "fact", "decision", "entity", "pattern", "rule", "other"]);
+
+/** Normalize LLM category to a valid default; "preferences" -> "preference", unknown -> "other". */
+function normalizeCategory(category: string): string {
+  const lower = category.trim().toLowerCase();
+  if (lower === "preferences") return "preference";
+  if (VALID_CATEGORIES.has(lower)) return lower;
+  return "other";
+}
+
 const PASS1_SYSTEM_PROMPT =
   "You are a fact extractor. Extract clearly and explicitly stated facts from the transcript. " +
-  "Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). " +
-  "Categories: preferences, technical, workflow, decision, context, other. " +
+  `Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). Categories: ${EXTRACTION_CATEGORIES}. ` +
   "Only include facts explicitly stated, not implied or inferred. " +
   "Return [] if no clear facts are found.";
 
@@ -96,8 +109,7 @@ const PASS2_SYSTEM_PROMPT =
   "You are an implicit preference analyst. Extract implied preferences, corrections, and contextual signals " +
   "from the transcript that were NOT explicitly stated but can be reliably inferred. " +
   "Focus on: preference changes (\"actually let's try X\"), implicit corrections, unstated constraints, workflow signals. " +
-  "Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). " +
-  "Categories: preferences, technical, workflow, decision, context, other. " +
+  `Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). Categories: ${EXTRACTION_CATEGORIES}. ` +
   "Return [] if no implicit facts can be reliably inferred.";
 
 const PASS3_SYSTEM_PROMPT =
@@ -167,7 +179,8 @@ export function parseCandidateFacts(response: string, pass: 1 | 2): CandidateFac
     if (!item || typeof item !== "object") continue;
     const obj = item as Record<string, unknown>;
     if (typeof obj.text !== "string" || obj.text.trim().length === 0) continue;
-    const category = typeof obj.category === "string" ? obj.category.trim() : "other";
+    const rawCategory = typeof obj.category === "string" ? obj.category : "other";
+    const category = normalizeCategory(rawCategory);
     const importance =
       typeof obj.importance === "number" && obj.importance >= 0 && obj.importance <= 1
         ? obj.importance
@@ -222,7 +235,11 @@ export class MultiPassExtractor {
         timeoutMs: this.timeoutMs,
       });
       return parseCandidateFacts(response, 1);
-    } catch {
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "multi-pass-extractor",
+        operation: "runPass1",
+      });
       return [];
     }
   }
@@ -238,7 +255,11 @@ export class MultiPassExtractor {
         timeoutMs: this.timeoutMs,
       });
       return parseCandidateFacts(response, 2);
-    } catch {
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "multi-pass-extractor",
+        operation: "runPass2",
+      });
       return [];
     }
   }
@@ -254,7 +275,11 @@ export class MultiPassExtractor {
         timeoutMs: this.timeoutMs,
       });
       return parseVerdict(response);
-    } catch {
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "multi-pass-extractor",
+        operation: "verifyCandidate",
+      });
       return "UNCERTAIN";
     }
   }

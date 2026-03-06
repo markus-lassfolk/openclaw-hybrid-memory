@@ -40,8 +40,10 @@ export const OPENAI_MODELS = new Set([
 export function resolveEnvVars(value: string): string {
   // Use [^}]+ not (.*?) to avoid ReDoS (js/polynomial-redos): no backtracking on malicious input.
   return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
-    const envValue = process.env[envVar];
-    if (!envValue) throw new Error(`Environment variable ${envVar} is not set`);
+    const name = String(envVar).trim();
+    if (!name) throw new Error("Environment variable name is empty");
+    const envValue = process.env[name];
+    if (!envValue) throw new Error(`Environment variable ${name} is not set`);
     return envValue;
   });
 }
