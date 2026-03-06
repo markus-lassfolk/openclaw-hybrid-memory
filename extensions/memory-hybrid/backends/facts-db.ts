@@ -46,12 +46,12 @@ export class FactsDB {
 
   /**
    * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
-   * Removes: NOT, AND, OR (uppercase), *, (, ), and quotes (already stripped).
+   * Removes: NOT, AND, OR (case-insensitive), *, (, ), and quotes.
    */
   private sanitizeFTS5Query(query: string): string {
     return query
       .replace(/['"*()]/g, "")
-      .replace(/\b(NOT|AND|OR)\b/g, "")
+      .replace(/\b(NOT|AND|OR)\b/gi, "")
       .trim();
   }
 
@@ -3012,18 +3012,18 @@ export class FactsDB {
    * Returns the new confidence value, or null if the fact was not found.
    */
   updateConfidence(id: string, delta: number): number | null {
-    // Wrapped in transaction to make read-modify-write atomic (even though
-    // better-sqlite3 is synchronous today, this guards against future changes).
-    return this.liveDb.transaction(() => {
-      const row = this.liveDb
-        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
-        .get(id) as { confidence: number } | undefined;
-      if (!row) return null;
-      const current = row.confidence ?? 1.0;
-      const updated = Math.max(0.1, Math.min(1.0, current + delta));
-      this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
-      return updated;
-    })();
+    // Atomic single-statement UPDATE with RETURNING-like pattern.
+    // No explicit transaction wrapper needed — better-sqlite3 is synchronous,
+    // and this method is also called from within recordContradiction's transaction
+    // where a nested transaction() call would throw.
+    const row = this.liveDb
+      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+      .get(id) as { confidence: number } | undefined;
+    if (!row) return null;
+    const current = row.confidence ?? 1.0;
+    const updated = Math.max(0.1, Math.min(1.0, current + delta));
+    this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
+    return updated;
   }
 
   /**
@@ -3512,7 +3512,7 @@ export class FactsDB {
              AND superseded_at IS NULL
              AND (expires_at IS NULL OR expires_at > ?)
              AND source_sessions IS NOT NULL
-             AND (',' || source_sessions || ',' LIKE ? ESCAPE '\\')
+             AND ((',' || source_sessions || ',' LIKE ? ESCAPE '\\') OR source_sessions LIKE ? ESCAPE '\\')
            ORDER BY created_at DESC
            LIMIT 20`,
         )
@@ -3520,6 +3520,7 @@ export class FactsDB {
           newFactId,
           nowSec,
           `%,${escapedSessionId},%`,
+          `%"${escapedSessionId}"%`,
         ) as Array<Record<string, unknown>>;
 
       for (const row of recentRows) {
