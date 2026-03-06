@@ -185,8 +185,8 @@ export async function rerankResults(
     // Append the tail facts (beyond candidateCount) and slice to outputCount.
     return [...ranked, ...tail].slice(0, config.outputCount);
   } catch (err) {
-    // Timeout or any error: fall back to original RRF ranking (no behavior change).
+    // Timeout or any error: fall back to original RRF ranking, sliced to outputCount.
     void err;
-    return facts;
+    return facts.slice(0, config.outputCount);
   }
 }
