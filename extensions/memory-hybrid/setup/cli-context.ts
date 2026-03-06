@@ -158,6 +158,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem reflect-rules",
   "hybrid-mem reflect-meta",
   "hybrid-mem dream-cycle",
+  "hybrid-mem resolve-contradictions",
   "hybrid-mem verify",
   "hybrid-mem credentials migrate-to-vault",
   "hybrid-mem distill-window",
@@ -211,6 +212,10 @@ export interface CliContextServices {
     mode?: "replace" | "additive";
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
   runDreamCycle: () => Promise<DreamCycleResult>;
+  runResolveContradictions: () => Promise<{
+    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  }>;
   getMemoryCategories: () => string[];
   mergeResults: HybridMemCliContext["mergeResults"];
   parseSourceDate: (v: string | number | null | undefined) => number | null;
@@ -314,6 +319,7 @@ function buildCliContextServices(
         logSink,
       );
     },
+    runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,
     parseSourceDate,
@@ -676,6 +682,7 @@ export function createHybridMemCliContext(
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
     runDreamCycle: services.runDreamCycle,
+    runResolveContradictions: services.runResolveContradictions,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
       model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),
