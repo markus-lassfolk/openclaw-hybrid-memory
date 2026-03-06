@@ -14,12 +14,18 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // For now, we'll test the module loading behavior and privacy constraints
 describe("Error Reporter", () => {
   describe("Module Loading", () => {
-    it("should gracefully handle missing @sentry/node dependency", async () => {
-      // This test verifies that the module doesn't crash when @sentry/node is not installed
-      // In a real scenario, we'd mock require() to throw, but for now we just verify import works
-      const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
+    it("should load successfully with @sentry/node as a required dependency", async () => {
+      // @sentry/node is now a required dependency (moved from optionalDependencies to dependencies)
+      const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } = await import("../services/error-reporter.js");
       expect(typeof initErrorReporter).toBe("function");
       expect(typeof isErrorReporterActive).toBe("function");
+      expect(typeof DEFAULT_GLITCHTIP_DSN).toBe("string");
+      expect(DEFAULT_GLITCHTIP_DSN).toContain("glitchtip");
+    });
+
+    it("should export DEFAULT_GLITCHTIP_DSN pointing to the community GlitchTip instance", async () => {
+      const { DEFAULT_GLITCHTIP_DSN } = await import("../services/error-reporter.js");
+      expect(DEFAULT_GLITCHTIP_DSN).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1");
     });
   });
 
@@ -138,6 +144,97 @@ describe("Error Reporter", () => {
       );
 
       // Should still log community mode but use custom DSN
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Using community mode")
+      );
+    });
+
+    it("should initialize by default with no config (opt-out: enabled+consent default to true)", async () => {
+      // Verify that with opt-out defaults, error reporting would activate when enabled+consent are both true
+      // (Actual Sentry.init call may fail in test environment, but the guard logic should pass)
+      const { initErrorReporter, DEFAULT_GLITCHTIP_DSN } = await import("../services/error-reporter.js");
+
+      const mockLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+      };
+
+      // Simulate the default config (opt-out: both true)
+      await initErrorReporter(
+        {
+          enabled: true,
+          consent: true,
+          mode: "community",
+          dsn: DEFAULT_GLITCHTIP_DSN,
+          maxBreadcrumbs: 10,
+          sampleRate: 1.0,
+        },
+        "test",
+        mockLogger
+      );
+
+      // Should NOT have logged a disabled message — the guard should pass
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        expect.stringContaining("Disabled:")
+      );
+    });
+
+    it("should respect explicit opt-out via consent: false", async () => {
+      const { initErrorReporter, DEFAULT_GLITCHTIP_DSN } = await import("../services/error-reporter.js");
+
+      const mockLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+      };
+
+      await initErrorReporter(
+        {
+          enabled: true,
+          consent: false, // Explicit opt-out
+          mode: "community",
+          dsn: DEFAULT_GLITCHTIP_DSN,
+          maxBreadcrumbs: 0,
+          sampleRate: 1.0,
+        },
+        "test",
+        mockLogger
+      );
+
+      // When consent=false, the reporter logs Disabled and returns early.
+      // Note: isErrorReporterActive() is a module-level singleton and may be true
+      // from a previous test that initialized successfully; we validate opt-out
+      // by checking the logger message (printf-style: format string + args).
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Disabled:"),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it("should use custom DSN when provided in community mode", async () => {
+      const { initErrorReporter } = await import("../services/error-reporter.js");
+
+      const mockLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+      };
+
+      const customDsn = "https://customkey@my-glitchtip.example.com/42";
+
+      await initErrorReporter(
+        {
+          enabled: true,
+          consent: true,
+          mode: "community",
+          dsn: customDsn, // User-provided override
+          maxBreadcrumbs: 10,
+          sampleRate: 1.0,
+        },
+        "test",
+        mockLogger
+      );
+
+      // Should log community mode (not self-hosted)
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining("Using community mode")
       );

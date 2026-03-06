@@ -2,7 +2,7 @@
  * Error Reporter Service for GlitchTip/Sentry Integration
  *
  * SECURITY REQUIREMENTS (NON-NEGOTIABLE):
- * - consent: false by default — user must explicitly opt in
+ * - consent: true by default — user must explicitly opt OUT
  * - sendDefaultPii: false always
  * - maxBreadcrumbs: 10 — only plugin.* category allowed, message/data stripped
  * - Only safe Sentry integrations enabled: LinkedErrors, InboundFilters, FunctionToString
@@ -11,7 +11,15 @@
  * - Rate limiting: 60s dedup window for same error fingerprint
  */
 
-import type * as SentryType from "@sentry/node";
+import * as SentryType from "@sentry/node";
+
+/**
+ * Default GlitchTip DSN for anonymous crash reporting.
+ * This DSN is safe to expose publicly — it only allows ingest (write), not read.
+ * Users can opt out by setting errorReporting.consent: false or errorReporting.enabled: false.
+ * Privacy: No PII, prompts, API keys, or user data is ever sent. See sanitizeEvent().
+ */
+export const DEFAULT_GLITCHTIP_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1";
 
 export interface ErrorReporterConfig {
   enabled: boolean;
@@ -30,9 +38,9 @@ export interface ErrorReporterConfig {
 }
 
 /** Hardcoded DSN for community error reporting (anonymous telemetry) */
-const COMMUNITY_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@villapolly.duckdns.org/1";
+const COMMUNITY_DSN = DEFAULT_GLITCHTIP_DSN;
 
-let Sentry: typeof SentryType | null = null;
+let Sentry: typeof SentryType | null = SentryType;
 let initialized = false;
 let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
@@ -71,15 +79,6 @@ export async function initErrorReporter(
     }
     resolvedDsn = config.dsn;
     logger.info?.('[ErrorReporter] Using self-hosted mode');
-  }
-
-  // Lazy-load @sentry/node (optional peer dependency)
-  try {
-    Sentry = await import("@sentry/node");
-  } catch (err) {
-    logger.warn?.('[ErrorReporter] @sentry/node not installed. Error reporting disabled.');
-    logger.warn?.('[ErrorReporter] Install with: npm install @sentry/node --save-optional');
-    return;
   }
 
   if (!Sentry) return;
