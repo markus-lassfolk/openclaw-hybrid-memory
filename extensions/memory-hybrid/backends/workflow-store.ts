@@ -64,30 +64,37 @@ export interface WorkflowPattern {
 }
 
 // ---------------------------------------------------------------------------
-// Levenshtein sequence similarity helpers
+// Levenshtein sequence similarity helpers (2-row DP to reduce memory)
 // ---------------------------------------------------------------------------
+
+/** Max rows to load for getPatterns/getSuccessRate to avoid DoS from unbounded scan. */
+const PATTERNS_QUERY_LIMIT = 2000;
 
 /**
  * Levenshtein distance between two string arrays (each element = one tool name).
+ * Uses two-row DP to keep memory O(min(m,n)) instead of O(m×n).
  */
 export function sequenceDistance(a: string[], b: string[]): number {
   const m = a.length;
   const n = b.length;
-  // dp[i][j] = edit distance between a[0..i-1] and b[0..j-1]
-  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
-  );
-
+  if (m === 0) return n;
+  if (n === 0) return m;
+  if (a === b) return 0;
+  // prev[j] = edit distance for a[0..i-1] and b[0..j]; curr[j] for current row
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  let curr: number[] = new Array(n + 1);
   for (let i = 1; i <= m; i++) {
+    curr[0] = i;
     for (let j = 1; j <= n; j++) {
       if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1];
+        curr[j] = prev[j - 1];
       } else {
-        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+        curr[j] = 1 + Math.min(prev[j], curr[j - 1], prev[j - 1]);
       }
     }
+    [prev, curr] = [curr, prev];
   }
-  return dp[m][n];
+  return prev[n];
 }
 
 /**
@@ -168,13 +175,17 @@ export class WorkflowStore {
   record(input: CreateWorkflowTraceInput): WorkflowTrace {
     const id = randomUUID();
     const now = new Date().toISOString();
-    // Normalize explicit keywords the same way extractGoalKeywords does (lowercase, dedupe, filter)
+    // Cap goal and tool sequence length to prevent unbounded storage and DoS
+    const goal = input.goal.slice(0, 500);
+    const toolSequence = input.toolSequence
+      .slice(0, 100)
+      .map((t) => String(t).slice(0, 64));
     const keywords = input.goalKeywords
       ? [...new Set(input.goalKeywords.map(k => k.toLowerCase().trim()).filter(k => k.length > 0))]
-      : extractGoalKeywords(input.goal);
-    const argsHash = input.argsHash ?? hashToolSequence(input.toolSequence);
+      : extractGoalKeywords(goal);
+    const argsHash = input.argsHash ?? hashToolSequence(toolSequence);
     const outcome = input.outcome ?? "unknown";
-    const toolCount = input.toolSequence.length;
+    const toolCount = toolSequence.length;
     const durationMs = Math.round(input.durationMs ?? 0);
     const sessionId = input.sessionId ?? "";
 
@@ -186,9 +197,9 @@ export class WorkflowStore {
       )
       .run(
         id,
-        input.goal,
+        goal,
         JSON.stringify(keywords),
-        JSON.stringify(input.toolSequence),
+        JSON.stringify(toolSequence),
         argsHash,
         outcome,
         toolCount,
@@ -270,7 +281,7 @@ export class WorkflowStore {
 
   getByGoal(keywords: string[], limit = 20): WorkflowTrace[] {
     if (keywords.length === 0) return [];
-    // Retrieve candidates via LIKE search on the JSON blob and filter in JS
+    // Retrieve recent traces and filter by keyword in JS (goal_keywords is JSON blob)
     const candidates = this.db
       .prepare("SELECT * FROM workflow_traces ORDER BY created_at DESC LIMIT 500")
       .all() as Record<string, unknown>[];
@@ -289,7 +300,9 @@ export class WorkflowStore {
 
   getSuccessRate(toolSequence: string[], similarityThreshold = 0.8): number {
     const allRows = this.db
-      .prepare("SELECT tool_sequence, outcome FROM workflow_traces ORDER BY created_at DESC LIMIT 1000")
+      .prepare(
+        `SELECT tool_sequence, outcome FROM workflow_traces ORDER BY created_at DESC LIMIT ${PATTERNS_QUERY_LIMIT}`,
+      )
       .all() as { tool_sequence: string; outcome: string }[];
 
     let total = 0;
@@ -322,8 +335,11 @@ export class WorkflowStore {
   }): WorkflowPattern[] {
     const threshold = options?.similarityThreshold ?? 0.8;
     const allRows = this.db
-      .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC LIMIT 1000")
+      .prepare(
+        `SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC LIMIT ${PATTERNS_QUERY_LIMIT}`,
+      )
       .all() as { goal: string; tool_sequence: string; outcome: string; duration_ms: number }[];
+    const cappedRows = allRows.slice(0, PATTERNS_QUERY_LIMIT);
 
     // Cluster by similarity
     const clusters: {
@@ -333,7 +349,7 @@ export class WorkflowStore {
       durations: number[];
     }[] = [];
 
-    for (const row of allRows) {
+    for (const row of cappedRows) {
       let seq: string[];
       try {
         seq = JSON.parse(row.tool_sequence) as string[];
