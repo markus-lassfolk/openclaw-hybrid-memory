@@ -97,35 +97,33 @@ export function createPluginService(ctx: PluginServiceContext) {
       // 4. Start periodic timers (async background tasks with delays)
       // ========================================================================
 
-      // Initialize error reporter if configured
-      if (cfg.errorReporting) {
-        try {
-          await initErrorReporter(
-            {
-              enabled: cfg.errorReporting.enabled,
-              dsn: cfg.errorReporting.dsn,
-              mode: cfg.errorReporting.mode ?? "community",
-              consent: cfg.errorReporting.consent,
-              environment: cfg.errorReporting.environment,
-              sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
-              maxBreadcrumbs: 10,
-              botId: cfg.errorReporting.botId,
-              botName: cfg.errorReporting.botName,
-            },
-            versionInfo.pluginVersion,
-            api.logger,
-            api.context?.agentId,
-          );
-          if (isErrorReporterActive()) {
-            api.logger.info("memory-hybrid: error reporting enabled");
-          }
-        } catch (err) {
-          api.logger.warn(`memory-hybrid: error reporter initialization failed: ${err}`);
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "plugin-service",
-            operation: "init-error-reporter",
-          });
+      // Initialize error reporter (always present — opt-out via enabled: false or consent: false)
+      try {
+        await initErrorReporter(
+          {
+            enabled: cfg.errorReporting.enabled,
+            dsn: cfg.errorReporting.dsn,
+            mode: cfg.errorReporting.mode ?? "community",
+            consent: cfg.errorReporting.consent,
+            environment: cfg.errorReporting.environment,
+            sampleRate: cfg.errorReporting.sampleRate ?? 1.0,
+            maxBreadcrumbs: 10,
+            botId: cfg.errorReporting.botId,
+            botName: cfg.errorReporting.botName,
+          },
+          versionInfo.pluginVersion,
+          api.logger,
+          api.context?.agentId,
+        );
+        if (isErrorReporterActive()) {
+          api.logger.info("memory-hybrid: error reporting enabled");
         }
+      } catch (err) {
+        api.logger.warn(`memory-hybrid: error reporter initialization failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "plugin-service",
+          operation: "init-error-reporter",
+        });
       }
 
       if (expired > 0) {
