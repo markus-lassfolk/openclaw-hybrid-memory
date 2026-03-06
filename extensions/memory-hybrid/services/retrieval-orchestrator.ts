@@ -246,10 +246,10 @@ export async function runRetrievalPipeline(
 
   if (strategies.includes("fts5")) {
     strategyPromises.push(
-      Promise.resolve([
+      (async (): Promise<[string, RankedResult[]]> => [
         "fts5",
         runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf),
-      ] as [string, RankedResult[]]),
+      ])(),
     );
   }
 
@@ -263,23 +263,26 @@ export async function runRetrievalPipeline(
 
   if (strategies.includes("graph")) {
     strategyPromises.push(
-      Promise.resolve(["graph", runGraphStrategy()] as [string, RankedResult[]]),
+      (async (): Promise<[string, RankedResult[]]> => [
+        "graph",
+        runGraphStrategy(),
+      ])(),
     );
   }
 
   // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
   if (aliasDb && queryVector) {
     strategyPromises.push(
-      Promise.resolve([
+      (async (): Promise<[string, RankedResult[]]> => [
         "aliases",
         searchAliasStrategy(aliasDb, queryVector, semanticTopK),
-      ] as [string, RankedResult[]]),
+      ])(),
     );
   }
 
   const strategySettledResults = await Promise.allSettled(strategyPromises);
 
-  // Build strategy map — rejected/hung strategies are ignored so the rest can still contribute.
+  // Build strategy map — rejected strategies are ignored so the rest can still contribute.
   const strategyMap = new Map<string, RankedResult[]>();
   for (const settled of strategySettledResults) {
     if (settled.status === "rejected") continue;
