@@ -39,8 +39,8 @@ export interface ProvenanceChain {
     extractionConfidence?: number;
   };
   edges: Array<{
-    edgeType: string;
-    sourceType: string;
+    edgeType: ProvenanceEdgeType;
+    sourceType: ProvenanceSourceType;
     sourceId: string;
     sourceText?: string;
     createdAt: string;
@@ -65,7 +65,7 @@ interface FactProvenanceRow {
   id: string;
   text: string;
   confidence: number | null;
-  source_session: string | null;
+  provenance_session: string | null;
   source_turn: number | null;
   extraction_method: string | null;
   extraction_confidence: number | null;
@@ -104,6 +104,7 @@ export class ProvenanceService {
       );
       CREATE INDEX IF NOT EXISTS idx_provenance_fact_id ON provenance_edges(fact_id);
       CREATE INDEX IF NOT EXISTS idx_provenance_source_id ON provenance_edges(source_id);
+      CREATE INDEX IF NOT EXISTS idx_provenance_created_at ON provenance_edges(created_at);
     `);
   }
 
@@ -161,7 +162,7 @@ export class ProvenanceService {
         .prepare(
           `SELECT id, text,
             COALESCE(importance, 0.0) as confidence,
-            source_session, source_turn, extraction_method, extraction_confidence
+            provenance_session, source_turn, extraction_method, extraction_confidence
            FROM facts WHERE id = ?`,
         )
         .get(factId) as FactProvenanceRow | undefined;
@@ -169,7 +170,7 @@ export class ProvenanceService {
       if (row) {
         factData = { id: row.id, text: row.text, confidence: row.confidence ?? 0 };
         source = {
-          sessionId: row.source_session ?? undefined,
+          sessionId: row.provenance_session ?? undefined,
           turn: row.source_turn ?? undefined,
           extractionMethod: row.extraction_method ?? undefined,
           extractionConfidence: row.extraction_confidence ?? undefined,

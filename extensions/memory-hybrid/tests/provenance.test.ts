@@ -245,6 +245,36 @@ describe("ProvenanceService.getProvenance", () => {
     expect(chain.source.turn).toBeUndefined();
     expect(chain.source.extractionMethod).toBeUndefined();
   });
+
+  it("populates source fields when factsDb is provided with provenance columns", () => {
+    service.addEdge("with-db-fact", {
+      edgeType: "DERIVED_FROM",
+      sourceType: "active_store",
+      sourceId: "session-y",
+    });
+    const fakeFactsDb = {
+      prepare: (_sql: string) => ({
+        get: (factId: string) => {
+          expect(factId).toBe("with-db-fact");
+          return {
+            id: "with-db-fact",
+            text: "Fact text",
+            confidence: 0.8,
+            provenance_session: "sess-123",
+            source_turn: 5,
+            extraction_method: "llm_extraction",
+            extraction_confidence: 0.87,
+          };
+        },
+      }),
+    };
+    const chain = service.getProvenance("with-db-fact", fakeFactsDb as never);
+    expect(chain.source).toBeDefined();
+    expect(chain.source.sessionId).toBe("sess-123");
+    expect(chain.source.turn).toBe(5);
+    expect(chain.source.extractionMethod).toBe("llm_extraction");
+    expect(chain.source.extractionConfidence).toBe(0.87);
+  });
 });
 
 // ---------------------------------------------------------------------------

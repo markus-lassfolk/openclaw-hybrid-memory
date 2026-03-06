@@ -498,14 +498,17 @@ export class FactsDB {
     `);
   }
 
-  /** Add provenance columns to facts table (Issue #163). All nullable for backward compatibility. */
+  /** Add provenance columns to facts table (Issue #163). All nullable. Use provenance_session (not source_session) to avoid confusion with source_sessions. */
   private migrateProvenanceColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
-    if (!colNames.has("source_session")) {
-      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_session TEXT`);
+    if (!colNames.has("provenance_session")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN provenance_session TEXT`);
+      if (colNames.has("source_session")) {
+        this.liveDb.exec(`UPDATE facts SET provenance_session = source_session WHERE source_session IS NOT NULL`);
+      }
     }
     if (!colNames.has("source_turn")) {
       this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_turn INTEGER`);

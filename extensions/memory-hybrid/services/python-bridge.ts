@@ -14,6 +14,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { capturePluginError } from "./error-reporter.js";
 
 const MAX_RETRIES = 3;
 const PING_TIMEOUT_MS = 5_000;
@@ -61,9 +62,14 @@ export class PythonBridge {
     rl.on("line", (line) => this.handleLine(line));
 
     this.proc.stderr.on("data", (data: Buffer) => {
-      // Only log if there are pending requests (otherwise noise during shutdown)
       if (this.pending.size > 0) {
-        console.warn(`[python-bridge] stderr: ${data.toString().trim()}`);
+        const msg = data.toString().trim();
+        if (msg.length > 0) {
+          capturePluginError(new Error(`[python-bridge] stderr: ${msg.slice(0, 200)}`), {
+            subsystem: "python-bridge",
+            operation: "stderr",
+          });
+        }
       }
     });
 

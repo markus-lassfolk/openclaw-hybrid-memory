@@ -185,11 +185,11 @@ export class VerificationStore {
   // verify — add a fact to the verification store
   // -------------------------------------------------------------------------
 
-  async verify(
+  verify(
     factId: string,
     text: string,
     verifiedBy: "agent" | "user" | "system",
-  ): Promise<string> {
+  ): string {
     const existing = this.db
       .prepare(`SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1`)
       .get(factId);
@@ -223,7 +223,7 @@ export class VerificationStore {
   // checkIntegrity — verify checksums match stored text
   // -------------------------------------------------------------------------
 
-  async checkIntegrity(factId?: string): Promise<IntegrityReport> {
+  checkIntegrity(factId?: string): IntegrityReport {
     let rows: VerifiedFactRow[];
     if (factId !== undefined) {
       rows = this.db
@@ -257,7 +257,7 @@ export class VerificationStore {
   // getVerified — retrieve a verified fact, throws on checksum mismatch
   // -------------------------------------------------------------------------
 
-  async getVerified(factId: string): Promise<VerifiedFact | null> {
+  getVerified(factId: string): VerifiedFact | null {
     const row = this.db
       .prepare(
         `SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`,
@@ -280,7 +280,7 @@ export class VerificationStore {
   // listDueForReverification — facts whose next_verification <= now
   // -------------------------------------------------------------------------
 
-  async listDueForReverification(): Promise<VerifiedFact[]> {
+  listDueForReverification(): VerifiedFact[] {
     const now = toISODate(new Date());
     const rows = this.db
       .prepare(
@@ -297,11 +297,11 @@ export class VerificationStore {
   // update — create a new version, linking to the superseded one
   // -------------------------------------------------------------------------
 
-  async update(
+  update(
     id: string,
     newText: string,
     verifiedBy: "agent" | "user" | "system",
-  ): Promise<string> {
+  ): string {
     const existing = this.db
       .prepare(`SELECT * FROM verified_facts WHERE id = ?`)
       .get(id) as VerifiedFactRow | undefined;

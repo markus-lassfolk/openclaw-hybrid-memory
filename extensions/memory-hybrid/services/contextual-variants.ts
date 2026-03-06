@@ -73,9 +73,9 @@ export class ContextualVariantGenerator {
     this.callTimestamps.push(now);
 
     const count = Math.max(1, this.config.maxVariantsPerFact);
-    const prompt = VARIANT_PROMPT_TEMPLATE.replace("{text}", text)
-      .replace("{category}", category)
-      .replace("{count}", String(count));
+    const prompt = VARIANT_PROMPT_TEMPLATE.replace("{text}", () => text)
+      .replace("{category}", () => category)
+      .replace("{count}", () => String(count));
 
     const model = this.config.model ?? "openai/gpt-4.1-nano";
 

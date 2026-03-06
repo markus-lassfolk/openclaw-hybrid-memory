@@ -449,8 +449,10 @@ export async function runRetrievalPipeline(
       try {
         return [name, await fn()] as [string, RankedResult[]];
       } catch (err) {
-        // Log and return empty so other strategies still contribute
-        console.error(`[retrieval] strategy "${name}" failed:`, err);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "retrieval",
+          operation: `strategy:${name}`,
+        });
         return [name, []] as [string, RankedResult[]];
       }
     })();
@@ -502,6 +504,22 @@ export async function runRetrievalPipeline(
     }
   }
 
+  // Issue #158: start multi-model semantic strategies in parallel with other strategies.
+  let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
+  if (
+    strategies.includes("semantic") &&
+    embeddingRegistry &&
+    embeddingRegistry.isMultiModel() &&
+    factsDbForEmbeddings
+  ) {
+    multiModelPromise = runMultiModelSemanticStrategies(
+      factsDbForEmbeddings,
+      embeddingRegistry,
+      query,
+      semanticTopK,
+    );
+  }
+
   const strategySettledResults = await Promise.allSettled(strategyPromises);
 
   // Build strategy map — rejected/empty strategies are skipped so the rest can still contribute.
@@ -514,28 +532,19 @@ export async function runRetrievalPipeline(
     }
   }
 
-  // Issue #158: multi-model semantic strategies — each additional model is a separate RRF lane.
-  // Only runs when registry has additional models and we have access to the fact_embeddings table.
-  if (
-    strategies.includes("semantic") &&
-    embeddingRegistry &&
-    embeddingRegistry.isMultiModel() &&
-    factsDbForEmbeddings
-  ) {
+  if (multiModelPromise) {
     try {
-      const multiModelResults = await runMultiModelSemanticStrategies(
-        factsDbForEmbeddings,
-        embeddingRegistry,
-        query,
-        semanticTopK,
-      );
+      const multiModelResults = await multiModelPromise;
       for (const [strategyName, results] of multiModelResults) {
         if (results.length > 0) {
           strategyMap.set(strategyName, results);
         }
       }
     } catch (err) {
-      console.error("[retrieval] multi-model semantic strategy failed:", err);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "multi-model-semantic",
+      });
     }
   }
 
@@ -650,8 +659,10 @@ export async function runRetrievalPipeline(
         scopedFused.sort((a, b) => b.finalScore - a.finalScore);
       }
     } catch (err) {
-      // Log via stderr without leaking query content; cluster boost is non-critical
-      console.error("[retrieval] cluster boost failed");
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "cluster-boost",
+      });
     }
   }
 
@@ -695,9 +706,6 @@ export async function runRetrievalPipeline(
         scopedFused.length = reranked.length;
       }
     } catch (err) {
-      // Graceful degradation — re-ranking failure never blocks retrieval.
-      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      console.error("[retrieval] reranking failed:", message);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "retrieval",
         operation: "reranking",
