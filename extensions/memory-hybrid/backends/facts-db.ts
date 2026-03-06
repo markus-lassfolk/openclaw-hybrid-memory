@@ -745,20 +745,24 @@ export class FactsDB {
 
     if (cnt === 0) return;
 
-    this.liveDb.exec(`
-      UPDATE facts
-      SET created_at = created_at / 1000
-      WHERE created_at > ${MS_THRESHOLD}
-    `);
+    this.liveDb
+      .prepare(
+        `UPDATE facts
+         SET created_at = created_at / 1000
+         WHERE created_at > ?`,
+      )
+      .run(MS_THRESHOLD);
 
     // last_confirmed_at may have been seeded from ms-based created_at
     // by the migrateDecayColumns migration (created_at → last_confirmed_at).
-    this.liveDb.exec(`
-      UPDATE facts
-      SET last_confirmed_at = last_confirmed_at / 1000
-      WHERE last_confirmed_at IS NOT NULL
-        AND last_confirmed_at > ${MS_THRESHOLD}
-    `);
+    this.liveDb
+      .prepare(
+        `UPDATE facts
+         SET last_confirmed_at = last_confirmed_at / 1000
+         WHERE last_confirmed_at IS NOT NULL
+           AND last_confirmed_at > ?`,
+      )
+      .run(MS_THRESHOLD);
   }
 
   store(
