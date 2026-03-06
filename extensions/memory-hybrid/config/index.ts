@@ -1475,18 +1475,22 @@ export const hybridConfigSchema = {
       credentials = {
         enabled: true,
         store: "sqlite",
-        encryptionKey: hasValidKey ? encryptionKey : "",
         ...opts,
       };
     } else {
       credentials = {
         enabled: false,
         store: "sqlite",
-        encryptionKey: "",
         autoDetect: false,
         expiryWarningDays: 7,
       };
     }
+    const resolvedKey = hasValidKey ? encryptionKey : "";
+    Object.defineProperty(credentials, "encryptionKey", {
+      value: resolvedKey,
+      enumerable: false,
+      writable: false,
+    });
 
     // Parse graph config
     const graphRaw = cfg.graph as Record<string, unknown> | undefined;
