@@ -191,6 +191,9 @@ export class FactsDB {
 
     // ---- Multi-model embeddings (Issue #158) ----
     this.migrateFactEmbeddingsTable();
+
+    // ---- Contextual variants (Issue #159) ----
+    this.migrateFactVariantsTable();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -443,6 +446,87 @@ export class FactsDB {
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_fact_embeddings_model ON fact_embeddings(model)`,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contextual variants storage (Issue #159)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create the fact_variants table for contextual variant text storage (Issue #159).
+   * Idempotent — safe to call on existing databases.
+   */
+  private migrateFactVariantsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS fact_variants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fact_id TEXT NOT NULL,
+        variant_type TEXT NOT NULL DEFAULT 'contextual',
+        variant_text TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+      )
+    `);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_variants_fact_id ON fact_variants(fact_id)`,
+    );
+  }
+
+  /**
+   * Store a contextual variant text for a fact.
+   * Returns the new row id.
+   */
+  storeVariant(factId: string, variantType: string, variantText: string): number {
+    const result = this.liveDb
+      .prepare(
+        `INSERT INTO fact_variants (fact_id, variant_type, variant_text)
+         VALUES (?, ?, ?)`,
+      )
+      .run(factId, variantType, variantText);
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Retrieve all variants stored for a given fact.
+   */
+  getVariants(
+    factId: string,
+  ): Array<{ id: number; variantType: string; variantText: string; createdAt: string }> {
+    return (
+      this.liveDb
+        .prepare(
+          `SELECT id, variant_type, variant_text, created_at FROM fact_variants WHERE fact_id = ?`,
+        )
+        .all(factId) as Array<{
+        id: number;
+        variant_type: string;
+        variant_text: string;
+        created_at: string;
+      }>
+    ).map((r) => ({
+      id: r.id,
+      variantType: r.variant_type,
+      variantText: r.variant_text,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * Check whether a fact already has variants stored (to avoid re-processing).
+   */
+  hasVariants(factId: string): boolean {
+    const row = this.liveDb
+      .prepare(`SELECT 1 FROM fact_variants WHERE fact_id = ? LIMIT 1`)
+      .get(factId);
+    return row !== undefined;
+  }
+
+  /**
+   * Delete all variants for a fact (called when a fact is deleted).
+   * Normally handled by ON DELETE CASCADE, but exposed for explicit use.
+   */
+  deleteVariants(factId: string): void {
+    this.liveDb.prepare(`DELETE FROM fact_variants WHERE fact_id = ?`).run(factId);
   }
 
   // ---------------------------------------------------------------------------
