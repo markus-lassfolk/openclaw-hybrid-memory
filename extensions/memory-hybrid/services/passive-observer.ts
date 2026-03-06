@@ -344,12 +344,19 @@ export async function runPassiveObserver(
   const dedupePool = recentFacts.slice(0, 50)
   try {
     // Use a 30-second hard timeout to prevent blocking the timer indefinitely on slow providers.
-    const batchResult = await Promise.race([
-      embeddings.embedBatch(dedupePool.map((f) => f.text)),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('embed-batch timeout')), 30_000),
-      ),
-    ])
+    const embedBatchPromise = embeddings.embedBatch(dedupePool.map((f) => f.text))
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('embed-batch timeout')), 30_000)
+    })
+    let batchResult: number[][]
+    try {
+      batchResult = (await Promise.race([embedBatchPromise, timeoutPromise])) as number[][]
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
+      }
+    }
     for (let i = 0; i < dedupePool.length; i++) {
       recentVectors.push(normalizeVector(batchResult[i]))
       recentFactIds.push(dedupePool[i].id)
