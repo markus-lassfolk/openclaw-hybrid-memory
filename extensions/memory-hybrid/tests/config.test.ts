@@ -1052,7 +1052,6 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.model).toBe("openai/gpt-4.1-nano");
   });
-
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.multiAgent).toBeDefined();
