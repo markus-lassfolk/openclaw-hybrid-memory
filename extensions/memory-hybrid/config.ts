@@ -479,6 +479,27 @@ export type DocumentsConfig = {
   autoTag: boolean;
 };
 
+/**
+ * Configuration for a single embedding model in a multi-model setup (Issue #158).
+ * Each model captures different semantic angles (general, domain-specific, query-tuned).
+ */
+export interface EmbeddingModelConfig {
+  /** Model identifier (e.g. "nomic-embed-text", "text-embedding-3-small"). */
+  name: string;
+  /** Provider for this model. */
+  provider: "openai" | "ollama" | "onnx";
+  /** Vector dimensions this model produces. */
+  dimensions: number;
+  /** Semantic role this model plays. */
+  role: "general" | "domain" | "query" | "custom";
+  /** API key for openai provider (overrides embedding.apiKey). */
+  apiKey?: string;
+  /** Endpoint for ollama provider (overrides embedding.endpoint). */
+  endpoint?: string;
+  /** Whether this model is active (default: true). */
+  enabled?: boolean;
+}
+
 export type HybridMemoryConfig = {
   embedding: {
     provider: "openai" | "ollama" | "onnx";
@@ -493,6 +514,13 @@ export type HybridMemoryConfig = {
     endpoint?: string;
     /** Number of texts to embed per batch call (default: 50). */
     batchSize: number;
+    /**
+     * Additional embedding models for multi-model support (Issue #158).
+     * When non-empty, facts are embedded with all models and stored in the fact_embeddings table.
+     * At retrieval time, all model indices are queried and results are merged via RRF.
+     * When empty/undefined, the system works in single-model mode (backward compatible).
+     */
+    multiModels?: EmbeddingModelConfig[];
   };
   lanceDbPath: string;
   sqlitePath: string;
