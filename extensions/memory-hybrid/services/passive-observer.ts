@@ -59,6 +59,8 @@ export interface ObserverRunResult {
   errors: number
 }
 
+// Track consecutive failures across runs to prevent infinite retries on bad session files.
+const consecutiveFailures = new Map<string, number>()
 
 // ---------------------------------------------------------------------------
 // JSONL text extraction
@@ -290,7 +292,6 @@ export async function runPassiveObserver(
   let cursorsChanged = false
   // Separate in-memory map for consecutive failure counts — not persisted to the cursors file
   // to avoid mixing byte-offset semantics with failure-count semantics in the same structure.
-  const consecutiveFailures = new Map<string, number>()
 
   // ---------------------------------------------------------------------------
   // Phase 1: scan all session files, count sessions, detect whether any have
