@@ -588,14 +588,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               const vectorStepPromise = (async (): Promise<SearchResult[]> => {
                 let textToEmbed = trimmed;
-                const allowHyde = ctx.cfg.search?.hydeEnabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
+                const allowHyde = ctx.cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
                 if (allowHyde) {
                   if (opts?.limitHydeOnce) directiveHydeUsed = true;
                   try {
                     const cronCfg = getCronModelConfig(ctx.cfg);
                     const pref = getLLMModelPreference(cronCfg, "nano");
-                    const hydeModel = ctx.cfg.search?.hydeModel ?? pref[0];
-                    const fallbackModels = ctx.cfg.search?.hydeModel ? [] : pref.slice(1);
+                    const hydeModel = ctx.cfg.queryExpansion.model ?? pref[0];
+                    const fallbackModels = ctx.cfg.queryExpansion.model ? [] : pref.slice(1);
                     const hydeContent = await chatCompleteWithRetry({
                       model: hydeModel,
                       fallbackModels,
@@ -604,7 +604,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                       maxTokens: 150,
                       openai: ctx.openai,
                       label: opts?.hydeLabel ?? "HyDE",
-                      timeoutMs: 25_000,
+                      timeoutMs: ctx.cfg.queryExpansion.timeoutMs,
                       signal: directiveAbort.signal,
                       pendingWarnings: ctx.pendingLLMWarnings,
                     });

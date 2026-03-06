@@ -240,9 +240,41 @@ export function parseSearchConfig(cfg: Record<string, unknown>): SearchConfig | 
 
 export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryExpansionConfig {
   const qeRaw = cfg.queryExpansion as Record<string, unknown> | undefined;
+  const searchRaw = cfg.search as Record<string, unknown> | undefined;
+
+  // Migration shim: if the legacy search.hydeEnabled flag is set, emit a deprecation warning
+  // and auto-enable queryExpansion when it has not been explicitly enabled.
+  const hydeEnabled = searchRaw?.hydeEnabled === true;
+  const qeExplicitlySet = qeRaw?.enabled !== undefined;
+
+  if (hydeEnabled) {
+    console.warn(
+      "memory-hybrid: search.hydeEnabled is DEPRECATED — use queryExpansion.enabled instead. " +
+      (qeExplicitlySet
+        ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config."
+        : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."),
+    );
+  }
+
+  // queryExpansion.enabled wins when explicitly set; otherwise fall through to HyDE migration
+  const enabled = qeExplicitlySet ? (qeRaw.enabled === true) : hydeEnabled;
+
+  // queryExpansion.model wins when set; fall back to search.hydeModel for migration compat
+  const hydeModel =
+    typeof searchRaw?.hydeModel === "string" && searchRaw.hydeModel.trim().length > 0
+      ? searchRaw.hydeModel.trim()
+      : undefined;
+  const model =
+    typeof qeRaw?.model === "string" && qeRaw.model.trim().length > 0
+      ? qeRaw.model.trim()
+      : (enabled ? hydeModel : undefined); // Fall back to search.hydeModel only when expansion is enabled
+
+  // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout
+  const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 5000;
+
   return {
-    enabled: qeRaw?.enabled === true,
-    model: typeof qeRaw?.model === "string" && qeRaw.model.trim().length > 0 ? qeRaw.model.trim() : undefined,
+    enabled,
+    model,
     maxVariants:
       typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0
         ? Math.min(10, Math.floor(qeRaw.maxVariants))
@@ -254,7 +286,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
     timeoutMs:
       typeof qeRaw?.timeoutMs === "number" && qeRaw.timeoutMs > 0
         ? Math.floor(qeRaw.timeoutMs)
-        : 5000,
+        : defaultTimeout,
   };
 }
 
