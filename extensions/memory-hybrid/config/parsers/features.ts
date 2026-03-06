@@ -14,6 +14,7 @@ import type {
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
+import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
 
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;
@@ -287,12 +288,24 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
   };
 }
 
-export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig | undefined {
+export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
-  if (!errorReportingRaw || typeof errorReportingRaw !== "object") return undefined;
 
-  let enabled = errorReportingRaw.enabled === true;
-  const consent = errorReportingRaw.consent === true;
+  // When errorReporting is not specified, use opt-out defaults (enabled + consent are true)
+  if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
+    return {
+      enabled: true,
+      dsn: DEFAULT_GLITCHTIP_DSN,
+      consent: true,
+      mode: "community",
+      sampleRate: 1.0,
+    };
+  }
+
+  // enabled defaults to true — user must explicitly set enabled: false to opt out
+  let enabled = errorReportingRaw.enabled !== false;
+  // consent defaults to true — user must explicitly set consent: false to opt out
+  const consent = errorReportingRaw.consent !== false;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
   const modeRaw = typeof errorReportingRaw.mode === "string" ? errorReportingRaw.mode : "community";
   const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
@@ -333,7 +346,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
     enabled,
     consent,
     mode,
-    dsn: dsnRaw || undefined,
+    dsn: dsnRaw || DEFAULT_GLITCHTIP_DSN,
     environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
     sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
       ? errorReportingRaw.sampleRate
