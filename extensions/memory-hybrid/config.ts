@@ -348,6 +348,20 @@ export type ContextualVariantsConfig = {
   categories?: string[];
 };
 
+/** Query expansion at retrieval time via LLM (Issue #160). */
+export type QueryExpansionConfig = {
+  /** Enable query expansion (default: false). */
+  enabled: boolean;
+  /** LLM model for expansion; when unset, defaults to "openai/gpt-4.1-nano". */
+  model?: string;
+  /** Max number of expansion variants to generate (default: 4). */
+  maxVariants: number;
+  /** LRU cache size for memoized expansions (default: 100). */
+  cacheSize: number;
+  /** Timeout in ms for the LLM call; on timeout, fall back to original query (default: 5000). */
+  timeoutMs: number;
+};
+
 /** Shortest-path traversal configuration (Issue #140). */
 export type PathConfig = {
   /** Enable memory_path tool (default: true). */
@@ -632,6 +646,8 @@ export type HybridMemoryConfig = {
   documents: DocumentsConfig;
   /** Contextual variant generation at index time (Issue #159, default: disabled). */
   contextualVariants: ContextualVariantsConfig;
+  /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */
+  queryExpansion: QueryExpansionConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -2190,6 +2206,25 @@ export const hybridConfigSchema = {
           : undefined,
     };
 
+    // Parse query expansion config (Issue #160, default: disabled)
+    const qeRaw = cfg.queryExpansion as Record<string, unknown> | undefined;
+    const queryExpansion: QueryExpansionConfig = {
+      enabled: qeRaw?.enabled === true,
+      model: typeof qeRaw?.model === "string" && qeRaw.model.trim().length > 0 ? qeRaw.model.trim() : undefined,
+      maxVariants:
+        typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0
+          ? Math.min(10, Math.floor(qeRaw.maxVariants))
+          : 4,
+      cacheSize:
+        typeof qeRaw?.cacheSize === "number" && qeRaw.cacheSize > 0
+          ? Math.floor(qeRaw.cacheSize)
+          : 100,
+      timeoutMs:
+        typeof qeRaw?.timeoutMs === "number" && qeRaw.timeoutMs > 0
+          ? Math.floor(qeRaw.timeoutMs)
+          : 5000,
+    };
+
     return {
       embedding: {
         provider: embeddingProvider,
@@ -2252,6 +2287,7 @@ export const hybridConfigSchema = {
       path,
       documents,
       contextualVariants,
+      queryExpansion,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
