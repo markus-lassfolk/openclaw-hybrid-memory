@@ -16,9 +16,10 @@ import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
@@ -49,18 +50,25 @@ import {
   type PendingTaskSignal,
 } from "../services/active-task.js";
 import { parseDuration } from "../utils/duration.js";
+import {
+  generateAmbientQueries,
+  detectTopicShift,
+  deduplicateResultsById,
+  SessionSeenFacts,
+} from "../services/ambient-retrieval.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
+  aliasDb: AliasDB | null;
   wal: WriteAheadLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
-  restartPendingCleared: boolean;
+  restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
   walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) => string;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
@@ -342,12 +350,32 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   // Note: currentAgentIdRef is already a mutable ref object from index.ts
   const currentAgentIdRef = ctx.currentAgentIdRef;
   let lastProgressiveIndexIds = ctx.lastProgressiveIndexIds;
-  let restartPendingCleared = ctx.restartPendingCleared;
+  const restartPendingClearedRef = ctx.restartPendingClearedRef;
 
   // Track auth failures per target per session to avoid spam
   const authFailureRecallsThisSession = new Map<string, number>();
   // Track session starts for retrieval directives
   const sessionStartSeen = new Set<string>();
+  // Ambient retrieval session state (Issue #156) — scoped per session key.
+  // Bounded to MAX_TRACKED_SESSIONS to prevent memory leak from long-running agents.
+  const MAX_TRACKED_SESSIONS = 200;
+  const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
+  const ambientLastEmbeddingMap = new Map<string, number[] | null>();
+
+  /** Evict oldest entries if maps exceed the session limit. */
+  function pruneSessionMaps(): void {
+    if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
+      const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
+      const keys = ambientSeenFactsMap.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) {
+          ambientSeenFactsMap.delete(value);
+          ambientLastEmbeddingMap.delete(value);
+        }
+      }
+    }
+  }
 
   const resolveSessionKey = (event: unknown, api?: ClawdbotPluginApi): string | null => {
     const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
@@ -376,8 +404,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       // close the shared singleton while this session is still active (fixes issue #106).
       ctx.vectorDb.open();
 
-      if (!restartPendingCleared && existsSync(getRestartPendingPath())) {
-        restartPendingCleared = true; // Set flag before unlink to prevent race
+      if (!restartPendingClearedRef.value && existsSync(getRestartPendingPath())) {
+        restartPendingClearedRef.value = true; // Set flag before unlink to prevent race
         try {
           unlinkSync(getRestartPendingPath());
         } catch (err: unknown) {
@@ -537,7 +565,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           async function runRecallPipeline(
             query: string,
             limit: number,
-            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string; limitHydeOnce?: boolean }
+            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string; limitHydeOnce?: boolean; precomputedVector?: number[] }
           ): Promise<SearchResult[]> {
             const trimmed = query.trim();
             if (!trimmed) return [];
@@ -590,7 +618,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     }
                   }
                 }
-                const vector = await ctx.embeddings.embed(textToEmbed);
+                // Reuse precomputed vector when HyDE did not transform the query text
+                const vector = (opts?.precomputedVector && textToEmbed === trimmed)
+                  ? opts.precomputedVector
+                  : await ctx.embeddings.embed(textToEmbed);
                 let results = await ctx.vectorDb.search(vector, limit * 2, minScore);
                 results = filterByScope(results, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
                 results = results.map((r) => {
@@ -646,7 +677,124 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return results;
           }
 
-          let candidates = await runRecallPipeline(e.prompt, limit, { hydeLabel: "HyDE", errorPrefix: "auto-recall-" });
+          // --- Ambient multi-query retrieval (Issue #156) ---
+          const ambientCfg = ctx.cfg.ambient;
+
+          // Resolve per-session ambient state (scoped by session key to avoid cross-session contamination)
+          const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
+          if (!ambientSeenFactsMap.has(sessionScopeKey)) {
+            ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
+            ambientLastEmbeddingMap.set(sessionScopeKey, null);
+            pruneSessionMaps();
+          } else {
+            // LRU: move returning session to end by deleting and re-inserting
+            const seenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
+            const lastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
+            ambientSeenFactsMap.delete(sessionScopeKey);
+            ambientLastEmbeddingMap.delete(sessionScopeKey);
+            ambientSeenFactsMap.set(sessionScopeKey, seenFacts);
+            ambientLastEmbeddingMap.set(sessionScopeKey, lastEmbedding);
+          }
+          const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
+          const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
+
+          // Compute prompt embedding once — reused in runRecallPipeline (vector step) and topic-shift
+          // detection below, avoiding a duplicate embed call (Issue #156)
+          let promptEmbedding: number[] | null = null;
+          if (ambientCfg.enabled && ambientCfg.multiQuery) {
+            try {
+              promptEmbedding = await ctx.embeddings.embed(e.prompt);
+            } catch {
+              // Non-fatal — skip topic-shift detection when embedding fails
+            }
+          }
+
+          let candidates = await runRecallPipeline(e.prompt, limit, {
+            hydeLabel: "HyDE",
+            errorPrefix: "auto-recall-",
+            precomputedVector: promptEmbedding ?? undefined,
+          });
+
+          if (ambientCfg.enabled && ambientCfg.multiQuery) {
+            try {
+              // Check for topic shift when we have both a previous and current embedding
+              const isTopicShift =
+                ambientLastEmbedding !== null &&
+                promptEmbedding !== null &&
+                detectTopicShift(
+                  ambientLastEmbedding,
+                  promptEmbedding,
+                  ambientCfg.topicShiftThreshold,
+                );
+
+              if (isTopicShift) {
+                api.logger.info?.("memory-hybrid: topic shift detected — re-running ambient retrieval");
+              }
+
+              // Update last embedding for next turn
+              if (promptEmbedding !== null) {
+                ambientLastEmbeddingMap.set(sessionScopeKey, promptEmbedding);
+              }
+
+              // Generate additional queries (entity, temporal, context)
+              const knownEntities = ctx.factsDb.getKnownEntities ? ctx.factsDb.getKnownEntities() : [];
+              const ambientSessionKey = resolveSessionKey(e, api);
+              const ambientQueries = generateAmbientQueries(
+                e.prompt,
+                ambientCfg,
+                {
+                  userId: api.context?.userId,
+                  channelId: ambientSessionKey ?? undefined,
+                  nowMs: Date.now(),
+                },
+                knownEntities,
+              );
+
+              // Skip message query (already run above as the main recall)
+              const extraQueries = ambientQueries.filter((q) => q.type !== "message");
+              if (extraQueries.length > 0) {
+                const extraResultSets: SearchResult[][] = [candidates];
+                for (const q of extraQueries) {
+                  try {
+                    const qResults = await runRecallPipeline(q.text, Math.ceil(limit / 2), {
+                      entity: q.type === "entity" ? q.entity : undefined,
+                      hydeLabel: "HyDE",
+                      errorPrefix: `ambient-${q.type}-`,
+                      limitHydeOnce: true,
+                    });
+                    extraResultSets.push(qResults);
+                  } catch (err) {
+                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      operation: `ambient-query-${q.type}`,
+                      subsystem: "auto-recall",
+                    });
+                  }
+                }
+
+                // Deduplicate across all result sets (message query first = highest priority)
+                const merged = deduplicateResultsById(extraResultSets, (r) => r.entry.id);
+
+                // On topic shift: filter out facts already shown in this session
+                const filtered = isTopicShift
+                  ? merged.filter((r) => !ambientSeenFacts.hasBeenSeen(r.entry.id))
+                  : merged;
+
+                candidates = filtered.slice(0, limit);
+
+                if (extraResultSets.length > 1) {
+                  api.logger.info?.(
+                    `memory-hybrid: ambient multi-query — ran ${extraQueries.length} extra queries, merged to ${candidates.length} candidates`,
+                  );
+                }
+              }
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "ambient-multi-query",
+                subsystem: "auto-recall",
+              });
+              api.logger.warn(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+            }
+          }
 
           const promptLower = e.prompt.toLowerCase();
           const { entityLookup } = ctx.cfg.autoRecall;
@@ -927,8 +1075,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (indexIds.length > 0) {
               ctx.factsDb.refreshAccessedFacts(indexIds);
             }
-            // Hebbian: Strengthen RELATED_TO links between facts recalled together
+            // Ambient: mark injected facts as seen for topic-shift deduplication (Issue #156)
             const allIds = [...pinned.map((r) => r.entry.id), ...indexIds];
+            if (ambientCfg.enabled && ambientCfg.multiQuery && allIds.length > 0) {
+              ambientSeenFacts.markSeen(allIds);
+            }
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together
             if (ctx.cfg.graph.enabled && allIds.length >= 2) {
               for (let i = 0; i < allIds.length; i++) {
                 for (let j = i + 1; j < allIds.length; j++) {
@@ -965,6 +1117,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             ctx.lastProgressiveIndexIds = indexIds;
             const includedIds = indexIds;
             ctx.factsDb.refreshAccessedFacts(includedIds);
+            // Ambient: mark injected facts as seen for topic-shift deduplication (Issue #156)
+            if (ambientCfg.enabled && ambientCfg.multiQuery && includedIds.length > 0) {
+              ambientSeenFacts.markSeen(includedIds);
+            }
             // Hebbian: Strengthen RELATED_TO links between facts recalled together
             if (ctx.cfg.graph.enabled && includedIds.length >= 2) {
               for (let i = 0; i < includedIds.length; i++) {
@@ -1016,6 +1172,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           // Access tracking for injected memories
           ctx.factsDb.refreshAccessedFacts(injectedIds);
+          // Ambient: mark injected facts as seen for topic-shift deduplication (Issue #156)
+          if (ambientCfg.enabled && ambientCfg.multiQuery) {
+            ambientSeenFacts.markSeen(injectedIds);
+          }
           // Hebbian: Strengthen RELATED_TO links between facts recalled together
           if (ctx.cfg.graph.enabled && injectedIds.length >= 2) {
             for (let i = 0; i < injectedIds.length; i++) {
@@ -1350,6 +1510,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("before_agent_start", async (event: unknown) => {
         const e = event as { prompt?: string; messages?: unknown[] };
         if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
 
         try {
 
@@ -1374,7 +1535,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (!detection.detected || !detection.target) return;
 
           // Check if we've already recalled for this target in this session
-          const recallCount = authFailureRecallsThisSession.get(detection.target) || 0;
+          const recallKey = `${sessionKey}:${detection.target}`;
+          const recallCount = authFailureRecallsThisSession.get(recallKey) || 0;
           const maxRecalls = ctx.cfg.autoRecall.authFailure.maxRecallsPerTarget;
           if (maxRecalls > 0 && recallCount >= maxRecalls) {
             // Use debug level to avoid log spam for repeated failures
@@ -1449,7 +1611,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(`memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`);
 
             // Track this recall
-            authFailureRecallsThisSession.set(detection.target, recallCount + 1);
+            authFailureRecallsThisSession.set(recallKey, recallCount + 1);
 
             // Return the hint to be injected
             // Hook contract validation: OpenClaw's before_agent_start hook must support
@@ -1523,11 +1685,23 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
+    if (ctx.cfg.ambient.enabled) {
+      api.on("agent_end", async (event: unknown) => {
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        ambientSeenFactsMap.delete(sessionKey);
+        ambientLastEmbeddingMap.delete(sessionKey);
+      });
+    }
+
     // Clear auth failure dedup map on session end
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
-      api.on("agent_end", async () => {
-        authFailureRecallsThisSession.clear();
-        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for new session");
+      api.on("agent_end", async (event: unknown) => {
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        const prefix = `${sessionKey}:`;
+        for (const key of authFailureRecallsThisSession.keys()) {
+          if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
+        }
+        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for ended session");
       });
     }
 
@@ -1643,6 +1817,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
                     ctx.factsDb.supersede(classification.targetId, null);
+                    ctx.aliasDb?.deleteByFactId(classification.targetId);
                     api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                     continue;
                   }
@@ -1675,9 +1850,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                         supersedesId: classification.targetId,
                       });
                       ctx.factsDb.supersede(classification.targetId, newEntry.id);
+                      ctx.aliasDb?.deleteByFactId(classification.targetId);
                       try {
-                        if (vector && !(await ctx.vectorDb.hasDuplicate(vector))) {
-                          await ctx.vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                        if (vector) {
+                          ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
+                          if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                            await ctx.vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                          }
                         }
                       } catch (err) {
                         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1727,8 +1906,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             });
 
             try {
-              if (vector && !(await ctx.vectorDb.hasDuplicate(vector))) {
-                await ctx.vectorDb.store({ text: textToStore, vector, importance: CLI_STORE_IMPORTANCE, category, id: storedEntry.id });
+              if (vector) {
+                ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
+                if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                  await ctx.vectorDb.store({ text: textToStore, vector, importance: CLI_STORE_IMPORTANCE, category, id: storedEntry.id });
+                }
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1875,6 +2057,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   });
                   try {
                     const vector = await ctx.embeddings.embed(text);
+                    ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
                     if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                       await ctx.vectorDb.store({
                         text,

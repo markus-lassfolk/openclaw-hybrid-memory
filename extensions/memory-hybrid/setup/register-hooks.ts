@@ -10,7 +10,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
@@ -22,14 +22,15 @@ import type { PendingLLMWarnings } from "../services/chat.js";
 export interface HooksContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
+  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
-  restartPendingCleared: boolean;
+  restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
   walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) => string;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
@@ -59,10 +60,11 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       openai: ctx.openai,
       cfg: ctx.cfg,
       credentialsDb: ctx.credentialsDb,
+      aliasDb: ctx.aliasDb,
       wal: ctx.wal,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
-      restartPendingCleared: ctx.restartPendingCleared,
+      restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       walWrite: ctx.walWrite,
       walRemove: ctx.walRemove,

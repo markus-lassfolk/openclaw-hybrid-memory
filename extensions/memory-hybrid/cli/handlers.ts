@@ -20,7 +20,7 @@ import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } f
 import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
@@ -86,7 +86,7 @@ import {
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
   // Daily 02:30 | self-correction-analysis | self-correction-run
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
@@ -101,6 +101,9 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  // Daily 02:45 | nightly-dream-cycle | dream-cycle (prune → consolidate → reflect)
+  // Default schedule; overridden by cfg.nightlyCycle.schedule during install/verify/upgrade.
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true },
 ];
 
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier). */
@@ -120,6 +123,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) => /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"]: (j) => /nightly-dream-cycle|dream.cycle/i.test(String(j.name ?? "")),
 };
 
 /**
@@ -150,7 +154,7 @@ function ensureMaintenanceCronJobs(
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
-  let store: { jobs?: unknown[] } = existsSync(cronStorePath) ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] }) : {};
+  const store: { jobs?: unknown[] } = existsSync(cronStorePath) ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] }) : {};
   if (!Array.isArray(store.jobs)) store.jobs = [];
   const jobsArr = store.jobs as Array<Record<string, unknown>>;
   let jobsChanged = false;
@@ -250,10 +254,11 @@ function relativeTime(ms: number): string {
 export interface HandlerContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  embeddings: Embeddings;
+  embeddings: EmbeddingProvider;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
+  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   resolvedSqlitePath: string;
@@ -293,7 +298,7 @@ export async function runStoreForCli(
   opts: StoreCliOpts,
   log: { warn: (m: string) => void },
 ): Promise<StoreCliResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
   if (factsDb.hasDuplicate(text)) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
@@ -342,6 +347,7 @@ export async function runStoreForCli(
         });
         try {
           const vector = await embeddings.embed(pointerText);
+          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
           if (!(await vectorDb.hasDuplicate(vector))) {
             await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
           }
@@ -395,6 +401,7 @@ export async function runStoreForCli(
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
             factsDb.supersede(classification.targetId, null);
+            aliasDb?.deleteByFactId(classification.targetId);
             return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
           }
           if (classification.action === "UPDATE" && classification.targetId) {
@@ -417,7 +424,9 @@ export async function runStoreForCli(
                 scopeTarget,
               });
               factsDb.supersede(classification.targetId, newEntry.id);
+              aliasDb?.deleteByFactId(classification.targetId);
               try {
+                factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
                 }
@@ -454,9 +463,13 @@ export async function runStoreForCli(
       scopeTarget,
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
-    if (supersedesId) factsDb.supersede(supersedesId, entry.id);
+    if (supersedesId) {
+      factsDb.supersede(supersedesId, entry.id);
+      aliasDb?.deleteByFactId(supersedesId);
+    }
     try {
       const vector = await embeddings.embed(text);
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       if (!(await vectorDb.hasDuplicate(vector))) {
         await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: opts.category ?? "other", id: entry.id });
       }
@@ -600,10 +613,15 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       const memToSkills = pluginCfg?.memoryToSkills as Record<string, unknown> | undefined;
       const schedule = typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0 ? (memToSkills.schedule as string).trim() : undefined;
       const notify = memToSkills?.notify !== false;
+      const dreamCycleRaw = pluginCfg?.nightlyCycle as Record<string, unknown> | undefined;
+      const dreamCycleSchedule = typeof dreamCycleRaw?.schedule === "string" && (dreamCycleRaw.schedule as string).trim().length > 0 ? (dreamCycleRaw.schedule as string).trim() : undefined;
+      const installScheduleOverrides: Record<string, string> = {};
+      if (schedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = schedule;
+      if (dreamCycleSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = dreamCycleSchedule;
       ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
-        scheduleOverrides: schedule ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: schedule } : undefined,
+        scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
         messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(notify) },
       });
     } catch (err) {
@@ -644,7 +662,7 @@ export async function runVerifyForCli(
 
   log("\n───── Infrastructure ─────");
 
-  if (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10) {
+  if (cfg.embedding.provider === "openai" && (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10)) {
     issues.push("embedding.apiKey is missing, placeholder, or too short");
     loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
     fixes.push(`LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`);
@@ -658,8 +676,14 @@ export async function runVerifyForCli(
   }
   const openclawDir = join(homedir(), ".openclaw");
   const defaultConfigPath = join(openclawDir, "openclaw.json");
-  if (configOk) log(`${OK} Config: embedding.apiKey and model present`);
-  else log(`${FAIL} Config: issues found`);
+  if (configOk) {
+    const msg = cfg.embedding.provider === "openai"
+      ? "Config: embedding.apiKey and model present"
+      : "Config: embedding.model present";
+    log(`${OK} ${msg}`);
+  } else {
+    log(`${FAIL} Config: issues found`);
+  }
 
   // Check for unsupported agents.defaults.pruning config (#105)
   try {
@@ -731,7 +755,13 @@ export async function runVerifyForCli(
     log(`${OK} Embedding API: OK`);
   } catch (e) {
     issues.push(`Embedding API: ${String(e)}`);
-    fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
+    if (cfg.embedding.provider === "openai") {
+      fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
+    } else if (cfg.embedding.provider === "ollama") {
+      fixes.push(`Embedding API: Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and the model "${cfg.embedding.model}" is available. Run 'ollama pull ${cfg.embedding.model}' if needed.`);
+    } else {
+      fixes.push(`Embedding API: Check your ${cfg.embedding.provider} provider configuration and ensure the model "${cfg.embedding.model}" is accessible.`);
+    }
     log(`${FAIL} Embedding API: FAIL — ${String(e)}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }
@@ -1269,14 +1299,17 @@ export async function runVerifyForCli(
         const cronStorePath = join(cronDir, "jobs.json");
 
         try {
-          const scheduleOverrides =
-            typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0
-              ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: cfg.memoryToSkills.schedule }
-              : undefined;
+          const scheduleOverrides: Record<string, string> = {};
+          if (typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0) {
+            scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = cfg.memoryToSkills.schedule;
+          }
+          if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
+            scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
+          }
           const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(cfg), {
             normalizeExisting: true,
             reEnableDisabled: false,
-            scheduleOverrides,
+            scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
             messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
@@ -1802,7 +1835,7 @@ export async function runExtractDailyForCli(
   opts: { days: number; dryRun: boolean; verbose?: boolean },
   sink: ExtractDailySink,
 ): Promise<ExtractDailyResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const memoryDir = join(homedir(), ".openclaw", "memory");
   const daysBack = opts.days;
   let totalExtracted = 0;
@@ -1857,6 +1890,7 @@ export async function runExtractDailyForCli(
                 });
                 try {
                   const vector = await embeddings.embed(pointerText);
+                  factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(vector))) {
                     await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
                   }
@@ -1929,6 +1963,7 @@ export async function runExtractDailyForCli(
               if (classification.action === "NOOP") continue;
               if (classification.action === "DELETE" && classification.targetId) {
                 factsDb.supersede(classification.targetId, null);
+                aliasDb?.deleteByFactId(classification.targetId);
                 continue;
               }
               if (classification.action === "UPDATE" && classification.targetId) {
@@ -1943,7 +1978,9 @@ export async function runExtractDailyForCli(
                     supersedesId: classification.targetId,
                   });
                   factsDb.supersede(classification.targetId, newEntry.id);
+                  aliasDb?.deleteByFactId(classification.targetId);
                   try {
+                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                     if (!(await vectorDb.hasDuplicate(vecForStore))) {
                       await vectorDb.store({ text: trimmed, vector: vecForStore, importance: BATCH_STORE_IMPORTANCE, category, id: newEntry.id });
                     }
@@ -1965,6 +2002,7 @@ export async function runExtractDailyForCli(
       const entry = factsDb.store(storePayload);
       try {
         const vector = vecForStore ?? await embeddings.embed(trimmed);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({ text: trimmed, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
         }
@@ -2173,6 +2211,7 @@ export async function runBackfillForCli(
       });
       try {
         const vector = await embeddings.embed(fact.text);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({
             text: fact.text,
@@ -2403,6 +2442,7 @@ export async function runIngestFilesForCli(
           category: fact.category,
           id: entry.id,
         });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         sink.warn(`memory-hybrid: ingest-files vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
         capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:vector-store" });
@@ -2566,6 +2606,7 @@ export async function runDistillForCli(
             });
             try {
               const vector = await embeddings.embed(pointerText);
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
                 await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
               }
@@ -2613,6 +2654,7 @@ export async function runDistillForCli(
       });
       try {
         await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         sink.warn(`memory-hybrid: distill vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
         capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:vector-store" });
@@ -2637,7 +2679,7 @@ export async function runDistillForCli(
  * Migrate credentials to vault
  */
 export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<MigrateToVaultResult | null> {
-  const { factsDb, vectorDb, embeddings, credentialsDb, resolvedSqlitePath } = ctx;
+  const { factsDb, vectorDb, embeddings, credentialsDb, aliasDb, resolvedSqlitePath } = ctx;
   if (!credentialsDb) return null;
   const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
   try {
@@ -2646,6 +2688,7 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
       vectorDb,
       embeddings,
       credentialsDb,
+      aliasDb,
       migrationFlagPath,
       markDone: true,
     });
@@ -2945,7 +2988,10 @@ export async function runSelfCorrectionRunForCli(
           source: "self-correction",
           tags: Array.isArray(obj.tags) ? obj.tags : [],
         });
-        if (vector) await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+        if (vector) {
+          await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+        }
         autoFixed++;
       } catch (err) {
         logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
@@ -3083,14 +3129,17 @@ export async function runUpgradeForCli(
   try {
     const openclawDir = join(homedir(), ".openclaw");
     const pluginConfig = getCronModelConfig(cfg);
-    const scheduleOverrides =
-      typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0
-        ? { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: cfg.memoryToSkills.schedule }
-        : undefined;
+    const scheduleOverrides: Record<string, string> = {};
+    if (typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0) {
+      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = cfg.memoryToSkills.schedule;
+    }
+    if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
+      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
+    }
     const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
       normalizeExisting: true,
       reEnableDisabled: false,
-      scheduleOverrides,
+      scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
       messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
     });
     if (added.length > 0 || normalized.length > 0) {

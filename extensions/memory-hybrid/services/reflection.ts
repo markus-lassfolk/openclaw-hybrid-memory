@@ -9,7 +9,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { Embeddings } from "./embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
@@ -72,9 +72,14 @@ export function normalizeVector(v: number[]): number[] {
 }
 
 /**
- * Compute cosine similarity between two vectors.
+ * Compute dot product between two PRE-NORMALIZED vectors.
+ * This is an optimized version that assumes both vectors are already unit-length.
+ * Returns the dot product, which equals cosine similarity for normalized vectors.
+ * 
+ * IMPORTANT: Use this ONLY when vectors are normalized via normalizeVector() first.
+ * For arbitrary (non-normalized) vectors, use cosineSimilarity from ambient-retrieval.ts instead.
  */
-export function cosineSimilarity(a: number[], b: number[]): number {
+export function dotProductSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   return a.reduce((s, x, i) => s + x * b[i], 0);
 }
@@ -109,7 +114,7 @@ export function parsePatternsFromReflectionResponse(rawResponse: string): string
 export async function runReflection(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   config: ReflectionConfig,
   opts: ReflectionOptions,
@@ -190,7 +195,7 @@ export async function runReflection(
   const existingPatternFacts = factsDb.getByCategory("pattern").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  let existingVectors: (number[] | null)[] = [];
+  const existingVectors: (number[] | null)[] = [];
   if (existingPatternFacts.length > 0) {
     for (let i = 0; i < existingPatternFacts.length; i += 20) {
       const batch = existingPatternFacts.slice(i, i + 20);
@@ -228,7 +233,7 @@ export async function runReflection(
     let isDuplicate = false;
     for (const ev of existingVectors) {
       if (ev === null || ev.length === 0) continue;
-      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
       }
@@ -269,6 +274,7 @@ export async function runReflection(
         category: "pattern",
         id: entry.id,
       });
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -295,7 +301,7 @@ export async function runReflection(
 export async function runReflectionRules(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -361,7 +367,7 @@ export async function runReflectionRules(
   const existingRuleFacts = factsDb.getByCategory("rule").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
   );
-  let existingVectors: (number[] | null)[] = [];
+  const existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingRuleFacts.length; i += 20) {
     const batch = existingRuleFacts.slice(i, i + 20);
     for (const f of batch) {
@@ -395,7 +401,7 @@ export async function runReflectionRules(
     let isDuplicate = false;
     for (const ev of existingVectors) {
       if (ev === null || ev.length === 0) continue;
-      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
       }
@@ -428,6 +434,7 @@ export async function runReflectionRules(
     }
     try {
       await vectorDb.store({ text: ruleText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "rule", id: entry.id });
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -448,7 +455,7 @@ export async function runReflectionRules(
 export async function runReflectionMeta(
   factsDb: FactsDB,
   vectorDb: VectorDB,
-  embeddings: Embeddings,
+  embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -514,7 +521,7 @@ export async function runReflectionMeta(
   const existingMetaFacts = factsDb.getByCategory("pattern").filter(
     (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && (f.tags?.includes("meta") === true),
   );
-  let existingVectors: (number[] | null)[] = [];
+  const existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingMetaFacts.length; i += 20) {
     const batch = existingMetaFacts.slice(i, i + 20);
     for (const f of batch) {
@@ -548,7 +555,7 @@ export async function runReflectionMeta(
     let isDuplicate = false;
     for (const ev of existingVectors) {
       if (ev === null || ev.length === 0) continue;
-      if (cosineSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
         isDuplicate = true;
         break;
       }
@@ -581,6 +588,7 @@ export async function runReflectionMeta(
     }
     try {
       await vectorDb.store({ text: metaText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "pattern", id: entry.id });
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

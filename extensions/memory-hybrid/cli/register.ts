@@ -6,6 +6,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
@@ -76,6 +77,7 @@ export type { ActiveTaskContext };
 export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  aliasDb?: AliasDB | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
   embeddings: EmbeddingProvider;
   mergeResults: typeof mergeResults;
@@ -125,6 +127,11 @@ export type HybridMemCliContext = {
   runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
   runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ metaExtracted: number; metaStored: number }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
+  runDreamCycle: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runResolveContradictions: () => Promise<{
+    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  }>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
