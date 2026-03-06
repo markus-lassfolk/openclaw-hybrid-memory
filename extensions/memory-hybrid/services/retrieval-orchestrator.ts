@@ -241,7 +241,7 @@ function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactL
   );
 }
 
-type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number };
+type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number; minClusterSize: number | undefined };
 
 class ClusterCache {
   private clusterCache: ClusterCacheEntry | null = null;
@@ -259,7 +259,8 @@ class ClusterCache {
     const now = Date.now();
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
     if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
-      if (linkCount == null || linkCount === this.clusterCacheLinkCount) {
+      if ((linkCount == null || linkCount === this.clusterCacheLinkCount) && 
+          this.clusterCache.minClusterSize === minClusterSize) {
         return this.clusterCache.clusters;
       }
     }
@@ -272,7 +273,7 @@ class ClusterCache {
       }
     }
 
-    this.clusterCache = { clusters: clusterByFact, timestamp: now };
+    this.clusterCache = { clusters: clusterByFact, timestamp: now, minClusterSize };
     this.clusterCacheLinkCount = linkCount;
     return clusterByFact;
   }
