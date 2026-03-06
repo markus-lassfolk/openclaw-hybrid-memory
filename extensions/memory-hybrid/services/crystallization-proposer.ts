@@ -106,14 +106,22 @@ export class CrystallizationProposer {
         const patternSnapshot = JSON.stringify(candidate.pattern);
 
         if (this.cfg.autoApprove) {
-          // Write immediately and record as approved
-          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
+          // Re-check cap before approving each skill
+          const currentApprovedCount = this.crystallizationStore.count("approved");
+          if (currentApprovedCount >= this.cfg.maxCrystallized) {
+            skipped++;
+            reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
+            continue;
+          }
+
+          // Create proposal first, then write to disk, then approve
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
           });
+          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
           this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
           proposed++;
         } else {
