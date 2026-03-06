@@ -124,6 +124,25 @@ const DENY_RULES: DenyRule[] = [
     pattern: /import\s+.*from\s+['"]child_process['"]/i,
     description: "import from 'child_process' in code block",
   },
+  // High-signal rules that apply everywhere (reduce bypass via unfenced instructions)
+  {
+    name: "plain-curl",
+    codeBlockOnly: false,
+    pattern: /\bcurl\s+.+https?:\/\//i,
+    description: "curl to URL in document",
+  },
+  {
+    name: "plain-ssh-user-host",
+    codeBlockOnly: false,
+    pattern: /\bssh\s+(-\w+\s+)*\S+@\S+/i,
+    description: "SSH user@host in document",
+  },
+  {
+    name: "plain-export-secret",
+    codeBlockOnly: false,
+    pattern: /\b(export\s+)?[A-Z_]*(?:API_KEY|SECRET|PASSWORD|TOKEN|PRIVATE_KEY)\s*=/i,
+    description: "Credential env assignment in document",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -146,9 +165,8 @@ export class SkillValidator {
       lineNumber++;
       const trimmed = line.trim();
 
-      // Track code block boundaries
-      const codeBlockFence = trimmed.match(/^```(\w*)/);
-      if (codeBlockFence) {
+      // Track code block boundaries (any triple backtick, optional language tag)
+      if (/^```[\s\w-]*$/.test(trimmed)) {
         inCodeBlock = !inCodeBlock;
         continue;
       }
@@ -163,11 +181,17 @@ export class SkillValidator {
         }
       }
 
-      // Additional check: detect shell command substitution syntax
-      if (inCodeBlock && /\$\([^)]+\)/.test(line)) {
-        violations.push(
-          `Line ${lineNumber}: [shell-subst] Command substitution in code block — "${trimmed.slice(0, 80)}"`,
-        );
+      // Additional check: shell command substitution in code blocks ($(...) or `...`)
+      if (inCodeBlock) {
+        if (/\$\([^)]+\)/.test(line)) {
+          violations.push(
+            `Line ${lineNumber}: [shell-subst] Command substitution $(...) in code block — "${trimmed.slice(0, 80)}"`,
+          );
+        } else if (/`[^`]+`/.test(line)) {
+          violations.push(
+            `Line ${lineNumber}: [shell-subst] Backtick command substitution in code block — "${trimmed.slice(0, 80)}"`,
+          );
+        }
       }
     }
 
