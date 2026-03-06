@@ -22,7 +22,7 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
-import type { RetrievalConfig, ClustersConfig, QueryExpansionConfig } from "../config.js";
+import type { RetrievalConfig, ClustersConfig } from "../config.js";
 import type { QueryExpander } from "./query-expander.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
@@ -467,7 +467,7 @@ export async function runRetrievalPipeline(
 
   // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
   // Only runs when semantic strategy is active, expander is provided, and embedFn is available.
-  if (strategies.includes("semantic") && queryExpander && embedFn) {
+  if (strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
     try {
       const variants = await queryExpander.expandQuery(query, queryExpansionContext);
       // variants[0] is always the original query (already handled above); expand from index 1.
