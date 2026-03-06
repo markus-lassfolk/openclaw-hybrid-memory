@@ -221,13 +221,14 @@ export function expandGraph(
 
   // Build expanded results (non-seed nodes only).
   const expandedResults: GraphExpandedResult[] = [];
+  const maxSeedScore = Math.max(...seedResults.map((s) => s.score), 0.5);
   for (const [factId, meta] of nodeMeta) {
     if (meta.hopCount === 0) continue; // already in directResults
 
     const entry = factsDb.getById(factId, getByIdOpts);
     if (!entry) continue;
 
-    const seedScore = seedScoreMap.get(meta.seedId) ?? Math.max(...seedResults.map((s) => s.score), 0.5);
+    const seedScore = seedScoreMap.get(meta.seedId) ?? maxSeedScore;
     const decay = HOP_SCORE_DECAY[meta.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
     const score = seedScore * decay;
 
@@ -269,4 +270,3 @@ export function formatLinkPath(linkPath: LinkPathStep[]): string {
     .map((step) => `via ${step.linkType} from ${step.fromFactId.slice(0, 8)}\u2026`)
     .join(" \u2192 ");
 }
-

@@ -216,6 +216,9 @@ export function detectClusters(
   options: ClusterDetectionOptions = {},
 ): ClusterDetectionResult {
   const { minClusterSize = 3, existingClusterIds } = options;
+  const minSize = Number.isFinite(minClusterSize)
+    ? Math.max(1, Math.floor(minClusterSize))
+    : 3;
 
   const linkedFactIds = factsDb.getAllLinkedFactIds();
   const totalLinkedFacts = linkedFactIds.length;
@@ -243,7 +246,7 @@ export function detectClusters(
   const clusters: TopicCluster[] = [];
 
   for (const component of components) {
-    if (component.length < minClusterSize) {
+    if (component.length < minSize) {
       isolatedFacts += component.length;
       continue;
     }

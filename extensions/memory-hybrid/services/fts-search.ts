@@ -63,21 +63,28 @@ export function buildFts5Query(raw: string): string | null {
 
   // If the user has explicitly used FTS5 operators, attempt to pass through
   // with only dangerous characters stripped.
-  const hasOperators = /\b(AND|OR|NOT)\b/.test(trimmed) || trimmed.includes("*");
+  const operatorTokens = trimmed.split(/\s+/);
+  const hasOperators = operatorTokens.some((t) => /^(AND|OR|NOT)$/i.test(t))
+    || operatorTokens.some((t) => /^[a-zA-Z0-9_]+\*$/.test(t));
   if (hasOperators) {
-    // Light sanitise: remove quotes, parens, semicolons, and SQL comment markers.
-    const sanitized = trimmed
-      .replace(/['"]/g, "")
-      .replace(/[();]/g, "")
-      .replace(/--/g, "")
-      .trim();
+    const sanitizedTokens: string[] = [];
+    for (const token of operatorTokens) {
+      if (/^(AND|OR|NOT)$/i.test(token)) {
+        sanitizedTokens.push(token.toUpperCase());
+        continue;
+      }
+      if (/^[a-zA-Z0-9_]+\*$/.test(token)) {
+        sanitizedTokens.push(token);
+        continue;
+      }
+      if (/^[a-zA-Z0-9_]+$/.test(token)) {
+        sanitizedTokens.push(`"${token}"`);
+      }
+    }
 
-    // Verify there is at least one real token beyond operators/wildcards.
-    // If only operators remain (e.g. "* AND OR NOT"), fall through to keyword mode.
-    const realTokens = sanitized
-      .split(/\s+/)
-      .filter((t) => t && !/^(AND|OR|NOT|\*)$/.test(t));
-    if (realTokens.length > 0) return sanitized;
+    // Verify there is at least one real term beyond operators.
+    const realTokens = sanitizedTokens.filter((t) => !/^(AND|OR|NOT)$/.test(t));
+    if (realTokens.length > 0) return sanitizedTokens.join(" ");
     // Fall through to keyword OR mode with the original sanitised value.
   }
 
@@ -143,10 +150,11 @@ export function searchFts(
   const ftsQuery = buildFts5Query(query);
   if (!ftsQuery) return [];
 
+  const validColumns = columns?.filter((c) => FTS_COLUMNS.includes(c)) ?? [];
   // Prefix query with column filter if requested.
   const matchExpr =
-    columns && columns.length > 0
-      ? `{ ${columns.join(" ")} } : ( ${ftsQuery} )`
+    validColumns.length > 0
+      ? `{ ${validColumns.join(" ")} } : ( ${ftsQuery} )`
       : ftsQuery;
 
   // Build WHERE clauses for structured filters.
@@ -168,30 +176,7 @@ export function searchFts(
     params.tagPattern = `%,${tagFilter.toLowerCase().trim()},%`;
   }
 
-  const rows = db
-    .prepare(
-      `SELECT
-         f.id             AS factId,
-         f.text,
-         f.entity,
-         fts.rank,
-         snippet(facts_fts, 0, '[', ']', '...', 16) AS snippet,
-         (
-           CASE WHEN bm25(facts_fts, 1, 0, 0, 0, 0, 0) < 0 THEN 'text ' ELSE '' END ||
-           CASE WHEN bm25(facts_fts, 0, 1, 0, 0, 0, 0) < 0 THEN 'category ' ELSE '' END ||
-           CASE WHEN bm25(facts_fts, 0, 0, 1, 0, 0, 0) < 0 THEN 'entity ' ELSE '' END ||
-           CASE WHEN bm25(facts_fts, 0, 0, 0, 1, 0, 0) < 0 THEN 'tags ' ELSE '' END ||
-           CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 1, 0) < 0 THEN 'key ' ELSE '' END ||
-           CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
-         ) AS matchInfo
-       FROM facts_fts fts
-       JOIN facts f ON f.rowid = fts.rowid
-       WHERE facts_fts MATCH @query
-         ${extraClauses.join(" ")}
-       ORDER BY fts.rank
-       LIMIT @limit`,
-    )
-    .all(params) as Array<{
+  let rows: Array<{
     factId: string;
     text: string;
     entity: string | null;
@@ -199,6 +184,35 @@ export function searchFts(
     snippet: string | null;
     matchInfo: string | null;
   }>;
+  try {
+    rows = db
+      .prepare(
+        `SELECT
+           f.id             AS factId,
+           f.text,
+           f.entity,
+           fts.rank,
+           snippet(facts_fts, 0, '[', ']', '...', 16) AS snippet,
+           (
+             CASE WHEN bm25(facts_fts, 1, 0, 0, 0, 0, 0) < 0 THEN 'text ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 1, 0, 0, 0, 0) < 0 THEN 'category ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 1, 0, 0, 0) < 0 THEN 'entity ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 1, 0, 0) < 0 THEN 'tags ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 1, 0) < 0 THEN 'key ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
+           ) AS matchInfo
+         FROM facts_fts fts
+         JOIN facts f ON f.rowid = fts.rowid
+         WHERE facts_fts MATCH @query
+           ${extraClauses.join(" ")}
+         ORDER BY fts.rank
+         LIMIT @limit`,
+      )
+      .all(params) as typeof rows;
+  } catch (err) {
+    console.warn("memory-hybrid: FTS query failed");
+    return [];
+  }
 
   return rows.map((r) => ({
     factId: r.factId,

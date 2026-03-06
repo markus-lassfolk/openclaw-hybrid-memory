@@ -30,7 +30,7 @@ export interface HooksContext {
   wal: WriteAheadLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
-  restartPendingCleared: boolean;
+  restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
   walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) => string;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
@@ -64,7 +64,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       wal: ctx.wal,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
-      restartPendingCleared: ctx.restartPendingCleared,
+      restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       walWrite: ctx.walWrite,
       walRemove: ctx.walRemove,

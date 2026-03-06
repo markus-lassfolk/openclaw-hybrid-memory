@@ -14,7 +14,6 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
-import { cosineSimilarity } from "./ambient-retrieval.js";
 
 // ---------------------------------------------------------------------------
 // AliasDB
@@ -63,7 +62,8 @@ export class AliasDB {
   /** Store a single alias with its embedding. Returns the generated row id. */
   store(factId: string, aliasText: string, embedding: number[]): string {
     const id = randomUUID();
-    const blob = Buffer.from(new Float32Array(embedding).buffer);
+    const floatArray = Float32Array.from(embedding);
+    const blob = Buffer.from(floatArray.buffer.slice(0));
     this.db
       .prepare(
         `INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`,
@@ -106,24 +106,36 @@ export class AliasDB {
     limit: number,
     minScore: number,
   ): AliasSearchResult[] {
-    const rows = this.db
-      .prepare(`SELECT factId, embedding FROM fact_aliases`)
-      .all() as Array<{ factId: string; embedding: Buffer }>;
-
     // Track best score per factId to deduplicate across aliases for the same fact
     const bestByFact = new Map<string, number>();
-    for (const row of rows) {
+    const queryNormSq = queryVector.reduce((sum, v) => sum + v * v, 0);
+    if (queryNormSq === 0) return [];
+
+    const stmt = this.db.prepare(`SELECT factId, embedding FROM fact_aliases`);
+    for (const row of stmt.iterate() as Iterable<{ factId: string; embedding: Buffer }>) {
+      if (row.embedding.byteLength % 4 !== 0) continue;
       const floats = new Float32Array(
-        row.embedding.buffer,
-        row.embedding.byteOffset,
-        row.embedding.byteLength / 4,
+        row.embedding.buffer.slice(
+          row.embedding.byteOffset,
+          row.embedding.byteOffset + row.embedding.byteLength,
+        ),
       );
-      const score = cosineSimilarity(queryVector, Array.from(floats));
-      if (score >= minScore) {
-        const existing = bestByFact.get(row.factId);
-        if (existing === undefined || score > existing) {
-          bestByFact.set(row.factId, score);
-        }
+      if (floats.length !== queryVector.length) continue;
+      let dot = 0;
+      let floatsNormSq = 0;
+      for (let i = 0; i < floats.length; i++) {
+        const f = floats[i]!;
+        const q = queryVector[i]!;
+        dot += q * f;
+        floatsNormSq += f * f;
+      }
+      const denom = Math.sqrt(queryNormSq) * Math.sqrt(floatsNormSq);
+      if (denom === 0) continue;
+      const score = dot / denom;
+      if (score < minScore) continue;
+      const existing = bestByFact.get(row.factId);
+      if (existing === undefined || score > existing) {
+        bestByFact.set(row.factId, score);
       }
     }
 

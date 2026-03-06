@@ -301,7 +301,7 @@ export class EventLog {
 
   /** True if the database connection is still open. */
   isOpen(): boolean {
-    return !this.closed;
+    return !this.closed && this.db.open;
   }
 
   close(): void {

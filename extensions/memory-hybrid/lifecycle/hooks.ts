@@ -68,7 +68,7 @@ export interface LifecycleContext {
   wal: WriteAheadLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
-  restartPendingCleared: boolean;
+  restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
   walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) => string;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
@@ -350,7 +350,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   // Note: currentAgentIdRef is already a mutable ref object from index.ts
   const currentAgentIdRef = ctx.currentAgentIdRef;
   let lastProgressiveIndexIds = ctx.lastProgressiveIndexIds;
-  let restartPendingCleared = ctx.restartPendingCleared;
+  const restartPendingClearedRef = ctx.restartPendingClearedRef;
 
   // Track auth failures per target per session to avoid spam
   const authFailureRecallsThisSession = new Map<string, number>();
@@ -387,8 +387,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       // close the shared singleton while this session is still active (fixes issue #106).
       ctx.vectorDb.open();
 
-      if (!restartPendingCleared && existsSync(getRestartPendingPath())) {
-        restartPendingCleared = true; // Set flag before unlink to prevent race
+      if (!restartPendingClearedRef.value && existsSync(getRestartPendingPath())) {
+        restartPendingClearedRef.value = true; // Set flag before unlink to prevent race
         try {
           unlinkSync(getRestartPendingPath());
         } catch (err: unknown) {
@@ -1653,6 +1653,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("agent_end", async (event: unknown) => {
         const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
         sessionStartSeen.delete(sessionKey);
+      });
+    }
+
+    if (ctx.cfg.ambient.enabled) {
+      api.on("agent_end", async (event: unknown) => {
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        ambientSeenFactsMap.delete(sessionKey);
+        ambientLastEmbeddingMap.delete(sessionKey);
       });
     }
 

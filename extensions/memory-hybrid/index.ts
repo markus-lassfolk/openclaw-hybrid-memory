@@ -263,7 +263,7 @@ const lastProgressiveIndexIds: string[] = [];
 // and tools will see the updated value (fixes pass-by-value bug from refactor).
 const currentAgentIdRef: { value: string | null } = { value: null };
 
-const restartPendingCleared = false;
+const restartPendingClearedRef: { value: boolean } = { value: false };
 
 const memoryHybridPlugin = {
   id: PLUGIN_ID,
@@ -387,7 +387,7 @@ const memoryHybridPlugin = {
       wal,
       currentAgentIdRef,
       lastProgressiveIndexIds,
-      restartPendingCleared,
+      restartPendingClearedRef,
       resolvedSqlitePath,
       walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
       walRemove: (id, logger) => walRemove(wal, id, logger),

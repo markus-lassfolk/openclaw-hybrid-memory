@@ -152,9 +152,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   // All other OpenAI methods (embeddings, etc.) are NOT proxied — embeddings use a separate client.
   // The proxy base is only accessed for non-chat methods (not used by this plugin directly).
   // Only create it with a real key when one is available; otherwise omit to avoid "unused" placeholder.
-  const proxyBase = cfg.embedding.apiKey
-    ? new OpenAI({ apiKey: cfg.embedding.apiKey })
-    : new OpenAI({ apiKey: gatewayToken ?? "no-direct-openai-key" });
+  const proxyBaseKey = cfg.embedding.apiKey ?? gatewayToken ?? "";
+  const proxyBase: OpenAI = proxyBaseKey ? new OpenAI({ apiKey: proxyBaseKey }) : ({} as OpenAI);
   return new Proxy(proxyBase, {
     get(target, prop, receiver) {
       if (prop === "chat") {

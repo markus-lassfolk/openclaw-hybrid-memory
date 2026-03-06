@@ -77,11 +77,17 @@ export function fuseResults(
   strategyResults: Map<string, RankedResult[]>,
   k: number = RRF_K_DEFAULT,
 ): FusedResult[] {
+  if (!Number.isFinite(k) || k <= 0) {
+    throw new Error(`RRF k must be a positive finite number (got ${k})`);
+  }
   // factId -> { rrfScore, sources }
   const accumulator = new Map<string, { rrfScore: number; sources: Array<{ strategy: string; rank: number }> }>();
 
   for (const [strategy, results] of strategyResults) {
     for (const result of results) {
+      if (!Number.isFinite(result.rank) || result.rank < 1) {
+        continue;
+      }
       const existing = accumulator.get(result.factId);
       const contribution = 1 / (k + result.rank);
       if (existing) {
@@ -143,7 +149,8 @@ export function applyPostRrfAdjustments(
     let score = result.rrfScore;
 
     // Recency adjustment
-    const lastAccessedSec = fact?.lastAccessed ?? null;
+    const lastAccessedRaw = fact?.lastAccessed;
+    const lastAccessedSec = Number.isFinite(lastAccessedRaw ?? NaN) ? (lastAccessedRaw as number) : null;
     const daysSince =
       lastAccessedSec != null
         ? Math.max(0, (nowSec - lastAccessedSec) / SECONDS_PER_DAY)
@@ -151,11 +158,13 @@ export function applyPostRrfAdjustments(
     score *= 1 + Math.log(daysSince + 1) * -0.01;
 
     // Confidence adjustment
-    const confidence = fact?.confidence ?? 1.0;
+    const confidenceRaw = fact?.confidence;
+    const confidence = Number.isFinite(confidenceRaw ?? NaN) ? (confidenceRaw as number) : 1.0;
     score *= Math.max(0, Math.min(1, confidence));
 
     // Access frequency adjustment
-    const recallCount = fact?.recallCount ?? 0;
+    const rawRecall = fact?.recallCount;
+    const recallCount = Number.isFinite(rawRecall ?? NaN) ? Math.max(0, rawRecall as number) : 0;
     score *= 1 + Math.min(recallCount * 0.02, 0.2);
 
     result.finalScore = score;

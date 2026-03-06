@@ -340,10 +340,18 @@ describe("FallbackEmbeddingProvider", () => {
 
   it("exposes dimensions and modelName from the active provider", () => {
     const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 768 });
-    const fallback = { embed: vi.fn(), embedBatch: vi.fn(), dimensions: 1536, modelName: "text-embedding-3-small" };
+    const fallback = { embed: vi.fn(), embedBatch: vi.fn(), dimensions: 768, modelName: "text-embedding-3-small" };
     const wrapper = new FallbackEmbeddingProvider(primary, fallback as unknown as import("../services/embeddings.js").EmbeddingProvider);
     expect(wrapper.dimensions).toBe(768);
     expect(wrapper.modelName).toBe("nomic-embed-text");
+  });
+
+  it("throws when primary and fallback dimensions differ", () => {
+    const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 768 });
+    const fallback = { embed: vi.fn(), embedBatch: vi.fn(), dimensions: 1536, modelName: "text-embedding-3-small" };
+    expect(
+      () => new FallbackEmbeddingProvider(primary, fallback as unknown as import("../services/embeddings.js").EmbeddingProvider),
+    ).toThrow(/must have matching dimensions/);
   });
 });
 
