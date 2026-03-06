@@ -168,8 +168,18 @@ import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptVa
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { IssueStore } from "./backends/issue-store.js";
+import { WorkflowStore, sequenceDistance, sequenceSimilarity, extractGoalKeywords, hashToolSequence } from "./backends/workflow-store.js";
+import { WorkflowTracker, _resetRateLimitForTest } from "./services/workflow-tracker.js";
+import { CrystallizationStore } from "./backends/crystallization-store.js";
+import { PatternDetector, computePatternId, scorePattern } from "./services/pattern-detector.js";
+import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
+import { SkillValidator } from "./services/skill-validator.js";
+import { CrystallizationProposer } from "./services/crystallization-proposer.js";
 import { VerificationStore, shouldAutoClassify, VerificationError } from "./services/verification-store.js";
 import { ProvenanceService } from "./services/provenance.js";
+import { ToolProposalStore } from "./backends/tool-proposal-store.js";
+import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
+import { ToolProposer } from "./services/tool-proposer.js";
 
 // Helper Functions
 
@@ -213,6 +223,9 @@ let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
 
 let issueStore: IssueStore | null = null;
+let workflowStore: WorkflowStore | null = null;
+let crystallizationStore: import("./backends/crystallization-store.js").CrystallizationStore | null = null;
+let toolProposalStore: import("./backends/tool-proposal-store.js").ToolProposalStore | null = null;
 let provenanceService: ProvenanceService | null = null;
 let pythonBridge: PythonBridge | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
@@ -277,13 +290,16 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, provenanceService });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
 
     issueStore = null;
+    workflowStore = null;
+    crystallizationStore = null;
+    toolProposalStore = null;
     provenanceService = null;
     // pythonBridge shutdown will be added by #206
     if (pythonBridge) {
@@ -311,6 +327,9 @@ const memoryHybridPlugin = {
       eventLog = dbContext.eventLog;
       aliasDb = dbContext.aliasDb;
       issueStore = dbContext.issueStore;
+      workflowStore = dbContext.workflowStore;
+      crystallizationStore = dbContext.crystallizationStore;
+      toolProposalStore = dbContext.toolProposalStore;
       provenanceService = dbContext.provenanceService;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
@@ -345,6 +364,9 @@ const memoryHybridPlugin = {
       proposalsDb,
       eventLog,
       issueStore,
+      workflowStore,
+      crystallizationStore,
+      toolProposalStore,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -532,6 +554,30 @@ export const _testing = {
   searchAliasStrategy,
   // Issue lifecycle tracking (Issue #137)
   IssueStore,
+  // Workflow trace tracking (Issue #209)
+  WorkflowStore,
+  WorkflowTracker,
+  sequenceDistance,
+  sequenceSimilarity,
+  extractGoalKeywords,
+  hashToolSequence,
+  _resetRateLimitForTest,
+  // Workflow crystallization (Issue #208)
+  CrystallizationStore,
+  PatternDetector,
+  SkillCrystallizer,
+  SkillValidator,
+  CrystallizationProposer,
+  computePatternId,
+  scorePattern,
+  deriveSkillName,
+  isExecOnlySequence,
+  // Plugin self-extension (Issue #210)
+  ToolProposalStore,
+  GapDetector,
+  ToolProposer,
+  computeGapId,
+  deriveToolNameFromSequence,
   // Verification store for critical facts (Issue #162)
   VerificationStore,
   shouldAutoClassify,

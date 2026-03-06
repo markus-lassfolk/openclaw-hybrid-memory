@@ -19,7 +19,10 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 import { IssueStore } from "../backends/issue-store.js";
+import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProvenanceService } from "../services/provenance.js";
+import { WorkflowStore } from "../backends/workflow-store.js";
+import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -197,6 +200,9 @@ export interface DatabaseContext {
   eventLog: EventLog | null;
   aliasDb: AliasDB | null;
   issueStore: IssueStore;
+  workflowStore: WorkflowStore;
+  crystallizationStore: CrystallizationStore;
+  toolProposalStore: ToolProposalStore;
   provenanceService: ProvenanceService | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
@@ -339,6 +345,21 @@ export function initializeDatabases(
   const issueStorePath = join(dirname(resolvedSqlitePath), "issues.db");
   const issueStore = new IssueStore(issueStorePath);
   api.logger.info(`memory-hybrid: issue store initialized (${issueStorePath})`);
+
+  // Initialize WorkflowStore — always created; recording gated by cfg.workflowTracking.enabled (Issue #209)
+  const workflowStorePath = join(dirname(resolvedSqlitePath), "workflow-traces.db");
+  const workflowStore = new WorkflowStore(workflowStorePath);
+  api.logger.info(`memory-hybrid: workflow store initialized (${workflowStorePath})`);
+
+  // Initialize CrystallizationStore — always created; proposals gated by cfg.crystallization.enabled (Issue #208)
+  const crystallizationStorePath = join(dirname(resolvedSqlitePath), "crystallization-proposals.db");
+  const crystallizationStore = new CrystallizationStore(crystallizationStorePath);
+  api.logger.info(`memory-hybrid: crystallization store initialized (${crystallizationStorePath})`);
+
+  // Initialize ToolProposalStore — always created; proposals gated by cfg.selfExtension.enabled (Issue #210)
+  const toolProposalStorePath = join(dirname(resolvedSqlitePath), "tool-proposals.db");
+  const toolProposalStore = new ToolProposalStore(toolProposalStorePath);
+  api.logger.info(`memory-hybrid: tool proposal store initialized (${toolProposalStorePath})`);
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -613,6 +634,9 @@ export function initializeDatabases(
     eventLog,
     aliasDb,
     issueStore,
+    workflowStore,
+    crystallizationStore,
+    toolProposalStore,
     provenanceService,
     resolvedLancePath,
     resolvedSqlitePath,
@@ -633,9 +657,12 @@ export function closeOldDatabases(context: {
   eventLog?: EventLog | null;
   aliasDb?: AliasDB | null;
   issueStore?: IssueStore | null;
+  workflowStore?: WorkflowStore | null;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, provenanceService } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -686,6 +713,27 @@ export function closeOldDatabases(context: {
       issueStore.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "issueStore" });
+    }
+  }
+  if (workflowStore) {
+    try {
+      workflowStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "workflowStore" });
+    }
+  }
+  if (crystallizationStore) {
+    try {
+      crystallizationStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "crystallizationStore" });
+    }
+  }
+  if (toolProposalStore) {
+    try {
+      toolProposalStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "toolProposalStore" });
     }
   }
   if (provenanceService) {
