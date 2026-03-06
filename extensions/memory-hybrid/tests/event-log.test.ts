@@ -363,6 +363,18 @@ describe("EventLog.archiveOld", () => {
     expect(remaining).toHaveLength(1);
   });
 
+  it("removes unconsolidated entries when includeUnconsolidated is true", () => {
+    const old = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
+
+    log.append({ sessionId: "s", timestamp: old, eventType: "fact_learned", content: {} });
+
+    const count = log.archiveOld(5, true);
+    expect(count).toBe(1);
+
+    const remaining = log.getBySession("s");
+    expect(remaining).toHaveLength(0);
+  });
+
   it("returns 0 when nothing is old enough", () => {
     const recent = new Date().toISOString();
     log.append({ sessionId: "s", timestamp: recent, eventType: "fact_learned", content: {} });

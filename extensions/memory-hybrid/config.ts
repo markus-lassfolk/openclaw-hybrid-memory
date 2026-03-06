@@ -320,6 +320,8 @@ export type NightlyCycleConfig = {
   model?: string;
   /** Days before consolidating episodic events into facts (default: 7). */
   consolidateAfterDays: number;
+  /** Max age for unconsolidated event log entries before archiving (default: 90). */
+  maxUnconsolidatedAgeDays: number;
 };
 
 /** Multi-hook retrieval aliases (Issue #149). */
@@ -1991,6 +1993,10 @@ export const hybridConfigSchema = {
       consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
         ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
         : 7,
+      maxUnconsolidatedAgeDays:
+        typeof nightlyCycleRaw?.maxUnconsolidatedAgeDays === "number" && nightlyCycleRaw.maxUnconsolidatedAgeDays >= 1
+          ? Math.min(3650, Math.floor(nightlyCycleRaw.maxUnconsolidatedAgeDays))
+          : 90,
     };
 
     // Parse reinforcement config (Issue #147, default: enabled)

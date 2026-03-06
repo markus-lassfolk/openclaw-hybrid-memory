@@ -38,6 +38,8 @@ export interface DreamCycleConfig {
   /** Fallback models for reflection steps, in preference order. */
   fallbackModels?: string[];
   consolidateAfterDays: number;
+  /** Maximum age for unconsolidated event log entries before archiving. */
+  maxUnconsolidatedAgeDays: number;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -330,6 +332,24 @@ export async function runDreamCycle(
       logger.warn(`memory-hybrid: dream-cycle — consolidation step failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-consolidation",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  // ── Step 2b: Archive stale event log entries ─────────────────────────────
+  if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
+    try {
+      const archived = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
+      if (archived > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — archived ${archived} event log entries older than ${config.maxUnconsolidatedAgeDays} days`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — archiveOld failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-archive",
         subsystem: "event-log",
       });
     }
