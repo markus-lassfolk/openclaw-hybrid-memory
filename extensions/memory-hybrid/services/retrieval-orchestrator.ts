@@ -234,9 +234,9 @@ async function runMultiModelSemanticStrategies(
 
 /** Compute cosine similarity between two Float32Arrays. Returns [-1, 1]. */
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  const len = Math.min(a.length, b.length);
+  if (a.length === 0 || a.length !== b.length) return 0;
   let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < len; i++) {
+  for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
     normB += b[i] * b[i];

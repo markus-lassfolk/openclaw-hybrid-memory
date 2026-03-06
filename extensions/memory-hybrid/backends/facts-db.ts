@@ -460,7 +460,7 @@ export class FactsDB {
     embedding: Float32Array,
     dimensions: number,
   ): void {
-    const blob = Buffer.from(embedding.buffer);
+    const blob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
     this.liveDb
       .prepare(
         `INSERT INTO fact_embeddings (fact_id, model, variant, embedding, dimensions)
