@@ -82,15 +82,13 @@ export function deriveToolNameFromSequence(toolSequence: string[]): string {
   }
 
   // Mixed tools → combine the two most common
-  const secondDominant = sorted[1]?.[0];
-  if (secondDominant) {
-    // e.g. [memory_recall, exec, memory_recall] → memory_recall_exec_combined
-    const base = dominant.replace(/^memory_/, "");
-    const sec = secondDominant.replace(/^memory_/, "");
-    return `memory_${base}_${sec}`;
-  }
-
-  return `${dominant}_combined`;
+  const secondDominant = sorted[1][0];
+  // e.g. [memory_recall, exec, memory_recall] → memory_recall_exec
+  // e.g. [exec, grep, exec] → exec_grep
+  const base = dominant.replace(/^memory_/, "");
+  const sec = secondDominant.replace(/^memory_/, "");
+  const hasMemoryPrefix = dominant.startsWith("memory_") || secondDominant.startsWith("memory_");
+  return hasMemoryPrefix ? `memory_${base}_${sec}` : `${base}_${sec}`;
 }
 
 // ---------------------------------------------------------------------------
