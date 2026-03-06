@@ -684,7 +684,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
           if (!ambientSeenFactsMap.has(sessionScopeKey)) {
             ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
+            ambientLastEmbeddingMap.set(sessionScopeKey, null);
             pruneSessionMaps();
+          } else {
+            // LRU: move returning session to end by deleting and re-inserting
+            const seenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
+            const lastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
+            ambientSeenFactsMap.delete(sessionScopeKey);
+            ambientLastEmbeddingMap.delete(sessionScopeKey);
+            ambientSeenFactsMap.set(sessionScopeKey, seenFacts);
+            ambientLastEmbeddingMap.set(sessionScopeKey, lastEmbedding);
           }
           const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
           const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
