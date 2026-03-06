@@ -210,7 +210,7 @@ export function searchFts(
       )
       .all(params) as typeof rows;
   } catch (err) {
-    console.warn(`memory-hybrid: FTS query failed: ${err}`);
+    console.warn("memory-hybrid: FTS query failed");
     return [];
   }
 

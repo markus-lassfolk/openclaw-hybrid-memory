@@ -397,7 +397,13 @@ export async function runPassiveObserver(
       const handle = await open(filePath, 'r')
       try {
         rawBuf = Buffer.alloc(length)
-        await handle.read(rawBuf, 0, length, cursor)
+        const { bytesRead } = await handle.read(rawBuf, 0, length, cursor)
+        if (bytesRead === 0) {
+          continue
+        }
+        if (bytesRead < length) {
+          rawBuf = rawBuf.subarray(0, bytesRead)
+        }
       } finally {
         await handle.close()
       }

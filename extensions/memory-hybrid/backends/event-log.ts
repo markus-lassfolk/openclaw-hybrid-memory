@@ -130,7 +130,7 @@ export class EventLog {
   getBySession(sessionId: string, limit = 1000): EventLogEntry[] {
     const rows = this.liveDb
       .prepare(
-        `SELECT * FROM event_log WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?`,
+        `SELECT * FROM event_log WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?`,
       )
       .all(sessionId, limit) as Record<string, unknown>[];
     return rows.map((r) => this.rowToEntry(r));

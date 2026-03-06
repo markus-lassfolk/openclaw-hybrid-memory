@@ -112,7 +112,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
       // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
-      const apiKey = providerCfg.apiKey ?? "";
+      const apiKey = providerCfg.apiKey ?? "no-key";
       const baseURL = providerCfg.baseURL;
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
@@ -153,7 +153,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   // The proxy base is only accessed for non-chat methods (not used by this plugin directly).
   // Only create it with a real key when one is available; otherwise omit to avoid "unused" placeholder.
   const proxyBaseKey = cfg.embedding.apiKey ?? gatewayToken ?? "";
-  const proxyBase = new OpenAI({ apiKey: proxyBaseKey });
+  const proxyBase: OpenAI = proxyBaseKey ? new OpenAI({ apiKey: proxyBaseKey }) : ({} as OpenAI);
   return new Proxy(proxyBase, {
     get(target, prop, receiver) {
       if (prop === "chat") {
