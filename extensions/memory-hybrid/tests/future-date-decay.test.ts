@@ -133,10 +133,10 @@ describe("detectFutureDate — 'next <weekday>'", () => {
     expect(daysSince(result!)).toBeGreaterThan(7);
   });
 
-  it("detects 'next Thursday' on a Thursday as 14 days (same-day consistency)", () => {
+  it("detects 'next Thursday' on a Thursday as 7 days (same-day consistency)", () => {
     const result = detectFutureDate("Call me next Thursday", ENABLED_CFG, NOW_MS);
     expect(result).not.toBeNull();
-    expect(daysSince(result!)).toBe(14);
+    expect(daysSince(result!)).toBe(7);
   });
 });
 

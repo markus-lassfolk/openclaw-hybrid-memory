@@ -322,6 +322,7 @@ export function registerMemoryTools(
 
         // Compute embedding for semantic strategy (with optional HyDE query expansion)
         let queryVector: number[] | null = null;
+        let semanticWarning: string | null = null;
         if (!tag) {
           try {
             addOperationBreadcrumb("search", "vector-recall");
@@ -362,6 +363,7 @@ export function registerMemoryTools(
               phase: "runtime",
             });
             api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+            semanticWarning = "Semantic search unavailable due to embedding failure; results may be incomplete.";
           }
         }
 
@@ -513,8 +515,13 @@ export function registerMemoryTools(
 
         if (results.length === 0) {
           return {
-            content: [{ type: "text", text: "No relevant memories found." }],
-            details: { count: 0 },
+            content: [{
+              type: "text",
+              text: semanticWarning
+                ? `No relevant memories found.\n\n⚠️ ${semanticWarning}`
+                : "No relevant memories found.",
+            }],
+            details: { count: 0, warning: semanticWarning ?? undefined },
           };
         }
 
@@ -565,10 +572,10 @@ export function registerMemoryTools(
           content: [
             {
               type: "text",
-              text: `Found ${results.length} memories:\n\n${text}`,
+              text: `Found ${results.length} memories:\n\n${text}${semanticWarning ? `\n\n⚠️ ${semanticWarning}` : ""}`,
             },
           ],
-          details: { count: results.length, memories: sanitized },
+          details: { count: results.length, memories: sanitized, warning: semanticWarning ?? undefined },
         };
   }
 

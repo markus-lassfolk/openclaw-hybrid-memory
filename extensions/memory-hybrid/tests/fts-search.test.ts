@@ -623,7 +623,7 @@ describe("buildFts5Query", () => {
 
   it("passes through FTS5 boolean operators", () => {
     const q = buildFts5Query("foo AND bar");
-    expect(q).toBe("foo AND bar");
+    expect(q).toBe("\"foo\" AND \"bar\"");
   });
 
   it("passes through prefix operator *", () => {
