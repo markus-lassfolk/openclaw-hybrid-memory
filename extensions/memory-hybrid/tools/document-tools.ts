@@ -8,7 +8,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 
@@ -21,6 +21,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { getMemoryCategories, type HybridMemoryConfig, type MemoryCategory } from "../config.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "openclaw/plugin-sdk";
+import { getConverter } from "./converters/index.js";
 
 export interface DocumentToolsContext {
   factsDb: FactsDB;
@@ -119,17 +120,28 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           };
         }
 
-        // --- Convert via Python bridge ---
+        // --- Convert: try native converter first (with password redaction), then Python bridge ---
         let markdown: string;
         let title: string;
         try {
-          const result = await pythonBridge.convert(filePath);
-          markdown = result.markdown;
-          title = result.title;
+          // Try native converter first (includes password redaction for smart home configs)
+          const fileContent = readFileSync(filePath, "utf-8");
+          const nativeConverter = getConverter(filePath, fileContent);
+          
+          if (nativeConverter) {
+            const result = nativeConverter.convert(fileContent, filePath);
+            markdown = result.markdown;
+            title = result.title;
+          } else {
+            // Fall back to Python bridge for other file types
+            const result = await pythonBridge.convert(filePath);
+            markdown = result.markdown;
+            title = result.title;
+          }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "documents",
-            operation: "python-bridge-convert",
+            operation: "document-convert",
             phase: "runtime",
           });
           const msg = err instanceof Error ? err.message : String(err);

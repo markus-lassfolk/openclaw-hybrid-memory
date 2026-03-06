@@ -132,6 +132,5 @@ function sniffJsonConverter(content: string): Converter | null {
     return victronVrmConverter;
   }
 
-  // Default to Victron for unrecognized JSON
-  return victronVrmConverter;
+  return null;
 }
