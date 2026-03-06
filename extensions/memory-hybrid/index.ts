@@ -169,6 +169,7 @@ import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { IssueStore } from "./backends/issue-store.js";
 import { VerificationStore, shouldAutoClassify, VerificationError } from "./services/verification-store.js";
+import { ProvenanceService } from "./services/provenance.js";
 
 // Helper Functions
 
@@ -532,6 +533,8 @@ export const _testing = {
   VerificationStore,
   shouldAutoClassify,
   VerificationError,
+  // Provenance tracing (Issue #163)
+  ProvenanceService,
 };
 
 export { versionInfo } from "./versionInfo.js";

@@ -19,6 +19,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 import { IssueStore } from "../backends/issue-store.js";
+import { ProvenanceService } from "../services/provenance.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -196,6 +197,7 @@ export interface DatabaseContext {
   eventLog: EventLog | null;
   aliasDb: AliasDB | null;
   issueStore: IssueStore;
+  provenanceService: ProvenanceService | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
@@ -337,6 +339,14 @@ export function initializeDatabases(
   const issueStorePath = join(dirname(resolvedSqlitePath), "issues.db");
   const issueStore = new IssueStore(issueStorePath);
   api.logger.info(`memory-hybrid: issue store initialized (${issueStorePath})`);
+
+  // Initialize ProvenanceService when enabled (Issue #163)
+  let provenanceService: ProvenanceService | null = null;
+  if (cfg.provenance.enabled) {
+    const provenancePath = join(dirname(resolvedSqlitePath), "provenance.db");
+    provenanceService = new ProvenanceService(provenancePath);
+    api.logger.info(`memory-hybrid: provenance tracing enabled (${provenancePath})`);
+  }
 
   // Load previously discovered categories so they remain available after restart
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
@@ -603,6 +613,7 @@ export function initializeDatabases(
     eventLog,
     aliasDb,
     issueStore,
+    provenanceService,
     resolvedLancePath,
     resolvedSqlitePath,
     health,
@@ -622,8 +633,9 @@ export function closeOldDatabases(context: {
   eventLog?: EventLog | null;
   aliasDb?: AliasDB | null;
   issueStore?: IssueStore | null;
+  provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -674,6 +686,13 @@ export function closeOldDatabases(context: {
       issueStore.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "issueStore" });
+    }
+  }
+  if (provenanceService) {
+    try {
+      provenanceService.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "provenanceService" });
     }
   }
 }

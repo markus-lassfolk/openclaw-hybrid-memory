@@ -197,6 +197,9 @@ export class FactsDB {
 
     // ---- Verification store for critical facts (Issue #162) ----
     this.migrateVerifiedFactsTable();
+
+    // ---- Provenance tracing (Issue #163) ----
+    this.migrateProvenanceColumns();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -493,6 +496,26 @@ export class FactsDB {
       CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
       CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
     `);
+  }
+
+  /** Add provenance columns to facts table (Issue #163). All nullable for backward compatibility. */
+  private migrateProvenanceColumns(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("source_session")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_session TEXT`);
+    }
+    if (!colNames.has("source_turn")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_turn INTEGER`);
+    }
+    if (!colNames.has("extraction_method")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN extraction_method TEXT`);
+    }
+    if (!colNames.has("extraction_confidence")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN extraction_confidence REAL`);
+    }
   }
 
   /**
