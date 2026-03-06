@@ -108,6 +108,27 @@ const COMMON_STOP_WORDS = new Set([
   "also", "just", "more", "most", "very", "some", "such", "true", "false",
 ]);
 
+const ENTITY_PREFIX_LEN = 3;
+const entityCache = new WeakMap<string[], { prefixMap: Map<string, string[]> }>();
+
+function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
+  const cached = entityCache.get(knownEntities);
+  if (cached) return cached.prefixMap;
+  const prefixMap = new Map<string, string[]>();
+  const seen = new Set<string>();
+  for (const entity of knownEntities) {
+    const lower = entity.toLowerCase().trim();
+    if (lower.length < 2 || seen.has(lower)) continue;
+    seen.add(lower);
+    const prefix = lower.slice(0, ENTITY_PREFIX_LEN);
+    const list = prefixMap.get(prefix);
+    if (list) list.push(lower);
+    else prefixMap.set(prefix, [lower]);
+  }
+  entityCache.set(knownEntities, { prefixMap });
+  return prefixMap;
+}
+
 /**
  * Extract entity candidates from a message using lightweight heuristics:
  *   - Known entities (case-insensitive substring match)
@@ -126,9 +147,21 @@ export function extractEntitiesFromMessage(
   const lower = text.toLowerCase();
 
   // 1. Known entities (case-insensitive)
-  for (const entity of knownEntities) {
-    if (entity && entity.length >= 2 && lower.includes(entity.toLowerCase())) {
-      candidates.add(entity.toLowerCase());
+  if (knownEntities.length > 0) {
+    const prefixMap = getEntityPrefixMap(knownEntities);
+    const seenPrefixes = new Set<string>();
+    for (const m of lower.matchAll(/\b[a-z0-9][a-z0-9_-]{1,}\b/g)) {
+      const token = m[0];
+      if (token.length >= 2) {
+        seenPrefixes.add(token.slice(0, ENTITY_PREFIX_LEN));
+      }
+    }
+    for (const prefix of seenPrefixes) {
+      const list = prefixMap.get(prefix);
+      if (!list) continue;
+      for (const entity of list) {
+        if (lower.includes(entity)) candidates.add(entity);
+      }
     }
   }
 
