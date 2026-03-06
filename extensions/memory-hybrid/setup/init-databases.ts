@@ -19,6 +19,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 import { IssueStore } from "../backends/issue-store.js";
+import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProvenanceService } from "../services/provenance.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 
@@ -199,6 +200,7 @@ export interface DatabaseContext {
   aliasDb: AliasDB | null;
   issueStore: IssueStore;
   workflowStore: WorkflowStore;
+  crystallizationStore: CrystallizationStore;
   provenanceService: ProvenanceService | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
@@ -346,6 +348,11 @@ export function initializeDatabases(
   const workflowStorePath = join(dirname(resolvedSqlitePath), "workflow-traces.db");
   const workflowStore = new WorkflowStore(workflowStorePath);
   api.logger.info(`memory-hybrid: workflow store initialized (${workflowStorePath})`);
+
+  // Initialize CrystallizationStore — always created; proposals gated by cfg.crystallization.enabled (Issue #208)
+  const crystallizationStorePath = join(dirname(resolvedSqlitePath), "crystallization-proposals.db");
+  const crystallizationStore = new CrystallizationStore(crystallizationStorePath);
+  api.logger.info(`memory-hybrid: crystallization store initialized (${crystallizationStorePath})`);
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -621,6 +628,7 @@ export function initializeDatabases(
     aliasDb,
     issueStore,
     workflowStore,
+    crystallizationStore,
     provenanceService,
     resolvedLancePath,
     resolvedSqlitePath,
@@ -642,9 +650,10 @@ export function closeOldDatabases(context: {
   aliasDb?: AliasDB | null;
   issueStore?: IssueStore | null;
   workflowStore?: WorkflowStore | null;
+  crystallizationStore?: CrystallizationStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, provenanceService } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -702,6 +711,13 @@ export function closeOldDatabases(context: {
       workflowStore.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "workflowStore" });
+    }
+  }
+  if (crystallizationStore) {
+    try {
+      crystallizationStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "crystallizationStore" });
     }
   }
   if (provenanceService) {

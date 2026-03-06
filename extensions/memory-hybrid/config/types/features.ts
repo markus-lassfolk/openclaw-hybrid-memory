@@ -125,6 +125,24 @@ export type WorkflowTrackingConfig = {
   goalExtractionModel?: string;
 };
 
+/** Workflow crystallization: auto-generate AgentSkill SKILL.md files from repeated patterns (Issue #208). */
+export type CrystallizationConfig = {
+  /** Enable crystallization cycle (default: false — opt-in). */
+  enabled: boolean;
+  /** Minimum usage count for a pattern to be considered (default: 5). */
+  minUsageCount: number;
+  /** Minimum success rate for a pattern to be considered (default: 0.7). */
+  minSuccessRate: number;
+  /** When true, auto-approve and write skills without human review (default: false). */
+  autoApprove: boolean;
+  /** Output directory for generated skills, ~ is expanded (default: '~/.openclaw/workspace/skills/auto'). */
+  outputDir: string;
+  /** Maximum number of approved crystallized skills (default: 50). */
+  maxCrystallized: number;
+  /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
+  pruneUnusedDays: number;
+};
+
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */
 export type DocumentsConfig = {
   /** Enable document ingestion tool (default: false — opt-in) */

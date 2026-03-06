@@ -11,6 +11,7 @@ import type {
   FutureDateProtectionConfig,
   DocumentsConfig,
   WorkflowTrackingConfig,
+  CrystallizationConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -360,5 +361,33 @@ export function parseWorkflowTrackingConfig(cfg: Record<string, unknown>): Workf
       typeof raw?.goalExtractionModel === "string" && raw.goalExtractionModel.trim().length > 0
         ? raw.goalExtractionModel.trim()
         : undefined,
+  };
+}
+
+export function parseCrystallizationConfig(cfg: Record<string, unknown>): CrystallizationConfig {
+  const raw = cfg.crystallization as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    minUsageCount:
+      typeof raw?.minUsageCount === "number" && raw.minUsageCount > 0
+        ? Math.floor(raw.minUsageCount)
+        : 5,
+    minSuccessRate:
+      typeof raw?.minSuccessRate === "number" && raw.minSuccessRate >= 0 && raw.minSuccessRate <= 1
+        ? raw.minSuccessRate
+        : 0.7,
+    autoApprove: raw?.autoApprove === true,
+    outputDir:
+      typeof raw?.outputDir === "string" && raw.outputDir.trim().length > 0
+        ? raw.outputDir.trim()
+        : "~/.openclaw/workspace/skills/auto",
+    maxCrystallized:
+      typeof raw?.maxCrystallized === "number" && raw.maxCrystallized > 0
+        ? Math.floor(raw.maxCrystallized)
+        : 50,
+    pruneUnusedDays:
+      typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0
+        ? Math.floor(raw.pruneUnusedDays)
+        : 30,
   };
 }
