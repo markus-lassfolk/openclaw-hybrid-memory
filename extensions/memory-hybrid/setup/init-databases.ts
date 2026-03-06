@@ -324,8 +324,9 @@ export function initializeDatabases(
   let aliasDb: AliasDB | null = null;
   if (cfg.aliases?.enabled) {
     const aliasPath = join(dirname(resolvedSqlitePath), "aliases.db");
-    aliasDb = new AliasDB(aliasPath);
-    api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath})`);
+    const aliasLancePath = join(dirname(resolvedSqlitePath), "aliases.lance");
+    aliasDb = new AliasDB(aliasPath, aliasLancePath, cfg.embedding.dimensions);
+    api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath}, ${aliasLancePath})`);
   }
 
   // Load previously discovered categories so they remain available after restart

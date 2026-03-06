@@ -6,6 +6,7 @@
  */
 
 import Database from "better-sqlite3";
+import * as lancedb from "@lancedb/lancedb";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -32,6 +33,181 @@ export interface AliasSearchResult {
   score: number;
 }
 
+const ALIAS_LANCE_TABLE = "fact_aliases";
+
+class AliasVectorIndex {
+  private db: lancedb.Connection | null = null;
+  private table: lancedb.Table | null = null;
+  private initPromise: Promise<void> | null = null;
+  private closed = false;
+
+  constructor(
+    private readonly dbPath: string,
+    private readonly vectorDim: number,
+  ) {}
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.table) return;
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this.doInitialize().catch((err) => {
+      capturePluginError(err as Error, {
+        operation: "alias-vector-db-init",
+        subsystem: "aliases",
+      });
+      this.initPromise = null;
+      throw err;
+    });
+    return this.initPromise;
+  }
+
+  private async doInitialize(): Promise<void> {
+    this.db = await lancedb.connect(this.dbPath);
+    const tables = await this.db.tableNames();
+    if (tables.includes(ALIAS_LANCE_TABLE)) {
+      this.table = await this.db.openTable(ALIAS_LANCE_TABLE);
+      await this.validateSchema();
+      return;
+    }
+    this.table = await this.db.createTable(ALIAS_LANCE_TABLE, [
+      {
+        id: "__schema__",
+        factId: "__schema__",
+        aliasText: "",
+        vector: new Array(this.vectorDim).fill(0),
+        createdAt: 0,
+      },
+    ]);
+    try {
+      await this.table.delete('id = "__schema__"');
+    } catch (deleteErr) {
+      // Non-fatal; keep the seed row if delete fails.
+      console.warn(`memory-hybrid: failed to delete alias schema seed row (non-fatal): ${deleteErr}`);
+    }
+  }
+
+  private async validateSchema(): Promise<void> {
+    try {
+      const schema = await this.table!.schema();
+      const vectorField = schema.fields.find(
+        (f: { type?: { typeId?: number; listSize?: number } }) =>
+          typeof f.type?.typeId === "number" && f.type.typeId === 16,
+      );
+      if (!vectorField) {
+        console.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — ` +
+            `alias search will fall back to linear scan.`,
+        );
+        return;
+      }
+      const actualDim = (vectorField.type as { listSize?: number }).listSize;
+      if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
+        const actual = typeof actualDim === "number" ? actualDim : "unknown";
+        console.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, ` +
+            `configured embedding model expects dim=${this.vectorDim}. ` +
+            `Alias search will fall back to linear scan until resolved.`,
+        );
+      }
+    } catch (err) {
+      console.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
+    }
+  }
+
+  private getTable(): lancedb.Table {
+    if (!this.table) {
+      throw new Error("AliasVectorIndex not initialized. Call ensureInitialized() first.");
+    }
+    return this.table;
+  }
+
+  async store(entry: { id: string; factId: string; aliasText: string; vector: number[] }): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      await this.getTable().add([
+        {
+          id: entry.id,
+          factId: entry.factId,
+          aliasText: entry.aliasText,
+          vector: entry.vector,
+          createdAt: Math.floor(Date.now() / 1000),
+        },
+      ]);
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "alias-vector-store",
+        subsystem: "aliases",
+      });
+      console.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
+    }
+  }
+
+  async search(
+    vector: number[],
+    limit: number,
+    minScore: number,
+  ): Promise<AliasSearchResult[]> {
+    try {
+      await this.ensureInitialized();
+      const searchLimit = Math.max(limit * 6, 50);
+      const results = await this.getTable().vectorSearch(vector).limit(searchLimit).toArray();
+      const bestByFact = new Map<string, number>();
+      for (const row of results) {
+        const distance = row._distance ?? 0;
+        const score = 1 / (1 + distance);
+        if (score < minScore) continue;
+        const factId = row.factId as string;
+        const existing = bestByFact.get(factId);
+        if (existing === undefined || score > existing) {
+          bestByFact.set(factId, score);
+        }
+      }
+      return Array.from(bestByFact.entries())
+        .map(([factId, score]) => ({ factId, score }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "alias-vector-search",
+        severity: "info",
+        subsystem: "aliases",
+      });
+      console.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
+      return [];
+    }
+  }
+
+  async deleteByFactId(factId: string): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(factId)) {
+        console.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
+        return;
+      }
+      await this.getTable().delete(`factId = '${factId.toLowerCase()}'`);
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "alias-vector-delete",
+        subsystem: "aliases",
+      });
+      console.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    try {
+      this.table = null;
+      this.db?.close();
+      this.db = null;
+    } catch {
+      // Ignore close errors
+    }
+  }
+}
+
 /**
  * SQLite-backed storage for fact_aliases.
  * Schema: (id TEXT PK, factId TEXT, aliasText TEXT, embedding BLOB)
@@ -41,8 +217,9 @@ export interface AliasSearchResult {
  */
 export class AliasDB {
   private db: Database.Database;
+  private aliasIndex: AliasVectorIndex;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, aliasLancePath: string, vectorDim: number) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
@@ -57,6 +234,7 @@ export class AliasDB {
     this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_fact_aliases_factId ON fact_aliases(factId)`,
     );
+    this.aliasIndex = new AliasVectorIndex(aliasLancePath, vectorDim);
   }
 
   /** Store a single alias with its embedding. Returns the generated row id. */
@@ -69,6 +247,7 @@ export class AliasDB {
         `INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`,
       )
       .run(id, factId, aliasText, blob);
+    void this.aliasIndex.store({ id, factId, aliasText, vector: embedding });
     return id;
   }
 
@@ -84,6 +263,7 @@ export class AliasDB {
   /** Delete all aliases for a fact (e.g., when the fact is superseded). */
   deleteByFactId(factId: string): void {
     this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(factId);
+    void this.aliasIndex.deleteByFactId(factId);
   }
 
   /** Total alias count. */
@@ -101,7 +281,24 @@ export class AliasDB {
    * deduplicates by factId (keeps best score per fact), and returns up to
    * `limit` results above `minScore`, sorted descending by score.
    */
-  search(
+  async search(
+    queryVector: number[],
+    limit: number,
+    minScore: number,
+  ): Promise<AliasSearchResult[]> {
+    const aliasCount = this.count();
+    if (aliasCount >= 1000) {
+      // Prefer LanceDB vector search for larger datasets; fallback to linear scan on errors.
+      try {
+        return await this.aliasIndex.search(queryVector, limit, minScore);
+      } catch {
+        return this.linearSearch(queryVector, limit, minScore);
+      }
+    }
+    return this.linearSearch(queryVector, limit, minScore);
+  }
+
+  private linearSearch(
     queryVector: number[],
     limit: number,
     minScore: number,
@@ -146,6 +343,7 @@ export class AliasDB {
   }
 
   close(): void {
+    this.aliasIndex.close();
     this.db.close();
   }
 }
@@ -245,13 +443,13 @@ export async function storeAliases(
  * Search alias embeddings for a query vector.
  * Returns ranked results (rank 1 = best match) compatible with RRF fusion.
  */
-export function searchAliasStrategy(
+export async function searchAliasStrategy(
   aliasDb: AliasDB,
   queryVector: number[],
   topK: number,
   minScore = 0.3,
-): Array<{ factId: string; rank: number; source: "aliases" }> {
-  const results = aliasDb.search(queryVector, topK, minScore);
+): Promise<Array<{ factId: string; rank: number; source: "aliases" }>> {
+  const results = await aliasDb.search(queryVector, topK, minScore);
   return results.map((r, i) => ({
     factId: r.factId,
     rank: i + 1,
