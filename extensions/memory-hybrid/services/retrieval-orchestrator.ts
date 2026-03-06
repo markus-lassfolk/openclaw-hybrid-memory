@@ -664,6 +664,7 @@ export async function runRetrievalPipeline(
   // On any failure or timeout, falls back to the original RRF order (no behavior change).
   if (rerankingConfig?.enabled && rerankingOpenai) {
     try {
+      const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
       const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
         const storedSec = entry.sourceDate ?? entry.createdAt;
         return {
@@ -671,7 +672,7 @@ export async function runRetrievalPipeline(
           text: entry.text,
           confidence: entry.confidence,
           storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
-          finalScore: finalOrder.get(factId) ?? 0,
+          finalScore: rrfScoreMap.get(factId) ?? 0,
         };
       });
 
