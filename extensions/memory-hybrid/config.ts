@@ -334,6 +334,20 @@ export type AliasesConfig = {
   model?: string;
 };
 
+/** Contextual variant generation at index time (Issue #159). */
+export type ContextualVariantsConfig = {
+  /** Enable contextual variant generation (default: false). */
+  enabled: boolean;
+  /** LLM model for variant generation; when unset, defaults to "openai/gpt-4.1-nano". */
+  model?: string;
+  /** Max variants generated per fact (default: 2). */
+  maxVariantsPerFact: number;
+  /** Rate limit: max LLM calls per minute (default: 30). */
+  maxPerMinute: number;
+  /** When set, only generate variants for facts in these categories (null/empty = all). */
+  categories?: string[];
+};
+
 /** Shortest-path traversal configuration (Issue #140). */
 export type PathConfig = {
   /** Enable memory_path tool (default: true). */
@@ -616,6 +630,8 @@ export type HybridMemoryConfig = {
   path: PathConfig;
   /** Document ingestion via MarkItDown Python bridge (Issue #206, default: disabled). */
   documents: DocumentsConfig;
+  /** Contextual variant generation at index time (Issue #159, default: disabled). */
+  contextualVariants: ContextualVariantsConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -2155,6 +2171,25 @@ export const hybridConfigSchema = {
       autoTag: documentsRaw?.autoTag !== false,
     };
 
+    // Parse contextual variants config (Issue #159, default: disabled)
+    const cvRaw = cfg.contextualVariants as Record<string, unknown> | undefined;
+    const contextualVariants: ContextualVariantsConfig = {
+      enabled: cvRaw?.enabled === true,
+      model: typeof cvRaw?.model === "string" && cvRaw.model.trim().length > 0 ? cvRaw.model.trim() : undefined,
+      maxVariantsPerFact:
+        typeof cvRaw?.maxVariantsPerFact === "number" && cvRaw.maxVariantsPerFact > 0
+          ? Math.min(5, Math.floor(cvRaw.maxVariantsPerFact))
+          : 2,
+      maxPerMinute:
+        typeof cvRaw?.maxPerMinute === "number" && cvRaw.maxPerMinute > 0
+          ? Math.floor(cvRaw.maxPerMinute)
+          : 30,
+      categories:
+        Array.isArray(cvRaw?.categories) && (cvRaw.categories as unknown[]).length > 0
+          ? (cvRaw.categories as unknown[]).filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+          : undefined,
+    };
+
     return {
       embedding: {
         provider: embeddingProvider,
@@ -2216,6 +2251,7 @@ export const hybridConfigSchema = {
       aliases,
       path,
       documents,
+      contextualVariants,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
