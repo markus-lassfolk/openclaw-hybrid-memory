@@ -218,6 +218,8 @@ class AliasVectorIndex {
 export class AliasDB {
   private db: Database.Database;
   private aliasIndex: AliasVectorIndex;
+  /** Cached alias count — invalidated on store/delete to avoid COUNT(*) on every search. */
+  private aliasCountCache: number | null = null;
 
   constructor(dbPath: string, aliasLancePath: string, vectorDim: number) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -240,37 +242,51 @@ export class AliasDB {
   /** Store a single alias with its embedding. Returns the generated row id. */
   store(factId: string, aliasText: string, embedding: number[]): string {
     const id = randomUUID();
+    // Normalize factId to lowercase so all stored values are consistent, enabling
+    // plain equality queries that benefit from idx_fact_aliases_factId.
+    const normalizedFactId = factId.toLowerCase();
     const floatArray = Float32Array.from(embedding);
     const blob = Buffer.from(floatArray.buffer.slice(0));
     this.db
       .prepare(
         `INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`,
       )
-      .run(id, factId, aliasText, blob);
-    void this.aliasIndex.store({ id, factId, aliasText, vector: embedding });
+      .run(id, normalizedFactId, aliasText, blob);
+    if (this.aliasCountCache != null) this.aliasCountCache += 1;
+    void this.aliasIndex.store({ id, factId: normalizedFactId, aliasText, vector: embedding });
     return id;
   }
 
   /** Return all alias rows (without embedding) for a given fact. */
   getByFactId(factId: string): AliasRow[] {
+    // factIds are normalized to lowercase on write; pre-lowercase the param so SQLite
+    // can use the idx_fact_aliases_factId index (COLLATE NOCASE would bypass it).
+    const normalizedFactId = factId.toLowerCase();
     return this.db
       .prepare(
         `SELECT id, factId, aliasText FROM fact_aliases WHERE factId = ?`,
       )
-      .all(factId) as AliasRow[];
+      .all(normalizedFactId) as AliasRow[];
   }
 
   /** Delete all aliases for a fact (e.g., when the fact is superseded). */
   deleteByFactId(factId: string): void {
-    this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(factId);
+    // Pre-lowercase to match normalized storage; avoids COLLATE NOCASE index bypass.
+    const normalizedFactId = factId.toLowerCase();
+    const res = this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(normalizedFactId);
+    if (this.aliasCountCache != null) {
+      this.aliasCountCache = Math.max(0, this.aliasCountCache - (res.changes ?? 0));
+    }
     void this.aliasIndex.deleteByFactId(factId);
   }
 
-  /** Total alias count. */
+  /** Total alias count (cached to avoid COUNT(*) on every search call). */
   count(): number {
+    if (this.aliasCountCache != null) return this.aliasCountCache;
     const row = this.db
       .prepare(`SELECT COUNT(*) as n FROM fact_aliases`)
       .get() as { n: number };
+    this.aliasCountCache = row.n;
     return row.n;
   }
 

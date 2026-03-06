@@ -1556,14 +1556,20 @@ export class FactsDB {
     const result = new Map<string, MemoryEntry>();
     if (ids.length === 0) return result;
     const uniqueIds = Array.from(new Set(ids));
-    const placeholders = uniqueIds.map(() => "?").join(",");
-    const rows = this.liveDb
-      .prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`)
-      .all(...uniqueIds) as Array<Record<string, unknown>>;
-    for (const row of rows) {
-      const entry = this.rowToEntry(row);
-      const filtered = this.applyLookupFilters(entry, options);
-      if (filtered) result.set(filtered.id, filtered);
+    // SQLite has a SQLITE_LIMIT_VARIABLE_NUMBER limit (default 999, often 32766).
+    // Batch in chunks of 500 to stay well within that limit for any configuration.
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = this.liveDb
+        .prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`)
+        .all(...chunk) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const entry = this.rowToEntry(row);
+        const filtered = this.applyLookupFilters(entry, options);
+        if (filtered) result.set(filtered.id, filtered);
+      }
     }
     return result;
   }

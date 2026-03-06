@@ -334,6 +334,14 @@ export async function runPassiveObserver(
     sessions.push({ filePath, sessionId, fileBytelen, cursor })
   }
 
+  // Prune consecutiveFailures entries for sessions that are no longer present on disk.
+  // Must run before any early return so stale entries are cleaned regardless of whether
+  // there is new content to process.
+  const activeSessionIds = new Set(sessions.map((s) => s.sessionId))
+  for (const id of consecutiveFailures.keys()) {
+    if (!activeSessionIds.has(id)) consecutiveFailures.delete(id)
+  }
+
   if (!hasNewContent) return result
 
   // ---------------------------------------------------------------------------
