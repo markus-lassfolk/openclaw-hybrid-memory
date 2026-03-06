@@ -81,7 +81,7 @@ function buildSkillContent(
   const successPct = Math.round(pattern.successRate * 100);
   const exampleGoalsText =
     pattern.exampleGoals.length > 0
-      ? pattern.exampleGoals.map((g) => `- ${g}`).join("\n")
+      ? pattern.exampleGoals.map((g) => `- ${g.replace(/\n/g, " ")}`).join("\n")
       : "- (no example goals recorded)";
 
   const stepsText = toolSequence

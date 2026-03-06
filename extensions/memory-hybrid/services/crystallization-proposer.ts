@@ -164,6 +164,15 @@ export class CrystallizationProposer {
       };
     }
 
+    // Check maxCrystallized limit before approving
+    const approvedCount = this.crystallizationStore.count("approved");
+    if (approvedCount >= this.cfg.maxCrystallized) {
+      return {
+        success: false,
+        message: `maxCrystallized limit reached (${this.cfg.maxCrystallized})`,
+      };
+    }
+
     // Re-validate before writing
     const validation = this.validator.validate(proposal.skillContent);
     if (!validation.valid) {
