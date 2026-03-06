@@ -115,10 +115,8 @@ const DENY_RULES: DenyRule[] = [
   {
     name: "require-fs",
     codeBlockOnly: true,
-    pattern: /require\s*\(\s*['"](?:child_process|fs|path)['"]/.source.includes("child_process")
-      ? /require\s*\(\s*['"]child_process['"]\)/i
-      : /require\s*\(\s*['"]child_process['"]\)/i,
-    description: "require('child_process') in code block",
+    pattern: /require\s*\(\s*['"](?:child_process|fs|path)['"]\)/i,
+    description: "require('child_process'|'fs'|'path') in code block",
   },
   {
     name: "import-child-process",

@@ -8,7 +8,6 @@
 
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import { computePatternId } from "./pattern-detector.js";
 
 // ---------------------------------------------------------------------------
 // Public types
