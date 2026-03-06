@@ -969,7 +969,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.ingest?.overlap).toBe(100);
   });
 
-  it("parses optional search config (HyDE)", () => {
+  it("parses optional search config (HyDE) — DEPRECATED: auto-migrates to queryExpansion (#160)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: {
@@ -977,12 +977,16 @@ describe("hybridConfigSchema.parse", () => {
         hydeModel: "gpt-4o-mini",
       },
     });
+    // Legacy search fields are still parsed for backward compat
     expect(result.search).toBeDefined();
     expect(result.search?.hydeEnabled).toBe(true);
     expect(result.search?.hydeModel).toBe("gpt-4o-mini");
+    // Migration shim: queryExpansion must be auto-enabled with the legacy model
+    expect(result.queryExpansion.enabled).toBe(true);
+    expect(result.queryExpansion.model).toBe("gpt-4o-mini");
   });
 
-  it("parses search with hydeEnabled true and no hydeModel (runtime uses llm/default, issue #92)", () => {
+  it("parses search with hydeEnabled true and no hydeModel — DEPRECATED: auto-migrates to queryExpansion (issue #92, #160)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: { hydeEnabled: true },
@@ -990,6 +994,37 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.search).toBeDefined();
     expect(result.search?.hydeEnabled).toBe(true);
     expect(result.search?.hydeModel).toBeUndefined();
+    // Migration shim: queryExpansion must be auto-enabled; model remains undefined (runtime uses nano tier)
+    expect(result.queryExpansion.enabled).toBe(true);
+    expect(result.queryExpansion.model).toBeUndefined();
+  });
+
+  it("migration shim (#160): queryExpansion.enabled=true works directly without search.hydeEnabled", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      queryExpansion: { enabled: true, model: "openai/gpt-4.1-nano" },
+    });
+    expect(result.queryExpansion.enabled).toBe(true);
+    expect(result.queryExpansion.model).toBe("openai/gpt-4.1-nano");
+    // No legacy search config needed
+    expect(result.search).toBeUndefined();
+  });
+
+  it("migration shim (#160): queryExpansion takes precedence when both search.hydeEnabled and queryExpansion.enabled are set", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      search: { hydeEnabled: true, hydeModel: "old-model" },
+      queryExpansion: { enabled: true, model: "new-model" },
+    });
+    // queryExpansion.enabled is explicit → it wins
+    expect(result.queryExpansion.enabled).toBe(true);
+    // queryExpansion.model wins over search.hydeModel
+    expect(result.queryExpansion.model).toBe("new-model");
+  });
+
+  it("migration shim (#160): queryExpansion stays disabled when neither search.hydeEnabled nor queryExpansion.enabled is set", () => {
+    const result = hybridConfigSchema.parse({ ...validBase });
+    expect(result.queryExpansion.enabled).toBe(false);
   });
 
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
@@ -1145,15 +1180,16 @@ describe("hybridConfigSchema.parse", () => {
       }
     });
 
-    it("mode full: enables search.hydeEnabled when search block present", () => {
+    it("mode full: enables queryExpansion (replaces deprecated search.hydeEnabled, #160)", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
         mode: "full" as ConfigMode,
-        search: {},
       });
       expect(result.mode).toBe("full");
-      expect(result.search).toBeDefined();
-      expect(result.search!.hydeEnabled).toBe(true);
+      // The full preset now sets queryExpansion.enabled directly (not via deprecated search.hydeEnabled)
+      expect(result.queryExpansion.enabled).toBe(true);
+      // No deprecated search block should be set by the preset
+      expect(result.search?.hydeEnabled).toBeFalsy();
     });
 
     it("user overrides win over preset (mode essential + graph.enabled true); mode becomes Custom for verify", () => {
