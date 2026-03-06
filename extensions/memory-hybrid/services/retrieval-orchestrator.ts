@@ -222,6 +222,8 @@ export interface FactLookup {
   /** Optional: cluster detection helpers (FactsDB implements these). */
   getAllLinkedFactIds?(): string[];
   getAllLinks?(): Array<{ sourceFactId: string; targetFactId: string }>;
+  /** Optional: count of links for cache invalidation (FactsDB implements this). */
+  linksCount?(): number;
   /** Optional: graph traversal helpers (FactsDB implements these). */
   getLinksFrom?(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }>;
   getLinksTo?(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>;
@@ -234,6 +236,50 @@ function hasClusterLookup(factsDb: FactLookup): factsDb is FactLookup & ClusterF
 function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactLookup {
   return typeof factsDb.getLinksFrom === "function" && typeof factsDb.getLinksTo === "function";
 }
+
+type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number };
+
+class ClusterCache {
+  private clusterCache: ClusterCacheEntry | null = null;
+  private clusterCacheLinkCount: number | null = null;
+  private readonly ttlMs: number;
+
+  constructor(ttlMs = 5 * 60 * 1000) {
+    this.ttlMs = ttlMs;
+  }
+
+  getClusterMap(
+    factsDb: FactLookup & ClusterFactLookup,
+    minClusterSize?: number,
+  ): Map<string, string> {
+    const now = Date.now();
+    const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
+    if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
+      if (linkCount == null || linkCount === this.clusterCacheLinkCount) {
+        return this.clusterCache.clusters;
+      }
+    }
+
+    const clusterResult = detectClusters(factsDb, { minClusterSize });
+    const clusterByFact = new Map<string, string>();
+    for (const cluster of clusterResult.clusters) {
+      for (const id of cluster.factIds) {
+        clusterByFact.set(id, cluster.id);
+      }
+    }
+
+    this.clusterCache = { clusters: clusterByFact, timestamp: now };
+    this.clusterCacheLinkCount = linkCount;
+    return clusterByFact;
+  }
+
+  invalidate(): void {
+    this.clusterCache = null;
+    this.clusterCacheLinkCount = null;
+  }
+}
+
+const clusterCache = new ClusterCache();
 
 /**
  * Run the multi-strategy retrieval pipeline and return fused, ranked results.
@@ -413,15 +459,11 @@ export async function runRetrievalPipeline(
   // --- Cluster sibling boost (Issue #146) ---
   if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {
     try {
-      const clusterResult = detectClusters(factsDb, { minClusterSize: clustersConfig.minClusterSize });
-      if (clusterResult.clusters.length > 0) {
-        const clusterByFact = new Map<string, string>();
-        for (const cluster of clusterResult.clusters) {
-          for (const id of cluster.factIds) {
-            clusterByFact.set(id, cluster.id);
-          }
-        }
-
+      const clusterByFact = clusterCache.getClusterMap(
+        factsDb,
+        clustersConfig.minClusterSize,
+      );
+      if (clusterByFact.size > 0) {
         const clusterToIndices = new Map<string, number[]>();
         for (let i = 0; i < scopedFused.length; i++) {
           const clusterId = clusterByFact.get(scopedFused[i].factId);
