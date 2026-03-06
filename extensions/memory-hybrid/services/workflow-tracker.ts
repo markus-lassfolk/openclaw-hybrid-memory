@@ -59,7 +59,8 @@ export class WorkflowTracker {
       buf = { sessionId, toolCalls: [], startedAt: Date.now() };
       this.sessions.set(sessionId, buf);
     }
-    buf.toolCalls.push(toolName);
+    const sanitized = toolName.replace(/[\n\r`]/g, "");
+    buf.toolCalls.push(sanitized);
   }
 
   /**

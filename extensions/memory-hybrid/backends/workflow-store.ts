@@ -339,7 +339,6 @@ export class WorkflowStore {
         `SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC LIMIT ${PATTERNS_QUERY_LIMIT}`,
       )
       .all() as { goal: string; tool_sequence: string; outcome: string; duration_ms: number }[];
-    const cappedRows = allRows.slice(0, PATTERNS_QUERY_LIMIT);
 
     // Cluster by similarity
     const clusters: {
@@ -349,7 +348,7 @@ export class WorkflowStore {
       durations: number[];
     }[] = [];
 
-    for (const row of cappedRows) {
+    for (const row of allRows) {
       let seq: string[];
       try {
         seq = JSON.parse(row.tool_sequence) as string[];
