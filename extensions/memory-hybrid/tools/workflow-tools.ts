@@ -56,14 +56,15 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
         };
 
         try {
+          const hasGoalFilter = goal && goal.trim().length > 0;
           const patterns = workflowStore.getPatterns({
             minSuccessRate: minSuccessRate ?? 0,
-            limit: limit ?? 20,
+            limit: hasGoalFilter ? undefined : (limit ?? 20),
           });
 
           // If goal supplied, further filter by keyword overlap
           let filtered = patterns;
-          if (goal && goal.trim().length > 0) {
+          if (hasGoalFilter) {
             const { extractGoalKeywords } = await import("../backends/workflow-store.js");
             const keywords = new Set(extractGoalKeywords(goal));
             filtered = patterns.filter((p) =>
@@ -71,6 +72,8 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
                 extractGoalKeywords(g).some((k) => keywords.has(k)),
               ),
             );
+            // Apply limit after goal filtering
+            filtered = filtered.slice(0, limit ?? 20);
           }
 
           if (filtered.length === 0) {
