@@ -241,7 +241,7 @@ function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactL
   );
 }
 
-type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number };
+type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number; minClusterSize: number | undefined };
 
 class ClusterCache {
   private readonly clusterCache = new WeakMap<object, ClusterCacheEntry>();
@@ -262,7 +262,8 @@ class ClusterCache {
     const cached = this.clusterCache.get(cacheKey);
     const cachedLinkCount = this.clusterCacheLinkCount.get(cacheKey) ?? null;
     if (cached && now - cached.timestamp < this.ttlMs) {
-      if (linkCount == null || linkCount === cachedLinkCount) {
+      if ((linkCount == null || linkCount === cachedLinkCount) &&
+          cached.minClusterSize === minClusterSize) {
         return cached.clusters;
       }
     }
@@ -275,7 +276,7 @@ class ClusterCache {
       }
     }
 
-    this.clusterCache.set(cacheKey, { clusters: clusterByFact, timestamp: now });
+    this.clusterCache.set(cacheKey, { clusters: clusterByFact, timestamp: now, minClusterSize });
     this.clusterCacheLinkCount.set(cacheKey, linkCount);
     return clusterByFact;
   }
@@ -287,6 +288,10 @@ class ClusterCache {
 }
 
 const clusterCache = new ClusterCache();
+
+export function invalidateClusterCache(): void {
+  clusterCache.invalidate();
+}
 
 /**
  * Run the multi-strategy retrieval pipeline and return fused, ranked results.
