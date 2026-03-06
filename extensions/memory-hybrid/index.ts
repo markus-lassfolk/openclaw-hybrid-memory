@@ -169,6 +169,7 @@ import { PythonBridge } from "./services/python-bridge.js";
 import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptValue } from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
+import { IssueStore } from "./backends/issue-store.js";
 
 // ============================================================================
 // Helper Functions
@@ -216,6 +217,7 @@ let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
+let issueStore: IssueStore | null = null;
 let pythonBridge: PythonBridge | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
@@ -279,11 +281,12 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
+    issueStore = null;
     if (pythonBridge) {
       pythonBridge.shutdown().catch(() => {});
       pythonBridge = null;
@@ -308,6 +311,7 @@ const memoryHybridPlugin = {
       proposalsDb = dbContext.proposalsDb;
       eventLog = dbContext.eventLog;
       aliasDb = dbContext.aliasDb;
+      issueStore = dbContext.issueStore;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -341,6 +345,7 @@ const memoryHybridPlugin = {
       credentialsDb,
       proposalsDb,
       eventLog,
+      issueStore,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -532,6 +537,8 @@ export const _testing = {
   generateAliases,
   storeAliases,
   searchAliasStrategy,
+  // Issue lifecycle tracking (Issue #137)
+  IssueStore,
 };
 
 export { versionInfo } from "./versionInfo.js";

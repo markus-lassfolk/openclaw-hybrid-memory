@@ -24,6 +24,8 @@ import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerPersonaTools } from "../tools/persona-tools.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
 import type { PythonBridge } from "../services/python-bridge.js";
+import { registerIssueTools } from "../tools/issue-tools.js";
+import type { IssueStore } from "../backends/issue-store.js";
 import {
   registerUtilityTools,
   type RunReflectionFn,
@@ -46,6 +48,7 @@ export interface ToolsContext {
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   aliasDb?: AliasDB | null;
+  issueStore?: IssueStore | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -91,6 +94,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     proposalsDb,
     eventLog,
     aliasDb,
+    issueStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -171,5 +175,10 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Document ingestion tool (opt-in, requires Python + markitdown)
   if (cfg.documents.enabled && pythonBridge) {
     registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge }, api);
+  }
+
+  // Issue lifecycle tracking (always enabled — lightweight, Issue #137)
+  if (issueStore) {
+    registerIssueTools({ issueStore }, api);
   }
 }
