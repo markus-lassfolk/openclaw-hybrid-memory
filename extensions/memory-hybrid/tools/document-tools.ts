@@ -8,7 +8,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { basename } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 
@@ -21,7 +21,6 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { getMemoryCategories, type HybridMemoryConfig, type MemoryCategory } from "../config.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "openclaw/plugin-sdk";
-import { getConverter } from "./converters/index.js";
 
 export interface DocumentToolsContext {
   factsDb: FactsDB;
@@ -120,29 +119,17 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           };
         }
 
-        // --- Convert: try native converter first (with password redaction), then Python bridge ---
+        // --- Convert via Python bridge ---
         let markdown: string;
         let title: string;
         try {
-          // Check if a native converter exists for this file extension
-          const nativeConverter = getConverter(filePath);
-          
-          if (nativeConverter) {
-            // Only read file content if a native converter can handle it
-            const fileContent = readFileSync(filePath, "utf-8");
-            const result = nativeConverter.convert(fileContent, filePath);
-            markdown = result.markdown;
-            title = result.title;
-          } else {
-            // Fall back to Python bridge for other file types
-            const result = await pythonBridge.convert(filePath);
-            markdown = result.markdown;
-            title = result.title;
-          }
+          const result = await pythonBridge.convert(filePath);
+          markdown = result.markdown;
+          title = result.title;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "documents",
-            operation: "document-convert",
+            operation: "python-bridge-convert",
             phase: "runtime",
           });
           const msg = err instanceof Error ? err.message : String(err);

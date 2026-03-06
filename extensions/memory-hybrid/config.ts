@@ -2104,20 +2104,22 @@ export const hybridConfigSchema = {
 
     // Parse documents config (Issue #206, default: disabled)
     const documentsRaw = cfg.documents as Record<string, unknown> | undefined;
+    const chunkSize =
+      typeof documentsRaw?.chunkSize === "number" && documentsRaw.chunkSize >= 100
+        ? Math.floor(documentsRaw.chunkSize)
+        : 2000;
+    const chunkOverlap =
+      typeof documentsRaw?.chunkOverlap === "number" && documentsRaw.chunkOverlap >= 0
+        ? Math.floor(documentsRaw.chunkOverlap)
+        : 200;
     const documents: DocumentsConfig = {
       enabled: documentsRaw?.enabled === true,
       pythonPath:
         typeof documentsRaw?.pythonPath === "string" && documentsRaw.pythonPath.trim().length > 0
           ? documentsRaw.pythonPath.trim()
           : "python3",
-      chunkSize:
-        typeof documentsRaw?.chunkSize === "number" && documentsRaw.chunkSize >= 100
-          ? Math.floor(documentsRaw.chunkSize)
-          : 2000,
-      chunkOverlap:
-        typeof documentsRaw?.chunkOverlap === "number" && documentsRaw.chunkOverlap >= 0
-          ? Math.floor(documentsRaw.chunkOverlap)
-          : 200,
+      chunkSize,
+      chunkOverlap: Math.min(chunkOverlap, chunkSize - 102),
       maxDocumentSize:
         typeof documentsRaw?.maxDocumentSize === "number" && documentsRaw.maxDocumentSize > 0
           ? Math.floor(documentsRaw.maxDocumentSize)
