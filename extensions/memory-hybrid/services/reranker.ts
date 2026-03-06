@@ -156,9 +156,9 @@ export async function rerankResults(
 
     const rankedIds = parseRankedIds(response);
 
-    // If LLM returned nothing useful, fall back to original order (full list, same as error path).
+    // If LLM returned nothing useful, fall back to original order sliced to outputCount (consistent with error path).
     if (rankedIds.length === 0) {
-      return facts;
+      return facts.slice(0, config.outputCount);
     }
 
     // Build a lookup map from the candidate set.

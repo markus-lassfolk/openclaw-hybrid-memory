@@ -353,21 +353,21 @@ describe("rerankResults — fallback on error", () => {
     expect(result.map((f) => f.factId)).toEqual(["fact-1", "fact-2"]);
   });
 
-  it("returns full original facts when LLM returns empty array (same as error fallback)", async () => {
+  it("returns original facts sliced to outputCount when LLM returns empty array (consistent with error fallback)", async () => {
     const openai = makeMockOpenAI("[]");
     const facts = Array.from({ length: 5 }, (_, i) => makeFact({ factId: `fact-${i + 1}` }));
     const cfg: RerankingConfig = { ...ENABLED_CFG, outputCount: 3 };
     const result = await rerankResults("query", facts, cfg, openai as never);
-    expect(result).toHaveLength(5);
+    expect(result).toHaveLength(3);
     expect(result[0].factId).toBe("fact-1");
   });
 
-  it("returns full original facts when LLM returns non-JSON response (same as error fallback)", async () => {
+  it("returns original facts sliced to outputCount when LLM returns non-JSON response (consistent with error fallback)", async () => {
     const openai = makeMockOpenAI("I cannot rank these results.");
     const facts = Array.from({ length: 5 }, (_, i) => makeFact({ factId: `fact-${i + 1}` }));
     const cfg: RerankingConfig = { ...ENABLED_CFG, outputCount: 2 };
     const result = await rerankResults("query", facts, cfg, openai as never);
-    expect(result).toHaveLength(5);
+    expect(result).toHaveLength(2);
     expect(result[0].factId).toBe("fact-1");
   });
 });
