@@ -120,6 +120,10 @@ export class PythonBridge {
           }
         }, 50);
       });
+      // Verify process actually started
+      if (!this.proc || this.proc.killed) {
+        throw new Error("Python bridge failed to start");
+      }
       return;
     }
     this.starting = true;
