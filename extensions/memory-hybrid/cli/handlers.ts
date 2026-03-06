@@ -838,10 +838,16 @@ export async function runVerifyForCli(
   }
 
   log("\n───── Advanced Features ─────");
-  if (cfg.search) {
-    log(`  search.hydeEnabled: ${bool(cfg.search.hydeEnabled)}`);
-    const effectiveHydeModel = cfg.search.hydeModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-    log(`  search.hydeModel: ${cfg.search.hydeModel != null ? cfg.search.hydeModel : `${effectiveHydeModel} (nano tier)`}`);
+  if (cfg.search?.hydeEnabled) {
+    log(`  search.hydeEnabled: DEPRECATED — use queryExpansion.enabled instead (auto-migrated)`);
+    if (cfg.search.hydeModel) {
+      log(`  search.hydeModel: DEPRECATED — use queryExpansion.model instead (value: ${cfg.search.hydeModel})`);
+    }
+  }
+  log(`  queryExpansion.enabled: ${bool(cfg.queryExpansion.enabled)}`);
+  if (cfg.queryExpansion.enabled) {
+    const effectiveQEModel = cfg.queryExpansion.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+    log(`  queryExpansion.model: ${cfg.queryExpansion.model != null ? cfg.queryExpansion.model : `${effectiveQEModel} (nano tier)`}`);
   }
   if (cfg.errorReporting) {
     log(`  errorReporting: ${bool(cfg.errorReporting.enabled)}`);
@@ -882,15 +888,15 @@ export async function runVerifyForCli(
   const nanoIsHeavy = nanoPrimary ? isHeavyModel(nanoPrimary) : false;
   const hasNanoModel = nanoOrder.some(isNanoModel);
   const hasExplicitClassifyOverride = !!(cfg.autoClassify.model);
-  const hasExplicitHydeOverride = !!(cfg.search?.hydeModel);
+  const hasExplicitHydeOverride = !!(cfg.queryExpansion?.model || cfg.search?.hydeModel);
 
   if (nanoIsHeavy && !hasNanoModel && !hasExplicitClassifyOverride) {
-    log(`  ⚠️  No nano/mini model for lightweight ops — autoClassify, HyDE, and summarize`);
+    log(`  ⚠️  No nano/mini model for lightweight ops — autoClassify, query expansion, and summarize`);
     log(`     will use ${nanoPrimary} (a heavy model) for short, cheap tasks. This may increase costs.`);
-    log(`     Fix: add llm.nano in plugin config, or set autoClassify.model and search.hydeModel`);
+    log(`     Fix: add llm.nano in plugin config, or set autoClassify.model and queryExpansion.model`);
     log(`     explicitly. Good options: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*`);
   } else if (!hasNanoModel && !hasExplicitClassifyOverride && defaultPrimary && !isLightModel(defaultPrimary)) {
-    log(`  ℹ️  Nano tier uses ${nanoPrimary ?? "default"}. For lower cost on classify/HyDE/summarize,`);
+    log(`  ℹ️  Nano tier uses ${nanoPrimary ?? "default"}. For lower cost on classify/query-expansion/summarize,`);
     log(`     add llm.nano: ["openai/gpt-4.1-nano"] (OpenAI) or other nano/mini model to plugin config.`);
   }
 

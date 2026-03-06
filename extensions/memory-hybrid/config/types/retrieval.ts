@@ -96,11 +96,17 @@ export type RetrievalConfig = {
   fts5TopK: number;
 };
 
-/** Search options: HyDE query expansion */
+/** Search options: HyDE query expansion
+ * @deprecated Use `queryExpansion` config instead. `search.hydeEnabled` and `search.hydeModel`
+ * will be removed in the next major version. A migration shim auto-enables `queryExpansion`
+ * when `search.hydeEnabled` is set; update your config to silence the deprecation warning.
+ */
 export type SearchConfig = {
-  /** Generate hypothetical answer before embedding for vector search (default false) */
+  /** Generate hypothetical answer before embedding for vector search (default false)
+   * @deprecated Use `queryExpansion.enabled` instead. Will be removed in next major version. */
   hydeEnabled: boolean;
-  /** Model for HyDE generation; when unset uses llm.default / legacy default (issue #92) */
+  /** Model for HyDE generation; when unset uses llm.default / legacy default (issue #92)
+   * @deprecated Use `queryExpansion.model` instead. Will be removed in next major version. */
   hydeModel?: string;
 };
 
