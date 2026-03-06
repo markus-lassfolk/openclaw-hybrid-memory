@@ -82,6 +82,43 @@ export function isStructuredForConsolidation(
   return false;
 }
 
+function selectConsolidatedKeyValue(
+  facts: MemoryEntry[],
+): { key: string | null; value: string | null } {
+  if (facts.length === 0) return { key: null, value: null };
+  const highestConfidence = facts.reduce((best, f) => (f.confidence > best.confidence ? f : best), facts[0]);
+  const factsWithKey = facts.filter((f) => typeof f.key === "string" && f.key.trim().length > 0);
+  if (factsWithKey.length === 0) return { key: null, value: null };
+
+  const keyToBest = new Map<string, MemoryEntry>();
+  for (const fact of factsWithKey) {
+    const key = fact.key!.trim();
+    const prev = keyToBest.get(key);
+    if (!prev || fact.confidence > prev.confidence) {
+      keyToBest.set(key, fact);
+    }
+  }
+
+  const keys = [...keyToBest.keys()];
+  let selectedKey = keys[0];
+  if (keys.length > 1) {
+    selectedKey = keys.reduce((bestKey, candidate) => {
+      const bestFact = keyToBest.get(bestKey)!;
+      const candidateFact = keyToBest.get(candidate)!;
+      if (candidate.length > bestKey.length) return candidate;
+      if (candidate.length < bestKey.length) return bestKey;
+      return candidateFact.confidence > bestFact.confidence ? candidate : bestKey;
+    }, selectedKey);
+  }
+
+  const bestForKey = keyToBest.get(selectedKey)!;
+  const selectedValue =
+    (highestConfidence.key === selectedKey && highestConfidence.value != null)
+      ? highestConfidence.value
+      : bestForKey.value ?? null;
+  return { key: selectedKey, value: selectedValue };
+}
+
 /**
  * Run consolidation: cluster similar facts and merge them with LLM.
  */
@@ -191,6 +228,7 @@ export async function runConsolidate(
       null as number | null,
     );
     const mergedTags = [...new Set(clusterFacts.flatMap((f) => f.tags ?? []))];
+    const { key: mergedKey, value: mergedValue } = selectConsolidatedKeyValue(clusterFacts);
 
     if (opts.dryRun) {
       logger.info(`memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`);
@@ -203,8 +241,8 @@ export async function runConsolidate(
       category,
       importance: BATCH_STORE_IMPORTANCE,
       entity: first?.entity ?? null,
-      key: null,
-      value: null,
+      key: mergedKey,
+      value: mergedValue,
       source: "conversation",
       sourceDate: maxSourceDate,
       tags: mergedTags.length > 0 ? mergedTags : undefined,
