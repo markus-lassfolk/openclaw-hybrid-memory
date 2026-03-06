@@ -61,27 +61,42 @@ jobs:
               }
             }
 
-            // Remove old size labels
+            // Check current size labels — skip if already correct (prevents label flapping)
+            const targetLabel = `size/${size}`;
             const prLabels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             })
-            for (const label of prLabels.filter(l => l.name.startsWith('size/'))) {
-              await github.rest.issues.removeLabel({
+            const currentSizeLabels = prLabels.filter(l => l.name.startsWith('size/'));
+            const currentSizeNames = currentSizeLabels.map(l => l.name);
+
+            if (currentSizeNames.length === 1 && currentSizeNames[0] === targetLabel) {
+              console.log(`Label ${targetLabel} already correct, skipping.`);
+              return;
+            }
+
+            // Remove incorrect size labels
+            for (const label of currentSizeLabels) {
+              if (label.name !== targetLabel) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  name: label.name,
+                })
+              }
+            }
+
+            // Add correct label if missing
+            if (!currentSizeNames.includes(targetLabel)) {
+              await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                name: label.name,
+                labels: [targetLabel],
               })
             }
-
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: [`size/${size}`],
-            })
 
   conventional-commits:
     name: Conventional Commits
