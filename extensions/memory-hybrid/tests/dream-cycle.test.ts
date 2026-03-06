@@ -257,6 +257,7 @@ describe("runDreamCycle", () => {
     pruneMode: "both",
     model: "gpt-4o-mini",
     consolidateAfterDays: 7,
+    maxUnconsolidatedAgeDays: 90,
   };
 
   it("returns skipped=true when enabled=false", async () => {
@@ -430,6 +431,7 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.reflectWindowDays).toBe(7);
     expect(cfg.nightlyCycle.pruneMode).toBe("both");
     expect(cfg.nightlyCycle.consolidateAfterDays).toBe(7);
+    expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(90);
   });
 
   it("enables the cycle when enabled: true", () => {
@@ -449,12 +451,14 @@ describe("NightlyCycleConfig parsing", () => {
         reflectWindowDays: 14,
         pruneMode: "expired",
         consolidateAfterDays: 3,
+        maxUnconsolidatedAgeDays: 30,
       },
     });
     expect(cfg.nightlyCycle.schedule).toBe("30 2 * * *");
     expect(cfg.nightlyCycle.reflectWindowDays).toBe(14);
     expect(cfg.nightlyCycle.pruneMode).toBe("expired");
     expect(cfg.nightlyCycle.consolidateAfterDays).toBe(3);
+    expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(30);
   });
 
   it("clamps reflectWindowDays to max 90", () => {

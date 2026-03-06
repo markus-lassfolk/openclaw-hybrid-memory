@@ -46,12 +46,12 @@ export class FactsDB {
 
   /**
    * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
-   * Removes: NOT, AND, OR (case-insensitive), *, (, ), and quotes.
+   * Removes: NOT, AND, OR, NEAR (case-insensitive), *, :, {, }, (, ), and quotes.
    */
   private sanitizeFTS5Query(query: string): string {
     return query
-      .replace(/['"*()]/g, "")
-      .replace(/\b(NOT|AND|OR)\b/gi, "")
+      .replace(/['"*(){}:]/g, "")
+      .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
       .trim();
   }
 
@@ -745,20 +745,24 @@ export class FactsDB {
 
     if (cnt === 0) return;
 
-    this.liveDb.exec(`
-      UPDATE facts
-      SET created_at = created_at / 1000
-      WHERE created_at > ${MS_THRESHOLD}
-    `);
+    this.liveDb
+      .prepare(
+        `UPDATE facts
+         SET created_at = created_at / 1000
+         WHERE created_at > ?`,
+      )
+      .run(MS_THRESHOLD);
 
     // last_confirmed_at may have been seeded from ms-based created_at
     // by the migrateDecayColumns migration (created_at → last_confirmed_at).
-    this.liveDb.exec(`
-      UPDATE facts
-      SET last_confirmed_at = last_confirmed_at / 1000
-      WHERE last_confirmed_at IS NOT NULL
-        AND last_confirmed_at > ${MS_THRESHOLD}
-    `);
+    this.liveDb
+      .prepare(
+        `UPDATE facts
+         SET last_confirmed_at = last_confirmed_at / 1000
+         WHERE last_confirmed_at IS NOT NULL
+           AND last_confirmed_at > ?`,
+      )
+      .run(MS_THRESHOLD);
   }
 
   store(
@@ -1220,10 +1224,13 @@ export class FactsDB {
     entity: string,
     key?: string,
     tag?: string,
-    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null },
+    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null; limit?: number },
   ): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
+    const limit = typeof options?.limit === "number" && options.limit > 0
+      ? Math.floor(options.limit)
+      : null;
     const temporalFilter =
       asOf != null
         ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
@@ -1236,10 +1243,11 @@ export class FactsDB {
         : "";
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
     const { clause: scopeClause, params: scopeParamsArr } = this.scopeFilterClausePositional(scopeFilter);
+    const limitClause = limit ? " LIMIT ?" : "";
 
     const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`;
 
     const params = key
       ? tagParam !== null
@@ -1256,7 +1264,8 @@ export class FactsDB {
         : asOf != null
           ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
           : [...[entity, nowSec], ...scopeParamsArr];
-    const rows = this.liveDb.prepare(base).all(...params) as Array<
+    const finalParams = limit ? [...params, limit] : params;
+    const rows = this.liveDb.prepare(base).all(...finalParams) as Array<
       Record<string, unknown>
     >;
 
@@ -1507,11 +1516,10 @@ export class FactsDB {
     return this.getById(id);
   }
 
-  /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
-  getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
-    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    const entry = this.rowToEntry(row);
+  private applyLookupFilters(
+    entry: MemoryEntry,
+    options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
+  ): MemoryEntry | null {
     const asOf = options?.asOf;
     if (asOf != null) {
       const vf = entry.validFrom ?? entry.createdAt;
@@ -1530,6 +1538,40 @@ export class FactsDB {
       if (!matches) return null;
     }
     return entry;
+  }
+
+  /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
+  getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
+    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const entry = this.rowToEntry(row);
+    return this.applyLookupFilters(entry, options);
+  }
+
+  /** Batch get facts by id. Returns a Map of id → entry after asOf/scope filtering. */
+  getByIds(
+    ids: string[],
+    options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
+  ): Map<string, MemoryEntry> {
+    const result = new Map<string, MemoryEntry>();
+    if (ids.length === 0) return result;
+    const uniqueIds = Array.from(new Set(ids));
+    // SQLite has a SQLITE_LIMIT_VARIABLE_NUMBER limit (default 999, often 32766).
+    // Batch in chunks of 500 to stay well within that limit for any configuration.
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = this.liveDb
+        .prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`)
+        .all(...chunk) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const entry = this.rowToEntry(row);
+        const filtered = this.applyLookupFilters(entry, options);
+        if (filtered) result.set(filtered.id, filtered);
+      }
+    }
+    return result;
   }
 
   /** Create a typed link between two facts. Returns link id. */

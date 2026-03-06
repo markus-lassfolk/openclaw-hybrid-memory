@@ -59,6 +59,8 @@ export interface ObserverRunResult {
   errors: number
 }
 
+// Track consecutive failures across runs to prevent infinite retries on bad session files.
+const consecutiveFailures = new Map<string, number>()
 
 // ---------------------------------------------------------------------------
 // JSONL text extraction
@@ -283,6 +285,17 @@ export async function runPassiveObserver(
     return result
   }
 
+  // Prune stale consecutiveFailures entries before any early returns, so sessions that
+  // disappear from disk (or when there are no session files at all) get cleaned up every tick.
+  {
+    const activeIds = new Set(
+      filePaths.map((fp) => fp.replace(/\\/g, '/').split('/').pop()!.replace('.jsonl', ''))
+    )
+    for (const id of consecutiveFailures.keys()) {
+      if (!activeIds.has(id)) consecutiveFailures.delete(id)
+    }
+  }
+
   if (filePaths.length === 0) return result
 
   const cursorsPath = getCursorsPath(opts.dbDir)
@@ -290,7 +303,6 @@ export async function runPassiveObserver(
   let cursorsChanged = false
   // Separate in-memory map for consecutive failure counts — not persisted to the cursors file
   // to avoid mixing byte-offset semantics with failure-count semantics in the same structure.
-  const consecutiveFailures = new Map<string, number>()
 
   // ---------------------------------------------------------------------------
   // Phase 1: scan all session files, count sessions, detect whether any have
@@ -495,11 +507,15 @@ export async function runPassiveObserver(
         try {
           vec = await embeddings.embed(fact.text)
         } catch (err) {
+          logger.warn(
+            `memory-hybrid: passive-observer — embed failed for fact: ${fact.text.slice(0, 80)}... (${err})`,
+          )
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: 'passive-observer-embed',
             severity: 'info',
             subsystem: 'passive-observer',
           })
+          result.errors++
           continue
         }
 

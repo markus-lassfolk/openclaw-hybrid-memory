@@ -320,6 +320,8 @@ export type NightlyCycleConfig = {
   model?: string;
   /** Days before consolidating episodic events into facts (default: 7). */
   consolidateAfterDays: number;
+  /** Max age for unconsolidated event log entries before archiving (default: 90). */
+  maxUnconsolidatedAgeDays: number;
 };
 
 /** Multi-hook retrieval aliases (Issue #149). */
@@ -1470,7 +1472,7 @@ export const hybridConfigSchema = {
       credentials = {
         enabled: true,
         store: "sqlite",
-        encryptionKey: hasValidKey ? encryptionKey : "",
+        encryptionKey: "",
         ...opts,
       };
     } else {
@@ -1482,6 +1484,12 @@ export const hybridConfigSchema = {
         expiryWarningDays: 7,
       };
     }
+    const resolvedKey = hasValidKey ? encryptionKey : "";
+    Object.defineProperty(credentials, "encryptionKey", {
+      value: resolvedKey,
+      enumerable: false,
+      writable: false,
+    });
 
     // Parse graph config
     const graphRaw = cfg.graph as Record<string, unknown> | undefined;
@@ -1732,11 +1740,16 @@ export const hybridConfigSchema = {
     const errorReporting: ErrorReportingConfig | undefined =
       errorReportingRaw && typeof errorReportingRaw === "object"
         ? (() => {
-            const enabled = errorReportingRaw.enabled === true;
+            let enabled = errorReportingRaw.enabled === true;
             const consent = errorReportingRaw.consent === true;
             const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
             const modeRaw = typeof errorReportingRaw.mode === "string" ? errorReportingRaw.mode : "community";
             const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
+
+            if (enabled && !consent) {
+              console.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
+              enabled = false;
+            }
             
             // Validate DSN when enabled in self-hosted mode
             if (enabled && mode === "self-hosted") {
@@ -1980,6 +1993,10 @@ export const hybridConfigSchema = {
       consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
         ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
         : 7,
+      maxUnconsolidatedAgeDays:
+        typeof nightlyCycleRaw?.maxUnconsolidatedAgeDays === "number" && nightlyCycleRaw.maxUnconsolidatedAgeDays >= 1
+          ? Math.min(3650, Math.floor(nightlyCycleRaw.maxUnconsolidatedAgeDays))
+          : 90,
     };
 
     // Parse reinforcement config (Issue #147, default: enabled)

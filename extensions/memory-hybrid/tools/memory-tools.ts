@@ -330,7 +330,7 @@ export function registerMemoryTools(
         // Entity-targeted lookup (always runs when entity filter is set; separate from RRF)
         let entityResults: SearchResult[] = [];
         if (entity) {
-          entityResults = factsDb.lookup(entity, undefined, tag, recallOpts);
+          entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
         }
 
         // Compute embedding for semantic strategy (with optional HyDE query expansion)

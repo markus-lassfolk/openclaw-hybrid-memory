@@ -17,6 +17,7 @@ import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
+import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -196,6 +197,7 @@ export interface DatabaseContext {
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
+  initialized: Promise<void>;
 }
 
 /**
@@ -324,8 +326,9 @@ export function initializeDatabases(
   let aliasDb: AliasDB | null = null;
   if (cfg.aliases?.enabled) {
     const aliasPath = join(dirname(resolvedSqlitePath), "aliases.db");
-    aliasDb = new AliasDB(aliasPath);
-    api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath})`);
+    const aliasLancePath = join(dirname(resolvedSqlitePath), "aliases.lance");
+    aliasDb = new AliasDB(aliasPath, aliasLancePath, cfg.embedding.dimensions);
+    api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath}, ${aliasLancePath})`);
   }
 
   // Load previously discovered categories so they remain available after restart
@@ -372,7 +375,7 @@ export function initializeDatabases(
 
   // Prerequisite checks (async, don't block plugin start): verify keys and model access
   // Health status can be queried by tools to fail gracefully instead of throwing at runtime.
-  void (async () => {
+  const initialized = (async () => {
     try {
       await embeddings.embed("verify");
       health.embeddingsOk = true;
@@ -420,9 +423,12 @@ export function initializeDatabases(
       let shouldMigrate = false;
       try {
         const handle = await open(migrationFlagPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
-        await handle.writeFile("1", "utf8");
-        await handle.close();
-        shouldMigrate = true; // We won the race, proceed with migration
+        try {
+          await handle.writeFile("1", "utf8");
+          shouldMigrate = true; // We won the race, proceed with migration
+        } finally {
+          await handle.close().catch(() => { /* ignore close errors */ });
+        }
       } catch (err: any) {
         if (err.code === "EEXIST") {
           // Another process already created the flag - skip migration
@@ -459,7 +465,14 @@ export function initializeDatabases(
         }
       }
     }
-  })();
+  })().catch((err: unknown) => {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "init",
+      operation: "async-initialization",
+      phase: "initialization",
+    });
+    api.logger.warn(`memory-hybrid: async initialization encountered an error: ${err}`);
+  });
 
   // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.
@@ -578,6 +591,7 @@ export function initializeDatabases(
     resolvedLancePath,
     resolvedSqlitePath,
     health,
+    initialized,
   };
 }
 
@@ -594,6 +608,8 @@ export function closeOldDatabases(context: {
   aliasDb?: AliasDB | null;
 }): void {
   const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb } = context;
+
+  invalidateClusterCache();
 
   if (typeof factsDb?.close === "function") {
     try {

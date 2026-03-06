@@ -108,6 +108,47 @@ const COMMON_STOP_WORDS = new Set([
   "also", "just", "more", "most", "very", "some", "such", "true", "false",
 ]);
 
+const ENTITY_PREFIX_LEN = 3;
+const entityCache = new Map<string, { prefixMap: Map<string, string[]>; timestamp: number }>();
+const ENTITY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
+  const cacheKey = knownEntities.join("\x00");
+  const now = Date.now();
+  const cached = entityCache.get(cacheKey);
+  if (cached && now - cached.timestamp < ENTITY_CACHE_TTL_MS) {
+    return cached.prefixMap;
+  }
+  const prefixMap = new Map<string, string[]>();
+  const seen = new Set<string>();
+  for (const entity of knownEntities) {
+    const lower = entity.toLowerCase().trim();
+    if (lower.length < 2 || seen.has(lower)) continue;
+    seen.add(lower);
+    const firstWordMatch = lower.match(/^[a-z0-9][a-z0-9_-]*/);
+    if (firstWordMatch) {
+      const word = firstWordMatch[0];
+      for (let len = Math.min(word.length, ENTITY_PREFIX_LEN); len >= 2; len--) {
+        const prefix = word.slice(0, len);
+        const list = prefixMap.get(prefix);
+        if (list) list.push(lower);
+        else prefixMap.set(prefix, [lower]);
+      }
+    } else {
+      const prefix = lower.slice(0, ENTITY_PREFIX_LEN);
+      const list = prefixMap.get(prefix);
+      if (list) list.push(lower);
+      else prefixMap.set(prefix, [lower]);
+    }
+  }
+  entityCache.set(cacheKey, { prefixMap, timestamp: now });
+  // Evict stale entries to prevent unbounded growth when entity lists change over time.
+  for (const [k, v] of entityCache) {
+    if (now - v.timestamp >= ENTITY_CACHE_TTL_MS) entityCache.delete(k);
+  }
+  return prefixMap;
+}
+
 /**
  * Extract entity candidates from a message using lightweight heuristics:
  *   - Known entities (case-insensitive substring match)
@@ -126,9 +167,21 @@ export function extractEntitiesFromMessage(
   const lower = text.toLowerCase();
 
   // 1. Known entities (case-insensitive)
-  for (const entity of knownEntities) {
-    if (entity && entity.length >= 2 && lower.includes(entity.toLowerCase())) {
-      candidates.add(entity.toLowerCase());
+  if (knownEntities.length > 0) {
+    const prefixMap = getEntityPrefixMap(knownEntities);
+    const seenPrefixes = new Set<string>();
+    for (const m of lower.matchAll(/\b[a-z0-9][a-z0-9_-]{1,}\b/g)) {
+      const token = m[0];
+      for (let len = Math.min(token.length, ENTITY_PREFIX_LEN); len >= 2; len--) {
+        seenPrefixes.add(token.slice(0, len));
+      }
+    }
+    for (const prefix of seenPrefixes) {
+      const list = prefixMap.get(prefix);
+      if (!list) continue;
+      for (const entity of list) {
+        if (lower.includes(entity)) candidates.add(entity);
+      }
     }
   }
 

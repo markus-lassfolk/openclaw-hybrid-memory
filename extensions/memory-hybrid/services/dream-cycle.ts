@@ -38,6 +38,8 @@ export interface DreamCycleConfig {
   /** Fallback models for reflection steps, in preference order. */
   fallbackModels?: string[];
   consolidateAfterDays: number;
+  /** Maximum age for unconsolidated event log entries before archiving. */
+  maxUnconsolidatedAgeDays: number;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -164,8 +166,16 @@ export async function runEpisodicConsolidation(
     if (eventTexts.length === 0) {
       // Mark events as consolidated with a namespaced skip sentinel to prevent re-processing.
       // 'SKIP:no_text' is clearly not a real fact UUID — no UUID-based query will match it.
-      eventLog.markConsolidated(groupEvents.map((e) => e.id), "SKIP:no_text");
-      eventsConsolidated += groupEvents.length;
+      try {
+        eventLog.markConsolidated(groupEvents.map((e) => e.id), "SKIP:no_text");
+        eventsConsolidated += groupEvents.length;
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — failed to mark no-text events as consolidated: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-mark-skip",
+          subsystem: "event-log",
+        });
+      }
       continue;
     }
 
@@ -232,10 +242,23 @@ export async function runEpisodicConsolidation(
     }
 
     // Mark all events in the group as consolidated into the new fact
-    eventLog.markConsolidated(groupEvents.map((e) => e.id), consolidatedFact.id);
-
-    factsCreated++;
-    eventsConsolidated += groupEvents.length;
+    try {
+      eventLog.markConsolidated(groupEvents.map((e) => e.id), consolidatedFact.id);
+      factsCreated++;
+      eventsConsolidated += groupEvents.length;
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — failed to mark events as consolidated: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-mark-consolidated",
+        subsystem: "event-log",
+      });
+      try {
+        factsDb.delete(consolidatedFact.id);
+      } catch (cleanupErr) {
+        logger.warn(`memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`);
+      }
+      continue;
+    }
 
     logger.info(
       `memory-hybrid: dream-cycle — consolidated ${groupEvents.length} events` +
@@ -330,6 +353,24 @@ export async function runDreamCycle(
       logger.warn(`memory-hybrid: dream-cycle — consolidation step failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-consolidation",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  // ── Step 2b: Archive stale event log entries ─────────────────────────────
+  if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
+    try {
+      const archived = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
+      if (archived > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — archived ${archived} event log entries older than ${config.maxUnconsolidatedAgeDays} days`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — archiveOld failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-archive",
         subsystem: "event-log",
       });
     }

@@ -1510,6 +1510,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("before_agent_start", async (event: unknown) => {
         const e = event as { prompt?: string; messages?: unknown[] };
         if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
 
         try {
 
@@ -1534,7 +1535,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (!detection.detected || !detection.target) return;
 
           // Check if we've already recalled for this target in this session
-          const recallCount = authFailureRecallsThisSession.get(detection.target) || 0;
+          const recallKey = `${sessionKey}:${detection.target}`;
+          const recallCount = authFailureRecallsThisSession.get(recallKey) || 0;
           const maxRecalls = ctx.cfg.autoRecall.authFailure.maxRecallsPerTarget;
           if (maxRecalls > 0 && recallCount >= maxRecalls) {
             // Use debug level to avoid log spam for repeated failures
@@ -1609,7 +1611,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(`memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`);
 
             // Track this recall
-            authFailureRecallsThisSession.set(detection.target, recallCount + 1);
+            authFailureRecallsThisSession.set(recallKey, recallCount + 1);
 
             // Return the hint to be injected
             // Hook contract validation: OpenClaw's before_agent_start hook must support
@@ -1693,9 +1695,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     // Clear auth failure dedup map on session end
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
-      api.on("agent_end", async () => {
-        authFailureRecallsThisSession.clear();
-        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for new session");
+      api.on("agent_end", async (event: unknown) => {
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        const prefix = `${sessionKey}:`;
+        for (const key of authFailureRecallsThisSession.keys()) {
+          if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
+        }
+        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for ended session");
       });
     }
 

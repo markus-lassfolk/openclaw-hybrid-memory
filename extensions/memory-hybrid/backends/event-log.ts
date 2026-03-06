@@ -194,17 +194,20 @@ export class EventLog {
 
   /**
    * Delete events whose timestamp is older than N days.
-   * Only deletes events that have already been consolidated (consolidated_into IS NOT NULL)
-   * to prevent silent data loss of unprocessed episodic events.
+   * By default, only deletes events that have already been consolidated
+   * (consolidated_into IS NOT NULL) to prevent silent data loss of unprocessed
+   * episodic events. When includeUnconsolidated is true, deletes all old events.
    * Returns the number of rows deleted.
    */
-  archiveOld(olderThanDays: number): number {
+  archiveOld(olderThanDays: number, includeUnconsolidated = false): number {
     const cutoff = new Date(
       Date.now() - olderThanDays * 24 * 3600 * 1000,
     ).toISOString();
     const result = this.liveDb
-      .prepare(`DELETE FROM event_log WHERE timestamp < ? AND consolidated_into IS NOT NULL`)
-      .run(cutoff);
+      .prepare(
+        `DELETE FROM event_log WHERE timestamp < ? AND (consolidated_into IS NOT NULL OR ?)`,
+      )
+      .run(cutoff, includeUnconsolidated ? 1 : 0);
     return result.changes;
   }
 

@@ -67,7 +67,12 @@ afterEach(() => {
 });
 
 function makeDb(): AliasDB {
-  return new AliasDB(join(tmpDir, `${randomUUID()}.db`));
+  const id = randomUUID();
+  return new AliasDB(
+    join(tmpDir, `${id}.db`),
+    join(tmpDir, `${id}.lance`),
+    4,
+  );
 }
 
 /** Build a unit vector in `dims` dimensions along axis 0. */
@@ -215,41 +220,41 @@ describe("AliasDB.deleteByFactId", () => {
 });
 
 describe("AliasDB.search", () => {
-  it("returns empty for empty DB", () => {
+  it("returns empty for empty DB", async () => {
     const db = makeDb();
-    expect(db.search(unitVec(), 5, 0.3)).toEqual([]);
+    expect(await db.search(unitVec(), 5, 0.3)).toEqual([]);
     db.close();
   });
 
-  it("finds alias with near-perfect cosine match (same vector)", () => {
+  it("finds alias with near-perfect cosine match (same vector)", async () => {
     const db = makeDb();
     const factId = randomUUID();
     db.store(factId, "exact alias", unitVec());
-    const results = db.search(unitVec(), 5, 0.3);
+    const results = await db.search(unitVec(), 5, 0.3);
     expect(results).toHaveLength(1);
     expect(results[0].factId).toBe(factId);
     expect(results[0].score).toBeCloseTo(1.0);
     db.close();
   });
 
-  it("excludes results below minScore", () => {
+  it("excludes results below minScore", async () => {
     const db = makeDb();
     const factId = randomUUID();
     // Store orthogonal vector → similarity ≈ 0
     db.store(factId, "orthogonal", orthVec());
-    const results = db.search(unitVec(), 5, 0.5);
+    const results = await db.search(unitVec(), 5, 0.5);
     expect(results).toHaveLength(0);
     db.close();
   });
 
-  it("deduplicates factId: keeps only best score", () => {
+  it("deduplicates factId: keeps only best score", async () => {
     const db = makeDb();
     const factId = randomUUID();
     // Two aliases for the same fact: one close, one not
     db.store(factId, "close alias", unitVec());
     const weakVec = [0.9, 0.1, 0, 0]; // normalise when scoring
     db.store(factId, "weak alias", weakVec);
-    const results = db.search(unitVec(), 5, 0.3);
+    const results = await db.search(unitVec(), 5, 0.3);
     // Should deduplicate to one result
     expect(results).toHaveLength(1);
     expect(results[0].factId).toBe(factId);
@@ -258,7 +263,7 @@ describe("AliasDB.search", () => {
     db.close();
   });
 
-  it("respects limit parameter", () => {
+  it("respects limit parameter", async () => {
     const db = makeDb();
     // Three facts, each with an alias similar to unitVec
     for (let i = 0; i < 3; i++) {
@@ -267,12 +272,12 @@ describe("AliasDB.search", () => {
       v[1] = i * 0.01;
       db.store(randomUUID(), `alias ${i}`, v);
     }
-    const results = db.search(unitVec(), 2, 0.3);
+    const results = await db.search(unitVec(), 2, 0.3);
     expect(results.length).toBeLessThanOrEqual(2);
     db.close();
   });
 
-  it("returns results sorted descending by score", () => {
+  it("returns results sorted descending by score", async () => {
     const db = makeDb();
     // fact A: exactly matches unitVec (score ≈ 1)
     const factA = randomUUID();
@@ -280,7 +285,7 @@ describe("AliasDB.search", () => {
     // fact B: partially matches (score < 1)
     const factB = randomUUID();
     db.store(factB, "partial", [1, 1, 0, 0]);
-    const results = db.search(unitVec(), 5, 0.3);
+    const results = await db.search(unitVec(), 5, 0.3);
     expect(results.length).toBeGreaterThanOrEqual(2);
     expect(results[0].score).toBeGreaterThanOrEqual(results[1].score);
     db.close();
@@ -479,41 +484,41 @@ describe("storeAliases", () => {
 // ---------------------------------------------------------------------------
 
 describe("searchAliasStrategy", () => {
-  it("returns empty for empty DB", () => {
+  it("returns empty for empty DB", async () => {
     const db = makeDb();
-    const results = searchAliasStrategy(db, unitVec(), 5);
+    const results = await searchAliasStrategy(db, unitVec(), 5);
     expect(results).toEqual([]);
     db.close();
   });
 
-  it("returns ranked results matching DB search results", () => {
+  it("returns ranked results matching DB search results", async () => {
     const db = makeDb();
     const factId = randomUUID();
     db.store(factId, "alias one", unitVec());
 
-    const results = searchAliasStrategy(db, unitVec(), 5);
+    const results = await searchAliasStrategy(db, unitVec(), 5);
     expect(results).toHaveLength(1);
     expect(results[0].factId).toBe(factId);
     expect(results[0].rank).toBe(1);
     db.close();
   });
 
-  it("sets source field to 'aliases'", () => {
+  it("sets source field to 'aliases'", async () => {
     const db = makeDb();
     db.store(randomUUID(), "alias", unitVec());
 
-    const results = searchAliasStrategy(db, unitVec(), 5);
+    const results = await searchAliasStrategy(db, unitVec(), 5);
     expect(results[0].source).toBe("aliases");
     db.close();
   });
 
-  it("assigns ascending ranks starting at 1", () => {
+  it("assigns ascending ranks starting at 1", async () => {
     const db = makeDb();
     // Add two facts with similar vectors
     db.store(randomUUID(), "best", unitVec());
     db.store(randomUUID(), "second best", [1, 0.1, 0, 0]);
 
-    const results = searchAliasStrategy(db, unitVec(), 5);
+    const results = await searchAliasStrategy(db, unitVec(), 5);
     expect(results.length).toBeGreaterThanOrEqual(2);
     const ranks = results.map((r) => r.rank);
     expect(ranks[0]).toBe(1);

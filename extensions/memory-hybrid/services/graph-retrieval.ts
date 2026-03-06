@@ -51,6 +51,7 @@ export interface GraphExpandedResult {
 /** Minimal interface the graph-retrieval service needs from FactsDB. */
 export interface GraphFactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
+  getByIds(ids: string[], options?: { asOf?: number; scopeFilter?: unknown }): Map<string, MemoryEntry>;
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }>;
   getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>;
 }
@@ -160,8 +161,9 @@ export function expandGraph(
     steps: LinkPathStep[],
     seedId: string,
     nextFrontier: string[],
+    visibleIds: Set<string>,
   ): void {
-    if (!factsDb.getById(candidateId, getByIdOpts)) return;
+    if (!visibleIds.has(candidateId)) return;
     const existing = nodeMeta.get(candidateId);
     const newSeedScore = seedScoreMap.get(seedId) ?? 0;
     if (!existing) {
@@ -181,6 +183,11 @@ export function expandGraph(
 
   for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
     const nextFrontier: string[] = [];
+    const candidateMoves: Array<{
+      candidateId: string;
+      steps: LinkPathStep[];
+      seedId: string;
+    }> = [];
 
     for (const fromId of frontier) {
       const fromMeta = nodeMeta.get(fromId)!;
@@ -197,7 +204,11 @@ export function expandGraph(
             strength: link.strength,
           },
         ];
-        tryAddNode(link.targetFactId, hop, steps, fromMeta.seedId, nextFrontier);
+        candidateMoves.push({
+          candidateId: link.targetFactId,
+          steps,
+          seedId: fromMeta.seedId,
+        });
       }
 
       // --- Incoming edges: sourceId → fromId (we discover sourceId) ---
@@ -212,8 +223,24 @@ export function expandGraph(
             strength: link.strength,
           },
         ];
-        tryAddNode(link.sourceFactId, hop, steps, fromMeta.seedId, nextFrontier);
+        candidateMoves.push({
+          candidateId: link.sourceFactId,
+          steps,
+          seedId: fromMeta.seedId,
+        });
       }
+    }
+
+    if (candidateMoves.length === 0) {
+      frontier = nextFrontier;
+      continue;
+    }
+
+    const candidateIds = Array.from(new Set(candidateMoves.map((m) => m.candidateId)));
+    const visible = factsDb.getByIds(candidateIds, getByIdOpts);
+    const visibleIds = new Set(visible.keys());
+    for (const move of candidateMoves) {
+      tryAddNode(move.candidateId, hop, move.steps, move.seedId, nextFrontier, visibleIds);
     }
 
     frontier = nextFrontier;
