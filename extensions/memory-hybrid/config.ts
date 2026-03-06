@@ -1470,7 +1470,7 @@ export const hybridConfigSchema = {
       credentials = {
         enabled: true,
         store: "sqlite",
-        encryptionKey: hasValidKey ? encryptionKey : "",
+        encryptionKey: "",
         ...opts,
       };
     } else {
@@ -1482,6 +1482,12 @@ export const hybridConfigSchema = {
         expiryWarningDays: 7,
       };
     }
+    const resolvedKey = hasValidKey ? encryptionKey : "";
+    Object.defineProperty(credentials, "encryptionKey", {
+      value: resolvedKey,
+      enumerable: false,
+      writable: false,
+    });
 
     // Parse graph config
     const graphRaw = cfg.graph as Record<string, unknown> | undefined;
@@ -1732,11 +1738,16 @@ export const hybridConfigSchema = {
     const errorReporting: ErrorReportingConfig | undefined =
       errorReportingRaw && typeof errorReportingRaw === "object"
         ? (() => {
-            const enabled = errorReportingRaw.enabled === true;
+            let enabled = errorReportingRaw.enabled === true;
             const consent = errorReportingRaw.consent === true;
             const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
             const modeRaw = typeof errorReportingRaw.mode === "string" ? errorReportingRaw.mode : "community";
             const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
+
+            if (enabled && !consent) {
+              console.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
+              enabled = false;
+            }
             
             // Validate DSN when enabled in self-hosted mode
             if (enabled && mode === "self-hosted") {

@@ -470,6 +470,19 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.errorReporting?.dsn).toBeUndefined();
   });
 
+  it("disables errorReporting when consent is false", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      errorReporting: {
+        enabled: true,
+        consent: false,
+        mode: "community",
+      },
+    });
+    expect(result.errorReporting?.enabled).toBe(false);
+    expect(result.errorReporting?.consent).toBe(false);
+  });
+
   it("parses errorReporting in self-hosted mode with DSN", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
