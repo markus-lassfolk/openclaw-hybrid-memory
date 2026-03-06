@@ -2,10 +2,11 @@
  * Workflow Tracker — session-level tool-sequence buffer and flush logic (Issue #209).
  *
  * Usage:
- *   1. Call `trackerForSession(sessionId)` to get/create a per-session buffer.
- *   2. Call `buffer.push(toolName)` after each tool call.
- *   3. Call `flush(goal, outcome)` at session end (or on explicit request) to
- *      persist the trace to WorkflowStore.
+ *   1. Create: `const tracker = new WorkflowTracker(store, config)`
+ *   2. Buffer: `tracker.push(toolName)` after each tool call
+ *   3. Persist: `tracker.flush(goal, outcome, sessionId)` at session end
+ *   4. Discard: `tracker.discard()` to clear without persisting
+ *   5. Inspect: `tracker.getBuffer()` to see buffered tool names
  *
  * Privacy: only tool *names* are stored; argument values are never persisted.
  * Rate limiting: enforced per UTC calendar day across all sessions.

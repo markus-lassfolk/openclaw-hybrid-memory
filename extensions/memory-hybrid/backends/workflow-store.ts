@@ -112,7 +112,7 @@ const STOP_WORDS = new Set([
 export function extractGoalKeywords(goal: string): string[] {
   return goal
     .toLowerCase()
-    .replace(/[^a-z0-9\s-_]/g, " ")
+    .replace(/[^a-z0-9\s_-]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length >= 3 && !STOP_WORDS.has(w))
     .slice(0, 10); // cap at 10 keywords
@@ -168,7 +168,10 @@ export class WorkflowStore {
   record(input: CreateWorkflowTraceInput): WorkflowTrace {
     const id = randomUUID();
     const now = new Date().toISOString();
-    const keywords = input.goalKeywords ?? extractGoalKeywords(input.goal);
+    // Normalize explicit keywords the same way extractGoalKeywords does (lowercase, dedupe, filter)
+    const keywords = input.goalKeywords
+      ? [...new Set(input.goalKeywords.map(k => k.toLowerCase().trim()).filter(k => k.length > 0))]
+      : extractGoalKeywords(input.goal);
     const argsHash = input.argsHash ?? hashToolSequence(input.toolSequence);
     const outcome = input.outcome ?? "unknown";
     const toolCount = input.toolSequence.length;
@@ -450,7 +453,12 @@ export class WorkflowStore {
       try {
         const parsed = JSON.parse(value as string);
         return Array.isArray(parsed) ? (parsed as string[]) : fallback;
-      } catch {
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "workflow-store",
+          operation: "parseJsonArray",
+          severity: "info",
+        });
         return fallback;
       }
     }

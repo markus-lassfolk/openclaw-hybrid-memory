@@ -8,6 +8,7 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { WorkflowStore } from "../backends/workflow-store.js";
+import { extractGoalKeywords } from "../backends/workflow-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export interface WorkflowToolsContext {
@@ -65,7 +66,6 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
           // If goal supplied, further filter by keyword overlap
           let filtered = patterns;
           if (hasGoalFilter) {
-            const { extractGoalKeywords } = await import("../backends/workflow-store.js");
             const keywords = new Set(extractGoalKeywords(goal));
             filtered = patterns.filter((p) =>
               p.exampleGoals.some((g) =>
@@ -86,7 +86,7 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
                     : "No workflow patterns recorded yet.",
                 },
               ],
-              patterns: [],
+              details: [],
             };
           }
 
@@ -109,7 +109,7 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
 
           return {
             content: [{ type: "text", text: summary }],
-            patterns: filtered,
+            details: filtered,
           };
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -121,6 +121,5 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
         }
       },
     },
-    async () => {},
   );
 }
