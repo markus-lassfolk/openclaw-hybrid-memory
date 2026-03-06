@@ -138,8 +138,8 @@ export class ToolProposalStore {
       params.push(filter.status);
     }
     if (filter?.name) {
-      query += " AND name LIKE ?";
-      params.push(`%${filter.name}%`);
+      query += " AND name LIKE ? ESCAPE '\\'";
+      params.push(`%${filter.name.replace(/[%_\\]/g, "\\$&")}%`);
     }
 
     query += " ORDER BY created_at DESC";
