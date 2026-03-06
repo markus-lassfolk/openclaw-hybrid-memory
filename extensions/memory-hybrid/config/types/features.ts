@@ -113,6 +113,18 @@ export type FutureDateProtectionConfig = {
   maxFreezeDays: number;
 };
 
+/** Workflow tracking: structured tool-sequence capture and pattern learning (Issue #209). */
+export type WorkflowTrackingConfig = {
+  /** Enable workflow trace recording (default: false — opt-in). */
+  enabled: boolean;
+  /** Maximum traces recorded per day across all sessions (default: 100). */
+  maxTracesPerDay: number;
+  /** Days to retain traces before auto-pruning (default: 90). */
+  retentionDays: number;
+  /** Optional: model used for goal extraction from conversation context. */
+  goalExtractionModel?: string;
+};
+
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */
 export type DocumentsConfig = {
   /** Enable document ingestion tool (default: false — opt-in) */
