@@ -485,7 +485,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
       }
       if (ctx.pythonBridge) {
-        ctx.pythonBridge.shutdown().catch(() => {});
+        await ctx.pythonBridge.shutdown();
       }
       factsDb.close();
       vectorDb.close();

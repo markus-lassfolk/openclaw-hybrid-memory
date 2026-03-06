@@ -45,8 +45,6 @@ export class PythonBridge {
   private readonly pythonPath: string;
   private readonly workerPath: string;
   private starting = false;
-  /** Lines emitted by readline before process was marked ready */
-  private bufferedLines: string[] = [];
 
   constructor(pythonPath = "python3") {
     this.pythonPath = pythonPath;
@@ -130,17 +128,17 @@ export class PythonBridge {
       // Health check
       await this.ping();
       this.restartCount = 0;
+      this.starting = false;
     } catch (err) {
       this.proc?.kill();
       this.proc = null;
       this.restartCount++;
       if (this.restartCount > MAX_RETRIES) {
+        this.starting = false;
         throw new Error(`Python bridge failed to start after ${MAX_RETRIES} retries: ${err}`);
       }
       this.starting = false;
       return this.ensureStarted();
-    } finally {
-      this.starting = false;
     }
   }
 
