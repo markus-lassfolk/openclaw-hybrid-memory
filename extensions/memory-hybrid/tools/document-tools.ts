@@ -9,7 +9,7 @@
 import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 
 import type { FactsDB } from "../backends/facts-db.js";
@@ -66,20 +66,58 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const filePath = params.path as string;
-        const extraTags = Array.isArray(params.tags)
-          ? (params.tags as string[]).filter((t) => typeof t === "string")
-          : [];
         const categoryParam = typeof params.category === "string" ? params.category : "fact";
         const isDryRun = params.dryRun === true;
+
+        // --- Path validation: require absolute path; optionally restrict to allowedPaths ---
+        if (!isAbsolute(filePath)) {
+          return {
+            content: [{ type: "text", text: `Error: Path must be absolute. Got: ${filePath}` }],
+            details: { error: "path_not_absolute", path: filePath },
+          };
+        }
+        const resolvedPath = resolve(filePath);
+        const allowedPaths = docCfg.allowedPaths;
+        if (allowedPaths && allowedPaths.length > 0) {
+          const underAllowed = allowedPaths.some((root) => {
+            const resolvedRoot = resolve(root);
+            return resolvedPath === resolvedRoot || resolvedPath.startsWith(resolvedRoot + "/");
+          });
+          if (!underAllowed) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Error: Path is not under any allowed directory. Allowed: ${allowedPaths.join(", ")}`,
+                },
+              ],
+              details: { error: "path_not_allowed", path: resolvedPath, allowedPaths },
+            };
+          }
+        }
+
+        // --- Normalize tags: comma-safe, lowercase, dedupe (tags stored comma-separated) ---
+        const tagSafe = (s: string): string =>
+          s
+            .toLowerCase()
+            .trim()
+            .replace(/\s+/g, "-")
+            .replace(/,/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "") || "tag";
+        const rawTags = Array.isArray(params.tags)
+          ? (params.tags as string[]).filter((t) => typeof t === "string")
+          : [];
+        const extraTags = [...new Set(rawTags.flatMap((t) => t.split(",").map((p) => tagSafe(p.trim())).filter(Boolean)))];
 
         // --- Validate file ---
         let stat: ReturnType<typeof statSync>;
         try {
-          stat = statSync(filePath);
+          stat = statSync(resolvedPath);
         } catch {
           return {
-            content: [{ type: "text", text: `Error: File not found or inaccessible: ${filePath}` }],
-            details: { error: "file_not_found", path: filePath },
+            content: [{ type: "text", text: `Error: File not found or inaccessible: ${resolvedPath}` }],
+            details: { error: "file_not_found", path: resolvedPath },
           };
         }
 
@@ -98,10 +136,10 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           };
         }
 
-        // --- Dedup check: hash the file path + mtime for a lightweight fingerprint ---
+        // --- Dedup check: hash the resolved path + mtime for a lightweight fingerprint ---
         const mtimeMs = stat.mtimeMs ?? 0;
         const fingerprint = createHash("sha256")
-          .update(`${filePath}:${mtimeMs}:${fileSize}`)
+          .update(`${resolvedPath}:${mtimeMs}:${fileSize}`)
           .digest("hex")
           .slice(0, 16);
 
@@ -123,7 +161,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         let markdown: string;
         let title: string;
         try {
-          const result = await pythonBridge.convert(filePath);
+          const result = await pythonBridge.convert(resolvedPath);
           markdown = result.markdown;
           title = result.title;
         } catch (err) {
@@ -135,14 +173,14 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           const msg = err instanceof Error ? err.message : String(err);
           return {
             content: [{ type: "text", text: `Error converting document: ${msg}` }],
-            details: { error: "conversion_failed", path: filePath },
+            details: { error: "conversion_failed", path: resolvedPath },
           };
         }
 
         if (!markdown || !markdown.trim()) {
           return {
             content: [{ type: "text", text: "Document converted but produced no text content." }],
-            details: { error: "empty_content", path: filePath },
+            details: { error: "empty_content", path: resolvedPath },
           };
         }
 
@@ -155,7 +193,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         if (chunks.length === 0) {
           return {
             content: [{ type: "text", text: "Document produced no storable chunks after chunking." }],
-            details: { error: "no_chunks", path: filePath },
+            details: { error: "no_chunks", path: resolvedPath },
           };
         }
 
@@ -177,7 +215,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
 
         // --- Store each chunk ---
         // Sanitize tag values from headings/filenames: tags are stored comma-separated, so commas would corrupt parseTags.
-        const tagSafe = (s: string): string => {
+        const headingTagSafe = (s: string): string => {
           const t = s
             .toLowerCase()
             .replace(/\s+/g, "-")
@@ -186,10 +224,10 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
             .replace(/^-|-$/g, "");
           return t || s.toLowerCase();
         };
-        const fileName = basename(filePath);
+        const fileName = basename(resolvedPath);
         const sourceName = `document:${fingerprint}`;
         const baseTags: string[] = [
-          ...(docCfg.autoTag ? [tagSafe(fileName)] : []),
+          ...(docCfg.autoTag ? [headingTagSafe(fileName)] : []),
           "document",
           ...extraTags,
         ];
@@ -198,7 +236,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         let errorCount = 0;
 
         for (const chunk of chunks) {
-          const headingTag = chunk.sectionHeading ? tagSafe(chunk.sectionHeading) : null;
+          const headingTag = chunk.sectionHeading ? headingTagSafe(chunk.sectionHeading) : null;
           const chunkTags = [
             ...baseTags,
             ...(headingTag ? [headingTag] : []),
