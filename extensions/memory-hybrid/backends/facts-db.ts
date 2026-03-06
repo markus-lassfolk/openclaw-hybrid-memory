@@ -46,12 +46,12 @@ export class FactsDB {
 
   /**
    * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
-   * Removes: NOT, AND, OR (case-insensitive), *, (, ), and quotes.
+   * Removes: NOT, AND, OR, NEAR (case-insensitive), *, :, {, }, (, ), and quotes.
    */
   private sanitizeFTS5Query(query: string): string {
     return query
-      .replace(/['"*()]/g, "")
-      .replace(/\b(NOT|AND|OR)\b/gi, "")
+      .replace(/['"*(){}:]/g, "")
+      .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
       .trim();
   }
 
