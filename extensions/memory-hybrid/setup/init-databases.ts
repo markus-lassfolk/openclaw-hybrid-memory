@@ -311,8 +311,8 @@ export function initializeDatabases(
     api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
   }
 
-  // Initialize EventLog only when a feature that writes to it is enabled
-  // (nightlyCycle.enabled or graph.autoSupersede). This avoids creating event-log.db for
+  // Initialize EventLog when nightlyCycle is enabled (episodic consolidation, nightly
+  // contradiction resolution) or graph.autoSupersede is on (contradiction events). This avoids creating event-log.db for
   // users who don't need it.
   let eventLog: EventLog | null = null;
   if (cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede) {
