@@ -12,7 +12,7 @@
  */
 
 import { existsSync, readdirSync } from 'node:fs'
-import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
+import { open, readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { FactsDB } from '../backends/facts-db.js'
@@ -66,6 +66,8 @@ export interface ObserverRunResult {
 
 /** Maximum length per message when building the transcript block. */
 const MAX_MSG_LENGTH = 500
+/** Hard cap on bytes read per session per run to avoid unbounded JSONL reads. */
+const MAX_JSONL_BYTES_PER_RUN = 2_000_000
 
 /**
  * Extract readable text from a raw JSONL transcript chunk.
@@ -383,8 +385,32 @@ export async function runPassiveObserver(
     if (cursor >= fileBytelen) continue // Nothing new
 
     let rawBuf: Buffer
+    let segmentEnd = fileBytelen
     try {
-      rawBuf = await readFile(filePath)
+      const maxBytes = Math.min(
+        MAX_JSONL_BYTES_PER_RUN,
+        Math.max(200_000, config.maxCharsPerChunk * 8),
+      )
+      const endOffset = Math.min(fileBytelen, cursor + maxBytes)
+      const length = endOffset - cursor
+      if (length <= 0) continue
+      const handle = await open(filePath, 'r')
+      try {
+        rawBuf = Buffer.alloc(length)
+        await handle.read(rawBuf, 0, length, cursor)
+      } finally {
+        await handle.close()
+      }
+      const lastNewlineIdx = rawBuf.lastIndexOf(0x0a)
+      if (lastNewlineIdx === -1 && endOffset < fileBytelen) {
+        logger.warn(`memory-hybrid: passive-observer — skipping oversized JSONL line in session ${sessionId}`)
+        cursors[sessionId] = endOffset
+        cursorsChanged = true
+        continue
+      }
+      const sliceEnd = lastNewlineIdx === -1 ? rawBuf.length : lastNewlineIdx + 1
+      rawBuf = rawBuf.subarray(0, sliceEnd)
+      segmentEnd = cursor + sliceEnd
     } catch (err) {
       logger.warn(`memory-hybrid: passive-observer — failed to read session ${sessionId}: ${err}`)
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -395,9 +421,9 @@ export async function runPassiveObserver(
       continue
     }
 
-    const newContent = rawBuf.subarray(cursor).toString('utf-8')
+    const newContent = rawBuf.toString('utf-8')
     if (!newContent.trim()) {
-      cursors[sessionId] = fileBytelen
+      cursors[sessionId] = segmentEnd
       cursorsChanged = true
       continue
     }
@@ -405,7 +431,7 @@ export async function runPassiveObserver(
     // Extract human-readable text from JSONL
     const textBlock = extractTextFromJsonlChunk(newContent)
     if (!textBlock.trim()) {
-      cursors[sessionId] = fileBytelen
+      cursors[sessionId] = segmentEnd
       cursorsChanged = true
       continue
     }
@@ -549,7 +575,7 @@ export async function runPassiveObserver(
     // Advance cursor to end of file only if at least one chunk was successfully processed.
     // Track consecutive failures to prevent infinite retry on permanently-bad session files.
     if (anyChunkSucceeded) {
-      cursors[sessionId] = fileBytelen
+      cursors[sessionId] = segmentEnd
       consecutiveFailures.delete(sessionId)
       cursorsChanged = true
     } else {
@@ -559,7 +585,7 @@ export async function runPassiveObserver(
         // Advance past the problematic content after 3 consecutive failures to prevent
         // an infinite retry loop that wastes LLM tokens on permanently-bad session files.
         logger.warn(`memory-hybrid: passive-observer — advancing cursor for session ${sessionId} after ${failures} consecutive failures`)
-        cursors[sessionId] = fileBytelen
+        cursors[sessionId] = segmentEnd
         consecutiveFailures.delete(sessionId)
         cursorsChanged = true
       }
