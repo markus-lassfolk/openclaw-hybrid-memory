@@ -23,6 +23,7 @@ import {
   type FactMetadata,
 } from "./rrf-fusion.js";
 import type { RetrievalConfig, ClustersConfig } from "../config.js";
+import type { QueryExpander } from "./query-expander.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
@@ -400,6 +401,10 @@ export function invalidateClusterCache(): void {
  * @param embeddingRegistry - Optional multi-model registry (Issue #158). When provided and
  *   has additional models registered, each model contributes a separate RRF strategy.
  * @param factsDbForEmbeddings - Optional access to fact_embeddings table (Issue #158).
+ * @param queryExpander - Optional query expander instance (Issue #160). When provided and
+ *   expansion is enabled, generates variant queries and adds each as a separate RRF strategy.
+ * @param embedFn - Optional function to embed text (Issue #160). Required for expansion to work.
+ * @param queryExpansionContext - Optional recent conversation context to improve expansion quality.
  */
 export async function runRetrievalPipeline(
   query: string,
@@ -418,6 +423,9 @@ export async function runRetrievalPipeline(
   clustersConfig?: ClustersConfig,
   embeddingRegistry?: EmbeddingRegistry | null,
   factsDbForEmbeddings?: FactsDbWithEmbeddings | null,
+  queryExpander?: QueryExpander | null,
+  embedFn?: ((text: string) => Promise<number[]>) | null,
+  queryExpansionContext?: string,
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
   const { strategies, semanticTopK, fts5TopK } = config;
@@ -464,6 +472,28 @@ export async function runRetrievalPipeline(
         searchAliasStrategy(aliasDb, queryVector, semanticTopK),
       ),
     );
+  }
+
+  // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
+  // Only runs when semantic strategy is active, expander is provided, and embedFn is available.
+  if (strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
+    try {
+      const variants = await queryExpander.expandQuery(query, queryExpansionContext);
+      // variants[0] is always the original query (already handled above); expand from index 1.
+      const additionalVariants = variants.slice(1);
+      for (let i = 0; i < additionalVariants.length; i++) {
+        const variantQuery = additionalVariants[i];
+        const strategyName = `semantic:qe:${i}`;
+        strategyPromises.push(
+          safeStrategy(strategyName, async () => {
+            const variantVector = await embedFn(variantQuery);
+            return runSemanticStrategy(vectorDb, variantVector, semanticTopK);
+          }),
+        );
+      }
+    } catch (_err) {
+      // Graceful degradation — expansion failure never blocks retrieval
+    }
   }
 
   const strategySettledResults = await Promise.allSettled(strategyPromises);
