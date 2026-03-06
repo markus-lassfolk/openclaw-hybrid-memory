@@ -29,6 +29,8 @@ import { registerWorkflowTools } from "../tools/workflow-tools.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import {
   registerUtilityTools,
@@ -55,6 +57,7 @@ export interface ToolsContext {
   issueStore?: IssueStore | null;
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -103,6 +106,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     issueStore,
     workflowStore,
     crystallizationStore,
+    toolProposalStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -198,5 +202,10 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Crystallization tools (register when store available; crystallization gated by cfg, Issue #208)
   if (crystallizationStore && workflowStore) {
     registerCrystallizationTools({ crystallizationStore, workflowStore, cfg }, api);
+  }
+
+  // Self-extension tools (register when store available; analysis gated by cfg, Issue #210)
+  if (toolProposalStore && workflowStore) {
+    registerSelfExtensionTools({ toolProposalStore, workflowStore, cfg }, api);
   }
 }
