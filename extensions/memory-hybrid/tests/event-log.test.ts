@@ -326,7 +326,7 @@ describe("EventLog.markConsolidated", () => {
 // ---------------------------------------------------------------------------
 
 describe("EventLog.archiveOld", () => {
-  it("removes entries older than N days and returns count", () => {
+  it("removes consolidated entries older than N days and returns count", () => {
     const old = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
     const recent = new Date().toISOString();
 
@@ -334,12 +334,33 @@ describe("EventLog.archiveOld", () => {
     log.append({ sessionId: "s", timestamp: old, eventType: "decision_made", content: {} });
     log.append({ sessionId: "s", timestamp: recent, eventType: "action_taken", content: {} });
 
+    // Mark the old entries as consolidated so archiveOld can clean them up
+    const allEntries = log.getBySession("s");
+    for (const entry of allEntries) {
+      if (entry.timestamp === old) {
+        log.markConsolidated([entry.id], "test-fact-id");
+      }
+    }
+
     const count = log.archiveOld(5);
     expect(count).toBe(2);
 
     const remaining = log.getBySession("s");
     expect(remaining).toHaveLength(1);
     expect(remaining[0].timestamp).toBe(recent);
+  });
+
+  it("preserves unconsolidated old entries", () => {
+    const old = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
+
+    log.append({ sessionId: "s", timestamp: old, eventType: "fact_learned", content: {} });
+
+    // Don't mark as consolidated — archiveOld should NOT delete it
+    const count = log.archiveOld(5);
+    expect(count).toBe(0);
+
+    const remaining = log.getBySession("s");
+    expect(remaining).toHaveLength(1);
   });
 
   it("returns 0 when nothing is old enough", () => {

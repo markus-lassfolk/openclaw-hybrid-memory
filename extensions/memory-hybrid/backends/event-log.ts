@@ -126,7 +126,7 @@ export class EventLog {
     return ids;
   }
 
-  /** Return events for a session, newest-first by default with a safety limit. */
+  /** Return events for a session in chronological order (oldest-first) with a safety limit. */
   getBySession(sessionId: string, limit = 1000): EventLogEntry[] {
     const rows = this.liveDb
       .prepare(
@@ -194,6 +194,8 @@ export class EventLog {
 
   /**
    * Delete events whose timestamp is older than N days.
+   * Only deletes events that have already been consolidated (consolidated_into IS NOT NULL)
+   * to prevent silent data loss of unprocessed episodic events.
    * Returns the number of rows deleted.
    */
   archiveOld(olderThanDays: number): number {
@@ -201,7 +203,7 @@ export class EventLog {
       Date.now() - olderThanDays * 24 * 3600 * 1000,
     ).toISOString();
     const result = this.liveDb
-      .prepare(`DELETE FROM event_log WHERE timestamp < ?`)
+      .prepare(`DELETE FROM event_log WHERE timestamp < ? AND consolidated_into IS NOT NULL`)
       .run(cutoff);
     return result.changes;
   }

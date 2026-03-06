@@ -2919,14 +2919,18 @@ export class FactsDB {
    * Returns the new confidence value, or null if the fact was not found.
    */
   updateConfidence(id: string, delta: number): number | null {
-    const row = this.liveDb
-      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
-      .get(id) as { confidence: number } | undefined;
-    if (!row) return null;
-    const current = row.confidence ?? 1.0;
-    const updated = Math.max(0.1, Math.min(1.0, current + delta));
-    this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
-    return updated;
+    // Wrapped in transaction to make read-modify-write atomic (even though
+    // better-sqlite3 is synchronous today, this guards against future changes).
+    return this.liveDb.transaction(() => {
+      const row = this.liveDb
+        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
+        .get(id) as { confidence: number } | undefined;
+      if (!row) return null;
+      const current = row.confidence ?? 1.0;
+      const updated = Math.max(0.1, Math.min(1.0, current + delta));
+      this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
+      return updated;
+    })();
   }
 
   /**
