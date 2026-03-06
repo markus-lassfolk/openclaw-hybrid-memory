@@ -114,19 +114,14 @@ export class CrystallizationProposer {
             continue;
           }
 
-          // Create proposal first, then approve, then write to disk (prevents orphaned files)
+          // Create proposal, approve in DB, THEN write to disk (DB is source of truth)
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
           });
-          const approved = this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
-          if (!approved) {
-            skipped++;
-            reasons.push(`Skipped '${result.skillName}': failed to approve proposal`);
-            continue;
-          }
+          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
           this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
           proposed++;
         } else {
@@ -187,14 +182,12 @@ export class CrystallizationProposer {
       };
     }
 
-    // Regenerate output path from skill name
-    const result = this.crystallizer.crystallize({
-      patternId: proposal.patternId,
-      pattern: JSON.parse(proposal.patternSnapshot),
-    });
-    const outputPath = result.proposedOutputPath;
+    // Determine output path — sanitize skill name to prevent path traversal
+    const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
+    const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+    const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 
-    // Approve in DB first, then write to disk (prevents orphaned files)
+    // Approve in DB first (source of truth), then write to disk
     const updated = this.crystallizationStore.approve(proposalId, outputPath);
     if (!updated) {
       return { success: false, message: "Failed to update proposal status" };
@@ -204,7 +197,7 @@ export class CrystallizationProposer {
       this.writeSkillToDisk(outputPath, proposal.skillContent);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, message: `Failed to write skill: ${msg}` };
+      return { success: false, message: `Approved but failed to write skill: ${msg}` };
     }
 
     return {

@@ -144,8 +144,7 @@ export class SkillCrystallizer {
 
     // Resolve output directory (expand ~ for home dir)
     const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
-    const safeName = skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
-    const proposedOutputPath = `${outputDir}/${safeName}/SKILL.md`;
+    const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
 
     // Generate shell script for exec-only sequences
     const hasScript = isExecOnlySequence(pattern.toolSequence);
@@ -173,7 +172,6 @@ function buildShellScript(
   patternId: string,
 ): string {
   const steps = pattern.toolSequence.map((_, i) => `# Step ${i + 1}: exec call`).join("\n");
-  const escapedSkillName = skillName.replace(/'/g, "'\\''");
   return `#!/usr/bin/env bash
 # Auto-generated shell script for skill: ${skillName}
 # Pattern ID: ${patternId}
@@ -185,6 +183,6 @@ set -euo pipefail
 ${steps}
 
 # TODO: replace the placeholder steps above with the actual commands
-echo 'Skill '\''${escapedSkillName}'\'' scaffold — update with actual commands'
+echo "Skill '${skillName}' scaffold — update with actual commands"
 `;
 }

@@ -24,29 +24,40 @@ export interface SessionBuffer {
 }
 
 // ---------------------------------------------------------------------------
+// Simple in-memory rate-limiter: count traces persisted per UTC day
+// ---------------------------------------------------------------------------
+
+let currentDay = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+let todayCount = 0;
+
+function checkAndIncrementRateLimit(maxPerDay: number): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== currentDay) {
+    currentDay = today;
+    todayCount = 0;
+  }
+  if (todayCount >= maxPerDay) return false;
+  todayCount++;
+  return true;
+}
+
+/** Exported for tests only */
+export function _resetRateLimitForTest(): void {
+  currentDay = new Date().toISOString().slice(0, 10);
+  todayCount = 0;
+}
+
+// ---------------------------------------------------------------------------
 // WorkflowTracker
 // ---------------------------------------------------------------------------
 
 export class WorkflowTracker {
   private sessions = new Map<string, SessionBuffer>();
-  private rateLimitDay = new Date().toISOString().slice(0, 10);
-  private rateLimitCount = 0;
 
   constructor(
     private readonly store: WorkflowStore,
     private readonly cfg: WorkflowTrackingConfig,
   ) {}
-
-  private checkAndIncrementRateLimit(maxPerDay: number): boolean {
-    const today = new Date().toISOString().slice(0, 10);
-    if (today !== this.rateLimitDay) {
-      this.rateLimitDay = today;
-      this.rateLimitCount = 0;
-    }
-    if (this.rateLimitCount >= maxPerDay) return false;
-    this.rateLimitCount++;
-    return true;
-  }
 
   /**
    * Push a tool name onto the given session's buffer.
@@ -54,14 +65,12 @@ export class WorkflowTracker {
    */
   push(sessionId: string, toolName: string): void {
     if (!this.cfg.enabled) return;
-    const sanitized = String(toolName).replace(/[\r\n\t`]/g, "").trim().slice(0, 64);
-    if (!sanitized) return;
     let buf = this.sessions.get(sessionId);
     if (!buf) {
       buf = { sessionId, toolCalls: [], startedAt: Date.now() };
       this.sessions.set(sessionId, buf);
     }
-    buf.toolCalls.push(sanitized);
+    buf.toolCalls.push(toolName);
   }
 
   /**
@@ -80,8 +89,8 @@ export class WorkflowTracker {
       return null;
     }
 
-    // Rate limit (increment before record; decrement in catch on DB failure)
-    if (!this.checkAndIncrementRateLimit(this.cfg.maxTracesPerDay)) {
+    // Rate limit
+    if (!checkAndIncrementRateLimit(this.cfg.maxTracesPerDay)) {
       this.sessions.delete(sessionId);
       return null;
     }
@@ -101,7 +110,6 @@ export class WorkflowTracker {
       this.sessions.delete(sessionId);
       return trace.id;
     } catch (err) {
-      this.rateLimitCount--; // Decrement on DB failure so quota isn't exhausted by errors
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "workflow-flush",
         subsystem: "workflow-tracker",
