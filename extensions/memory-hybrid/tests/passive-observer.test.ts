@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import * as chat from "../services/chat.js";
 import {
   extractTextFromJsonlChunk,
   parseObserverResponse,
@@ -436,6 +437,45 @@ describe("runPassiveObserver", () => {
     expect(opts.dryRun).toBe(true);
     // factsDb.store should not be called in dry-run mode (tested by service)
     expect(factsDb.store).not.toHaveBeenCalled();
+  });
+
+  it("stores extracted facts end-to-end with mocked LLM + DBs", async () => {
+    const sessionContent = JSON.stringify({
+      message: { role: "user", content: "We decided to use Rust for the CLI tool." },
+    }) + "\n";
+    writeFileSync(join(sessionsDir, "e2e.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(JSON.stringify([
+        { text: "The team decided to use Rust for the CLI tool", category: "decision", importance: 0.8 },
+      ]));
+
+    const factsDb = makeFactsDb({
+      detectContradictions: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    });
+    const vectorDb = makeVectorDb();
+    const embeddings = makeEmbeddings([0.1, 0.2, 0.3]);
+    const cfg = makeConfig({ sessionsDir });
+
+    const result = await runPassiveObserver(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      makeOpenAI(),
+      cfg,
+      ["fact", "decision", "preference", "entity", "pattern", "rule", "other"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    expect(result.factsExtracted).toBe(1);
+    expect(result.factsStored).toBe(1);
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    expect(vectorDb.store).toHaveBeenCalledTimes(1);
+
+    chatSpy.mockRestore();
   });
 });
 
