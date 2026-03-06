@@ -75,6 +75,10 @@ export function createPluginService(ctx: PluginServiceContext) {
     timers,
   } = ctx;
 
+  let observerRunning = false;
+  let observerRunPromise: Promise<void> | null = null;
+  let shuttingDown = false;
+
   return {
     id: PLUGIN_ID,
     start: async () => {
@@ -361,12 +365,15 @@ export function createPluginService(ctx: PluginServiceContext) {
           }
         };
 
-        let observerRunning = false;
         const intervalMs = cfg.passiveObserver.intervalMinutes * 60_000;
         timers.passiveObserverTimer.value = setInterval(() => {
+          if (shuttingDown) return;
           if (observerRunning) return;
           observerRunning = true;
-          void runObserver().finally(() => { observerRunning = false; });
+          observerRunPromise = runObserver().finally(() => {
+            observerRunning = false;
+            observerRunPromise = null;
+          });
         }, intervalMs);
         api.logger.info(
           `memory-hybrid: passive-observer enabled (model: ${observerModel}, interval: ${cfg.passiveObserver.intervalMinutes}m, minImportance: ${cfg.passiveObserver.minImportance})`,
@@ -445,7 +452,8 @@ export function createPluginService(ctx: PluginServiceContext) {
         })();
       }, 20000);
     },
-    stop: () => {
+    stop: async () => {
+      shuttingDown = true;
       // Flush any pending error reports before shutdown (non-blocking)
       if (isErrorReporterActive()) {
         flushErrorReporter(2000).catch(() => {});
@@ -465,6 +473,16 @@ export function createPluginService(ctx: PluginServiceContext) {
         timers.postUpgradeTimeout.value = null;
       }
       api.logger.info("memory-hybrid: stopping...");
+      if (observerRunPromise) {
+        const timeoutMs = 5000;
+        const completed = await Promise.race([
+          observerRunPromise.then(() => true).catch(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!completed) {
+          api.logger.warn("memory-hybrid: passive-observer shutdown timed out; closing databases anyway");
+        }
+      }
       factsDb.close();
       vectorDb.close();
       if (credentialsDb) { credentialsDb.close(); }
