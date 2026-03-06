@@ -362,6 +362,20 @@ export type QueryExpansionConfig = {
   timeoutMs: number;
 };
 
+/** LLM re-ranking of RRF fusion results (Issue #161). */
+export type RerankingConfig = {
+  /** Enable LLM re-ranking (default: false). */
+  enabled: boolean;
+  /** LLM model for re-ranking; when unset, defaults to "openai/gpt-4.1-nano". */
+  model?: string;
+  /** Number of top RRF candidates to present to the LLM for re-ranking (default: 50). */
+  candidateCount: number;
+  /** Number of results to return after re-ranking (default: 20). */
+  outputCount: number;
+  /** Timeout in ms for the LLM call; on timeout, fall back to original RRF order (default: 10000). */
+  timeoutMs: number;
+};
+
 /** Shortest-path traversal configuration (Issue #140). */
 export type PathConfig = {
   /** Enable memory_path tool (default: true). */
@@ -650,6 +664,8 @@ export type HybridMemoryConfig = {
   contextualVariants: ContextualVariantsConfig;
   /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */
   queryExpansion: QueryExpansionConfig;
+  /** LLM re-ranking of RRF fusion results (Issue #161, default: disabled). */
+  reranking: RerankingConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -2230,6 +2246,25 @@ export const hybridConfigSchema = {
           : 5000,
     };
 
+    // Parse re-ranking config (Issue #161, default: disabled)
+    const rrRaw = cfg.reranking as Record<string, unknown> | undefined;
+    const reranking: RerankingConfig = {
+      enabled: rrRaw?.enabled === true,
+      model: typeof rrRaw?.model === "string" && rrRaw.model.trim().length > 0 ? rrRaw.model.trim() : undefined,
+      candidateCount:
+        typeof rrRaw?.candidateCount === "number" && rrRaw.candidateCount > 0
+          ? Math.floor(rrRaw.candidateCount)
+          : 50,
+      outputCount:
+        typeof rrRaw?.outputCount === "number" && rrRaw.outputCount > 0
+          ? Math.floor(rrRaw.outputCount)
+          : 20,
+      timeoutMs:
+        typeof rrRaw?.timeoutMs === "number" && rrRaw.timeoutMs > 0
+          ? Math.floor(rrRaw.timeoutMs)
+          : 10000,
+    };
+
     return {
       embedding: {
         provider: embeddingProvider,
@@ -2293,6 +2328,7 @@ export const hybridConfigSchema = {
       documents,
       contextualVariants,
       queryExpansion,
+      reranking,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },

@@ -22,7 +22,8 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
-import type { RetrievalConfig, ClustersConfig } from "../config.js";
+import type { RetrievalConfig, ClustersConfig, RerankingConfig } from "../config.js";
+import { rerankResults, type ScoredFact } from "./reranker.js";
 import type { QueryExpander } from "./query-expander.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
@@ -405,6 +406,9 @@ export function invalidateClusterCache(): void {
  *   expansion is enabled, generates variant queries and adds each as a separate RRF strategy.
  * @param embedFn - Optional function to embed text (Issue #160). Required for expansion to work.
  * @param queryExpansionContext - Optional recent conversation context to improve expansion quality.
+ * @param rerankingConfig - Optional re-ranking configuration (Issue #161). When provided and
+ *   enabled, calls an LLM to re-rank the top candidates by semantic relevance to the query.
+ * @param rerankingOpenai - Optional OpenAI-compatible client for re-ranking LLM calls.
  */
 export async function runRetrievalPipeline(
   query: string,
@@ -426,6 +430,8 @@ export async function runRetrievalPipeline(
   queryExpander?: QueryExpander | null,
   embedFn?: ((text: string) => Promise<number[]>) | null,
   queryExpansionContext?: string,
+  rerankingConfig?: RerankingConfig | null,
+  rerankingOpenai?: import("openai").default | null,
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
   const { strategies, semanticTopK, fts5TopK } = config;
@@ -652,6 +658,46 @@ export async function runRetrievalPipeline(
   // Re-sort entries to match final order
   const finalOrder = new Map<string, number>(scopedFused.map((r, i) => [r.factId, i]));
   orderedEntries.sort((a, b) => (finalOrder.get(a.factId) ?? 0) - (finalOrder.get(b.factId) ?? 0));
+
+  // --- LLM Re-ranking (Issue #161) ---
+  // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
+  // On any failure or timeout, falls back to the original RRF order (no behavior change).
+  if (rerankingConfig?.enabled && rerankingOpenai) {
+    try {
+      const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
+        const storedSec = entry.sourceDate ?? entry.createdAt;
+        return {
+          factId,
+          text: entry.text,
+          confidence: entry.confidence,
+          storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+          finalScore: finalOrder.get(factId) ?? 0,
+        };
+      });
+
+      const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
+
+      // Rebuild orderedEntries in the new order.
+      const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
+      orderedEntries.sort(
+        (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+      );
+      // Trim to the outputCount returned by the reranker.
+      if (orderedEntries.length > reranked.length) {
+        orderedEntries.length = reranked.length;
+      }
+      // Also reorder scopedFused to stay consistent with orderedEntries.
+      scopedFused.sort(
+        (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+      );
+      if (scopedFused.length > reranked.length) {
+        scopedFused.length = reranked.length;
+      }
+    } catch (err) {
+      // Graceful degradation — re-ranking failure never blocks retrieval.
+      console.error("[retrieval] reranking failed:", err);
+    }
+  }
 
   // --- Token budget packing ---
   // Build contradicted set so contradicted facts are marked with a warning in the packed output.
