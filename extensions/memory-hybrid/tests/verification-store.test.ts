@@ -90,6 +90,13 @@ describe("VerificationStore.verify", () => {
     expect(next <= expectedMax).toBe(true);
   });
 
+  it("throws VerificationError when fact_id is already verified", async () => {
+    await store.verify("fact-dup", "First", "agent");
+    await expect(store.verify("fact-dup", "Second", "agent")).rejects.toThrow(VerificationError);
+    const vf = await store.getVerified("fact-dup");
+    expect(vf!.canonicalText).toBe("First");
+  });
+
   it("accepts all three verifiedBy values", async () => {
     await store.verify("fact-a", "Text A", "agent");
     await store.verify("fact-b", "Text B", "user");
@@ -223,8 +230,26 @@ describe("VerificationStore.update", () => {
     expect(oldRow.canonical_text).toBe("Old text");
   });
 
+  it("clears next_verification on superseded version so listDueForReverification does not return it", async () => {
+    const id = await store.verify("fact-super", "Original", "agent");
+    await store.update(id, "Updated", "user");
+
+    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const oldRow = db.prepare(`SELECT next_verification FROM verified_facts WHERE id = ?`).get(id) as { next_verification: string | null };
+    expect(oldRow.next_verification).toBeNull();
+  });
+
   it("throws VerificationError when updating a non-existent id", async () => {
     await expect(store.update("no-such-id", "text", "agent")).rejects.toThrow(VerificationError);
+  });
+
+  it("throws VerificationError when updating from a non-latest version", async () => {
+    const id1 = await store.verify("fact-chain", "V1", "agent");
+    const id2 = await store.update(id1, "V2", "user");
+    await expect(store.update(id1, "V2-alt", "user")).rejects.toThrow(VerificationError);
+    const vf = await store.getVerified("fact-chain");
+    expect(vf!.canonicalText).toBe("V2");
+    expect(vf!.id).toBe(id2);
   });
 
   it("update computes correct checksum for new text", async () => {
@@ -373,14 +398,17 @@ describe("VerificationConfig defaults", () => {
     const s = new VerificationStore(join(tmpDir, "default-config.db"), {
       backupPath: join(tmpDir, "default-backup.json"),
     });
-    await s.verify("fact-cfg", "Config test", "agent");
-    const vf = await s.getVerified("fact-cfg");
-    const now = Date.now();
-    const next = new Date(vf!.nextVerification!).getTime();
-    const diffDays = (next - now) / (24 * 3600 * 1000);
-    expect(diffDays).toBeGreaterThan(28);
-    expect(diffDays).toBeLessThan(32);
-    s.close();
+    try {
+      await s.verify("fact-cfg", "Config test", "agent");
+      const vf = await s.getVerified("fact-cfg");
+      const now = Date.now();
+      const next = new Date(vf!.nextVerification!).getTime();
+      const diffDays = (next - now) / (24 * 3600 * 1000);
+      expect(diffDays).toBeGreaterThan(28);
+      expect(diffDays).toBeLessThan(32);
+    } finally {
+      s.close();
+    }
   });
 
   it("respects custom reverificationDays", async () => {

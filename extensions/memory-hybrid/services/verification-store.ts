@@ -6,10 +6,11 @@
  */
 
 import Database from "better-sqlite3";
-import { mkdirSync, appendFileSync, chmodSync, existsSync } from "node:fs";
+import { mkdirSync, appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { homedir } from "node:os";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,8 +104,8 @@ function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the fact looks like an IP/hostname/credential that should
- * be considered for verification. Does NOT auto-enroll — requires explicit opt-in.
+ * Returns true if the fact looks like an IP address or infrastructure/technical
+ * fact that should be considered for verification. Does NOT auto-enroll — requires explicit opt-in.
  */
 export function shouldAutoClassify(fact: {
   text: string;
@@ -144,8 +145,7 @@ export class VerificationStore {
   ) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
+    this.applyPragmas();
     this.reverificationDays = options?.reverificationDays ?? 30;
 
     const rawBackup = options?.backupPath ?? "~/.openclaw/verified-facts.json";
@@ -155,6 +155,13 @@ export class VerificationStore {
     this.initSchema();
   }
 
+  private applyPragmas(): void {
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+    this.db.pragma("synchronous = NORMAL");
+  }
+
+  /** Schema for standalone verification DB (no facts table). When verified_facts lives in FactsDB, the migration in facts-db.ts is used (with FK to facts(id) ON DELETE CASCADE). */
   private initSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS verified_facts (
@@ -183,6 +190,15 @@ export class VerificationStore {
     text: string,
     verifiedBy: "agent" | "user" | "system",
   ): Promise<string> {
+    const existing = this.db
+      .prepare(`SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1`)
+      .get(factId);
+    if (existing) {
+      throw new VerificationError(
+        `Fact ${factId} is already verified; use update() to create a new version`,
+      );
+    }
+
     const id = randomUUID();
     const now = toISODate(new Date());
     const nextVerification = toISODate(
@@ -294,6 +310,17 @@ export class VerificationStore {
       throw new VerificationError(`No verified fact found with id=${id}`);
     }
 
+    const latest = this.db
+      .prepare(
+        `SELECT id FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`,
+      )
+      .get(existing.fact_id) as { id: string } | undefined;
+    if (!latest || latest.id !== id) {
+      throw new VerificationError(
+        `Can only update from the latest version; id=${id} is not the current latest for fact_id=${existing.fact_id}`,
+      );
+    }
+
     const newId = randomUUID();
     const now = toISODate(new Date());
     const nextVerification = toISODate(
@@ -320,6 +347,8 @@ export class VerificationStore {
         id,
         now,
       );
+
+    this.db.prepare(`UPDATE verified_facts SET next_verification = NULL WHERE id = ?`).run(id);
 
     this.writeBackup({
       action: "update",
@@ -349,15 +378,23 @@ export class VerificationStore {
   // Private: append-only backup
   // -------------------------------------------------------------------------
 
+  private static hasLoggedBackupError = false;
+
   private writeBackup(entry: Record<string, unknown>): void {
     try {
+      if (!existsSync(this.backupPath)) {
+        writeFileSync(this.backupPath, "", { mode: 0o600 });
+      }
       const line = JSON.stringify({ ...entry, ts: new Date().toISOString() }) + "\n";
-      appendFileSync(this.backupPath, line, { encoding: "utf8", mode: 0o600 });
-      // Ensure restrictive permissions on sensitive backup file
-      if (existsSync(this.backupPath)) chmodSync(this.backupPath, 0o600);
+      appendFileSync(this.backupPath, line, "utf8");
     } catch (err) {
-      // Non-fatal: backup failure should not break the verify operation
-      void err;
+      if (!VerificationStore.hasLoggedBackupError) {
+        VerificationStore.hasLoggedBackupError = true;
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "verification-store",
+          operation: "writeBackup",
+        });
+      }
     }
   }
 }

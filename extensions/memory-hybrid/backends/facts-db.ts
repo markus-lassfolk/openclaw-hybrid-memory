@@ -475,12 +475,12 @@ export class FactsDB {
     );
   }
 
-  /** Create verified_facts table for high-trust storage tier (Issue #162). */
+  /** Create verified_facts table for high-trust storage tier (Issue #162). Uses ON DELETE CASCADE so FactsDB.delete/prune do not fail when a fact has verified_facts rows. */
   private migrateVerifiedFactsTable(): void {
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS verified_facts (
         id TEXT PRIMARY KEY,
-        fact_id TEXT NOT NULL REFERENCES facts(id),
+        fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
         canonical_text TEXT NOT NULL,
         checksum TEXT NOT NULL,
         verified_at TEXT NOT NULL,
