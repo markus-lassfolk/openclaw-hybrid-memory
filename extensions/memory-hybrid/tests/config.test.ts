@@ -1027,6 +1027,18 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.enabled).toBe(false);
   });
 
+  it("migration shim (#160): explicit queryExpansion.enabled=false overrides search.hydeEnabled=true", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      search: { hydeEnabled: true, hydeModel: "old-model" },
+      queryExpansion: { enabled: false },
+    });
+    // queryExpansion.enabled is explicitly false → it wins over legacy hydeEnabled=true
+    expect(result.queryExpansion.enabled).toBe(false);
+    // Model should not be inherited when queryExpansion is explicitly disabled
+    expect(result.queryExpansion.model).toBeUndefined();
+  });
+
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.multiAgent).toBeDefined();

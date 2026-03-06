@@ -245,19 +245,19 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   // Migration shim: if the legacy search.hydeEnabled flag is set, emit a deprecation warning
   // and auto-enable queryExpansion when it has not been explicitly enabled.
   const hydeEnabled = searchRaw?.hydeEnabled === true;
-  const qeExplicitlyEnabled = qeRaw?.enabled === true;
+  const qeExplicitlySet = qeRaw?.enabled !== undefined;
 
   if (hydeEnabled) {
     console.warn(
       "memory-hybrid: search.hydeEnabled is DEPRECATED — use queryExpansion.enabled instead. " +
-      (qeExplicitlyEnabled
+      (qeExplicitlySet
         ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config."
         : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."),
     );
   }
 
   // queryExpansion.enabled wins when explicitly set; otherwise fall through to HyDE migration
-  const enabled = qeExplicitlyEnabled || (!qeExplicitlyEnabled && hydeEnabled);
+  const enabled = qeExplicitlySet ? (qeRaw.enabled === true) : hydeEnabled;
 
   // queryExpansion.model wins when set; fall back to search.hydeModel for migration compat
   const hydeModel =
@@ -267,7 +267,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const model =
     typeof qeRaw?.model === "string" && qeRaw.model.trim().length > 0
       ? qeRaw.model.trim()
-      : (hydeEnabled && !qeExplicitlyEnabled ? hydeModel : undefined);
+      : (hydeEnabled && !qeExplicitlySet ? hydeModel : undefined);
 
   return {
     enabled,
