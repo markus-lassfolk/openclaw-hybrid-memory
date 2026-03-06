@@ -286,6 +286,9 @@ export async function runPassiveObserver(
   const cursorsPath = getCursorsPath(opts.dbDir)
   const cursors = await loadCursors(cursorsPath)
   let cursorsChanged = false
+  // Separate in-memory map for consecutive failure counts — not persisted to the cursors file
+  // to avoid mixing byte-offset semantics with failure-count semantics in the same structure.
+  const consecutiveFailures = new Map<string, number>()
 
   // ---------------------------------------------------------------------------
   // Phase 1: scan all session files, count sessions, detect whether any have
@@ -538,21 +541,20 @@ export async function runPassiveObserver(
 
     // Advance cursor to end of file only if at least one chunk was successfully processed.
     // Track consecutive failures to prevent infinite retry on permanently-bad session files.
-    const failureKey = `${sessionId}:failures`
     if (anyChunkSucceeded) {
       cursors[sessionId] = fileBytelen
-      delete cursors[failureKey]
+      consecutiveFailures.delete(sessionId)
       cursorsChanged = true
     } else {
-      const consecutiveFailures = (cursors[failureKey] ?? 0) + 1
-      cursors[failureKey] = consecutiveFailures
-      cursorsChanged = true
-      if (consecutiveFailures >= 3) {
+      const failures = (consecutiveFailures.get(sessionId) ?? 0) + 1
+      consecutiveFailures.set(sessionId, failures)
+      if (failures >= 3) {
         // Advance past the problematic content after 3 consecutive failures to prevent
         // an infinite retry loop that wastes LLM tokens on permanently-bad session files.
-        logger.warn(`memory-hybrid: passive-observer — advancing cursor for session ${sessionId} after ${consecutiveFailures} consecutive failures`)
+        logger.warn(`memory-hybrid: passive-observer — advancing cursor for session ${sessionId} after ${failures} consecutive failures`)
         cursors[sessionId] = fileBytelen
-        delete cursors[failureKey]
+        consecutiveFailures.delete(sessionId)
+        cursorsChanged = true
       }
     }
   }
