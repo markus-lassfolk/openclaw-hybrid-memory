@@ -429,15 +429,34 @@ export function searchAmbientIssues(
     return { openIssues: [], resolvedIssues: [] };
   }
 
-  // Extract a short search term: first 60 chars of the message for LIKE matching
-  const searchTerm = message.trim().slice(0, 60);
-  const matches = issueStore.search(searchTerm);
+  const lower = message.toLowerCase();
+  const keywords: string[] = [];
+  for (const kw of ERROR_KEYWORDS) {
+    if (lower.includes(kw)) {
+      keywords.push(kw);
+    }
+  }
+  const words = message.match(/\b[a-zA-Z0-9_-]{3,}\b/g) || [];
+  for (const word of words.slice(0, 5)) {
+    if (!ERROR_KEYWORDS.includes(word.toLowerCase())) {
+      keywords.push(word);
+    }
+  }
 
-  const openIssues = matches
+  const allMatches = new Map<string, Issue>();
+  for (const keyword of keywords.slice(0, 3)) {
+    const matches = issueStore.search(keyword);
+    for (const match of matches) {
+      allMatches.set(match.id, match);
+    }
+  }
+
+  const matchList = Array.from(allMatches.values());
+  const openIssues = matchList
     .filter((i) => i.status === "open" || i.status === "diagnosed" || i.status === "fix-attempted")
     .slice(0, 3);
 
-  const resolvedIssues = matches
+  const resolvedIssues = matchList
     .filter((i) => i.status === "resolved" || i.status === "verified")
     .slice(0, 3);
 
