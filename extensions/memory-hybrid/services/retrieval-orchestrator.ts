@@ -7,7 +7,7 @@
  * Strategies:
  *   - semantic: LanceDB vector similarity search
  *   - fts5: SQLite FTS5 full-text search (Issue #151)
- *   - graph: Graph-walk spreading activation (stub — full GraphRAG is #145)
+ *   - graph: Graph-walk spreading activation (GraphRAG expansion)
  */
 
 import type Database from "better-sqlite3";
@@ -25,6 +25,7 @@ import {
 import type { RetrievalConfig, ClustersConfig } from "../config.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
+import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -176,12 +177,32 @@ async function runSemanticStrategy(
 }
 
 /**
- * Graph walk strategy stub.
- * Full GraphRAG implementation is tracked in issue #145.
- * Returns empty results gracefully.
+ * Graph walk strategy using GraphRAG expansion (Issue #152).
+ * Expands from seed facts found by other strategies.
  */
-function runGraphStrategy(): RankedResult[] {
-  return [];
+function runGraphStrategy(
+  factsDb: FactLookup,
+  seeds: Array<{ factId: string; score: number; entry: MemoryEntry }>,
+  maxDepth: number,
+  scopeFilter?: unknown,
+  asOf?: number,
+): RankedResult[] {
+  if (maxDepth <= 0 || seeds.length === 0 || !hasGraphLookup(factsDb)) return [];
+  const expanded = expandGraph(factsDb, seeds, { maxDepth, scopeFilter, asOf });
+  const bestById = new Map<string, number>();
+  for (const e of expanded) {
+    if (e.expansionSource !== "graph") continue;
+    const existing = bestById.get(e.factId);
+    if (existing === undefined || e.score > existing) {
+      bestById.set(e.factId, e.score);
+    }
+  }
+  const sorted = Array.from(bestById.entries()).sort((a, b) => b[1] - a[1]);
+  return sorted.map(([factId], i) => ({
+    factId,
+    rank: i + 1,
+    source: "graph" as const,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -201,17 +222,24 @@ export interface FactLookup {
   /** Optional: cluster detection helpers (FactsDB implements these). */
   getAllLinkedFactIds?(): string[];
   getAllLinks?(): Array<{ sourceFactId: string; targetFactId: string }>;
+  /** Optional: graph traversal helpers (FactsDB implements these). */
+  getLinksFrom?(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }>;
+  getLinksTo?(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>;
 }
 
 function hasClusterLookup(factsDb: FactLookup): factsDb is FactLookup & ClusterFactLookup {
   return typeof factsDb.getAllLinkedFactIds === "function" && typeof factsDb.getAllLinks === "function";
 }
 
+function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactLookup {
+  return typeof factsDb.getLinksFrom === "function" && typeof factsDb.getLinksTo === "function";
+}
+
 /**
  * Run the multi-strategy retrieval pipeline and return fused, ranked results.
  *
  * Steps:
- * 1. Run configured strategies in parallel (semantic, fts5, graph stub).
+ * 1. Run configured strategies in parallel (semantic, fts5) and optional graph expansion.
  * 2. Fuse via RRF.
  * 3. Look up fact metadata for post-RRF adjustments (applying scope + asOf filters).
  * 4. Apply post-RRF adjustments (recency, confidence, access frequency).
@@ -285,12 +313,6 @@ export async function runRetrievalPipeline(
     );
   }
 
-  if (strategies.includes("graph")) {
-    strategyPromises.push(
-      safeStrategy("graph", () => runGraphStrategy()),
-    );
-  }
-
   // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
   if (aliasDb && queryVector) {
     strategyPromises.push(
@@ -309,6 +331,36 @@ export async function runRetrievalPipeline(
     const [name, results] = settled.value;
     if (results.length > 0) {
       strategyMap.set(name, results);
+    }
+  }
+
+  // Graph walk strategy (Issue #152) — expand from semantic/FTS5 seeds
+  if (strategies.includes("graph")) {
+    const seedScores = new Map<string, number>();
+    const seedEntries = new Map<string, MemoryEntry>();
+    const getByIdOpts = (scopeFilter || asOf != null)
+      ? { scopeFilter, asOf }
+      : undefined;
+
+    for (const results of strategyMap.values()) {
+      for (const r of results) {
+        const entry = factsDb.getById(r.factId, getByIdOpts);
+        if (!entry) continue;
+        const score = 1 / (k + r.rank);
+        const existing = seedScores.get(r.factId) ?? 0;
+        seedScores.set(r.factId, existing + score);
+        if (!seedEntries.has(r.factId)) seedEntries.set(r.factId, entry);
+      }
+    }
+
+    const seeds = Array.from(seedScores.entries()).map(([factId, score]) => ({
+      factId,
+      score,
+      entry: seedEntries.get(factId)!,
+    }));
+    const graphResults = runGraphStrategy(factsDb, seeds, config.graphWalkDepth, scopeFilter, asOf);
+    if (graphResults.length > 0) {
+      strategyMap.set("graph", graphResults);
     }
   }
 
