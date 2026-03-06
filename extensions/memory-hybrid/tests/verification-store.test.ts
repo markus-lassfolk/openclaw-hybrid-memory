@@ -369,20 +369,18 @@ describe("VerificationStore backup file", () => {
 // ---------------------------------------------------------------------------
 
 describe("VerificationConfig defaults", () => {
-  it("uses reverificationDays=30 by default", () => {
+  it("uses reverificationDays=30 by default", async () => {
     const s = new VerificationStore(join(tmpDir, "default-config.db"), {
       backupPath: join(tmpDir, "default-backup.json"),
     });
-    // Internal reverificationDays should be 30; verify via the nextVerification date
-    s.verify("fact-cfg", "Config test", "agent").then(async () => {
-      const vf = await s.getVerified("fact-cfg");
-      const now = Date.now();
-      const next = new Date(vf!.nextVerification!).getTime();
-      const diffDays = (next - now) / (24 * 3600 * 1000);
-      expect(diffDays).toBeGreaterThan(28);
-      expect(diffDays).toBeLessThan(32);
-      s.close();
-    });
+    await s.verify("fact-cfg", "Config test", "agent");
+    const vf = await s.getVerified("fact-cfg");
+    const now = Date.now();
+    const next = new Date(vf!.nextVerification!).getTime();
+    const diffDays = (next - now) / (24 * 3600 * 1000);
+    expect(diffDays).toBeGreaterThan(28);
+    expect(diffDays).toBeLessThan(32);
+    s.close();
   });
 
   it("respects custom reverificationDays", async () => {

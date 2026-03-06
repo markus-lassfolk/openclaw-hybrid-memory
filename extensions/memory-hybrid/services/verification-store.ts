@@ -6,7 +6,7 @@
  */
 
 import Database from "better-sqlite3";
-import { mkdirSync, appendFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, chmodSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -144,6 +144,8 @@ export class VerificationStore {
   ) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("foreign_keys = ON");
     this.reverificationDays = options?.reverificationDays ?? 30;
 
     const rawBackup = options?.backupPath ?? "~/.openclaw/verified-facts.json";
@@ -350,11 +352,12 @@ export class VerificationStore {
   private writeBackup(entry: Record<string, unknown>): void {
     try {
       const line = JSON.stringify({ ...entry, ts: new Date().toISOString() }) + "\n";
-      appendFileSync(this.backupPath, line, "utf8");
+      appendFileSync(this.backupPath, line, { encoding: "utf8", mode: 0o600 });
+      // Ensure restrictive permissions on sensitive backup file
+      if (existsSync(this.backupPath)) chmodSync(this.backupPath, 0o600);
     } catch (err) {
       // Non-fatal: backup failure should not break the verify operation
-      // Log but don't throw
-      const _ = err;
+      void err;
     }
   }
 }
