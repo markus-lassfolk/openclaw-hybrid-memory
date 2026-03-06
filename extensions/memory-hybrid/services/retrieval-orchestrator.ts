@@ -234,7 +234,11 @@ function hasClusterLookup(factsDb: FactLookup): factsDb is FactLookup & ClusterF
 }
 
 function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactLookup {
-  return typeof factsDb.getLinksFrom === "function" && typeof factsDb.getLinksTo === "function";
+  return (
+    typeof factsDb.getLinksFrom === "function" &&
+    typeof factsDb.getLinksTo === "function" &&
+    typeof (factsDb as GraphFactLookup).getByIds === "function"
+  );
 }
 
 type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number };

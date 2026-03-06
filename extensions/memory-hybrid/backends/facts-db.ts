@@ -1507,11 +1507,10 @@ export class FactsDB {
     return this.getById(id);
   }
 
-  /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
-  getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
-    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    const entry = this.rowToEntry(row);
+  private applyLookupFilters(
+    entry: MemoryEntry,
+    options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
+  ): MemoryEntry | null {
     const asOf = options?.asOf;
     if (asOf != null) {
       const vf = entry.validFrom ?? entry.createdAt;
@@ -1530,6 +1529,34 @@ export class FactsDB {
       if (!matches) return null;
     }
     return entry;
+  }
+
+  /** Get one fact by id (for merge category). Returns null if not found. When asOf is set, returns null if the fact was not valid at that time. When scopeFilter is set, returns null if the fact is not in scope. */
+  getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
+    const row = this.liveDb.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const entry = this.rowToEntry(row);
+    return this.applyLookupFilters(entry, options);
+  }
+
+  /** Batch get facts by id. Returns a Map of id → entry after asOf/scope filtering. */
+  getByIds(
+    ids: string[],
+    options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
+  ): Map<string, MemoryEntry> {
+    const result = new Map<string, MemoryEntry>();
+    if (ids.length === 0) return result;
+    const uniqueIds = Array.from(new Set(ids));
+    const placeholders = uniqueIds.map(() => "?").join(",");
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`)
+      .all(...uniqueIds) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const entry = this.rowToEntry(row);
+      const filtered = this.applyLookupFilters(entry, options);
+      if (filtered) result.set(filtered.id, filtered);
+    }
+    return result;
   }
 
   /** Create a typed link between two facts. Returns link id. */

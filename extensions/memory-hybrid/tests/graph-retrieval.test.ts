@@ -93,6 +93,14 @@ function buildMockDb(
   const entryMap = new Map(entries.map((e) => [e.id, e]));
   return {
     getById: (id: string) => entryMap.get(id) ?? null,
+    getByIds: (ids: string[]) => {
+      const result = new Map<string, MemoryEntry>();
+      for (const id of ids) {
+        const entry = entryMap.get(id);
+        if (entry) result.set(id, entry);
+      }
+      return result;
+    },
     getLinksFrom: (id: string) => linksFrom[id] ?? [],
     getLinksTo: (id: string) => linksTo[id] ?? [],
   };
