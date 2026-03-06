@@ -389,6 +389,7 @@ export function registerMemoryTools(
             scopeFilter,
             asOfSec ?? undefined,
             cfg.aliases?.enabled ? aliasDb : null,
+            cfg.clusters,
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).

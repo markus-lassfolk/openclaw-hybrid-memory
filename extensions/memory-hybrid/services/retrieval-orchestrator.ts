@@ -22,8 +22,9 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
-import type { RetrievalConfig } from "../config.js";
+import type { RetrievalConfig, ClustersConfig } from "../config.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
+import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -197,6 +198,13 @@ export interface FactLookup {
   isContradicted?(factId: string): boolean;
   /** Optional: batch check — returns the subset of factIds involved in unresolved contradictions. */
   getContradictedIds?(factIds: string[]): Set<string>;
+  /** Optional: cluster detection helpers (FactsDB implements these). */
+  getAllLinkedFactIds?(): string[];
+  getAllLinks?(): Array<{ sourceFactId: string; targetFactId: string }>;
+}
+
+function hasClusterLookup(factsDb: FactLookup): factsDb is FactLookup & ClusterFactLookup {
+  return typeof factsDb.getAllLinkedFactIds === "function" && typeof factsDb.getAllLinks === "function";
 }
 
 /**
@@ -237,6 +245,7 @@ export async function runRetrievalPipeline(
   scopeFilter?: unknown,
   asOf?: number,
   aliasDb?: AliasDB | null,
+  clustersConfig?: ClustersConfig,
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
   const { strategies, semanticTopK, fts5TopK } = config;
@@ -348,6 +357,49 @@ export async function runRetrievalPipeline(
 
   // --- Post-RRF adjustments ---
   applyPostRrfAdjustments(scopedFused, factMetaMap, nowSec);
+
+  // --- Cluster sibling boost (Issue #146) ---
+  if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {
+    try {
+      const clusterResult = detectClusters(factsDb, { minClusterSize: clustersConfig.minClusterSize });
+      if (clusterResult.clusters.length > 0) {
+        const clusterByFact = new Map<string, string>();
+        for (const cluster of clusterResult.clusters) {
+          for (const id of cluster.factIds) {
+            clusterByFact.set(id, cluster.id);
+          }
+        }
+
+        const clusterToIndices = new Map<string, number[]>();
+        for (let i = 0; i < scopedFused.length; i++) {
+          const clusterId = clusterByFact.get(scopedFused[i].factId);
+          if (!clusterId) continue;
+          const list = clusterToIndices.get(clusterId) ?? [];
+          list.push(i);
+          clusterToIndices.set(clusterId, list);
+        }
+
+        const BOOST_MULTIPLIER = 1.1;
+        for (const indices of clusterToIndices.values()) {
+          if (indices.length < 2) continue;
+          let bestIndex = indices[0];
+          for (const idx of indices) {
+            if (scopedFused[idx].finalScore > scopedFused[bestIndex].finalScore) {
+              bestIndex = idx;
+            }
+          }
+          for (const idx of indices) {
+            if (idx === bestIndex) continue;
+            scopedFused[idx].finalScore *= BOOST_MULTIPLIER;
+          }
+        }
+
+        scopedFused.sort((a, b) => b.finalScore - a.finalScore);
+      }
+    } catch (err) {
+      console.warn("[retrieval] cluster boost failed:", err);
+    }
+  }
 
   // Re-sort entries to match final order
   const finalOrder = new Map<string, number>(scopedFused.map((r, i) => [r.factId, i]));
