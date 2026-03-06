@@ -77,7 +77,7 @@ export function buildRerankPrompt(query: string, facts: ScoredFact[]): string {
  * Handles responses that wrap the JSON in prose or code fences.
  */
 export function parseRankedIds(response: string): string[] {
-  const match = response.match(/\[[\s\S]*\]/);
+  const match = response.match(/\[[\s\S]*?\]/);
   if (!match) return [];
 
   let parsed: unknown;
@@ -134,7 +134,7 @@ export async function rerankResults(
 
     // If LLM returned nothing useful, fall back to original order.
     if (rankedIds.length === 0) {
-      return facts.slice(0, config.outputCount);
+      return facts;
     }
 
     // Build a lookup map from the candidate set.
