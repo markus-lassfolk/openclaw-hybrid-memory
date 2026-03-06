@@ -3394,6 +3394,7 @@ export class FactsDB {
    * Matches patterns:
    *   - "is a <type>" / "is an <type>"
    *   - "type of <type>"
+   *   - "kind of <type>"
    *
    * When a match is found and the type noun is a known entity with an anchor fact,
    * creates an INSTANCE_OF link from newFactId → anchor fact.
@@ -3404,6 +3405,7 @@ export class FactsDB {
     const patterns = [
       /\bis\s+an?\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
       /\btype\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+      /\bkind\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
     ];
 
     const candidates = new Set<string>();
@@ -3454,7 +3456,7 @@ export class FactsDB {
    *   3. Supersession detection — if entity+key matches an existing fact with a
    *      different value, create a SUPERSEDES edge and (when autoSupersede is true)
    *      mark the old fact as superseded and reduce its confidence.
-   *   4. INSTANCE_OF auto-detection — matches "is a/an X" and "type of X" patterns.
+   *   4. INSTANCE_OF auto-detection — matches "is a/an X", "type of X", and "kind of X" patterns.
    *
    * Returns { linkedCount, supersededIds } for use in the response message.
    */
