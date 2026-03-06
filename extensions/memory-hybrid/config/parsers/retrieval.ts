@@ -259,7 +259,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   // queryExpansion.enabled wins when explicitly set; otherwise fall through to HyDE migration
   const enabled = qeExplicitlySet ? (qeRaw.enabled === true) : hydeEnabled;
 
-  // queryExpansion.model wins when set; fall back to search.hydeModel for migration compat
+  // queryExpansion.model wins when set; fall back to search.hydeModel when model is missing and expansion is enabled (migration compat)
   const hydeModel =
     typeof searchRaw?.hydeModel === "string" && searchRaw.hydeModel.trim().length > 0
       ? searchRaw.hydeModel.trim()
@@ -267,7 +267,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const model =
     typeof qeRaw?.model === "string" && qeRaw.model.trim().length > 0
       ? qeRaw.model.trim()
-      : (enabled ? hydeModel : undefined); // Fall back to search.hydeModel only when expansion is enabled
+      : (enabled ? hydeModel : undefined);
 
   // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout
   const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 5000;

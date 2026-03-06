@@ -1043,14 +1043,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.model).toBeUndefined();
   });
 
-  it("migration shim (#160): search.hydeModel falls back when queryExpansion.enabled=true but model unset", () => {
+  it("migration shim (#160): queryExpansion.enabled=true inherits search.hydeModel when queryExpansion.model unset", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
-      search: { hydeEnabled: true, hydeModel: "openai/gpt-4.1-nano" },
+      search: { hydeEnabled: true, hydeModel: "legacy-hyde-model" },
       queryExpansion: { enabled: true },
     });
     expect(result.queryExpansion.enabled).toBe(true);
-    expect(result.queryExpansion.model).toBe("openai/gpt-4.1-nano");
+    expect(result.queryExpansion.model).toBe("legacy-hyde-model");
   });
 
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
