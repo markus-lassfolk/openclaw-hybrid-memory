@@ -39,6 +39,10 @@ export class FactsDB {
   private supersededTextsCacheTime = 0;
   /** Cache TTL for superseded texts to avoid full table scan on every search. Increased to reduce thrashing. */
   private readonly SUPERSEDED_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
+  private knownEntitiesCache: string[] | null = null;
+  private knownEntitiesCacheTime = 0;
+  /** Cache TTL for known-entity list used by autoLinkEntities on every write. */
+  private readonly KNOWN_ENTITIES_CACHE_TTL_MS = 30_000; // 30 seconds
 
   /**
    * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
@@ -371,7 +375,8 @@ export class FactsDB {
   /**
    * Migrate the FTS5 virtual table to include the `tags` column (Issue #151).
    * FTS5 virtual tables cannot be altered, so we drop and recreate if tags are absent.
-   * The FTS rebuild is deferred to the fts-search service's rebuildFtsIndex().
+   * The entire migration is wrapped in a transaction so a crash mid-migration leaves the
+   * DB in a consistent state (either old schema intact, or new schema + backfill complete).
    */
   private migrateFtsTagsSupport(): void {
     const row = this.liveDb
@@ -381,54 +386,58 @@ export class FactsDB {
     // If the CREATE statement already contains 'tags', nothing to do.
     if (row && row.sql && row.sql.includes("tags")) return;
 
-    // Drop old triggers first (they reference the old column list).
-    this.liveDb.exec(`
-      DROP TRIGGER IF EXISTS facts_ai;
-      DROP TRIGGER IF EXISTS facts_ad;
-      DROP TRIGGER IF EXISTS facts_au;
-    `);
+    // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
+    const migrate = this.liveDb.transaction(() => {
+      // Drop old triggers first (they reference the old column list).
+      this.liveDb.exec(`
+        DROP TRIGGER IF EXISTS facts_ai;
+        DROP TRIGGER IF EXISTS facts_ad;
+        DROP TRIGGER IF EXISTS facts_au;
+      `);
 
-    // Drop and recreate FTS5 with tags included.
-    this.liveDb.exec(`DROP TABLE IF EXISTS facts_fts`);
-    this.liveDb.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
-        text,
-        category,
-        entity,
-        tags,
-        key,
-        value,
-        content='facts',
-        content_rowid='rowid',
-        tokenize='porter unicode61'
-      )
-    `);
+      // Drop and recreate FTS5 with tags included.
+      this.liveDb.exec(`DROP TABLE IF EXISTS facts_fts`);
+      this.liveDb.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+          text,
+          category,
+          entity,
+          tags,
+          key,
+          value,
+          content='facts',
+          content_rowid='rowid',
+          tokenize='porter unicode61'
+        )
+      `);
 
-    // Recreate triggers with tags column.
-    this.liveDb.exec(`
-      CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+      // Recreate triggers with tags column.
+      this.liveDb.exec(`
+        CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+          INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+          VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+          INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
+          VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+          INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
+          VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+          INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
+          VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+        END
+      `);
+
+      // Backfill existing facts into the new FTS index.
+      this.liveDb.exec(`
         INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
-        INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
-      END
-    `);
-
-    // Backfill existing facts into the new FTS index.
-    this.liveDb.exec(`
-      INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-      SELECT rowid, text, category, entity, tags, key, value FROM facts
-    `);
+        SELECT rowid, text, category, entity, tags, key, value FROM facts
+      `);
+    });
+    migrate();
   }
 
   /**
@@ -548,29 +557,43 @@ export class FactsDB {
 
   /** Create memory_links table for graph-based spreading activation. */
   private migrateMemoryLinksTable(): void {
-    // Check if table exists and if it has the old CASCADE FK on target_fact_id
-    const tableInfo = this.liveDb
-      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`)
-      .get() as { sql: string } | undefined;
-    
-    if (tableInfo && tableInfo.sql.includes('FOREIGN KEY (target_fact_id)') && tableInfo.sql.includes('ON DELETE CASCADE')) {
-      // Table exists with old CASCADE FK - need to recreate it
-      this.liveDb.exec(`
-        CREATE TABLE memory_links_new (
-          id TEXT PRIMARY KEY,
-          source_fact_id TEXT NOT NULL,
-          target_fact_id TEXT NOT NULL,
-          link_type TEXT NOT NULL,
-          strength REAL NOT NULL DEFAULT 1.0,
-          created_at INTEGER NOT NULL,
-          FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
-        )
-      `);
-      this.liveDb.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
-      this.liveDb.exec(`DROP TABLE memory_links`);
-      this.liveDb.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
-    } else if (!tableInfo) {
-      // Table doesn't exist - create it fresh
+    const tableExists = this.liveDb
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_links'`)
+      .get();
+
+    if (tableExists) {
+      // Use PRAGMA foreign_key_list to check for a CASCADE FK on target_fact_id.
+      // This is immune to DDL formatting variations across plugin versions.
+      const fkList = this.liveDb
+        .prepare(`PRAGMA foreign_key_list(memory_links)`)
+        .all() as Array<{ table: string; from: string; on_delete: string }>;
+      const hasTargetCascade = fkList.some(
+        (fk) => fk.from === "target_fact_id" && fk.on_delete.toUpperCase() === "CASCADE",
+      );
+
+      if (hasTargetCascade) {
+        // Table exists with old CASCADE FK on target_fact_id — recreate without it.
+        const recreate = this.liveDb.transaction(() => {
+          this.liveDb.exec(`
+            CREATE TABLE memory_links_new (
+              id TEXT PRIMARY KEY,
+              source_fact_id TEXT NOT NULL,
+              target_fact_id TEXT NOT NULL,
+              link_type TEXT NOT NULL,
+              strength REAL NOT NULL DEFAULT 1.0,
+              created_at INTEGER NOT NULL,
+              FOREIGN KEY (source_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+            )
+          `);
+          this.liveDb.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
+          this.liveDb.exec(`DROP TABLE memory_links`);
+          this.liveDb.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
+        });
+        recreate();
+      }
+      // If table exists without CASCADE on target, no migration needed.
+    } else {
+      // Table doesn't exist — create it fresh.
       this.liveDb.exec(`
         CREATE TABLE memory_links (
           id TEXT PRIMARY KEY,
@@ -583,8 +606,7 @@ export class FactsDB {
         )
       `);
     }
-    // If table exists without CASCADE on target, no migration needed
-    
+
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type)`);
@@ -1190,6 +1212,11 @@ export class FactsDB {
   }
 
   delete(id: string): boolean {
+    // Explicitly clean up contradictions (defense-in-depth; ON DELETE CASCADE on facts also handles this,
+    // but explicit cleanup ensures correctness regardless of FK enforcement state at the call site).
+    this.liveDb
+      .prepare(`DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?`)
+      .run(id, id);
     // Manually clean up links where this fact is the target, except DERIVED_FROM links
     // (DERIVED_FROM links are preserved for provenance tracking even after source facts are deleted)
     this.liveDb
@@ -1484,7 +1511,10 @@ export class FactsDB {
     }));
   }
 
-  /** BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set). */
+  /** BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set).
+   * CONTRADICTS links are excluded from traversal — they would otherwise pollute graph-based recall
+   * with unrelated contradicted facts and cause traversal explosion when a fact has many contradictions.
+   */
   getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
     if (factIds.length === 0 || maxDepth < 1) return [...factIds];
     const seen = new Set<string>(factIds);
@@ -1493,10 +1523,10 @@ export class FactsDB {
       const next: string[] = [];
       for (const id of frontier) {
         const out = this.liveDb
-          .prepare(`SELECT target_fact_id FROM memory_links WHERE source_fact_id = ?`)
+          .prepare(`SELECT target_fact_id FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS'`)
           .all(id) as Array<{ target_fact_id: string }>;
         const in_ = this.liveDb
-          .prepare(`SELECT source_fact_id FROM memory_links WHERE target_fact_id = ?`)
+          .prepare(`SELECT source_fact_id FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS'`)
           .all(id) as Array<{ source_fact_id: string }>;
         for (const r of out) {
           if (!seen.has(r.target_fact_id)) {
@@ -2968,9 +2998,8 @@ export class FactsDB {
         )
         .run(id, factIdNew, factIdOld, detectedAt, originalConfidence);
 
+      // Store a single directed link (new→old). getContradictedIds queries both directions.
       this.createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
-      // Bidirectional: if A CONTRADICTS B, then B CONTRADICTS A
-      this.createLink(factIdOld, factIdNew, "CONTRADICTS", 1.0);
 
       this.updateConfidence(factIdOld, -0.2);
     });
@@ -3069,19 +3098,27 @@ export class FactsDB {
   /**
    * Batch check: return the subset of factIds that are involved in any
    * active (unresolved) contradiction (as old or new fact).
-   * Emits a single SQL query instead of one per fact.
+   * Processes in chunks of 499 to stay within SQLite's default
+   * SQLITE_LIMIT_VARIABLE_NUMBER (999) when doubling the parameter list for the UNION.
    */
   getContradictedIds(factIds: string[]): Set<string> {
     if (factIds.length === 0) return new Set();
-    const placeholders = factIds.map(() => "?").join(",");
-    const rows = this.liveDb
-      .prepare(
-        `SELECT fact_id_old AS id FROM contradictions WHERE fact_id_old IN (${placeholders}) AND resolved = 0
-         UNION
-         SELECT fact_id_new AS id FROM contradictions WHERE fact_id_new IN (${placeholders}) AND resolved = 0`,
-      )
-      .all(...factIds, ...factIds) as Array<{ id: string }>;
-    return new Set(rows.map((r) => r.id));
+    const result = new Set<string>();
+    // Each chunk is used twice in the UNION query, so keep chunk ≤ 499 (total ≤ 998).
+    const CHUNK = 499;
+    for (let i = 0; i < factIds.length; i += CHUNK) {
+      const chunk = factIds.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = this.liveDb
+        .prepare(
+          `SELECT fact_id_old AS id FROM contradictions WHERE fact_id_old IN (${placeholders}) AND resolved = 0
+           UNION
+           SELECT fact_id_new AS id FROM contradictions WHERE fact_id_new IN (${placeholders}) AND resolved = 0`,
+        )
+        .all(...chunk, ...chunk) as Array<{ id: string }>;
+      for (const r of rows) result.add(r.id);
+    }
+    return result;
   }
 
   /**
@@ -3178,12 +3215,18 @@ export class FactsDB {
    * Used by entity-matching auto-linker at write time.
    */
   getKnownEntities(): string[] {
+    const now = Date.now();
+    if (this.knownEntitiesCache !== null && now - this.knownEntitiesCacheTime < this.KNOWN_ENTITIES_CACHE_TTL_MS) {
+      return this.knownEntitiesCache;
+    }
     const rows = this.liveDb
       .prepare(
         `SELECT DISTINCT entity FROM facts WHERE entity IS NOT NULL AND superseded_at IS NULL`,
       )
       .all() as Array<{ entity: string }>;
-    return rows.map((r) => r.entity);
+    this.knownEntitiesCache = rows.map((r) => r.entity);
+    this.knownEntitiesCacheTime = now;
+    return this.knownEntitiesCache;
   }
 
   /**

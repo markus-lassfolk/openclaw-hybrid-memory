@@ -35,6 +35,8 @@ export interface DreamCycleConfig {
   reflectWindowDays: number;
   pruneMode: DreamCyclePruneMode;
   model: string;
+  /** Fallback models for reflection steps, in preference order. */
+  fallbackModels?: string[];
   consolidateAfterDays: number;
 }
 
@@ -160,9 +162,9 @@ export async function runEpisodicConsolidation(
       .filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
-      // Mark events as consolidated with a sentinel value to prevent re-processing
-      // Use a namespaced sentinel to distinguish from real fact IDs
-      eventLog.markConsolidated(groupEvents.map((e) => e.id), "__skipped_no_text__");
+      // Mark events as consolidated with a namespaced skip sentinel to prevent re-processing.
+      // 'SKIP:no_text' is clearly not a real fact UUID — no UUID-based query will match it.
+      eventLog.markConsolidated(groupEvents.map((e) => e.id), "SKIP:no_text");
       eventsConsolidated += groupEvents.length;
       continue;
     }
@@ -351,7 +353,7 @@ export async function runDreamCycle(
         window: config.reflectWindowDays,
         dryRun: false,
         model: config.model,
-        fallbackModels: [],
+        fallbackModels: config.fallbackModels ?? [],
       },
       logger,
     );
@@ -374,7 +376,7 @@ export async function runDreamCycle(
         vectorDb,
         embeddings,
         openai,
-        { dryRun: false, model: config.model, fallbackModels: [] },
+        { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [] },
         logger,
       );
       rulesGenerated = rulesResult.rulesStored;

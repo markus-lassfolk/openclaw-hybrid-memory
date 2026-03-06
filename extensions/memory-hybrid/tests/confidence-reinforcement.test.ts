@@ -299,7 +299,10 @@ describe("Passive observer — reinforcement on similarity", () => {
   }
 
   function makeEmbeddings(vec = [1, 0, 0]) {
-    return { embed: vi.fn().mockResolvedValue(vec) };
+    return {
+      embed: vi.fn().mockResolvedValue(vec),
+      embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
+    };
   }
 
   it("factsReinforced is zero when no similar facts exist", async () => {

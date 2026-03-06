@@ -65,6 +65,9 @@ export class EventLog {
   }
 
   private get liveDb(): Database.Database {
+    if (this.closed) {
+      throw new Error("EventLog is closed");
+    }
     if (!this.db.open) {
       this.db = new Database(this.dbPath);
       this.db.pragma("journal_mode = WAL");

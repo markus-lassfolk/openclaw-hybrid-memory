@@ -359,8 +359,13 @@ export function createPluginService(ctx: PluginServiceContext) {
           }
         };
 
+        let observerRunning = false;
         const intervalMs = cfg.passiveObserver.intervalMinutes * 60_000;
-        timers.passiveObserverTimer.value = setInterval(() => void runObserver(), intervalMs);
+        timers.passiveObserverTimer.value = setInterval(() => {
+          if (observerRunning) return;
+          observerRunning = true;
+          void runObserver().finally(() => { observerRunning = false; });
+        }, intervalMs);
         api.logger.info(
           `memory-hybrid: passive-observer enabled (model: ${observerModel}, interval: ${cfg.passiveObserver.intervalMinutes}m, minImportance: ${cfg.passiveObserver.minImportance})`,
         );

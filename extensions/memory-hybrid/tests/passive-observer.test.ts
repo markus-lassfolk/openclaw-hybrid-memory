@@ -287,6 +287,7 @@ describe("runPassiveObserver", () => {
 
   const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
     embed: vi.fn().mockResolvedValue(vec),
+    embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
   });
 
   const makeOpenAI = () => ({} as unknown as import("openai").default);

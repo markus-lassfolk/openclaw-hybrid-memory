@@ -277,11 +277,13 @@ export async function runRetrievalPipeline(
     );
   }
 
-  const strategyResults = await Promise.all(strategyPromises);
+  const strategySettledResults = await Promise.allSettled(strategyPromises);
 
-  // Build strategy map
+  // Build strategy map — rejected/hung strategies are ignored so the rest can still contribute.
   const strategyMap = new Map<string, RankedResult[]>();
-  for (const [name, results] of strategyResults) {
+  for (const settled of strategySettledResults) {
+    if (settled.status === "rejected") continue;
+    const [name, results] = settled.value;
     if (results.length > 0) {
       strategyMap.set(name, results);
     }
