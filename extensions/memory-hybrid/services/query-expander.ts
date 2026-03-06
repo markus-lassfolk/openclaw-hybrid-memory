@@ -82,7 +82,7 @@ Return ONLY a JSON array of strings, no other text. Example: ["alternative one",
  * Handles responses that wrap the JSON in prose or code fences.
  */
 export function parseExpansionsFromResponse(response: string, maxVariants: number): string[] {
-  const match = response.match(/\[[\s\S]*?\]/);
+  const match = response.match(/\[[\s\S]*\]/);
   if (!match) return [];
 
   let parsed: unknown;
@@ -137,8 +137,8 @@ export class QueryExpander {
         ? `\nContext: ${context.slice(0, 300)}`
         : "";
       const prompt = EXPANSION_PROMPT_TEMPLATE
-        .replace("{query}", query)
-        .replace("{contextLine}", contextLine);
+        .replace("{query}", () => query)
+        .replace("{contextLine}", () => contextLine);
 
       const model = this.config.model ?? "openai/gpt-4.1-nano";
 
