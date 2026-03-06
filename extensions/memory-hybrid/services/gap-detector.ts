@@ -13,6 +13,7 @@
  */
 
 import type { WorkflowStore, WorkflowPattern } from "../backends/workflow-store.js";
+import { hashToolSequence } from "../backends/workflow-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -95,13 +96,8 @@ export function deriveToolNameFromSequence(toolSequence: string[]): string {
 // computeGapId
 // ---------------------------------------------------------------------------
 
-import { createHash } from "node:crypto";
-
 export function computeGapId(toolSequence: string[]): string {
-  return createHash("sha256")
-    .update(JSON.stringify(toolSequence))
-    .digest("hex")
-    .slice(0, 16);
+  return hashToolSequence(toolSequence);
 }
 
 // ---------------------------------------------------------------------------

@@ -114,15 +114,15 @@ export class CrystallizationProposer {
             continue;
           }
 
-          // Create proposal, approve in DB, THEN write to disk (DB is source of truth)
+          // Create proposal, write to disk, THEN approve in DB (ensures atomicity)
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
           });
-          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
           this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
+          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
           proposed++;
         } else {
           // Store as pending, awaiting human approval
@@ -187,17 +187,17 @@ export class CrystallizationProposer {
     const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 
-    // Approve in DB first (source of truth), then write to disk
-    const updated = this.crystallizationStore.approve(proposalId, outputPath);
-    if (!updated) {
-      return { success: false, message: "Failed to update proposal status" };
-    }
-
+    // Write to disk first, then approve in DB (ensures atomicity)
     try {
       this.writeSkillToDisk(outputPath, proposal.skillContent);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, message: `Approved but failed to write skill: ${msg}` };
+      return { success: false, message: `Failed to write skill: ${msg}` };
+    }
+
+    const updated = this.crystallizationStore.approve(proposalId, outputPath);
+    if (!updated) {
+      return { success: false, message: "Failed to update proposal status" };
     }
 
     return {

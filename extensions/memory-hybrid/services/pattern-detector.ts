@@ -6,8 +6,8 @@
  * Deduplication: skips patterns that already have a pending/approved proposal.
  */
 
-import { createHash } from "node:crypto";
 import type { WorkflowStore, WorkflowPattern } from "../backends/workflow-store.js";
+import { hashToolSequence } from "../backends/workflow-store.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -33,7 +33,7 @@ export interface CrystallizationCandidate {
  * Uses SHA-256 truncated to 16 hex chars.
  */
 export function computePatternId(toolSequence: string[]): string {
-  return createHash("sha256").update(JSON.stringify(toolSequence)).digest("hex").slice(0, 16);
+  return hashToolSequence(toolSequence);
 }
 
 /**
