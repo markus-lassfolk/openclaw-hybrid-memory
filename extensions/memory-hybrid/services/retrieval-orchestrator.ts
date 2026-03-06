@@ -22,10 +22,14 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
-import type { RetrievalConfig, ClustersConfig } from "../config.js";
+import type { RetrievalConfig, ClustersConfig, RerankingConfig } from "../config.js";
+import { rerankResults, type ScoredFact } from "./reranker.js";
+import type { QueryExpander } from "./query-expander.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
+import type { EmbeddingRegistry } from "./embedding-registry.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -177,6 +181,84 @@ async function runSemanticStrategy(
 }
 
 /**
+ * Run multi-model semantic search using EmbeddingRegistry (Issue #158).
+ * Queries the fact_embeddings SQLite table for each additional model via cosine
+ * similarity approximation, then returns per-model ranked results.
+ *
+ * This returns a Map from strategy label → RankedResult[], so each model
+ * participates as a separate RRF strategy (same pattern as "semantic", "fts5").
+ */
+async function runMultiModelSemanticStrategies(
+  factsDbWithEmbeddings: FactsDbWithEmbeddings,
+  registry: EmbeddingRegistry,
+  queryText: string,
+  topK: number,
+): Promise<Map<string, RankedResult[]>> {
+  const result = new Map<string, RankedResult[]>();
+  const models = registry.getModels();
+  if (models.length === 0) return result;
+
+  // Embed query with all additional models in parallel
+  const embedTasks = models.map(async (cfg) => {
+    const queryVec = await registry.embed(queryText, cfg.name);
+    return { name: cfg.name, queryVec };
+  });
+
+  const settled = await Promise.allSettled(embedTasks);
+  for (const s of settled) {
+    if (s.status === "rejected") {
+      capturePluginError(
+        s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
+        { subsystem: "retrieval", operation: "multi-model-embed" },
+      );
+      continue;
+    }
+    const { name, queryVec } = s.value;
+    const maxCandidatesPerModel = Math.max(topK * 10, 500);
+    const candidates = factsDbWithEmbeddings.getEmbeddingsByModel(name, maxCandidatesPerModel);
+    if (candidates.length === 0) continue;
+
+    // Compute cosine similarity for the bounded candidate set (already limited at DB with ORDER BY id DESC)
+    const scored = candidates
+      .map(({ factId, embedding }) => ({
+        factId,
+        score: cosineSimilarity(queryVec, embedding),
+      }))
+      .filter((r) => r.score >= 0.3)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK);
+
+    if (scored.length > 0) {
+      result.set(`semantic:${name}`, scored.map((r, i) => ({
+        factId: r.factId,
+        rank: i + 1,
+        source: `semantic:${name}` as const,
+      })));
+    }
+  }
+  return result;
+}
+
+/** Compute cosine similarity between two Float32Arrays. Returns [-1, 1]. */
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length === 0 || a.length !== b.length) return 0;
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  if (denom === 0) return 0;
+  return dot / denom;
+}
+
+/** Minimal interface for fact_embeddings access (satisfied by FactsDB). */
+export interface FactsDbWithEmbeddings {
+  getEmbeddingsByModel(model: string, limit?: number): Array<{ factId: string; embedding: Float32Array }>;
+}
+
+/**
  * Graph walk strategy using GraphRAG expansion (Issue #152).
  * Expands from seed facts found by other strategies.
  */
@@ -313,6 +395,16 @@ export function invalidateClusterCache(): void {
  * @param includeSuperseded - Whether to include superseded facts (default false).
  * @param scopeFilter - Scope constraints applied when resolving fused fact IDs.
  * @param asOf - Temporal filter applied when resolving fused fact IDs.
+ * @param embeddingRegistry - Optional multi-model registry (Issue #158). When provided and
+ *   has additional models registered, each model contributes a separate RRF strategy.
+ * @param factsDbForEmbeddings - Optional access to fact_embeddings table (Issue #158).
+ * @param queryExpander - Optional query expander instance (Issue #160). When provided and
+ *   expansion is enabled, generates variant queries and adds each as a separate RRF strategy.
+ * @param embedFn - Optional function to embed text (Issue #160). Required for expansion to work.
+ * @param queryExpansionContext - Optional recent conversation context to improve expansion quality.
+ * @param rerankingConfig - Optional re-ranking configuration (Issue #161). When provided and
+ *   enabled, calls an LLM to re-rank the top candidates by semantic relevance to the query.
+ * @param rerankingOpenai - Optional OpenAI-compatible client for re-ranking LLM calls.
  */
 export async function runRetrievalPipeline(
   query: string,
@@ -329,6 +421,13 @@ export async function runRetrievalPipeline(
   asOf?: number,
   aliasDb?: AliasDB | null,
   clustersConfig?: ClustersConfig,
+  embeddingRegistry?: EmbeddingRegistry | null,
+  factsDbForEmbeddings?: FactsDbWithEmbeddings | null,
+  queryExpander?: QueryExpander | null,
+  embedFn?: ((text: string) => Promise<number[]>) | null,
+  queryExpansionContext?: string,
+  rerankingConfig?: RerankingConfig | null,
+  rerankingOpenai?: import("openai").default | null,
 ): Promise<OrchestratorResult> {
   const k = config.rrf_k;
   const { strategies, semanticTopK, fts5TopK } = config;
@@ -346,8 +445,10 @@ export async function runRetrievalPipeline(
       try {
         return [name, await fn()] as [string, RankedResult[]];
       } catch (err) {
-        // Log and return empty so other strategies still contribute
-        console.error(`[retrieval] strategy "${name}" failed:`, err);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "retrieval",
+          operation: `strategy:${name}`,
+        });
         return [name, []] as [string, RankedResult[]];
       }
     })();
@@ -377,6 +478,44 @@ export async function runRetrievalPipeline(
     );
   }
 
+  // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
+  // Only runs when semantic strategy is active, expander is provided, and embedFn is available.
+  if (strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
+    try {
+      const variants = await queryExpander.expandQuery(query, queryExpansionContext);
+      // variants[0] is always the original query (already handled above); expand from index 1.
+      const additionalVariants = variants.slice(1);
+      for (let i = 0; i < additionalVariants.length; i++) {
+        const variantQuery = additionalVariants[i];
+        const strategyName = `semantic:qe:${i}`;
+        strategyPromises.push(
+          safeStrategy(strategyName, async () => {
+            const variantVector = await embedFn(variantQuery);
+            return runSemanticStrategy(vectorDb, variantVector, semanticTopK);
+          }),
+        );
+      }
+    } catch (_err) {
+      // Graceful degradation — expansion failure never blocks retrieval
+    }
+  }
+
+  // Issue #158: start multi-model semantic strategies in parallel with other strategies.
+  let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
+  if (
+    strategies.includes("semantic") &&
+    embeddingRegistry &&
+    embeddingRegistry.isMultiModel() &&
+    factsDbForEmbeddings
+  ) {
+    multiModelPromise = runMultiModelSemanticStrategies(
+      factsDbForEmbeddings,
+      embeddingRegistry,
+      query,
+      semanticTopK,
+    );
+  }
+
   const strategySettledResults = await Promise.allSettled(strategyPromises);
 
   // Build strategy map — rejected/empty strategies are skipped so the rest can still contribute.
@@ -386,6 +525,22 @@ export async function runRetrievalPipeline(
     const [name, results] = settled.value;
     if (results.length > 0) {
       strategyMap.set(name, results);
+    }
+  }
+
+  if (multiModelPromise) {
+    try {
+      const multiModelResults = await multiModelPromise;
+      for (const [strategyName, results] of multiModelResults) {
+        if (results.length > 0) {
+          strategyMap.set(strategyName, results);
+        }
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "multi-model-semantic",
+      });
     }
   }
 
@@ -500,14 +655,59 @@ export async function runRetrievalPipeline(
         scopedFused.sort((a, b) => b.finalScore - a.finalScore);
       }
     } catch (err) {
-      // Log via stderr without leaking query content; cluster boost is non-critical
-      console.error("[retrieval] cluster boost failed");
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "cluster-boost",
+      });
     }
   }
 
   // Re-sort entries to match final order
   const finalOrder = new Map<string, number>(scopedFused.map((r, i) => [r.factId, i]));
   orderedEntries.sort((a, b) => (finalOrder.get(a.factId) ?? 0) - (finalOrder.get(b.factId) ?? 0));
+
+  // --- LLM Re-ranking (Issue #161) ---
+  // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
+  // On any failure or timeout, falls back to the original RRF order (no behavior change).
+  if (rerankingConfig?.enabled && rerankingOpenai) {
+    try {
+      const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
+      const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
+        const storedSec = entry.sourceDate ?? entry.createdAt;
+        return {
+          factId,
+          text: entry.text,
+          confidence: entry.confidence,
+          storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+          finalScore: rrfScoreMap.get(factId) ?? 0,
+        };
+      });
+
+      const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
+
+      // Rebuild orderedEntries in the new order.
+      const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
+      orderedEntries.sort(
+        (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+      );
+      // Trim to the outputCount returned by the reranker.
+      if (orderedEntries.length > reranked.length) {
+        orderedEntries.length = reranked.length;
+      }
+      // Also reorder scopedFused to stay consistent with orderedEntries.
+      scopedFused.sort(
+        (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+      );
+      if (scopedFused.length > reranked.length) {
+        scopedFused.length = reranked.length;
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "reranking",
+      });
+    }
+  }
 
   // --- Token budget packing ---
   // Build contradicted set so contradicted facts are marked with a warning in the packed output.

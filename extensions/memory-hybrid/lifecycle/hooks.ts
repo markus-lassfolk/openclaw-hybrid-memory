@@ -55,6 +55,7 @@ import {
   detectTopicShift,
   deduplicateResultsById,
   SessionSeenFacts,
+  searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
 
 export interface LifecycleContext {
@@ -82,6 +83,7 @@ export interface LifecycleContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
+  issueStore: import("../backends/issue-store.js").IssueStore | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -781,20 +783,58 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
                 candidates = filtered.slice(0, limit);
 
-                if (extraResultSets.length > 1) {
-                  api.logger.info?.(
-                    `memory-hybrid: ambient multi-query — ran ${extraQueries.length} extra queries, merged to ${candidates.length} candidates`,
-                  );
-                }
+              if (extraResultSets.length > 1) {
+                api.logger.info?.(
+                  `memory-hybrid: ambient multi-query — ran ${extraQueries.length} extra queries, merged to ${candidates.length} candidates`,
+                );
               }
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "ambient-multi-query",
-                subsystem: "auto-recall",
-              });
-              api.logger.warn(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
             }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "ambient-multi-query",
+              subsystem: "auto-recall",
+            });
+            api.logger.warn(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
           }
+        }
+
+        // Ambient issue retrieval (Issue #137): surface past resolved issues when error-like context detected
+        let issueBlock = "";
+        if (ambientCfg.enabled && ctx.issueStore) {
+          try {
+            const issueResults = searchAmbientIssues(e.prompt, ctx.issueStore);
+            if (issueResults.openIssues.length > 0 || issueResults.resolvedIssues.length > 0) {
+              api.logger.info?.(
+                `memory-hybrid: ambient issue retrieval — found ${issueResults.openIssues.length} open + ${issueResults.resolvedIssues.length} resolved issues`,
+              );
+              const issueLines: string[] = [];
+              if (issueResults.openIssues.length > 0) {
+                issueLines.push("<known-issues>");
+                for (const issue of issueResults.openIssues) {
+                  issueLines.push(`- [${issue.severity}] ${issue.title} (status: ${issue.status})`);
+                }
+                issueLines.push("</known-issues>");
+              }
+              if (issueResults.resolvedIssues.length > 0) {
+                issueLines.push("<resolved-issues>");
+                for (const issue of issueResults.resolvedIssues) {
+                  const resolution = issue.fix ? ` — Fix: ${issue.fix.slice(0, 100)}` : "";
+                  issueLines.push(`- [${issue.severity}] ${issue.title}${resolution}`);
+                }
+                issueLines.push("</resolved-issues>");
+              }
+              if (issueLines.length > 0) {
+                issueBlock = issueLines.join("\n") + "\n\n";
+              }
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "ambient-issue-retrieval",
+              subsystem: "auto-recall",
+            });
+            api.logger.warn(`memory-hybrid: ambient issue retrieval failed: ${err}`);
+          }
+        }
 
           const promptLower = e.prompt.toLowerCase();
           const { entityLookup } = ctx.cfg.autoRecall;
@@ -923,7 +963,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(`memory-hybrid: retrieval directives matched (${directiveMatches.join(", ")})`);
           }
 
-          if (candidates.length === 0) return hotBlock ? { prependContext: hotBlock } : undefined;
+          if (candidates.length === 0) {
+            const combinedContext = issueBlock + hotBlock;
+            return combinedContext ? { prependContext: combinedContext } : undefined;
+          }
 
           {
             const nowSec = Math.floor(Date.now() / 1000);
@@ -1096,7 +1139,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: hotBlock + withProcedures(fullContent) };
+            return { prependContext: issueBlock + hotBlock + withProcedures(fullContent) };
           }
 
           if (injectionFormat === "progressive") {
@@ -1109,9 +1152,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             );
             if (indexLines.length === 0) {
               if (procedureBlock) {
-                return { prependContext: hotBlock + procedureBlock };
+                return { prependContext: issueBlock + hotBlock + procedureBlock };
               }
-              return hotBlock ? { prependContext: hotBlock } : undefined;
+              const combinedContext = issueBlock + hotBlock;
+              return combinedContext ? { prependContext: combinedContext } : undefined;
             }
             lastProgressiveIndexIds = indexIds;
             ctx.lastProgressiveIndexIds = indexIds;
@@ -1134,7 +1178,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
             );
             return {
-              prependContext: hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`),
+              prependContext: issueBlock + hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`),
             };
           }
 
@@ -1165,9 +1209,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (lines.length === 0) {
             if (procedureBlock) {
-              return { prependContext: hotBlock + procedureBlock };
+              return { prependContext: issueBlock + hotBlock + procedureBlock };
             }
-            return hotBlock ? { prependContext: hotBlock } : undefined;
+            const combinedContext = issueBlock + hotBlock;
+            return combinedContext ? { prependContext: combinedContext } : undefined;
           }
 
           // Access tracking for injected memories
@@ -1237,9 +1282,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (!memoryContext) {
             if (procedureBlock) {
-              return { prependContext: hotBlock + procedureBlock };
+              return { prependContext: issueBlock + hotBlock + procedureBlock };
             }
-            return hotBlock ? { prependContext: hotBlock } : undefined;
+            const combinedContext = issueBlock + hotBlock;
+            return combinedContext ? { prependContext: combinedContext } : undefined;
           }
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
@@ -1249,7 +1295,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           return {
-            prependContext: hotBlock + withProcedures(`${header}${memoryContext}${footer}`),
+            prependContext: issueBlock + hotBlock + withProcedures(`${header}${memoryContext}${footer}`),
           };
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {

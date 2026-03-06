@@ -160,18 +160,18 @@ import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.j
 import { registerTools } from "./setup/register-tools.js";
 import { registerLifecycleHooks, type HooksContext } from "./setup/register-hooks.js";
 import { capturePluginError } from "./services/error-reporter.js";
+import { PythonBridge } from "./services/python-bridge.js";
 
-// ============================================================================
 // Backend Imports (extracted from god file for maintainability)
-// ============================================================================
 
 import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptValue } from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
+import { IssueStore } from "./backends/issue-store.js";
+import { VerificationStore, shouldAutoClassify, VerificationError } from "./services/verification-store.js";
+import { ProvenanceService } from "./services/provenance.js";
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /** Get top-N existing facts by embedding similarity. Resolves vector search ids via factsDb (filters superseded). Falls back to empty array on vector search failure. */
 /** Wrappers for extracted helper functions that need access to module-level config */
@@ -189,14 +189,10 @@ function detectCategory(text: string): MemoryCategory {
   );
 }
 
-// ============================================================================
 // LLM-based Auto-Classifier
-// ============================================================================
 
 /** Minimum "other" facts before we run category discovery (avoid noise on tiny sets). */
-// ============================================================================
 // Plugin Definition
-// ============================================================================
 
 // Mutable module-level state so that ALL closures (tools, event handlers,
 // timers) always see the *current* instances — even after a SIGUSR1 reload
@@ -215,6 +211,10 @@ let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
+
+let issueStore: IssueStore | null = null;
+let provenanceService: ProvenanceService | null = null;
+let pythonBridge: PythonBridge | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -277,11 +277,19 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
+
+    issueStore = null;
+    provenanceService = null;
+    // pythonBridge shutdown will be added by #206
+    if (pythonBridge) {
+      pythonBridge.shutdown().catch(() => {});
+      pythonBridge = null;
+    }
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -302,6 +310,8 @@ const memoryHybridPlugin = {
       proposalsDb = dbContext.proposalsDb;
       eventLog = dbContext.eventLog;
       aliasDb = dbContext.aliasDb;
+      issueStore = dbContext.issueStore;
+      provenanceService = dbContext.provenanceService;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -314,8 +324,14 @@ const memoryHybridPlugin = {
     );
 
     // ========================================================================
-    // Tools
+    // Python Bridge (lazy — only when documents.enabled, spawns on first use)
     // ========================================================================
+
+    // Initialized lazily — PythonBridge only spawns the subprocess on first convert() call
+    pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
+
+    // ========================================================================
+    // Tools
 
     try {
       registerTools({
@@ -328,6 +344,7 @@ const memoryHybridPlugin = {
       credentialsDb,
       proposalsDb,
       eventLog,
+      issueStore,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -340,15 +357,14 @@ const memoryHybridPlugin = {
       runReflection,
       runReflectionRules,
       runReflectionMeta,
+      pythonBridge,
     }, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:tools" });
       throw err;
     }
 
-    // ========================================================================
     // CLI Commands
-    // ========================================================================
     try {
       registerHybridMemCliWithApi(api, {
       factsDb,
@@ -371,39 +387,35 @@ const memoryHybridPlugin = {
       throw err;
     }
 
-    // ========================================================================
-    // Lifecycle Hooks
-    // ========================================================================
-
+    // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
     try {
       registerLifecycleHooks({
-      factsDb,
-      vectorDb,
-      embeddings,
-      openai,
-      cfg,
-      credentialsDb,
-      aliasDb,
-      wal,
-      currentAgentIdRef,
-      lastProgressiveIndexIds,
-      restartPendingClearedRef,
-      resolvedSqlitePath,
-      walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
-      walRemove: (id, logger) => walRemove(wal, id, logger),
-      findSimilarByEmbedding,
-      shouldCapture,
-      detectCategory,
-      pendingLLMWarnings,
-    }, api);
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        cfg,
+        credentialsDb,
+        aliasDb,
+        wal,
+        currentAgentIdRef,
+        lastProgressiveIndexIds,
+        restartPendingClearedRef,
+        resolvedSqlitePath,
+        walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+        walRemove: (id, logger) => walRemove(wal, id, logger),
+        findSimilarByEmbedding,
+        shouldCapture,
+        detectCategory,
+        pendingLLMWarnings,
+        issueStore: issueStore ?? null,
+      }, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:hooks" });
       throw err;
     }
 
-    // ========================================================================
     // Service
-    // ========================================================================
 
     try {
       api.registerService(
@@ -421,6 +433,7 @@ const memoryHybridPlugin = {
         resolvedSqlitePath,
         api,
         timers,
+        pythonBridge,
       })
     );
     } catch (err) {
@@ -517,6 +530,14 @@ export const _testing = {
   generateAliases,
   storeAliases,
   searchAliasStrategy,
+  // Issue lifecycle tracking (Issue #137)
+  IssueStore,
+  // Verification store for critical facts (Issue #162)
+  VerificationStore,
+  shouldAutoClassify,
+  VerificationError,
+  // Provenance tracing (Issue #163)
+  ProvenanceService,
 };
 
 export { versionInfo } from "./versionInfo.js";
