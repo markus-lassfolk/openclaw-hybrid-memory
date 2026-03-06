@@ -179,6 +179,13 @@ export class FactsDB {
     // ---- Topic cluster storage (Issue #146) ----
     this.migrateClusterTables();
 
+    // ---- Recall hit-rate tracking (Issue #148) ----
+    this.migrateRecallLog();
+
+    // ---- Embedding model tracking (Issue #153) ----
+    this.migrateEmbeddingModelColumn();
+    this.migrateEmbeddingMetaTable();
+
     // ---- Future-date decay freeze (#144) ----
     this.migrateDecayFreezeColumn();
   }
@@ -358,6 +365,43 @@ export class FactsDB {
     if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
       this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
     }
+  }
+
+  /** Create recall_log table for memory_recall hit-rate tracking (Issue #148). */
+  private migrateRecallLog(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS recall_log (
+        id TEXT PRIMARY KEY,
+        occurred_at INTEGER NOT NULL,
+        hit INTEGER NOT NULL CHECK(hit IN (0, 1))
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_time ON recall_log(occurred_at)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_hit ON recall_log(hit)`);
+  }
+
+  /** Add embedding_model column to facts for tracking vector provenance (Issue #153). */
+  private migrateEmbeddingModelColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "embedding_model")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN embedding_model TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_embedding_model ON facts(embedding_model) WHERE embedding_model IS NOT NULL`,
+    );
+  }
+
+  /** Store active embedding provider+model metadata (Issue #153). */
+  private migrateEmbeddingMetaTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS embedding_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
   }
 
   /** Add decay_freeze_until column for future-date freeze protection (#144). */
@@ -736,6 +780,8 @@ export class FactsDB {
       successCount?: number;
       lastValidated?: number | null;
       sourceSessions?: string | null;
+      /** Embedding model used to generate this fact's vector (if any). */
+      embeddingModel?: string | null;
       /** Memory scope — global, user, agent, or session. Default global. */
       scope?: "global" | "user" | "agent" | "session";
       /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
@@ -765,6 +811,7 @@ export class FactsDB {
     const importance = entry.importance ?? 0.7;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
+    const embeddingModel = entry.embeddingModel ?? null;
     const normHash = normalizedHash(entry.text);
     const sourceDate = entry.sourceDate ?? null;
     const tags = entry.tags ?? null;
@@ -800,8 +847,8 @@ export class FactsDB {
         : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -818,6 +865,7 @@ export class FactsDB {
         nowSec,
         confidence,
         summary,
+        embeddingModel,
         normHash,
         sourceDate,
         tagsStr,
@@ -843,6 +891,7 @@ export class FactsDB {
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
+      embeddingModel,
       sourceDate,
       scope,
       scopeTarget: scopeTarget ?? undefined,
@@ -887,6 +936,49 @@ export class FactsDB {
       }
     });
     tx();
+  }
+
+  /** Record a memory_recall invocation outcome for hit-rate tracking (Issue #148). */
+  logRecall(hit: boolean, occurredAtSec?: number): void {
+    const id = randomUUID();
+    const nowSec = occurredAtSec ?? Math.floor(Date.now() / 1000);
+    this.liveDb
+      .prepare(`INSERT INTO recall_log (id, occurred_at, hit) VALUES (?, ?, ?)`)
+      .run(id, nowSec, hit ? 1 : 0);
+  }
+
+  /** Prune recall_log entries older than N days to prevent unbounded growth (Issue #148). */
+  pruneRecallLog(olderThanDays = 30): number {
+    const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 24 * 3600;
+    return this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes;
+  }
+
+  /** Read the last stored embedding provider+model metadata (Issue #153). */
+  getEmbeddingMeta(): { provider: string; model: string } | null {
+    const row = this.liveDb
+      .prepare(`SELECT provider, model FROM embedding_meta WHERE id = 1`)
+      .get() as { provider: string; model: string } | undefined;
+    if (!row) return null;
+    return { provider: row.provider, model: row.model };
+  }
+
+  /** Persist the active embedding provider+model metadata (Issue #153). */
+  setEmbeddingMeta(provider: string, model: string): void {
+    const nowSec = Math.floor(Date.now() / 1000);
+    this.liveDb
+      .prepare(
+        `INSERT INTO embedding_meta (id, provider, model, updated_at)
+         VALUES (1, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, model = excluded.model, updated_at = excluded.updated_at`,
+      )
+      .run(provider, model, nowSec);
+  }
+
+  /** Record which embedding model generated the stored vector for a fact (Issue #153). */
+  setEmbeddingModel(id: string, model: string | null): void {
+    this.liveDb
+      .prepare(`UPDATE facts SET embedding_model = ? WHERE id = ?`)
+      .run(model, id);
   }
 
   /** Get HOT-tier facts for session context, capped by token budget. */
@@ -1370,6 +1462,7 @@ export class FactsDB {
       successCount: (row.success_count as number) ?? undefined,
       lastValidated: (row.last_validated as number) ?? undefined,
       sourceSessions: (row.source_sessions as string) ?? undefined,
+      embeddingModel: (row.embedding_model as string) ?? null,
       reinforcedCount: (row.reinforced_count as number) ?? 0,
       lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
       reinforcedQuotes: (() => {
@@ -3307,6 +3400,7 @@ export class FactsDB {
    * Matches patterns:
    *   - "is a <type>" / "is an <type>"
    *   - "type of <type>"
+   *   - "kind of <type>"
    *
    * When a match is found and the type noun is a known entity with an anchor fact,
    * creates an INSTANCE_OF link from newFactId → anchor fact.
@@ -3317,6 +3411,7 @@ export class FactsDB {
     const patterns = [
       /\bis\s+an?\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
       /\btype\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
+      /\bkind\s+of\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
     ];
 
     const candidates = new Set<string>();
@@ -3367,7 +3462,7 @@ export class FactsDB {
    *   3. Supersession detection — if entity+key matches an existing fact with a
    *      different value, create a SUPERSEDES edge and (when autoSupersede is true)
    *      mark the old fact as superseded and reduce its confidence.
-   *   4. INSTANCE_OF auto-detection — matches "is a/an X" and "type of X" patterns.
+   *   4. INSTANCE_OF auto-detection — matches "is a/an X", "type of X", and "kind of X" patterns.
    *
    * Returns { linkedCount, supersededIds } for use in the response message.
    */

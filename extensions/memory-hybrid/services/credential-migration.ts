@@ -99,6 +99,7 @@ export async function migrateCredentialsToVault(
       });
       try {
         const vector = await embeddings.embed(pointerText);
+        factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({
             text: pointerText,

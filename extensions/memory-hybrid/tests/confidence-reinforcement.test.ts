@@ -275,7 +275,7 @@ describe("Passive observer — reinforcement on similarity", () => {
       intervalMinutes: 15,
       maxCharsPerChunk: 8000,
       minImportance: 0.5,
-      deduplicationThreshold: 0.85,
+      deduplicationThreshold: 0.92,
       sessionsDir,
       ...overrides,
     };

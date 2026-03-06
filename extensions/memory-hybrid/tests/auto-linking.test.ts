@@ -434,6 +434,34 @@ describe("autoLinkEntities — config variants", () => {
 });
 
 // ---------------------------------------------------------------------------
+// autoLinkEntities — INSTANCE_OF detection
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.autoLinkEntities — INSTANCE_OF detection", () => {
+  const cfg = { coOccurrenceWeight: 0.3, autoSupersede: false };
+
+  it("creates INSTANCE_OF link for 'is a' pattern", () => {
+    const anchor = db.store({ text: "Dachshund info", entity: "dachshund", key: null, value: null, category: "other", importance: 0.5, source: "test" });
+    const newFact = db.store({ text: "Polly is a dachshund.", entity: "Polly", key: null, value: null, category: "other", importance: 0.5, source: "test" });
+
+    db.autoLinkEntities(newFact.id, newFact.text, newFact.entity, null, null, cfg);
+    const links = db.getLinksFrom(newFact.id);
+    const instanceLink = links.find((l) => l.linkType === "INSTANCE_OF" && l.targetFactId === anchor.id);
+    expect(instanceLink).toBeDefined();
+  });
+
+  it("creates INSTANCE_OF link for 'kind of' pattern", () => {
+    const anchor = db.store({ text: "Amphibian info", entity: "amphibian", key: null, value: null, category: "other", importance: 0.5, source: "test" });
+    const newFact = db.store({ text: "Frog is a kind of amphibian.", entity: "Frog", key: null, value: null, category: "other", importance: 0.5, source: "test" });
+
+    db.autoLinkEntities(newFact.id, newFact.text, newFact.entity, null, null, cfg);
+    const links = db.getLinksFrom(newFact.id);
+    const instanceLink = links.find((l) => l.linkType === "INSTANCE_OF" && l.targetFactId === anchor.id);
+    expect(instanceLink).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 

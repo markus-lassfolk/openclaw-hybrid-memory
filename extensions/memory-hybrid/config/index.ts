@@ -1557,7 +1557,7 @@ export const hybridConfigSchema = {
       deduplicationThreshold:
         typeof observerRaw?.deduplicationThreshold === "number" && observerRaw.deduplicationThreshold >= 0 && observerRaw.deduplicationThreshold <= 1
           ? observerRaw.deduplicationThreshold
-          : 0.85,
+          : 0.92,
       sessionsDir:
         typeof observerRaw?.sessionsDir === "string" && observerRaw.sessionsDir.trim().length > 0
           ? observerRaw.sessionsDir.trim()

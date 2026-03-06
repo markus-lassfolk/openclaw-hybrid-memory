@@ -266,7 +266,7 @@ describe("runPassiveObserver", () => {
     intervalMinutes: 15,
     maxCharsPerChunk: 8000,
     minImportance: 0.5,
-    deduplicationThreshold: 0.85,
+    deduplicationThreshold: 0.92,
     ...overrides,
   });
 
@@ -453,7 +453,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     expect(cfg.passiveObserver.intervalMinutes).toBe(15);
     expect(cfg.passiveObserver.maxCharsPerChunk).toBe(8000);
     expect(cfg.passiveObserver.minImportance).toBe(0.5);
-    expect(cfg.passiveObserver.deduplicationThreshold).toBe(0.85);
+    expect(cfg.passiveObserver.deduplicationThreshold).toBe(0.92);
     expect(cfg.passiveObserver.model).toBeUndefined();
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
@@ -506,7 +506,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
       passiveObserver: { deduplicationThreshold: 1.5 },
     });
-    expect(cfg.passiveObserver.deduplicationThreshold).toBe(0.85);
+    expect(cfg.passiveObserver.deduplicationThreshold).toBe(0.92);
   });
 
   it("ignores empty string sessionsDir", async () => {

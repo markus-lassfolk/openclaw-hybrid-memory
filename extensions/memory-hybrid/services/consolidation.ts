@@ -212,6 +212,7 @@ export async function runConsolidate(
     try {
       const vector = await embeddings.embed(mergedText);
       await vectorDb.store({ text: mergedText, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

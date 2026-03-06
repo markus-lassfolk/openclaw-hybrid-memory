@@ -346,6 +346,23 @@ export function initializeDatabases(
     }
   }
 
+  // Track embedding provider+model changes to trigger re-embedding (Issue #153).
+  const currentEmbeddingMeta = { provider: cfg.embedding.provider, model: cfg.embedding.model };
+  let embeddingConfigChanged = false;
+  try {
+    const previousEmbeddingMeta = factsDb.getEmbeddingMeta();
+    embeddingConfigChanged = Boolean(
+      previousEmbeddingMeta &&
+      (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
+        previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
+    );
+    if (!previousEmbeddingMeta || embeddingConfigChanged) {
+      factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
+    }
+  } catch (err) {
+    api.logger.warn(`memory-hybrid: failed to read embedding metadata (non-fatal): ${err}`);
+  }
+
   // Health status tracking for verification checks
   const health: HealthStatus = {
     embeddingsOk: false,
@@ -444,17 +461,19 @@ export function initializeDatabases(
     }
   })();
 
-  // Schema validation and optional auto-repair re-embedding (issue #128).
+  // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.
   // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
-  if (cfg.vector.autoRepair) {
+  if (cfg.vector.autoRepair || embeddingConfigChanged) {
     void (async () => {
       const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
-        await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
+        if (cfg.vector.autoRepair || embeddingConfigChanged) {
+          await vectorDb.count(); // triggers doInitialize() → validateOrRepairSchema()
+        }
 
         // Check if there's an incomplete re-embedding from a previous run
-        let needsReembedding = vectorDb.wasRepaired;
+        let needsReembedding = embeddingConfigChanged || (cfg.vector.autoRepair && vectorDb.wasRepaired);
         let completedIds = new Set<string>();
 
         if (!needsReembedding && existsSync(reembedProgressPath)) {
@@ -475,9 +494,11 @@ export function initializeDatabases(
         if (needsReembedding) {
           const initialGeneration = vectorDb.getCloseGeneration();
           api.logger.info(
-            vectorDb.wasRepaired
-              ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
-              : "memory-hybrid: resuming re-embedding after hot reload...",
+            embeddingConfigChanged
+              ? `memory-hybrid: embedding config changed (${currentEmbeddingMeta.provider}/${currentEmbeddingMeta.model}) — re-embedding existing facts...`
+              : vectorDb.wasRepaired
+                ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
+                : "memory-hybrid: resuming re-embedding after hot reload...",
           );
           const facts = factsDb.getAll({ includeSuperseded: false });
           let reembedded = completedIds.size;
@@ -511,6 +532,7 @@ export function initializeDatabases(
                   importance: fact.importance ?? 0.5,
                   category: fact.category,
                 });
+                factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
               }
               completedIds.add(fact.id);
               reembedded++;
@@ -530,15 +552,15 @@ export function initializeDatabases(
           }
 
           api.logger.info(
-            `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts after auto-repair`,
+            `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts during re-embedding pass`,
           );
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "vector-schema-repair-reembed",
+          operation: "vector-reembed",
           subsystem: "vector",
         });
-        api.logger.warn(`memory-hybrid: VectorDB auto-repair re-embedding failed: ${err}`);
+        api.logger.warn(`memory-hybrid: re-embedding failed: ${err}`);
       }
     })();
   }

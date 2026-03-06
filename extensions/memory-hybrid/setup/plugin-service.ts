@@ -165,6 +165,8 @@ export function createPluginService(ctx: PluginServiceContext) {
                       importance: importance ?? 0.7,
                       category: category || "other",
                       id: stored.id,
+                    }).then(() => {
+                      factsDb.setEmbeddingModel(stored.id, embeddings.modelName);
                     }).catch((err) => {
                       api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
                       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

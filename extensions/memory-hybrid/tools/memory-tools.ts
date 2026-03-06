@@ -221,6 +221,16 @@ export function registerMemoryTools(
         // Accepting arbitrary scope filters allows users to access other users' private memories.
         // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
         const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+        const logRecall = (hit: boolean) => {
+          const maybeFactsDb = factsDb as { logRecall?: (hit: boolean) => void };
+          if (typeof maybeFactsDb.logRecall === "function") {
+            try {
+              maybeFactsDb.logRecall(hit);
+            } catch {
+              // Non-fatal: recall logging should never break recall
+            }
+          }
+        };
 
         // Fetch by id (fact id or 1-based index from last progressive index)
         if (idParam !== undefined && idParam !== null && idParam !== "") {
@@ -249,6 +259,7 @@ export function registerMemoryTools(
             if (entry) {
               // Access boost — update recall_count and last_accessed on fetch by id
               factsDb.refreshAccessedFacts([entry.id]);
+              logRecall(true);
               const text = `[${entry.category}] ${entry.text}`;
               return {
                 content: [
@@ -278,6 +289,7 @@ export function registerMemoryTools(
               };
             }
           }
+          logRecall(false);
           return {
             content: [
               {
@@ -294,6 +306,7 @@ export function registerMemoryTools(
 
         const query = typeof queryParam === "string" && queryParam.trim().length > 0 ? queryParam.trim() : null;
         if (!query) {
+          logRecall(false);
           return {
             content: [
               {
@@ -389,6 +402,7 @@ export function registerMemoryTools(
             scopeFilter,
             asOfSec ?? undefined,
             cfg.aliases?.enabled ? aliasDb : null,
+            cfg.clusters,
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).
@@ -514,6 +528,7 @@ export function registerMemoryTools(
         }
 
         if (results.length === 0) {
+          logRecall(false);
           return {
             content: [{
               type: "text",
@@ -530,6 +545,7 @@ export function registerMemoryTools(
           contradictionStatus.set(r.entry.id, factsDb.isContradicted(r.entry.id));
         }
 
+        logRecall(true);
         const text = results
           .map((r, i) => {
             const contradicted = contradictionStatus.get(r.entry.id) ?? false;
@@ -853,6 +869,7 @@ export function registerMemoryTools(
             try {
               addOperationBreadcrumb("vector", "store-credential-pointer");
               const vector = await embeddings.embed(pointerText);
+              factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vector))) {
                 await vectorDb.store({
                   text: pointerText,
@@ -973,8 +990,11 @@ export function registerMemoryTools(
 
                 const finalImportance = Math.max(importance, oldFact.importance);
                 try {
-                  if (vector && !(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                  if (vector) {
+                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                    if (!(await vectorDb.hasDuplicate(vector))) {
+                      await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                    }
                   }
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1100,14 +1120,17 @@ export function registerMemoryTools(
 
         try {
           addOperationBreadcrumb("vector", "store-fact");
-          if (vector && !(await vectorDb.hasDuplicate(vector))) {
-            await vectorDb.store({
-              text: textToStore,
-              vector,
-              importance,
-              category,
-              id: entry.id,
-            });
+          if (vector) {
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            if (!(await vectorDb.hasDuplicate(vector))) {
+              await vectorDb.store({
+                text: textToStore,
+                vector,
+                importance,
+                category,
+                id: entry.id,
+              });
+            }
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1122,7 +1145,7 @@ export function registerMemoryTools(
         walRemove(walEntryId, api.logger);
 
         // Issue #149: generate and store retrieval aliases (non-blocking)
-        if (cfg.aliases?.enabled && aliasDb) {
+        if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
           const aliasModel =
             cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
           void storeAliases(

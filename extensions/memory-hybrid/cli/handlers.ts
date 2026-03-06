@@ -86,7 +86,7 @@ import {
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
   // Daily 02:30 | self-correction-analysis | self-correction-run
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
@@ -102,6 +102,7 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // Daily 02:45 | nightly-dream-cycle | dream-cycle (prune → consolidate → reflect)
+  // Default schedule; overridden by cfg.nightlyCycle.schedule during install/verify/upgrade.
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true },
 ];
 
@@ -346,6 +347,7 @@ export async function runStoreForCli(
         });
         try {
           const vector = await embeddings.embed(pointerText);
+          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
           if (!(await vectorDb.hasDuplicate(vector))) {
             await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
           }
@@ -424,6 +426,7 @@ export async function runStoreForCli(
               factsDb.supersede(classification.targetId, newEntry.id);
               aliasDb?.deleteByFactId(classification.targetId);
               try {
+                factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
                 }
@@ -466,6 +469,7 @@ export async function runStoreForCli(
     }
     try {
       const vector = await embeddings.embed(text);
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       if (!(await vectorDb.hasDuplicate(vector))) {
         await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: opts.category ?? "other", id: entry.id });
       }
@@ -1886,6 +1890,7 @@ export async function runExtractDailyForCli(
                 });
                 try {
                   const vector = await embeddings.embed(pointerText);
+                  factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(vector))) {
                     await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
                   }
@@ -1975,6 +1980,7 @@ export async function runExtractDailyForCli(
                   factsDb.supersede(classification.targetId, newEntry.id);
                   aliasDb?.deleteByFactId(classification.targetId);
                   try {
+                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                     if (!(await vectorDb.hasDuplicate(vecForStore))) {
                       await vectorDb.store({ text: trimmed, vector: vecForStore, importance: BATCH_STORE_IMPORTANCE, category, id: newEntry.id });
                     }
@@ -1996,6 +2002,7 @@ export async function runExtractDailyForCli(
       const entry = factsDb.store(storePayload);
       try {
         const vector = vecForStore ?? await embeddings.embed(trimmed);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({ text: trimmed, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
         }
@@ -2204,6 +2211,7 @@ export async function runBackfillForCli(
       });
       try {
         const vector = await embeddings.embed(fact.text);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({
             text: fact.text,
@@ -2434,6 +2442,7 @@ export async function runIngestFilesForCli(
           category: fact.category,
           id: entry.id,
         });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         sink.warn(`memory-hybrid: ingest-files vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
         capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:vector-store" });
@@ -2597,6 +2606,7 @@ export async function runDistillForCli(
             });
             try {
               const vector = await embeddings.embed(pointerText);
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
                 await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
               }
@@ -2644,6 +2654,7 @@ export async function runDistillForCli(
       });
       try {
         await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         sink.warn(`memory-hybrid: distill vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
         capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:vector-store" });
@@ -2977,7 +2988,10 @@ export async function runSelfCorrectionRunForCli(
           source: "self-correction",
           tags: Array.isArray(obj.tags) ? obj.tags : [],
         });
-        if (vector) await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+        if (vector) {
+          await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+        }
         autoFixed++;
       } catch (err) {
         logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);

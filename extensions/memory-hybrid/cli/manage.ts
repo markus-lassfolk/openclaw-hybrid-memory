@@ -96,6 +96,10 @@ export type ManageContext = {
     | { ok: true; path: string; topLanguages: string[]; languagesAdded: number }
     | { ok: false; error: string }
   >;
+  runResolveContradictions: () => Promise<{
+    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  }>;
   runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
   runSelfCorrectionRun: (opts: {
     extractPath?: string;
@@ -1242,6 +1246,29 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  Rules generated: ${res.rulesGenerated}`);
       }));
   }
+
+  mem
+    .command("resolve-contradictions")
+    .description("Resolve unresolved contradictions (auto-resolve obvious cases, report ambiguous pairs)")
+    .action(withExit(async () => {
+      let res;
+      try {
+        res = await ctx.runResolveContradictions();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "resolve-contradictions" });
+        throw err;
+      }
+      console.log(`Contradictions resolved: ${res.autoResolved.length} auto-resolved, ${res.ambiguous.length} ambiguous.`);
+      if (res.ambiguous.length > 0) {
+        console.log("Ambiguous pairs (manual review recommended):");
+        for (const a of res.ambiguous.slice(0, 10)) {
+          console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+        }
+        if (res.ambiguous.length > 10) {
+          console.log(`  ...and ${res.ambiguous.length - 10} more`);
+        }
+      }
+    }));
 
   mem
     .command("classify")

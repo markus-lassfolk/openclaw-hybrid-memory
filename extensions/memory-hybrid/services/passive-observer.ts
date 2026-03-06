@@ -544,6 +544,7 @@ export async function runPassiveObserver(
           text: fact.text,
           category: fact.category as MemoryCategory,
           importance: fact.importance,
+          confidence: 0.6,
           entity: null,
           key: null,
           value: null,
@@ -554,6 +555,10 @@ export async function runPassiveObserver(
           tags: ['passive-observer'],
         })
 
+        // Contradiction detection (Issue #142): check for same entity+key with different value
+        // Pass scope so detection stays within session boundary.
+        factsDb.detectContradictions(stored.id, null, null, null, stored.scope ?? null, stored.scopeTarget ?? null);
+
         // Store to LanceDB
         try {
           await vectorDb.store({
@@ -563,6 +568,7 @@ export async function runPassiveObserver(
             category: fact.category,
             id: stored.id,
           })
+          factsDb.setEmbeddingModel(stored.id, embeddings.modelName)
         } catch (err) {
           logger.warn(`memory-hybrid: passive-observer vector store failed: ${err}`)
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
