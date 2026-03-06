@@ -213,6 +213,7 @@ let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
 
 let issueStore: IssueStore | null = null;
+let provenanceService: ProvenanceService | null = null;
 let pythonBridge: PythonBridge | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
@@ -276,13 +277,14 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
 
     issueStore = null;
+    provenanceService = null;
     // pythonBridge shutdown will be added by #206
     if (pythonBridge) {
       pythonBridge.shutdown().catch(() => {});
@@ -309,6 +311,7 @@ const memoryHybridPlugin = {
       eventLog = dbContext.eventLog;
       aliasDb = dbContext.aliasDb;
       issueStore = dbContext.issueStore;
+      provenanceService = dbContext.provenanceService;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
