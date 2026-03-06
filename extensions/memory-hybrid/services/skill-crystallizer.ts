@@ -55,8 +55,8 @@ export function deriveSkillName(
     if (slug.length >= 3) return `auto-${slug}`;
   }
 
-  // Fall back: use the first two tool names + hash fragment
-  const toolSlug = toolSequence.slice(0, 2).join("-").replace(/[^a-z0-9-]/g, "-");
+  // Fall back: use the first two tool names + hash fragment (lowercase for consistency)
+  const toolSlug = toolSequence.slice(0, 2).join("-").toLowerCase().replace(/[^a-z0-9-]/g, "-");
   return `auto-${toolSlug}-${patternId.slice(0, 6)}`;
 }
 

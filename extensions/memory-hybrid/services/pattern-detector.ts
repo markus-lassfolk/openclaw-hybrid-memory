@@ -2,7 +2,7 @@
  * Pattern Detector — identify crystallization candidates from WorkflowStore (Issue #208).
  *
  * Analyses workflow patterns from WorkflowStore.getPatterns() and scores them
- * by usage count × success rate × recency to identify strong candidates.
+ * by usage count × success rate to identify strong candidates.
  * Deduplication: skips patterns that already have a pending/approved proposal.
  */
 

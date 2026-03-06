@@ -64,7 +64,7 @@ const DENY_RULES: DenyRule[] = [
   {
     name: "credential-env-secret",
     codeBlockOnly: true,
-    pattern: /\$\{?(?:API_KEY|SECRET|PASSWORD|TOKEN|PRIVATE_KEY|ACCESS_KEY|AUTH)\b/i,
+    pattern: /\$\{?(?:\w*(?:API_KEY|SECRET|PASSWORD|TOKEN|PRIVATE_KEY|ACCESS_KEY|AUTH|CREDENTIAL)\w*)\b/i,
     description: "Environment variable referencing a credential secret",
   },
   {
@@ -140,7 +140,6 @@ export class SkillValidator {
     const lines = skillContent.split("\n");
 
     let inCodeBlock = false;
-    let codeBlockLang = "";
     let lineNumber = 0;
 
     for (const line of lines) {
@@ -150,13 +149,7 @@ export class SkillValidator {
       // Track code block boundaries
       const codeBlockFence = trimmed.match(/^```(\w*)/);
       if (codeBlockFence) {
-        if (!inCodeBlock) {
-          inCodeBlock = true;
-          codeBlockLang = codeBlockFence[1] ?? "";
-        } else {
-          inCodeBlock = false;
-          codeBlockLang = "";
-        }
+        inCodeBlock = !inCodeBlock;
         continue;
       }
 
