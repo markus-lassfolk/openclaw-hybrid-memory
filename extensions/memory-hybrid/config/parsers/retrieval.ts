@@ -267,7 +267,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const model =
     typeof qeRaw?.model === "string" && qeRaw.model.trim().length > 0
       ? qeRaw.model.trim()
-      : (hydeEnabled && !qeExplicitlySet ? hydeModel : undefined);
+      : (enabled ? hydeModel : undefined); // Fall back to search.hydeModel only when expansion is enabled
 
   // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout
   const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 5000;
