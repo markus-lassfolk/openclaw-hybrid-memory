@@ -22,6 +22,7 @@ import { IssueStore } from "../backends/issue-store.js";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProvenanceService } from "../services/provenance.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
+import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -201,6 +202,7 @@ export interface DatabaseContext {
   issueStore: IssueStore;
   workflowStore: WorkflowStore;
   crystallizationStore: CrystallizationStore;
+  toolProposalStore: ToolProposalStore;
   provenanceService: ProvenanceService | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
@@ -353,6 +355,11 @@ export function initializeDatabases(
   const crystallizationStorePath = join(dirname(resolvedSqlitePath), "crystallization-proposals.db");
   const crystallizationStore = new CrystallizationStore(crystallizationStorePath);
   api.logger.info(`memory-hybrid: crystallization store initialized (${crystallizationStorePath})`);
+
+  // Initialize ToolProposalStore — always created; proposals gated by cfg.selfExtension.enabled (Issue #210)
+  const toolProposalStorePath = join(dirname(resolvedSqlitePath), "tool-proposals.db");
+  const toolProposalStore = new ToolProposalStore(toolProposalStorePath);
+  api.logger.info(`memory-hybrid: tool proposal store initialized (${toolProposalStorePath})`);
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -629,6 +636,7 @@ export function initializeDatabases(
     issueStore,
     workflowStore,
     crystallizationStore,
+    toolProposalStore,
     provenanceService,
     resolvedLancePath,
     resolvedSqlitePath,
@@ -651,9 +659,10 @@ export function closeOldDatabases(context: {
   issueStore?: IssueStore | null;
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, provenanceService } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -718,6 +727,13 @@ export function closeOldDatabases(context: {
       crystallizationStore.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "crystallizationStore" });
+    }
+  }
+  if (toolProposalStore) {
+    try {
+      toolProposalStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "toolProposalStore" });
     }
   }
   if (provenanceService) {

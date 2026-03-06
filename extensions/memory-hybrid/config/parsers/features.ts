@@ -12,6 +12,7 @@ import type {
   DocumentsConfig,
   WorkflowTrackingConfig,
   CrystallizationConfig,
+  SelfExtensionConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -389,5 +390,24 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
       typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0
         ? Math.floor(raw.pruneUnusedDays)
         : 30,
+  };
+}
+
+export function parseSelfExtensionConfig(cfg: Record<string, unknown>): SelfExtensionConfig {
+  const raw = cfg.selfExtension as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    minGapFrequency:
+      typeof raw?.minGapFrequency === "number" && raw.minGapFrequency > 0
+        ? Math.floor(raw.minGapFrequency)
+        : 3,
+    minToolSavings:
+      typeof raw?.minToolSavings === "number" && raw.minToolSavings > 0
+        ? Math.floor(raw.minToolSavings)
+        : 2,
+    maxProposals:
+      typeof raw?.maxProposals === "number" && raw.maxProposals > 0
+        ? Math.floor(raw.maxProposals)
+        : 20,
   };
 }

@@ -160,3 +160,15 @@ export type DocumentsConfig = {
   /** Optional allowlist of absolute directory paths; when set, ingestion only allows files under these paths */
   allowedPaths?: string[];
 };
+
+/** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210). */
+export type SelfExtensionConfig = {
+  /** Enable self-extension gap detection and proposal generation (default: false — opt-in). */
+  enabled: boolean;
+  /** Minimum times a gap must be observed before proposing a tool (default: 3). */
+  minGapFrequency: number;
+  /** Minimum number of tool calls saved to qualify as a gap (default: 2). */
+  minToolSavings: number;
+  /** Maximum number of pending proposals allowed at any time (default: 20). */
+  maxProposals: number;
+};
