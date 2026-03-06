@@ -1138,7 +1138,7 @@ export function registerMemoryTools(
         walRemove(walEntryId, api.logger);
 
         // Issue #149: generate and store retrieval aliases (non-blocking)
-        if (cfg.aliases?.enabled && aliasDb) {
+        if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
           const aliasModel =
             cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
           void storeAliases(
