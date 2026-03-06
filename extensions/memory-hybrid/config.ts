@@ -370,7 +370,7 @@ export type ReinforcementConfig = {
 
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */
 export type RetrievalConfig = {
-  /** Active retrieval strategies (default: ["semantic", "fts5", "graph"]). */
+  /** Active retrieval strategies (default: ["semantic", "fts5"]; "graph" is accepted but is a no-op stub until #145 is complete). */
   strategies: Array<"semantic" | "fts5" | "graph">;
   /** RRF k constant (default 60). Higher = less rank-position sensitivity. */
   rrf_k: number;
@@ -1197,11 +1197,16 @@ export const hybridConfigSchema = {
     } else if (embeddingProvider === "openai") {
       resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
     } else {
-      // Warn when falling back to 768 for an unknown ollama/onnx model (#5)
+      // For ollama/onnx: require explicit dimensions when the model is unknown to prevent
+      // silent schema mismatches with existing LanceDB tables (e.g. 768 vs 1536 dimensions).
       if (!EMBEDDING_DIMENSIONS[model]) {
-        console.warn(`memory-hybrid: embedding model '${model}' is not in the known-models list; defaulting to 768 dimensions. Set embedding.dimensions explicitly to suppress this warning.`);
+        throw new Error(
+          `memory-hybrid: embedding model '${model}' is not in the known-models list. ` +
+          `Set embedding.dimensions explicitly to the vector size your model produces. ` +
+          `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
+        );
       }
-      resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for unknown ollama models
+      resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for known ollama models
     }
 
     const resolvedEndpoint = typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
@@ -1831,9 +1836,9 @@ export const hybridConfigSchema = {
             (s): s is "semantic" | "fts5" | "graph" =>
               typeof s === "string" && VALID_STRATEGIES.includes(s as typeof VALID_STRATEGIES[number]),
           )
-        : (["semantic", "fts5", "graph"] as Array<"semantic" | "fts5" | "graph">);
+        : (["semantic", "fts5"] as Array<"semantic" | "fts5" | "graph">);
     const retrieval: RetrievalConfig = {
-      strategies: parsedStrategies.length > 0 ? parsedStrategies : ["semantic", "fts5", "graph"],
+      strategies: parsedStrategies.length > 0 ? parsedStrategies : ["semantic", "fts5"],
       rrf_k:
         typeof retrievalRaw?.rrf_k === "number" && retrievalRaw.rrf_k > 0
           ? Math.floor(retrievalRaw.rrf_k)

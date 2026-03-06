@@ -244,44 +244,60 @@ export async function runRetrievalPipeline(
   // --- Run strategies in parallel ---
   const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];
 
+  // Helper: wrap each strategy in try/catch so a synchronous throw or rejection
+  // is captured by allSettled rather than aborting the pipeline.
+  const safeStrategy = (
+    name: string,
+    fn: () => RankedResult[] | Promise<RankedResult[]>,
+  ): Promise<[string, RankedResult[]]> =>
+    (async () => {
+      try {
+        return [name, await fn()] as [string, RankedResult[]];
+      } catch (err) {
+        // Log and return empty so other strategies still contribute
+        console.error(`[retrieval] strategy "${name}" failed:`, err);
+        return [name, []] as [string, RankedResult[]];
+      }
+    })();
+
   if (strategies.includes("fts5")) {
     strategyPromises.push(
-      Promise.resolve([
-        "fts5",
+      safeStrategy("fts5", () =>
         runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf),
-      ] as [string, RankedResult[]]),
+      ),
     );
   }
 
   if (strategies.includes("semantic") && queryVector) {
     strategyPromises.push(
-      runSemanticStrategy(vectorDb, queryVector, semanticTopK).then(
-        (r) => ["semantic", r] as [string, RankedResult[]],
+      safeStrategy("semantic", () =>
+        runSemanticStrategy(vectorDb, queryVector, semanticTopK),
       ),
     );
   }
 
   if (strategies.includes("graph")) {
     strategyPromises.push(
-      Promise.resolve(["graph", runGraphStrategy()] as [string, RankedResult[]]),
+      safeStrategy("graph", () => runGraphStrategy()),
     );
   }
 
   // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
   if (aliasDb && queryVector) {
     strategyPromises.push(
-      Promise.resolve([
-        "aliases",
+      safeStrategy("aliases", () =>
         searchAliasStrategy(aliasDb, queryVector, semanticTopK),
-      ] as [string, RankedResult[]]),
+      ),
     );
   }
 
-  const strategyResults = await Promise.all(strategyPromises);
+  const strategySettledResults = await Promise.allSettled(strategyPromises);
 
-  // Build strategy map
+  // Build strategy map — rejected/empty strategies are skipped so the rest can still contribute.
   const strategyMap = new Map<string, RankedResult[]>();
-  for (const [name, results] of strategyResults) {
+  for (const settled of strategySettledResults) {
+    if (settled.status === "rejected") continue;
+    const [name, results] = settled.value;
     if (results.length > 0) {
       strategyMap.set(name, results);
     }

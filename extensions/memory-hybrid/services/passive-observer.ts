@@ -211,8 +211,9 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
 
     const importanceRaw =
       typeof obj.importance === 'number' ? obj.importance : parseFloat(String(obj.importance))
-    // Default to 0.5 when importance is missing/invalid so facts are not silently dropped
-    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.5
+    // Default to 0.0 when importance is missing/invalid — forces the LLM to explicitly assign
+    // importance rather than having invalid/missing values silently pass the minImportance filter.
+    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.0
 
     const categoryRaw =
       typeof obj.category === 'string' ? obj.category.toLowerCase().trim() : 'fact'
@@ -285,6 +286,9 @@ export async function runPassiveObserver(
   const cursorsPath = getCursorsPath(opts.dbDir)
   const cursors = await loadCursors(cursorsPath)
   let cursorsChanged = false
+  // Separate in-memory map for consecutive failure counts — not persisted to the cursors file
+  // to avoid mixing byte-offset semantics with failure-count semantics in the same structure.
+  const consecutiveFailures = new Map<string, number>()
 
   // ---------------------------------------------------------------------------
   // Phase 1: scan all session files, count sessions, detect whether any have
@@ -336,13 +340,32 @@ export async function runPassiveObserver(
   const recentFacts = factsDb.getRecentFacts(7, { excludeCategories: [] }) // last 7 days
   const recentVectors: (number[] | null)[] = []
   const recentFactIds: (string | null)[] = []
-  for (const f of recentFacts.slice(0, 200)) {
+  // Cap at 50 facts — sufficient for dedup without excessive API calls.
+  const dedupePool = recentFacts.slice(0, 50)
+  try {
+    // Use a 30-second hard timeout to prevent blocking the timer indefinitely on slow providers.
+    const embedBatchPromise = embeddings.embedBatch(dedupePool.map((f) => f.text))
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('embed-batch timeout')), 30_000)
+    })
+    let batchResult: number[][]
     try {
-      recentVectors.push(normalizeVector(await embeddings.embed(f.text)))
-      recentFactIds.push(f.id)
-    } catch {
+      batchResult = (await Promise.race([embedBatchPromise, timeoutPromise])) as number[][]
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
+      }
+    }
+    for (let i = 0; i < dedupePool.length; i++) {
+      recentVectors.push(normalizeVector(batchResult[i]))
+      recentFactIds.push(dedupePool[i].id)
+    }
+  } catch {
+    // On timeout or error, proceed without dedup vectors — a few duplicates are acceptable.
+    for (const f of dedupePool) {
       recentVectors.push(null)
-      recentFactIds.push(null)
+      recentFactIds.push(f.id)
     }
   }
 
@@ -523,10 +546,23 @@ export async function runPassiveObserver(
       }
     }
 
-    // Advance cursor to end of file only if at least one chunk was successfully processed
+    // Advance cursor to end of file only if at least one chunk was successfully processed.
+    // Track consecutive failures to prevent infinite retry on permanently-bad session files.
     if (anyChunkSucceeded) {
       cursors[sessionId] = fileBytelen
+      consecutiveFailures.delete(sessionId)
       cursorsChanged = true
+    } else {
+      const failures = (consecutiveFailures.get(sessionId) ?? 0) + 1
+      consecutiveFailures.set(sessionId, failures)
+      if (failures >= 3) {
+        // Advance past the problematic content after 3 consecutive failures to prevent
+        // an infinite retry loop that wastes LLM tokens on permanently-bad session files.
+        logger.warn(`memory-hybrid: passive-observer — advancing cursor for session ${sessionId} after ${failures} consecutive failures`)
+        cursors[sessionId] = fileBytelen
+        consecutiveFailures.delete(sessionId)
+        cursorsChanged = true
+      }
     }
   }
 
