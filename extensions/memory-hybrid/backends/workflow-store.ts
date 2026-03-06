@@ -257,6 +257,9 @@ export class WorkflowStore {
     } else if (filter?.goal) {
       query += " LIMIT ?";
       params.push(PATTERNS_QUERY_LIMIT);
+    } else {
+      query += " LIMIT ?";
+      params.push(PATTERNS_QUERY_LIMIT);
     }
 
     const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];

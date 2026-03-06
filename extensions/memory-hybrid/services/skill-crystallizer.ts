@@ -173,6 +173,7 @@ function buildShellScript(
   patternId: string,
 ): string {
   const steps = pattern.toolSequence.map((_, i) => `# Step ${i + 1}: exec call`).join("\n");
+  const escapedSkillName = skillName.replace(/'/g, "'\\''");
   return `#!/usr/bin/env bash
 # Auto-generated shell script for skill: ${skillName}
 # Pattern ID: ${patternId}
@@ -184,6 +185,6 @@ set -euo pipefail
 ${steps}
 
 # TODO: replace the placeholder steps above with the actual commands
-echo "Skill '${skillName}' scaffold — update with actual commands"
+echo 'Skill '\''${escapedSkillName}'\'' scaffold — update with actual commands'
 `;
 }

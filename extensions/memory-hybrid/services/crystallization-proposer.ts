@@ -114,20 +114,15 @@ export class CrystallizationProposer {
             continue;
           }
 
-          // Sanitize skill name for output path (same as approveProposal) to prevent path traversal
-          const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
-          const safeName = result.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
-          const outputPath = `${outputDir}/${safeName}/SKILL.md`;
-
           // Write to disk first, then create and approve proposal (avoids orphaned pending proposals)
-          this.writeSkillToDisk(outputPath, result.skillContent);
+          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
           });
-          this.crystallizationStore.approve(proposal.id, outputPath);
+          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
           proposed++;
         } else {
           // Store as pending, awaiting human approval
@@ -187,10 +182,12 @@ export class CrystallizationProposer {
       };
     }
 
-    // Determine output path — sanitize skill name to prevent path traversal
-    const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
-    const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
-    const outputPath = `${outputDir}/${safeName}/SKILL.md`;
+    // Regenerate output path from skill name
+    const result = this.crystallizer.crystallize({
+      patternId: proposal.patternId,
+      pattern: JSON.parse(proposal.patternSnapshot),
+    });
+    const outputPath = result.proposedOutputPath;
 
     // Write to disk first, then approve in DB (ensures atomicity)
     try {
