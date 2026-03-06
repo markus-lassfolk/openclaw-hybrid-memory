@@ -18,6 +18,7 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
+import { IssueStore } from "../backends/issue-store.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -194,6 +195,7 @@ export interface DatabaseContext {
   proposalsDb: ProposalsDB | null;
   eventLog: EventLog | null;
   aliasDb: AliasDB | null;
+  issueStore: IssueStore;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
@@ -330,6 +332,11 @@ export function initializeDatabases(
     aliasDb = new AliasDB(aliasPath, aliasLancePath, cfg.embedding.dimensions);
     api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath}, ${aliasLancePath})`);
   }
+
+  // Initialize IssueStore — always enabled, lightweight SQLite table (Issue #137)
+  const issueStorePath = join(dirname(resolvedSqlitePath), "issues.db");
+  const issueStore = new IssueStore(issueStorePath);
+  api.logger.info(`memory-hybrid: issue store initialized (${issueStorePath})`);
 
   // Load previously discovered categories so they remain available after restart
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
@@ -595,6 +602,7 @@ export function initializeDatabases(
     proposalsDb,
     eventLog,
     aliasDb,
+    issueStore,
     resolvedLancePath,
     resolvedSqlitePath,
     health,
@@ -613,8 +621,9 @@ export function closeOldDatabases(context: {
   proposalsDb?: ProposalsDB | null;
   eventLog?: EventLog | null;
   aliasDb?: AliasDB | null;
+  issueStore?: IssueStore | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore } = context;
 
   invalidateClusterCache();
 
@@ -658,6 +667,13 @@ export function closeOldDatabases(context: {
       aliasDb.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "aliasDb" });
+    }
+  }
+  if (issueStore) {
+    try {
+      issueStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "issueStore" });
     }
   }
 }
