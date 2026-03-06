@@ -115,25 +115,34 @@ export class ContextualVariantGenerator {
 /**
  * Parse a JSON array of strings from an LLM response.
  * Handles responses that wrap the JSON in prose or code fences.
+ * Tries every [...] substring (same approach as query-expander) so that arrays
+ * containing literal "]" in string values parse correctly.
  */
 export function parseVariantsFromResponse(response: string, maxVariants: number): string[] {
-  // Extract the first JSON array from the response
-  const match = response.match(/\[[\s\S]*?\]/);
-  if (!match) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(match[0]);
-  } catch {
-    return [];
+  const candidates: string[] = [];
+  let start = response.indexOf("[");
+  while (start !== -1) {
+    let end = response.indexOf("]", start + 1);
+    while (end !== -1) {
+      candidates.push(response.slice(start, end + 1));
+      end = response.indexOf("]", end + 1);
+    }
+    start = response.indexOf("[", start + 1);
   }
-
-  if (!Array.isArray(parsed)) return [];
-
-  return parsed
-    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-    .map((v) => v.trim())
-    .slice(0, maxVariants);
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    return parsed
+      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      .map((v) => v.trim())
+      .slice(0, maxVariants);
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------

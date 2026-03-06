@@ -151,6 +151,12 @@ describe("parseVariantsFromResponse", () => {
     const result = parseVariantsFromResponse("[]", 5);
     expect(result).toEqual([]);
   });
+
+  it("parses array when string values contain literal ] (e.g. [topic])", () => {
+    const response = 'Summary: ["phrase about [topic]", "other variant"]';
+    const result = parseVariantsFromResponse(response, 5);
+    expect(result).toEqual(["phrase about [topic]", "other variant"]);
+  });
 });
 
 // ---------------------------------------------------------------------------

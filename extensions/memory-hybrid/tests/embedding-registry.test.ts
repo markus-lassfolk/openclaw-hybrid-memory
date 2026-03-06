@@ -195,7 +195,7 @@ describe("EmbeddingRegistry — embedAll()", () => {
     }
   });
 
-  it("throws when an additional model fails", async () => {
+  it("returns partial results when an additional model fails (reports error, does not throw)", async () => {
     const primary = makeMockProvider("text-embedding-3-small", 4, [1, 0, 0, 0]);
     const registry = new EmbeddingRegistry(primary, "text-embedding-3-small");
 
@@ -204,7 +204,10 @@ describe("EmbeddingRegistry — embedAll()", () => {
 
     registry.register({ name: "nomic-embed-text", provider: "ollama", dimensions: 3, role: "domain" });
 
-    await expect(registry.embedAll("test")).rejects.toThrow();
+    const result = await registry.embedAll("test");
+    expect(result.size).toBe(1);
+    expect(result.has("text-embedding-3-small")).toBe(true);
+    expect(result.get("text-embedding-3-small")).toBeInstanceOf(Float32Array);
 
     vi.unstubAllGlobals();
   });
