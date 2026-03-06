@@ -388,6 +388,14 @@ export type VerificationConfig = {
   autoClassify: boolean;
 };
 
+/** Provenance tracing for fact-to-source chains (Issue #163). */
+export type ProvenanceConfig = {
+  /** Enable provenance tracing (default: false — opt-in). */
+  enabled: boolean;
+  /** Days to retain provenance edges before pruning (default: 365). */
+  retentionDays: number;
+};
+
 /** Shortest-path traversal configuration (Issue #140). */
 export type PathConfig = {
   /** Enable memory_path tool (default: true). */
@@ -680,6 +688,8 @@ export type HybridMemoryConfig = {
   reranking: RerankingConfig;
   /** Verification store for critical facts (Issue #162, default: disabled). */
   verification: VerificationConfig;
+  /** Provenance tracing for fact-to-source chains (Issue #163, default: disabled). */
+  provenance: ProvenanceConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -2318,6 +2328,16 @@ export const hybridConfigSchema = {
       autoClassify: verifRaw?.autoClassify !== false,
     };
 
+    // Parse provenance config (Issue #163, default: disabled)
+    const provRaw = cfg.provenance as Record<string, unknown> | undefined;
+    const provenance: ProvenanceConfig = {
+      enabled: provRaw?.enabled === true,
+      retentionDays:
+        typeof provRaw?.retentionDays === "number" && provRaw.retentionDays > 0
+          ? Math.floor(provRaw.retentionDays)
+          : 365,
+    };
+
     return {
       embedding: {
         provider: embeddingProvider,
@@ -2384,6 +2404,7 @@ export const hybridConfigSchema = {
       queryExpansion,
       reranking,
       verification,
+      provenance,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
