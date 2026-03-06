@@ -329,26 +329,27 @@ export class VerificationStore {
     const checksum = computeChecksum(newText);
     const newVersion = existing.version + 1;
 
-    this.db
-      .prepare(
-        `INSERT INTO verified_facts
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO verified_facts
           (id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        newId,
-        existing.fact_id,
-        newText,
-        checksum,
-        now,
-        verifiedBy,
-        nextVerification,
-        newVersion,
-        id,
-        now,
-      );
-
-    this.db.prepare(`UPDATE verified_facts SET next_verification = NULL WHERE id = ?`).run(id);
+        )
+        .run(
+          newId,
+          existing.fact_id,
+          newText,
+          checksum,
+          now,
+          verifiedBy,
+          nextVerification,
+          newVersion,
+          id,
+          now,
+        );
+      this.db.prepare(`UPDATE verified_facts SET next_verification = NULL WHERE id = ?`).run(id);
+    })();
 
     this.writeBackup({
       action: "update",
@@ -378,7 +379,7 @@ export class VerificationStore {
   // Private: append-only backup
   // -------------------------------------------------------------------------
 
-  private static hasLoggedBackupError = false;
+  private hasLoggedBackupError = false;
 
   private writeBackup(entry: Record<string, unknown>): void {
     try {
@@ -388,8 +389,8 @@ export class VerificationStore {
       const line = JSON.stringify({ ...entry, ts: new Date().toISOString() }) + "\n";
       appendFileSync(this.backupPath, line, "utf8");
     } catch (err) {
-      if (!VerificationStore.hasLoggedBackupError) {
-        VerificationStore.hasLoggedBackupError = true;
+      if (!this.hasLoggedBackupError) {
+        this.hasLoggedBackupError = true;
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "verification-store",
           operation: "writeBackup",
