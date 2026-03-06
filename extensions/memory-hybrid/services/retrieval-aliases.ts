@@ -264,7 +264,7 @@ export class AliasDB {
     const normalizedFactId = factId.toLowerCase();
     return this.db
       .prepare(
-        `SELECT id, factId, aliasText FROM fact_aliases WHERE factId = ?`,
+        `SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`,
       )
       .all(normalizedFactId) as AliasRow[];
   }

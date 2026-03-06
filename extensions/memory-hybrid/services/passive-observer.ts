@@ -317,10 +317,12 @@ export async function runPassiveObserver(
   }
 
   const sessions: SessionInfo[] = []
+  const activeSessionIds = new Set<string>()
   let hasNewContent = false
 
   for (const filePath of filePaths) {
     const sessionId = filePath.replace(/\\/g, '/').split('/').pop()!.replace('.jsonl', '')
+    activeSessionIds.add(sessionId)
     let fileBytelen: number
     try {
       const stats = await stat(filePath)

@@ -259,7 +259,7 @@ class ClusterCache {
     const now = Date.now();
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
     if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
-      if ((linkCount == null || linkCount === this.clusterCacheLinkCount) && 
+      if ((linkCount == null || linkCount === this.clusterCacheLinkCount) &&
           this.clusterCache.minClusterSize === minClusterSize) {
         return this.clusterCache.clusters;
       }

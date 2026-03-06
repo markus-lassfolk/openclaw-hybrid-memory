@@ -192,6 +192,16 @@ describe("AliasDB.getByFactId", () => {
     expect(db.getByFactId(randomUUID())).toEqual([]);
     db.close();
   });
+
+  it("matches factId case-insensitively", () => {
+    const db = makeDb();
+    const factId = randomUUID().toUpperCase();
+    db.store(factId, "phrase one", unitVec());
+    const rows = db.getByFactId(factId.toLowerCase());
+    expect(rows).toHaveLength(1);
+    expect(rows[0].factId).toBe(factId.toLowerCase());
+    db.close();
+  });
 });
 
 describe("AliasDB.deleteByFactId", () => {
@@ -215,6 +225,16 @@ describe("AliasDB.deleteByFactId", () => {
     db.deleteByFactId(factA);
     expect(db.count()).toBe(1);
     expect(db.getByFactId(factB)).toHaveLength(1);
+    db.close();
+  });
+
+  it("deletes aliases case-insensitively", () => {
+    const db = makeDb();
+    const factId = randomUUID().toUpperCase();
+    db.store(factId, "alias 1", unitVec());
+    expect(db.count()).toBe(1);
+    db.deleteByFactId(factId.toLowerCase());
+    expect(db.count()).toBe(0);
     db.close();
   });
 });

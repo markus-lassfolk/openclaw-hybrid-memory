@@ -434,7 +434,14 @@ export function initializeDatabases(
           // Another process already created the flag - skip migration
           shouldMigrate = false;
         } else {
-          throw err; // Unexpected error
+          shouldMigrate = false;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "credentials",
+            operation: "migration-flag-create",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: failed to create migration flag (skipping migration): ${err}`);
         }
       }
       if (shouldMigrate) {

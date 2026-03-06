@@ -107,6 +107,14 @@ export class Embeddings implements EmbeddingProvider {
 
     let lastErr: Error | undefined;
     for (const model of this.models) {
+      const cacheKey = makeCacheKey(model, text);
+      const cached = this.cache.get(cacheKey);
+      if (cached !== undefined) {
+        this.cache.delete(cacheKey);
+        this.cache.set(cacheKey, cached);
+        this.modelName = model;
+        return cached;
+      }
       try {
         const supportsDimensions = model.startsWith("text-embedding-3-");
         const resp = await withLLMRetry(
