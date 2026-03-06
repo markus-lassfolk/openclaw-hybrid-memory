@@ -166,11 +166,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   } else if (embedding?.provider !== undefined) {
     throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx.`);
   } else {
-    // Intentional default when omitted: ollama for local-first setups. Document in release notes if changing.
+    // Backward compat: previous config defaulted to "openai" when omitted.
     if (embedding !== undefined) {
-      console.warn(`memory-hybrid: embedding.provider not set; defaulting to "ollama". Set embedding.provider explicitly (openai, ollama, or onnx).`);
+      console.warn(`memory-hybrid: embedding.provider not set; defaulting to "openai". Set embedding.provider explicitly (openai, ollama, or onnx).`);
     }
-    embeddingProvider = "ollama";
+    embeddingProvider = "openai";
   }
 
   // apiKey is required for openai provider only

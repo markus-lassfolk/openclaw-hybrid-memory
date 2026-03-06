@@ -3351,7 +3351,8 @@ export class FactsDB {
       .get(id) as { tags: string | null } | undefined;
     if (!row) return;
     const tags = parseTags(row.tags);
-    if (tags.includes(normalized)) return;
+    // Case-insensitive duplicate check (existing tags may be mixed-case in storage).
+    if (tags.some((t) => t.toLowerCase() === normalized)) return;
     tags.push(normalized);
     this.liveDb.prepare(`UPDATE facts SET tags = ? WHERE id = ?`).run(serializeTags(tags), id);
   }
