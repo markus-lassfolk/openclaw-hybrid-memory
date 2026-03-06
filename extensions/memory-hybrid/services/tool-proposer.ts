@@ -30,7 +30,7 @@ export interface ProposeCycleResult {
  * the tool sequence it replaces. This is a heuristic sketch — not a formal spec.
  */
 function generateParameterSchema(gap: DetectedGap): string {
-  const params: Record<string, { type: string; description: string; items?: { type: string } }> = {};
+  const params: Record<string, { type: string; description?: string; items?: { type: string } }> = {};
 
   // Always include the goal the tool should accomplish
   params["goal"] = {
@@ -58,7 +58,13 @@ function generateParameterSchema(gap: DetectedGap): string {
     };
   }
 
-  return JSON.stringify({ type: "object", properties: params, required: ["goal"] }, null, 2);
+  const schema = {
+    type: "object" as const,
+    properties: params,
+    required: ["goal"] as string[],
+    additionalProperties: false,
+  };
+  return JSON.stringify(schema, null, 2);
 }
 
 // ---------------------------------------------------------------------------

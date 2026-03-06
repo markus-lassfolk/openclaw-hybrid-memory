@@ -60,8 +60,8 @@ const DEFAULT_OPTIONS: GapDetectorOptions = {
 // Tool-name derivation helpers
 // ---------------------------------------------------------------------------
 
-/** Derive a camel_case tool name from a sequence of tool names.
- *  e.g. ["memory_recall", "memory_recall", "memory_recall"] → "memory_recall_bulk"
+/** Derive a snake_case tool name from a sequence of tool names.
+ *  e.g. ["memory_recall", "memory_recall", "memory_recall"] → "memory_bulk_recall"
  *       ["exec", "exec", "exec"]                            → "exec_bulk"
  */
 export function deriveToolNameFromSequence(toolSequence: string[]): string {
@@ -76,9 +76,10 @@ export function deriveToolNameFromSequence(toolSequence: string[]): string {
   const dominant = sorted[0][0];
   const dominantCount = sorted[0][1];
 
-  // All the same → bulk / batch variant
+  // All the same → bulk variant: insert _bulk after namespace (e.g. memory_recall → memory_bulk_recall)
   if (dominantCount === toolSequence.length) {
-    // e.g. memory_recall x3 → memory_bulk_recall
+    const parts = dominant.split("_");
+    if (parts.length >= 2) return `${parts[0]}_bulk_${parts.slice(1).join("_")}`;
     return `${dominant}_bulk`;
   }
 
