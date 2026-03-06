@@ -51,6 +51,7 @@ import type {
   FutureDateProtectionConfig,
   DocumentsConfig,
   WorkflowTrackingConfig,
+  CrystallizationConfig,
 } from "./features.js";
 
 import type {
@@ -365,6 +366,8 @@ export type HybridMemoryConfig = {
   documents: DocumentsConfig;
   /** Workflow tracking: tool-sequence capture and pattern learning (Issue #209, default: disabled). */
   workflowTracking: WorkflowTrackingConfig;
+  /** Workflow crystallization: auto-generate AgentSkill SKILL.md files from repeated patterns (Issue #208, default: disabled). */
+  crystallization: CrystallizationConfig;
   /** Contextual variant generation at index time (Issue #159, default: disabled). */
   contextualVariants: ContextualVariantsConfig;
   /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */

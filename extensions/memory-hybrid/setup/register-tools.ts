@@ -27,6 +27,8 @@ import type { IssueStore } from "../backends/issue-store.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
+import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import {
   registerUtilityTools,
@@ -52,6 +54,7 @@ export interface ToolsContext {
   aliasDb?: AliasDB | null;
   issueStore?: IssueStore | null;
   workflowStore?: WorkflowStore | null;
+  crystallizationStore?: CrystallizationStore | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -99,6 +102,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     aliasDb,
     issueStore,
     workflowStore,
+    crystallizationStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -189,5 +193,10 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Workflow pattern tool (always registered when store available; recording is gated by cfg, Issue #209)
   if (workflowStore) {
     registerWorkflowTools({ workflowStore }, api);
+  }
+
+  // Crystallization tools (register when store available; crystallization gated by cfg, Issue #208)
+  if (crystallizationStore && workflowStore) {
+    registerCrystallizationTools({ crystallizationStore, workflowStore, cfg }, api);
   }
 }
