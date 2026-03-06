@@ -62,14 +62,6 @@ export interface ObserverRunResult {
 // Track consecutive failures across runs to prevent infinite retries on bad session files.
 const consecutiveFailures = new Map<string, number>()
 
-function pruneConsecutiveFailures(activeSessionIds: Set<string>): void {
-  for (const sessionId of consecutiveFailures.keys()) {
-    if (!activeSessionIds.has(sessionId)) {
-      consecutiveFailures.delete(sessionId)
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // JSONL text extraction
 // ---------------------------------------------------------------------------
@@ -293,6 +285,17 @@ export async function runPassiveObserver(
     return result
   }
 
+  // Prune stale consecutiveFailures entries before any early returns, so sessions that
+  // disappear from disk (or when there are no session files at all) get cleaned up every tick.
+  {
+    const activeIds = new Set(
+      filePaths.map((fp) => fp.replace(/\\/g, '/').split('/').pop()!.replace('.jsonl', ''))
+    )
+    for (const id of consecutiveFailures.keys()) {
+      if (!activeIds.has(id)) consecutiveFailures.delete(id)
+    }
+  }
+
   if (filePaths.length === 0) return result
 
   const cursorsPath = getCursorsPath(opts.dbDir)
@@ -343,8 +346,6 @@ export async function runPassiveObserver(
 
     sessions.push({ filePath, sessionId, fileBytelen, cursor })
   }
-
-  pruneConsecutiveFailures(activeSessionIds)
 
   if (!hasNewContent) return result
 

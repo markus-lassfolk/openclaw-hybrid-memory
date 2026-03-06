@@ -142,6 +142,10 @@ function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
     }
   }
   entityCache.set(cacheKey, { prefixMap, timestamp: now });
+  // Evict stale entries to prevent unbounded growth when entity lists change over time.
+  for (const [k, v] of entityCache) {
+    if (now - v.timestamp >= ENTITY_CACHE_TTL_MS) entityCache.delete(k);
+  }
   return prefixMap;
 }
 

@@ -423,9 +423,12 @@ export function initializeDatabases(
       let shouldMigrate = false;
       try {
         const handle = await open(migrationFlagPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
-        await handle.writeFile("1", "utf8");
-        await handle.close();
-        shouldMigrate = true; // We won the race, proceed with migration
+        try {
+          await handle.writeFile("1", "utf8");
+          shouldMigrate = true; // We won the race, proceed with migration
+        } finally {
+          await handle.close().catch(() => { /* ignore close errors */ });
+        }
       } catch (err: any) {
         if (err.code === "EEXIST") {
           // Another process already created the flag - skip migration
@@ -469,7 +472,7 @@ export function initializeDatabases(
         }
       }
     }
-  })().catch((err) => {
+  })().catch((err: unknown) => {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "init",
       operation: "async-initialization",

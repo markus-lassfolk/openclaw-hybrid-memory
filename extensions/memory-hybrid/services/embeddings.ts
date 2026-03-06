@@ -90,6 +90,21 @@ export class Embeddings implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    // Check cache for any model before making API calls.
+    // This prevents redundant API calls when the primary model consistently fails
+    // and a fallback model's cached result would be immediately available.
+    for (const model of this.models) {
+      const cacheKey = makeCacheKey(model, text);
+      const cached = this.cache.get(cacheKey);
+      if (cached !== undefined) {
+        // LRU refresh: move to end
+        this.cache.delete(cacheKey);
+        this.cache.set(cacheKey, cached);
+        this.modelName = model;
+        return cached;
+      }
+    }
+
     let lastErr: Error | undefined;
     for (const model of this.models) {
       const cacheKey = makeCacheKey(model, text);
@@ -115,7 +130,8 @@ export class Embeddings implements EmbeddingProvider {
           const firstKey = this.cache.keys().next().value;
           if (firstKey !== undefined) this.cache.delete(firstKey);
         }
-        this.cache.set(cacheKey, vector);
+        const storeCacheKey = makeCacheKey(model, text);
+        this.cache.set(storeCacheKey, vector);
         this.modelName = model;
         return vector;
       } catch (err) {

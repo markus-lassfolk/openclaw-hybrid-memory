@@ -1553,16 +1553,18 @@ export class FactsDB {
     ids: string[],
     options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
   ): Map<string, MemoryEntry> {
-    const BATCH_SIZE = 500;
     const result = new Map<string, MemoryEntry>();
     if (ids.length === 0) return result;
     const uniqueIds = Array.from(new Set(ids));
-    for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
-      const batchIds = uniqueIds.slice(i, i + BATCH_SIZE);
-      const placeholders = batchIds.map(() => "?").join(",");
+    // SQLite has a SQLITE_LIMIT_VARIABLE_NUMBER limit (default 999, often 32766).
+    // Batch in chunks of 500 to stay well within that limit for any configuration.
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
       const rows = this.liveDb
         .prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`)
-        .all(...batchIds) as Array<Record<string, unknown>>;
+        .all(...chunk) as Array<Record<string, unknown>>;
       for (const row of rows) {
         const entry = this.rowToEntry(row);
         const filtered = this.applyLookupFilters(entry, options);

@@ -244,8 +244,8 @@ function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactL
 type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number; minClusterSize: number | undefined };
 
 class ClusterCache {
-  private readonly clusterCache = new WeakMap<object, ClusterCacheEntry>();
-  private readonly clusterCacheLinkCount = new WeakMap<object, number | null>();
+  private clusterCache: ClusterCacheEntry | null = null;
+  private clusterCacheLinkCount: number | null = null;
   private readonly ttlMs: number;
 
   constructor(ttlMs = 5 * 60 * 1000) {
@@ -257,14 +257,11 @@ class ClusterCache {
     minClusterSize?: number,
   ): Map<string, string> {
     const now = Date.now();
-    const cacheKey = factsDb as object;
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
-    const cached = this.clusterCache.get(cacheKey);
-    const cachedLinkCount = this.clusterCacheLinkCount.get(cacheKey) ?? null;
-    if (cached && now - cached.timestamp < this.ttlMs) {
-      if ((linkCount == null || linkCount === cachedLinkCount) &&
-          cached.minClusterSize === minClusterSize) {
-        return cached.clusters;
+    if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
+      if ((linkCount == null || linkCount === this.clusterCacheLinkCount) &&
+          this.clusterCache.minClusterSize === minClusterSize) {
+        return this.clusterCache.clusters;
       }
     }
 
@@ -276,14 +273,14 @@ class ClusterCache {
       }
     }
 
-    this.clusterCache.set(cacheKey, { clusters: clusterByFact, timestamp: now, minClusterSize });
-    this.clusterCacheLinkCount.set(cacheKey, linkCount);
+    this.clusterCache = { clusters: clusterByFact, timestamp: now, minClusterSize };
+    this.clusterCacheLinkCount = linkCount;
     return clusterByFact;
   }
 
   invalidate(): void {
-    // WeakMap cache entries are isolated per FactsDB instance and naturally
-    // cleaned up when the instance becomes unreachable.
+    this.clusterCache = null;
+    this.clusterCacheLinkCount = null;
   }
 }
 
