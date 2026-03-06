@@ -939,10 +939,15 @@ function isOpenAIModel(model: string): boolean {
 }
 
 function resolveEnvVars(value: string): string {
-  // Use [^}]+ not (.*?) to avoid ReDoS (js/polynomial-redos): no backtracking on malicious input.
-  return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
-    const envValue = process.env[envVar];
-    if (!envValue) throw new Error(`Environment variable ${envVar} is not set`);
+  // Bounded character class [^}]{1,256} prevents ReDoS (js/polynomial-redos).
+  // Environment variable names are short; 256 chars is generous.
+  return value.replace(/\$\{([^}]{1,256})\}/g, (_, envVar: string) => {
+    const trimmed = envVar.trim();
+    if (!trimmed) {
+      throw new Error("Environment variable name cannot be empty or whitespace in '${...}'");
+    }
+    const envValue = process.env[trimmed];
+    if (!envValue) throw new Error(`Environment variable ${trimmed} is not set`);
     return envValue;
   });
 }

@@ -356,9 +356,26 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const authFailureRecallsThisSession = new Map<string, number>();
   // Track session starts for retrieval directives
   const sessionStartSeen = new Set<string>();
-  // Ambient retrieval session state (Issue #156) — scoped per session key
+  // Ambient retrieval session state (Issue #156) — scoped per session key.
+  // Bounded to MAX_TRACKED_SESSIONS to prevent memory leak from long-running agents.
+  const MAX_TRACKED_SESSIONS = 200;
   const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
   const ambientLastEmbeddingMap = new Map<string, number[] | null>();
+
+  /** Evict oldest entries if maps exceed the session limit. */
+  function pruneSessionMaps(): void {
+    if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
+      const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
+      const keys = ambientSeenFactsMap.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) {
+          ambientSeenFactsMap.delete(value);
+          ambientLastEmbeddingMap.delete(value);
+        }
+      }
+    }
+  }
 
   const resolveSessionKey = (event: unknown, api?: ClawdbotPluginApi): string | null => {
     const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
@@ -667,6 +684,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
           if (!ambientSeenFactsMap.has(sessionScopeKey)) {
             ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
+            ambientLastEmbeddingMap.set(sessionScopeKey, null);
+            pruneSessionMaps();
+          } else {
+            // LRU: move returning session to end by deleting and re-inserting
+            const seenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
+            const lastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
+            ambientSeenFactsMap.delete(sessionScopeKey);
+            ambientLastEmbeddingMap.delete(sessionScopeKey);
+            ambientSeenFactsMap.set(sessionScopeKey, seenFacts);
+            ambientLastEmbeddingMap.set(sessionScopeKey, lastEmbedding);
           }
           const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
           const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
