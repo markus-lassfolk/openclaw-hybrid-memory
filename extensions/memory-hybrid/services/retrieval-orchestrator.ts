@@ -286,6 +286,10 @@ class ClusterCache {
 
 const clusterCache = new ClusterCache();
 
+export function invalidateClusterCache(): void {
+  clusterCache.invalidate();
+}
+
 /**
  * Run the multi-strategy retrieval pipeline and return fused, ranked results.
  *

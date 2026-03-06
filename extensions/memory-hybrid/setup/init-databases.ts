@@ -17,6 +17,7 @@ import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
+import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -597,6 +598,8 @@ export function closeOldDatabases(context: {
   aliasDb?: AliasDB | null;
 }): void {
   const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb } = context;
+
+  invalidateClusterCache();
 
   if (typeof factsDb?.close === "function") {
     try {
