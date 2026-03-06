@@ -22,6 +22,8 @@ import { registerMemoryTools } from "../tools/memory-tools.js";
 import { registerGraphTools } from "../tools/graph-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerPersonaTools } from "../tools/persona-tools.js";
+import { registerIssueTools } from "../tools/issue-tools.js";
+import type { IssueStore } from "../backends/issue-store.js";
 import {
   registerUtilityTools,
   type RunReflectionFn,
@@ -44,6 +46,7 @@ export interface ToolsContext {
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   aliasDb?: AliasDB | null;
+  issueStore?: IssueStore | null;
   resolvedSqlitePath: string;
   timers: {
     proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -88,6 +91,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     proposalsDb,
     eventLog,
     aliasDb,
+    issueStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -163,4 +167,9 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     (operation, data) => walWrite(wal, operation, data, api.logger),
     (id) => walRemove(wal, id, api.logger)
   );
+
+  // Issue lifecycle tracking (always enabled — lightweight, Issue #137)
+  if (issueStore) {
+    registerIssueTools({ issueStore }, api);
+  }
 }

@@ -12,6 +12,8 @@
  */
 
 import type { AmbientConfig } from "../config.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import type { Issue } from "../types/issue-types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -382,4 +384,62 @@ export function deduplicateResultsById<T>(
     }
   }
   return deduped;
+}
+
+// ---------------------------------------------------------------------------
+// Issue-aware ambient context (Issue #137)
+// ---------------------------------------------------------------------------
+
+/** Keywords that suggest the conversation involves an active problem or error. */
+const ERROR_KEYWORDS = [
+  "error", "failed", "crash", "timeout", "broken", "not working",
+  "exception", "bug", "issue", "problem", "fault", "failure", "down",
+];
+
+/**
+ * Detect whether a message text contains error-like keywords that suggest
+ * the user is dealing with an active problem.
+ */
+export function hasErrorKeywords(text: string): boolean {
+  const lower = text.toLowerCase();
+  return ERROR_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+export interface IssueAmbientResult {
+  /** Open issues that may be relevant to the current message. */
+  openIssues: Issue[];
+  /** Resolved/verified issues that may contain relevant resolution context. */
+  resolvedIssues: Issue[];
+}
+
+/**
+ * Search the issue store for issues relevant to the current conversation message.
+ * Called when the message contains error-like keywords.
+ *
+ * - Searches open issues so the user knows about known active problems.
+ * - Searches resolved/verified issues to surface past resolutions that may help.
+ *
+ * Returns at most 3 open + 3 resolved issues.
+ */
+export function searchAmbientIssues(
+  message: string,
+  issueStore: IssueStore,
+): IssueAmbientResult {
+  if (!hasErrorKeywords(message)) {
+    return { openIssues: [], resolvedIssues: [] };
+  }
+
+  // Extract a short search term: first 60 chars of the message for LIKE matching
+  const searchTerm = message.trim().slice(0, 60);
+  const matches = issueStore.search(searchTerm);
+
+  const openIssues = matches
+    .filter((i) => i.status === "open" || i.status === "diagnosed" || i.status === "fix-attempted")
+    .slice(0, 3);
+
+  const resolvedIssues = matches
+    .filter((i) => i.status === "resolved" || i.status === "verified")
+    .slice(0, 3);
+
+  return { openIssues, resolvedIssues };
 }
