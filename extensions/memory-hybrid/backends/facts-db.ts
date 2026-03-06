@@ -1224,10 +1224,13 @@ export class FactsDB {
     entity: string,
     key?: string,
     tag?: string,
-    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null },
+    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null; limit?: number },
   ): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
+    const limit = typeof options?.limit === "number" && options.limit > 0
+      ? Math.floor(options.limit)
+      : null;
     const temporalFilter =
       asOf != null
         ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
@@ -1240,10 +1243,11 @@ export class FactsDB {
         : "";
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
     const { clause: scopeClause, params: scopeParamsArr } = this.scopeFilterClausePositional(scopeFilter);
+    const limitClause = limit ? " LIMIT ?" : "";
 
     const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC`;
+      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`
+      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`;
 
     const params = key
       ? tagParam !== null
@@ -1260,7 +1264,8 @@ export class FactsDB {
         : asOf != null
           ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
           : [...[entity, nowSec], ...scopeParamsArr];
-    const rows = this.liveDb.prepare(base).all(...params) as Array<
+    const finalParams = limit ? [...params, limit] : params;
+    const rows = this.liveDb.prepare(base).all(...finalParams) as Array<
       Record<string, unknown>
     >;
 
