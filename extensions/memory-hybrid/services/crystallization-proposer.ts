@@ -119,14 +119,14 @@ export class CrystallizationProposer {
           const safeName = result.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
           const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 
-          // Create proposal, write to disk, THEN approve in DB (ensures atomicity)
+          // Write to disk first, then create and approve proposal (avoids orphaned pending proposals)
+          this.writeSkillToDisk(outputPath, result.skillContent);
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
           });
-          this.writeSkillToDisk(outputPath, result.skillContent);
           this.crystallizationStore.approve(proposal.id, outputPath);
           proposed++;
         } else {
