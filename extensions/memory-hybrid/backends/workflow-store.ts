@@ -123,7 +123,7 @@ export function extractGoalKeywords(goal: string): string[] {
 // ---------------------------------------------------------------------------
 
 export function hashToolSequence(toolSequence: string[]): string {
-  return createHash("sha256").update(toolSequence.join("|")).digest("hex").slice(0, 16);
+  return createHash("sha256").update(JSON.stringify(toolSequence)).digest("hex").slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
