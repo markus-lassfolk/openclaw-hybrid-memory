@@ -849,12 +849,14 @@ export async function runVerifyForCli(
     const effectiveQEModel = cfg.queryExpansion.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
     log(`  queryExpansion.model: ${cfg.queryExpansion.model != null ? cfg.queryExpansion.model : `${effectiveQEModel} (nano tier)`}`);
   }
-  log(`  errorReporting: ${bool(cfg.errorReporting.enabled)} (consent: ${bool(cfg.errorReporting.consent)})`);
-  if (cfg.errorReporting.enabled) {
-    log(`    mode: ${cfg.errorReporting.mode ?? "community"}`);
-    if (cfg.errorReporting.dsn) log(`    dsn: ${cfg.errorReporting.dsn}`);
-    if (cfg.errorReporting.botId) log(`    botId: ${cfg.errorReporting.botId}`);
-    if (cfg.errorReporting.botName) log(`    botName: ${cfg.errorReporting.botName}`);
+  if (cfg.errorReporting) {
+    log(`  errorReporting: ${bool(cfg.errorReporting.enabled)} (consent: ${bool(cfg.errorReporting.consent)})`);
+    if (cfg.errorReporting.enabled) {
+      log(`    mode: ${cfg.errorReporting.mode ?? "community"}`);
+      if (cfg.errorReporting.dsn) log(`    dsn: ${cfg.errorReporting.dsn}`);
+      if (cfg.errorReporting.botId) log(`    botId: ${cfg.errorReporting.botId}`);
+      if (cfg.errorReporting.botName) log(`    botName: ${cfg.errorReporting.botName}`);
+    }
   }
 
   const cronCfgForVerify = getCronModelConfig(cfg);

@@ -257,7 +257,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   }
 
   // queryExpansion.enabled wins when explicitly set; otherwise fall through to HyDE migration
-  const enabled = qeExplicitlySet ? (qeRaw.enabled === true) : hydeEnabled;
+  const enabled = qeExplicitlySet ? qeRaw.enabled === true : hydeEnabled;
 
   // queryExpansion.model wins when set; fall back to search.hydeModel for migration compat
   const hydeModel =
