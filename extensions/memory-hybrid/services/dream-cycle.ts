@@ -36,6 +36,8 @@ export interface DreamCycleConfig {
   pruneMode: DreamCyclePruneMode;
   model: string;
   consolidateAfterDays: number;
+  /** Fallback models for reflection steps — provides LLM resilience on unattended nightly runs. */
+  fallbackModels?: string[];
 }
 
 /** Result returned by a single dream cycle run. */
@@ -160,9 +162,8 @@ export async function runEpisodicConsolidation(
       .filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
-      // Mark events as consolidated with a sentinel value to prevent re-processing
-      // Use a namespaced sentinel to distinguish from real fact IDs
-      eventLog.markConsolidated(groupEvents.map((e) => e.id), "__skipped_no_text__");
+      // Mark events as consolidated with null (skipped — no extractable text)
+      eventLog.markConsolidated(groupEvents.map((e) => e.id), null);
       eventsConsolidated += groupEvents.length;
       continue;
     }
@@ -351,7 +352,7 @@ export async function runDreamCycle(
         window: config.reflectWindowDays,
         dryRun: false,
         model: config.model,
-        fallbackModels: [],
+        fallbackModels: config.fallbackModels ?? [],
       },
       logger,
     );
@@ -374,7 +375,7 @@ export async function runDreamCycle(
         vectorDb,
         embeddings,
         openai,
-        { dryRun: false, model: config.model, fallbackModels: [] },
+        { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [] },
         logger,
       );
       rulesGenerated = rulesResult.rulesStored;

@@ -375,14 +375,13 @@ export function createEmbeddingProvider(
   }
 
   if (provider === "onnx") {
-    // ONNX runtime not yet implemented — fall back to OpenAI if key available
-    if (apiKey) {
-      console.warn("memory-hybrid: ONNX embedding provider is not yet implemented. Falling back to OpenAI. Your data will be sent to OpenAI's cloud API.");
-      const openaiClient = new OpenAI({ apiKey });
-      const openaiModels = models?.length ? models : ["text-embedding-3-small"];
-      return new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
-    }
-    throw new Error("ONNX embedding provider is not yet implemented. Set embedding.apiKey to fall back to OpenAI, or use provider='ollama'.");
+    // ONNX runtime is not yet implemented. Throw an explicit error rather than silently
+    // sending data to OpenAI — users who choose 'onnx' have opted out of cloud APIs.
+    throw new Error(
+      "memory-hybrid: ONNX embedding provider is not yet implemented. " +
+      "Use provider='ollama' for local embeddings or provider='openai' for cloud embeddings. " +
+      "Do not set provider='onnx' if you intend to use OpenAI — set it explicitly to 'openai'.",
+    );
   }
 
   throw new Error(`Unknown embedding provider: '${provider as string}'. Valid options: openai, ollama, onnx.`);

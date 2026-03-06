@@ -419,7 +419,7 @@ describe("createEmbeddingProvider factory", () => {
     expect(() => createEmbeddingProvider(cfg)).toThrow(/apiKey/);
   });
 
-  it("falls back to OpenAI for provider='onnx' when apiKey is present", () => {
+  it("throws for provider='onnx' regardless of whether apiKey is present (no silent cloud fallback)", () => {
     const cfg: EmbeddingConfig = {
       provider: "onnx",
       model: "text-embedding-3-small",
@@ -427,8 +427,7 @@ describe("createEmbeddingProvider factory", () => {
       dimensions: 1536,
       batchSize: 50,
     };
-    const provider = createEmbeddingProvider(cfg);
-    expect(provider).toBeInstanceOf(Embeddings);
+    expect(() => createEmbeddingProvider(cfg)).toThrow(/ONNX/);
   });
 
   it("throws for provider='onnx' without apiKey", () => {

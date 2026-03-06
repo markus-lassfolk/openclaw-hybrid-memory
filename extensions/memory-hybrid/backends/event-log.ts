@@ -65,6 +65,9 @@ export class EventLog {
   }
 
   private get liveDb(): Database.Database {
+    if (this.closed) {
+      throw new Error("EventLog is closed");
+    }
     if (!this.db.open) {
       this.db = new Database(this.dbPath);
       this.db.pragma("journal_mode = WAL");
@@ -176,8 +179,8 @@ export class EventLog {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /** Mark a set of events as consolidated into the given fact id. */
-  markConsolidated(eventIds: string[], factId: string): void {
+  /** Mark a set of events as consolidated into the given fact id (or null when skipped). */
+  markConsolidated(eventIds: string[], factId: string | null): void {
     const stmt = this.liveDb.prepare(
       `UPDATE event_log SET consolidated_into = ? WHERE id = ?`,
     );

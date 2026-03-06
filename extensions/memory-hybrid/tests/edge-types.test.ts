@@ -132,35 +132,35 @@ describe("CONTRADICTS bidirectional", () => {
     expect(contradicts[0].targetFactId).toBe(factA.id);
   });
 
-  it("recordContradiction creates reverse link (old → new) for bidirectionality", () => {
+  it("recordContradiction does NOT create a reverse link (unidirectional new → old only)", () => {
     const factA = storeFact("Alice is 30 years old", "alice", "age", "30");
     const factB = storeFact("Alice is 31 years old", "alice", "age", "31");
 
     db.recordContradiction(factB.id, factA.id);
 
+    // Only the directed new→old link should exist; no reverse link from old→new
     const outboundFromA = db.getLinksFrom(factA.id);
     const contradicts = outboundFromA.filter((l) => l.linkType === "CONTRADICTS");
-    expect(contradicts).toHaveLength(1);
-    expect(contradicts[0].targetFactId).toBe(factB.id);
+    expect(contradicts).toHaveLength(0);
   });
 
-  it("detectContradictions creates bidirectional CONTRADICTS links", () => {
+  it("detectContradictions creates a single directed CONTRADICTS link (new → old)", () => {
     const factA = storeFact("Bob likes cats", "bob", "preference", "cats");
     const factB = storeFact("Bob likes dogs", "bob", "preference", "dogs");
 
     db.detectContradictions(factB.id, "bob", "preference", "dogs");
 
-    // Both directions should exist
+    // Only the new→old link should exist
     const fromB = db.getLinksFrom(factB.id).filter((l) => l.linkType === "CONTRADICTS");
     const fromA = db.getLinksFrom(factA.id).filter((l) => l.linkType === "CONTRADICTS");
 
     expect(fromB).toHaveLength(1);
     expect(fromB[0].targetFactId).toBe(factA.id);
-    expect(fromA).toHaveLength(1);
-    expect(fromA[0].targetFactId).toBe(factB.id);
+    // No reverse link from old→new
+    expect(fromA).toHaveLength(0);
   });
 
-  it("both facts are marked as contradicted after bidirectional link creation", () => {
+  it("both facts are marked as contradicted after unidirectional link creation", () => {
     const factA = storeFact("City is Paris", "city", "name", "Paris");
     const factB = storeFact("City is London", "city", "name", "London");
 

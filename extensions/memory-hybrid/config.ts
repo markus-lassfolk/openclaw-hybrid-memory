@@ -1197,11 +1197,17 @@ export const hybridConfigSchema = {
     } else if (embeddingProvider === "openai") {
       resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
     } else {
-      // Warn when falling back to 768 for an unknown ollama/onnx model (#5)
+      // For Ollama/ONNX providers with unknown model dimensions, require the user to set
+      // embedding.dimensions explicitly to prevent silent vector corruption in LanceDB
+      // when the schema was initialized with a different dimension count.
       if (!EMBEDDING_DIMENSIONS[model]) {
-        console.warn(`memory-hybrid: embedding model '${model}' is not in the known-models list; defaulting to 768 dimensions. Set embedding.dimensions explicitly to suppress this warning.`);
+        throw new Error(
+          `memory-hybrid: embedding model '${model}' is not in the known-models list for provider='${embeddingProvider}'. ` +
+          `Set embedding.dimensions explicitly in your configuration (e.g., dimensions: 768). ` +
+          `If you previously used a different provider, ensure the dimension matches your existing LanceDB schema.`,
+        );
       }
-      resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for unknown ollama models
+      resolvedDimensions = vectorDimsForModel(model, 768); // safe — model is in EMBEDDING_DIMENSIONS
     }
 
     const resolvedEndpoint = typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
@@ -1831,9 +1837,11 @@ export const hybridConfigSchema = {
             (s): s is "semantic" | "fts5" | "graph" =>
               typeof s === "string" && VALID_STRATEGIES.includes(s as typeof VALID_STRATEGIES[number]),
           )
-        : (["semantic", "fts5", "graph"] as Array<"semantic" | "fts5" | "graph">);
+        : (["semantic", "fts5"] as Array<"semantic" | "fts5" | "graph">);
     const retrieval: RetrievalConfig = {
-      strategies: parsedStrategies.length > 0 ? parsedStrategies : ["semantic", "fts5", "graph"],
+      // 'graph' strategy is a no-op stub until Issue #145 is fully wired — exclude from default
+      // to avoid misleading operators. Users can opt-in explicitly via retrieval.strategies config.
+      strategies: parsedStrategies.length > 0 ? parsedStrategies : ["semantic", "fts5"],
       rrf_k:
         typeof retrievalRaw?.rrf_k === "number" && retrievalRaw.rrf_k > 0
           ? Math.floor(retrievalRaw.rrf_k)

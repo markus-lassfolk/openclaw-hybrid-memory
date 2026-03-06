@@ -211,8 +211,9 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
 
     const importanceRaw =
       typeof obj.importance === 'number' ? obj.importance : parseFloat(String(obj.importance))
-    // Default to 0.5 when importance is missing/invalid so facts are not silently dropped
-    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.5
+    // Default to 0.0 when importance is missing/invalid — forces the LLM to explicitly assign
+    // importance rather than letting malformed values silently pass the minImportance filter.
+    const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.0
 
     const categoryRaw =
       typeof obj.category === 'string' ? obj.category.toLowerCase().trim() : 'fact'
@@ -336,11 +337,29 @@ export async function runPassiveObserver(
   const recentFacts = factsDb.getRecentFacts(7, { excludeCategories: [] }) // last 7 days
   const recentVectors: (number[] | null)[] = []
   const recentFactIds: (string | null)[] = []
-  for (const f of recentFacts.slice(0, 200)) {
-    try {
-      recentVectors.push(normalizeVector(await embeddings.embed(f.text)))
-      recentFactIds.push(f.id)
-    } catch {
+  const DEDUP_SAMPLE_SIZE = 50 // cap to avoid blocking the timer for minutes
+  const factsToEmbed = recentFacts.slice(0, DEDUP_SAMPLE_SIZE)
+  try {
+    const DEDUP_EMBEDDING_TIMEOUT_MS = 30_000
+    const batchVectors = await Promise.race([
+      embeddings.embedBatch(factsToEmbed.map((f) => f.text)),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Phase 2 embedBatch timeout')), DEDUP_EMBEDDING_TIMEOUT_MS),
+      ),
+    ])
+    for (let i = 0; i < factsToEmbed.length; i++) {
+      try {
+        recentVectors.push(normalizeVector(batchVectors[i]))
+        recentFactIds.push(factsToEmbed[i].id)
+      } catch {
+        recentVectors.push(null)
+        recentFactIds.push(null)
+      }
+    }
+  } catch (err) {
+    logger.warn(`memory-hybrid: passive-observer — Phase 2 embedBatch failed: ${err}`)
+    // Push nulls so dedup is skipped but Phase 3 proceeds
+    for (let i = 0; i < factsToEmbed.length; i++) {
       recentVectors.push(null)
       recentFactIds.push(null)
     }
@@ -523,9 +542,26 @@ export async function runPassiveObserver(
       }
     }
 
-    // Advance cursor to end of file only if at least one chunk was successfully processed
+    // Advance cursor to end of file only if at least one chunk was successfully processed.
+    // Track consecutive failures per session — after MAX_FAILURES skip the content to
+    // prevent infinite retry loops on malformed session files wasting LLM tokens.
+    const FAILURE_KEY = `__fail__:${sessionId}`
+    const MAX_CONSECUTIVE_FAILURES = 3
     if (anyChunkSucceeded) {
       cursors[sessionId] = fileBytelen
+      delete cursors[FAILURE_KEY] // reset failure counter on success
+      cursorsChanged = true
+    } else {
+      const failures = (cursors[FAILURE_KEY] ?? 0) + 1
+      if (failures >= MAX_CONSECUTIVE_FAILURES) {
+        logger.warn(
+          `memory-hybrid: passive-observer — session ${sessionId} failed ${failures} times consecutively; advancing cursor to skip bad content`,
+        )
+        cursors[sessionId] = fileBytelen
+        delete cursors[FAILURE_KEY]
+      } else {
+        cursors[FAILURE_KEY] = failures
+      }
       cursorsChanged = true
     }
   }
