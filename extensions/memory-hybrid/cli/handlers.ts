@@ -349,6 +349,7 @@ export async function runStoreForCli(
           const vector = await embeddings.embed(pointerText);
           if (!(await vectorDb.hasDuplicate(vector))) {
             await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+            factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
           }
         } catch (err) {
           log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -427,6 +428,7 @@ export async function runStoreForCli(
               try {
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
+                  factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                 }
               } catch (err) {
                 log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -469,6 +471,7 @@ export async function runStoreForCli(
       const vector = await embeddings.embed(text);
       if (!(await vectorDb.hasDuplicate(vector))) {
         await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: opts.category ?? "other", id: entry.id });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       }
     } catch (err) {
       log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -1889,6 +1892,7 @@ export async function runExtractDailyForCli(
                   const vector = await embeddings.embed(pointerText);
                   if (!(await vectorDb.hasDuplicate(vector))) {
                     await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+                    factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                   }
                 } catch (err) {
                   sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -1978,6 +1982,7 @@ export async function runExtractDailyForCli(
                   try {
                     if (!(await vectorDb.hasDuplicate(vecForStore))) {
                       await vectorDb.store({ text: trimmed, vector: vecForStore, importance: BATCH_STORE_IMPORTANCE, category, id: newEntry.id });
+                      factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                     }
                   } catch (err) {
                     sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -1999,6 +2004,7 @@ export async function runExtractDailyForCli(
         const vector = vecForStore ?? await embeddings.embed(trimmed);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({ text: trimmed, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         }
       } catch (err) {
         sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
@@ -2213,6 +2219,7 @@ export async function runBackfillForCli(
             category: fact.category,
             id: entry.id,
           });
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         }
       } catch (err) {
         sink.warn(`memory-hybrid: backfill vector store failed for "${fact.text.slice(0, 50)}...": ${err}`);
@@ -2435,6 +2442,7 @@ export async function runIngestFilesForCli(
           category: fact.category,
           id: entry.id,
         });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         sink.warn(`memory-hybrid: ingest-files vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
         capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:vector-store" });
@@ -2600,6 +2608,7 @@ export async function runDistillForCli(
               const vector = await embeddings.embed(pointerText);
               if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
                 await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
+                factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
               }
             } catch (err) {
               capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-vector-store" });
@@ -2645,6 +2654,7 @@ export async function runDistillForCli(
       });
       try {
         await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         sink.warn(`memory-hybrid: distill vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
         capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:vector-store" });
@@ -2978,7 +2988,10 @@ export async function runSelfCorrectionRunForCli(
           source: "self-correction",
           tags: Array.isArray(obj.tags) ? obj.tags : [],
         });
-        if (vector) await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+        if (vector) {
+          await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+        }
         autoFixed++;
       } catch (err) {
         logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);

@@ -48,6 +48,7 @@ export async function runMemoryDiagnostics(opts: {
       category: entry.category,
       id: entry.id,
     });
+    factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
 
     const structuredResults = factsDb.search(markerText, 5, {
       tierFilter: "all",

@@ -1848,6 +1848,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                       try {
                         if (vector && !(await ctx.vectorDb.hasDuplicate(vector))) {
                           await ctx.vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                          ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
                         }
                       } catch (err) {
                         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1899,6 +1900,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               if (vector && !(await ctx.vectorDb.hasDuplicate(vector))) {
                 await ctx.vectorDb.store({ text: textToStore, vector, importance: CLI_STORE_IMPORTANCE, category, id: storedEntry.id });
+                ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -2053,6 +2055,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                         category: "technical",
                         id: entry.id,
                       });
+                      ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
                     }
                   } catch (err) {
                     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

@@ -877,6 +877,7 @@ export function registerMemoryTools(
                   category: "technical",
                   id: pointerEntry.id,
                 });
+                factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -991,6 +992,7 @@ export function registerMemoryTools(
                 try {
                   if (vector && !(await vectorDb.hasDuplicate(vector))) {
                     await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                   }
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1124,6 +1126,7 @@ export function registerMemoryTools(
               category,
               id: entry.id,
             });
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {

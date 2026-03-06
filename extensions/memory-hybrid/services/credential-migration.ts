@@ -107,6 +107,7 @@ export async function migrateCredentialsToVault(
             category: "technical",
             id: pointerEntry.id,
           });
+          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
         }
       } catch (e) {
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {

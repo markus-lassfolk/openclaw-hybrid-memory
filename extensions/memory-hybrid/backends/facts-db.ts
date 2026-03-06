@@ -182,6 +182,10 @@ export class FactsDB {
     // ---- Recall hit-rate tracking (Issue #148) ----
     this.migrateRecallLog();
 
+    // ---- Embedding model tracking (Issue #153) ----
+    this.migrateEmbeddingModelColumn();
+    this.migrateEmbeddingMetaTable();
+
     // ---- Future-date decay freeze (#144) ----
     this.migrateDecayFreezeColumn();
   }
@@ -374,6 +378,30 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_time ON recall_log(occurred_at)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_recall_log_hit ON recall_log(hit)`);
+  }
+
+  /** Add embedding_model column to facts for tracking vector provenance (Issue #153). */
+  private migrateEmbeddingModelColumn(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "embedding_model")) return;
+    this.liveDb.exec(`ALTER TABLE facts ADD COLUMN embedding_model TEXT`);
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_facts_embedding_model ON facts(embedding_model) WHERE embedding_model IS NOT NULL`,
+    );
+  }
+
+  /** Store active embedding provider+model metadata (Issue #153). */
+  private migrateEmbeddingMetaTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS embedding_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
   }
 
   /** Add decay_freeze_until column for future-date freeze protection (#144). */
@@ -752,6 +780,8 @@ export class FactsDB {
       successCount?: number;
       lastValidated?: number | null;
       sourceSessions?: string | null;
+      /** Embedding model used to generate this fact's vector (if any). */
+      embeddingModel?: string | null;
       /** Memory scope — global, user, agent, or session. Default global. */
       scope?: "global" | "user" | "agent" | "session";
       /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
@@ -781,6 +811,7 @@ export class FactsDB {
     const importance = entry.importance ?? 0.7;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
+    const embeddingModel = entry.embeddingModel ?? null;
     const normHash = normalizedHash(entry.text);
     const sourceDate = entry.sourceDate ?? null;
     const tags = entry.tags ?? null;
@@ -816,8 +847,8 @@ export class FactsDB {
         : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -834,6 +865,7 @@ export class FactsDB {
         nowSec,
         confidence,
         summary,
+        embeddingModel,
         normHash,
         sourceDate,
         tagsStr,
@@ -859,6 +891,7 @@ export class FactsDB {
       lastConfirmedAt: nowSec,
       confidence,
       summary: summary ?? undefined,
+      embeddingModel,
       sourceDate,
       scope,
       scopeTarget: scopeTarget ?? undefined,
@@ -912,6 +945,34 @@ export class FactsDB {
     this.liveDb
       .prepare(`INSERT INTO recall_log (id, occurred_at, hit) VALUES (?, ?, ?)`)
       .run(id, nowSec, hit ? 1 : 0);
+  }
+
+  /** Read the last stored embedding provider+model metadata (Issue #153). */
+  getEmbeddingMeta(): { provider: string; model: string } | null {
+    const row = this.liveDb
+      .prepare(`SELECT provider, model FROM embedding_meta WHERE id = 1`)
+      .get() as { provider: string; model: string } | undefined;
+    if (!row) return null;
+    return { provider: row.provider, model: row.model };
+  }
+
+  /** Persist the active embedding provider+model metadata (Issue #153). */
+  setEmbeddingMeta(provider: string, model: string): void {
+    const nowSec = Math.floor(Date.now() / 1000);
+    this.liveDb
+      .prepare(
+        `INSERT INTO embedding_meta (id, provider, model, updated_at)
+         VALUES (1, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, model = excluded.model, updated_at = excluded.updated_at`,
+      )
+      .run(provider, model, nowSec);
+  }
+
+  /** Record which embedding model generated the stored vector for a fact (Issue #153). */
+  setEmbeddingModel(id: string, model: string | null): void {
+    this.liveDb
+      .prepare(`UPDATE facts SET embedding_model = ? WHERE id = ?`)
+      .run(model, id);
   }
 
   /** Get HOT-tier facts for session context, capped by token budget. */
@@ -1395,6 +1456,7 @@ export class FactsDB {
       successCount: (row.success_count as number) ?? undefined,
       lastValidated: (row.last_validated as number) ?? undefined,
       sourceSessions: (row.source_sessions as string) ?? undefined,
+      embeddingModel: (row.embedding_model as string) ?? null,
       reinforcedCount: (row.reinforced_count as number) ?? 0,
       lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
       reinforcedQuotes: (() => {

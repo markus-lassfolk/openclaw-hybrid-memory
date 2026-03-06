@@ -48,6 +48,8 @@ export type MemoryEntry = {
   successCount?: number;
   lastValidated?: number | null;
   sourceSessions?: string | null;
+  /** Embedding model used to generate this fact's vector (if stored). */
+  embeddingModel?: string | null;
   /** Reinforcement tracking — number of times this fact was reinforced by user praise. */
   reinforcedCount?: number;
   /** When this fact was last reinforced (epoch seconds). */

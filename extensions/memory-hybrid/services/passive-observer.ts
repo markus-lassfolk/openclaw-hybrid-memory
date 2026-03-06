@@ -568,6 +568,7 @@ export async function runPassiveObserver(
             category: fact.category,
             id: stored.id,
           })
+          factsDb.setEmbeddingModel(stored.id, embeddings.modelName)
         } catch (err) {
           logger.warn(`memory-hybrid: passive-observer vector store failed: ${err}`)
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
