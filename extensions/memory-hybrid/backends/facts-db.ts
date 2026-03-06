@@ -194,6 +194,9 @@ export class FactsDB {
 
     // ---- Contextual variants (Issue #159) ----
     this.migrateFactVariantsTable();
+
+    // ---- Verification store for critical facts (Issue #162) ----
+    this.migrateVerifiedFactsTable();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -470,6 +473,26 @@ export class FactsDB {
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_fact_variants_fact_id ON fact_variants(fact_id)`,
     );
+  }
+
+  /** Create verified_facts table for high-trust storage tier (Issue #162). */
+  private migrateVerifiedFactsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS verified_facts (
+        id TEXT PRIMARY KEY,
+        fact_id TEXT NOT NULL REFERENCES facts(id),
+        canonical_text TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        verified_at TEXT NOT NULL,
+        verified_by TEXT NOT NULL,
+        next_verification TEXT,
+        version INTEGER DEFAULT 1,
+        previous_version_id TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
+      CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
+    `);
   }
 
   /**

@@ -168,6 +168,7 @@ import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptVa
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { IssueStore } from "./backends/issue-store.js";
+import { VerificationStore, shouldAutoClassify, VerificationError } from "./services/verification-store.js";
 
 // Helper Functions
 
@@ -527,6 +528,10 @@ export const _testing = {
   searchAliasStrategy,
   // Issue lifecycle tracking (Issue #137)
   IssueStore,
+  // Verification store for critical facts (Issue #162)
+  VerificationStore,
+  shouldAutoClassify,
+  VerificationError,
 };
 
 export { versionInfo } from "./versionInfo.js";

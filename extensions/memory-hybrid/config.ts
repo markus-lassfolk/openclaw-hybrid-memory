@@ -376,6 +376,18 @@ export type RerankingConfig = {
   timeoutMs: number;
 };
 
+/** Verification store for critical facts (Issue #162). */
+export type VerificationConfig = {
+  /** Enable verification store (default: false). */
+  enabled: boolean;
+  /** Path to append-only backup JSON file (default: '~/.openclaw/verified-facts.json'). */
+  backupPath: string;
+  /** Days until a verified fact should be re-verified (default: 30). */
+  reverificationDays: number;
+  /** When true, suggest verification for IP/infrastructure facts (does NOT auto-enroll; default: true). */
+  autoClassify: boolean;
+};
+
 /** Shortest-path traversal configuration (Issue #140). */
 export type PathConfig = {
   /** Enable memory_path tool (default: true). */
@@ -666,6 +678,8 @@ export type HybridMemoryConfig = {
   queryExpansion: QueryExpansionConfig;
   /** LLM re-ranking of RRF fusion results (Issue #161, default: disabled). */
   reranking: RerankingConfig;
+  /** Verification store for critical facts (Issue #162, default: disabled). */
+  verification: VerificationConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };
@@ -2289,6 +2303,21 @@ export const hybridConfigSchema = {
           : 10000,
     };
 
+    // Parse verification config (Issue #162, default: disabled)
+    const verifRaw = cfg.verification as Record<string, unknown> | undefined;
+    const verification: VerificationConfig = {
+      enabled: verifRaw?.enabled === true,
+      backupPath:
+        typeof verifRaw?.backupPath === "string" && verifRaw.backupPath.trim().length > 0
+          ? verifRaw.backupPath.trim()
+          : "~/.openclaw/verified-facts.json",
+      reverificationDays:
+        typeof verifRaw?.reverificationDays === "number" && verifRaw.reverificationDays > 0
+          ? Math.floor(verifRaw.reverificationDays)
+          : 30,
+      autoClassify: verifRaw?.autoClassify !== false,
+    };
+
     return {
       embedding: {
         provider: embeddingProvider,
@@ -2354,6 +2383,7 @@ export const hybridConfigSchema = {
       contextualVariants,
       queryExpansion,
       reranking,
+      verification,
       mode: hasPresetOverrides ? "custom" : appliedMode,
     };
   },
