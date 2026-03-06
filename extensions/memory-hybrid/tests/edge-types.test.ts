@@ -160,7 +160,7 @@ describe("CONTRADICTS unidirectional", () => {
     expect(fromA).toHaveLength(0);
   });
 
-  it("both facts are marked as contradicted after a contradiction is recorded", () => {
+  it("both facts are marked as contradicted via the contradictions table", () => {
     const factA = storeFact("City is Paris", "city", "name", "Paris");
     const factB = storeFact("City is London", "city", "name", "London");
 
