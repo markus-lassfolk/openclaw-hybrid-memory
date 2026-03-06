@@ -126,7 +126,7 @@ describe("memory_ingest_document", () => {
     const tool = api.getTool("memory_ingest_document");
     expect(tool).toBeDefined();
 
-    const result = await (tool!.execute as Function)("tc-1", { path: testFilePath });
+    const result = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-1", { path: testFilePath });
     expect(result.content[0].text).toContain("Ingested");
     expect(result.details.storedCount).toBeGreaterThanOrEqual(2);
     expect(result.details.errorCount).toBe(0);
@@ -148,7 +148,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as Function)("tc-2", { path: "/nonexistent/file.pdf" });
+    const result = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-2", { path: "/nonexistent/file.pdf" });
     expect(result.details.error).toBe("file_not_found");
   });
 
@@ -168,7 +168,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as Function)("tc-3", { path: testFilePath });
+    const result = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-3", { path: testFilePath });
     expect(result.details.error).toBe("file_too_large");
   });
 
@@ -190,10 +190,10 @@ describe("memory_ingest_document", () => {
     const tool = api.getTool("memory_ingest_document");
 
     // First ingestion
-    await (tool!.execute as Function)("tc-4a", { path: testFilePath });
+    await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-4a", { path: testFilePath });
 
     // Second ingestion — should detect duplicate
-    const result = await (tool!.execute as Function)("tc-4b", { path: testFilePath });
+    const result = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-4b", { path: testFilePath });
     expect(result.details.action).toBe("skipped_duplicate");
   });
 
@@ -214,7 +214,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as Function)("tc-5", { path: testFilePath, dryRun: true });
+    const result = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-5", { path: testFilePath, dryRun: true });
 
     expect(result.details.dryRun).toBe(true);
     expect(result.content[0].text).toContain("Dry run");
@@ -242,7 +242,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as Function)("tc-6", { path: testFilePath });
+    const result = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-6", { path: testFilePath });
     expect(result.details.error).toBe("conversion_failed");
     expect(result.content[0].text).toContain("Error converting");
   });
@@ -264,14 +264,14 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as Function)("tc-7", { path: testFilePath });
+    const result = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-7", { path: testFilePath });
 
     // Verify ingestion was successful and stored chunks
     expect(result.details.storedCount).toBeGreaterThan(0);
 
     // Use countBySource to confirm the source was correctly set (dedup check works)
     // Then re-ingesting should detect it as duplicate
-    const result2 = await (tool!.execute as Function)("tc-7b", { path: testFilePath });
+    const result2 = await (tool!.execute as (...args: unknown[]) => Promise<unknown>)("tc-7b", { path: testFilePath });
     expect(result2.details.action).toBe("skipped_duplicate");
   });
 });
