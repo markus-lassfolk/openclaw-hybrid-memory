@@ -144,7 +144,8 @@ export class SkillCrystallizer {
 
     // Resolve output directory (expand ~ for home dir)
     const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
-    const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
+    const safeName = skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+    const proposedOutputPath = `${outputDir}/${safeName}/SKILL.md`;
 
     // Generate shell script for exec-only sequences
     const hasScript = isExecOnlySequence(pattern.toolSequence);

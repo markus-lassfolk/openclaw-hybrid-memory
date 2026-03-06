@@ -110,6 +110,7 @@ export class WorkflowTracker {
       this.sessions.delete(sessionId);
       return trace.id;
     } catch (err) {
+      todayCount--; // Decrement rate limit counter on DB failure
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "workflow-flush",
         subsystem: "workflow-tracker",

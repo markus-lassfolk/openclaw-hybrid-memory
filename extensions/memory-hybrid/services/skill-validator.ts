@@ -96,7 +96,7 @@ const DENY_RULES: DenyRule[] = [
   {
     name: "rm-rf",
     codeBlockOnly: true,
-    pattern: /\brm\s+-[rf]+\s+\/|rm\s+-[rf]+\s+~\//i,
+    pattern: /\brm\s+-[rf]+\s+(?:\/|~\/)/i,
     description: "Recursive deletion from absolute or home path in code block",
   },
   {
@@ -164,10 +164,10 @@ export class SkillValidator {
       }
 
       // Additional check: any code block containing shell-like content should
-      // not have backtick command substitution
-      if (inCodeBlock && /\$\([^)]+\)/.test(line)) {
+      // not have command substitution (both $(...) and backtick forms)
+      if (inCodeBlock && (/\$\([^)]+\)/.test(line) || /`[^`]+`/.test(line))) {
         violations.push(
-          `Line ${lineNumber}: [shell-subst] Command substitution $(...) in code block — "${trimmed.slice(0, 80)}"`,
+          `Line ${lineNumber}: [shell-subst] Command substitution in code block — "${trimmed.slice(0, 80)}"`,
         );
       }
     }
