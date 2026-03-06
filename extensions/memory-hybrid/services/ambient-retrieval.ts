@@ -431,15 +431,15 @@ export function searchAmbientIssues(
 
   const lower = message.toLowerCase();
   const keywords: string[] = [];
-  for (const kw of ERROR_KEYWORDS) {
-    if (lower.includes(kw)) {
-      keywords.push(kw);
-    }
-  }
   const words = message.match(/\b[a-zA-Z0-9_-]{3,}\b/g) || [];
   for (const word of words.slice(0, 5)) {
     if (!ERROR_KEYWORDS.includes(word.toLowerCase())) {
       keywords.push(word);
+    }
+  }
+  for (const kw of ERROR_KEYWORDS) {
+    if (lower.includes(kw)) {
+      keywords.push(kw);
     }
   }
 
