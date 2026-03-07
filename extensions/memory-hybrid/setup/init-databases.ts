@@ -10,7 +10,8 @@ import { ProposalsDB } from "../backends/proposals-db.js";
 import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
-import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
+import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
+import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
@@ -194,6 +195,7 @@ export interface DatabaseContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  embeddingRegistry: EmbeddingRegistry;
   openai: OpenAI;
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
@@ -243,6 +245,11 @@ export function initializeDatabases(
       `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
     );
   });
+  const embeddingRegistry = buildEmbeddingRegistry(
+    embeddings,
+    cfg.embedding.model,
+    resolveEmbeddingRegistryModels(cfg.embedding),
+  );
 
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
@@ -667,6 +674,7 @@ export function initializeDatabases(
     factsDb,
     vectorDb,
     embeddings,
+    embeddingRegistry,
     openai,
     credentialsDb,
     wal,
@@ -683,6 +691,21 @@ export function initializeDatabases(
     health,
     initialized,
   };
+}
+
+function resolveEmbeddingRegistryModels(
+  embedding: HybridMemoryConfig["embedding"],
+): EmbeddingModelConfig[] | undefined {
+  if (Array.isArray(embedding.multiModels) && embedding.multiModels.length > 0) {
+    return embedding.multiModels;
+  }
+  const rawModels = (embedding as unknown as { models?: unknown }).models;
+  if (!Array.isArray(rawModels) || rawModels.length === 0) return undefined;
+  const hasObjectModels = rawModels.every(
+    (item) => item && typeof item === "object",
+  );
+  if (!hasObjectModels) return undefined;
+  return rawModels as EmbeddingModelConfig[];
 }
 
 /**

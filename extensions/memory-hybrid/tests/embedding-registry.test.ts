@@ -9,6 +9,7 @@ import {
   EmbeddingRegistry,
   buildEmbeddingRegistry,
 } from "../services/embedding-registry.js";
+import { hybridConfigSchema } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingModelConfig } from "../config.js";
 
@@ -240,6 +241,31 @@ describe("buildEmbeddingRegistry()", () => {
     const registry = buildEmbeddingRegistry(primary, "text-embedding-3-small", multiModels);
     expect(registry.isMultiModel()).toBe(true);
     expect(registry.getModels()).toHaveLength(2);
+  });
+
+  it("builds a registry from parsed config multiModels", () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-long-enough",
+        model: "text-embedding-3-small",
+        multiModels: [
+          { name: "nomic-embed-text", provider: "ollama", dimensions: 768, role: "domain" },
+        ],
+      },
+    });
+    const primary = makeMockProvider("text-embedding-3-small", 1536);
+    const registry = buildEmbeddingRegistry(primary, cfg.embedding.model, cfg.embedding.multiModels);
+    expect(registry.isMultiModel()).toBe(true);
+    expect(registry.getModels()).toHaveLength(1);
+  });
+
+  it("falls back to single-model when config has no multiModels", () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+    });
+    const primary = makeMockProvider("text-embedding-3-small", 1536);
+    const registry = buildEmbeddingRegistry(primary, cfg.embedding.model, cfg.embedding.multiModels);
+    expect(registry.isMultiModel()).toBe(false);
   });
 
   it("skips disabled models from config", () => {

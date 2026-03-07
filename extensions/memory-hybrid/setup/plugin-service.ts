@@ -10,6 +10,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getDefaultCronModel, getCronModelConfig } from "../config.js";
 import type OpenAI from "openai";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import {
   initErrorReporter,
   isErrorReporterActive,
@@ -28,6 +29,7 @@ export interface PluginServiceContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: import("../services/embeddings.js").EmbeddingProvider;
+  embeddingRegistry: EmbeddingRegistry;
   credentialsDb: CredentialsDB | null;
   proposalsDb: ProposalsDB | null;
   wal: WriteAheadLog | null;

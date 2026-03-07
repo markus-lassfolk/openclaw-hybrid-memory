@@ -17,6 +17,7 @@ import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
@@ -63,6 +64,7 @@ export interface LifecycleContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  embeddingRegistry: EmbeddingRegistry | null;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
