@@ -122,27 +122,6 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
   return !deepEqual(userVal, presetVal);
 }
 
-/** Apply a mode preset to cfg and detect if user overrode any preset value. Single place for preset merge + override detection. */
-function applyModePreset(
-  cfg: Record<string, unknown>,
-  appliedMode: ConfigMode,
-): { cfg: Record<string, unknown>; hasPresetOverrides: boolean } {
-  const preset = PRESET_OVERRIDES[appliedMode];
-  const userRaw = { ...cfg } as Record<string, unknown>;
-  delete userRaw.mode;
-  const merged = deepMergePreset(preset, cfg) as Record<string, unknown>;
-  delete merged.mode;
-  let hasPresetOverrides = false;
-  for (const key of Object.keys(preset)) {
-    if (!(key in userRaw)) continue;
-    if (userOverridesPresetValue(userRaw[key], preset[key])) {
-      hasPresetOverrides = true;
-      break;
-    }
-  }
-  return { cfg: merged, hasPresetOverrides };
-}
-
 export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
   if (!dims) {
