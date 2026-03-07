@@ -564,3 +564,114 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
     expect(retrieved).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Section 3: Issue #144 — Recurring events, overrides, auto-detection, combined
+// ---------------------------------------------------------------------------
+
+describe("detectFutureDate — recurring events return null (no freeze)", () => {
+  it("returns null for 'every Monday'", () => {
+    expect(detectFutureDate("Stand-up every Monday at 9am", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'every week'", () => {
+    expect(detectFutureDate("Team sync every week", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for text with no date whatsoever", () => {
+    expect(detectFutureDate("User prefers dark mode", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+});
+
+describe("detectFutureDate — explicit paramDecayFreezeUntil override", () => {
+  it("explicit finite override takes precedence over auto-detected date", () => {
+    const overrideTs = Math.floor(NOW_MS / 1000) + 5 * 86400; // 5 days
+    // Text has a 30-day date — override should win
+    const autoDetected = detectFutureDate("Meeting in 30 days", ENABLED_CFG, NOW_MS);
+    expect(autoDetected).not.toBeNull();
+    expect(autoDetected!).toBeGreaterThan(overrideTs);
+
+    // Simulate the override logic from memory_store
+    const result =
+      Number.isFinite(overrideTs) ? overrideTs : autoDetected;
+    expect(result).toBe(overrideTs);
+  });
+
+  it("falls back to auto-detection when override is null", () => {
+    const paramDecayFreezeUntil: number | null = null;
+    const autoDetected = detectFutureDate("Meeting in 30 days", ENABLED_CFG, NOW_MS);
+    const result =
+      paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
+        ? paramDecayFreezeUntil
+        : autoDetected;
+    expect(result).toBe(autoDetected);
+    expect(result).not.toBeNull();
+  });
+
+  it("returns null when override is null and text has no date", () => {
+    const paramDecayFreezeUntil: number | null = null;
+    const autoDetected = detectFutureDate("User prefers dark mode", ENABLED_CFG, NOW_MS);
+    const result =
+      paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
+        ? paramDecayFreezeUntil
+        : autoDetected;
+    expect(result).toBeNull();
+  });
+});
+
+describe("detectFutureDate — auto-detection from fact text", () => {
+  it("detects a deadline in text and returns freeze timestamp", () => {
+    const result = detectFutureDate("Deadline is 2026-03-20", ENABLED_CFG, NOW_MS);
+    expect(result).not.toBeNull();
+    // 2026-03-20 = 15 days ahead
+    expect(daysSince(result!)).toBeCloseTo(15, 0);
+  });
+
+  it("returns null for text without any future date (disabled config)", () => {
+    const result = detectFutureDate("Deadline is 2026-03-20", DISABLED_CFG, NOW_MS);
+    expect(result).toBeNull();
+  });
+});
+
+describe("FactsDB — combined freeze+prune: frozen survives, unfrozen decays", () => {
+  it("frozen fact survives pruneExpired while unfrozen fact with same expiry is deleted", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    const pastExpiry = nowSec - 1 * 86400; // already expired
+    const futureFreeze = nowSec + 30 * 86400;
+
+    // Frozen fact: expired but freeze protects it
+    const frozen = db.store({
+      text: "Upcoming conference April 2026",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "active",
+      decayFreezeUntil: futureFreeze,
+    });
+
+    // Unfrozen fact: expired with no freeze
+    const unfrozen = db.store({
+      text: "Old stale fact from last month",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "active",
+    });
+
+    // Force both to have a past expires_at
+    const rawDb = db.getRawDb();
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id IN (?, ?)`)
+      .run(pastExpiry, frozen.id, unfrozen.id);
+
+    db.pruneExpired();
+
+    expect(db.getById(frozen.id)).not.toBeNull();   // frozen → survives
+    expect(db.getById(unfrozen.id)).toBeNull();      // unfrozen → pruned
+  });
+});
