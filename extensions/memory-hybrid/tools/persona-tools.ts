@@ -272,11 +272,14 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           const applyResult = await applyApprovedProposal(applyCtx, proposal.id);
           if (applyResult.ok) {
             api.logger.info(`memory-hybrid: persona proposal auto-applied — ${proposal.id} → ${applyResult.targetFile}`);
+            const changePreview = applyResult.suggestedChange.length > 500
+              ? applyResult.suggestedChange.slice(0, 500) + "…"
+              : applyResult.suggestedChange;
             return {
               content: [
                 {
                   type: "text",
-                  text: `Proposal ${proposal.id} created and automatically applied to ${applyResult.targetFile}.\nTitle: ${title}\nBackup: ${applyResult.backupPath}\n\nChange applied:\n${applyResult.suggestedChange}`,
+                  text: `Proposal ${proposal.id} created and automatically applied to ${applyResult.targetFile}.\nTitle: ${title}\nBackup: ${applyResult.backupPath}\n\nChange applied (truncated to 500 chars):\n${changePreview}`,
                 },
               ],
               details: { proposalId: proposal.id, status: "applied", targetFile: applyResult.targetFile, backupPath: applyResult.backupPath },

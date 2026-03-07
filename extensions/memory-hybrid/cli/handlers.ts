@@ -525,7 +525,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
           config: {
             mode: "full",
             embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
-            distill: { defaultModel: "gemini-3-pro-preview" },
+            distill: { defaultModel: "gemini-3.1-pro-preview" },
             autoCapture: true,
             autoRecall: true,
             captureMaxChars: 5000,
@@ -2332,6 +2332,7 @@ function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
+      if (!obj || typeof obj !== "object") continue;
       if (obj.type !== "message" || !obj.message || obj.message.role !== "user") continue;
       const content = obj.message.content;
       if (!Array.isArray(content)) continue;
@@ -2393,7 +2394,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       const batch = unmatched.slice(i, i + SENTIMENT_BATCH_SIZE);
       const truncated = batch.map((t) => t.slice(0, SENTIMENT_MSG_MAX_CHARS).replace(/\n/g, " "));
       const prompt =
-        "For each of the following user messages (one per line), output exactly one word per line in the same order: positive_feedback, negative_feedback, or neutral. Only output the words, one per line.\n\n" +
+        "For each of the following user messages (one per line), output exactly one word per line in the same order: positive_feedback, negative_feedback, or neutral. Output ONLY one word per line, no preamble, no explanation.\n\n" +
         truncated.join("\n");
       try {
         const content = await chatCompleteWithRetry({
@@ -2406,6 +2407,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
           label: "memory-hybrid: feedback-phrases sentiment",
         });
         const lines = (content ?? "").split(/\r?\n/).map((l) => l.trim().toLowerCase());
+        if (lines.length < batch.length) {
+          logger.warn?.(`memory-hybrid: sentiment model returned ${lines.length} lines for batch of ${batch.length}; some messages may default to neutral`);
+        }
         for (let j = 0; j < batch.length; j++) {
           const word = lines[j] ?? "";
           if (word.includes("positive")) labels.push("positive_feedback");
@@ -2431,30 +2435,66 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   const cronCfg = getCronModelConfig(cfg);
   const heavyPref = getLLMModelPreference(cronCfg, "heavy");
   const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(cronCfg, "heavy");
-  const { spawnSync } = await import("node:child_process");
+  const { spawn } = await import("node:child_process");
   const { tmpdir: osTmp } = await import("node:os");
   const promptPath = join(osTmp(), `analyze-feedback-phrases-${Date.now()}.txt`);
   writeFileSync(promptPath, prompt, "utf-8");
   try {
-    const r = spawnSync(
-      "openclaw",
-      ["sessions", "spawn", "--model", model, "--message", "Analyze the attached file and output ONLY a JSON object with keys reinforcement and correction (arrays of strings). No markdown, no code fences.", "--attach", promptPath],
-      { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
-    );
+    // Build args conditionally: only add --model if model is truthy (avoids passing "undefined" string)
+    const spawnArgs = ["sessions", "spawn"];
+    if (model) spawnArgs.push("--model", model);
+    spawnArgs.push("--message", "Analyze the attached file and output ONLY a JSON object with keys reinforcement and correction (arrays of strings). No markdown, no code fences.", "--attach", promptPath);
+    // Use async spawn to avoid blocking the event loop during the LLM call (which may take 60–120+ seconds).
+    // Stream accumulation removes the 2 MB maxBuffer ceiling of spawnSync.
+    const r = await new Promise<{ stdout: string; stderr: string; status: number | null; error?: Error }>((resolve) => {
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      const child = spawn("openclaw", spawnArgs, { shell: process.platform === "win32" });
+      child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+      child.on("error", (err: Error) => resolve({ stdout: "", stderr: "", status: null, error: err }));
+      child.on("close", (code: number | null) => resolve({
+        stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+        status: code,
+      }));
+    });
+    if (r.error) {
+      return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: `sessions spawn failed: ${r.error.message}` };
+    }
     const content = (r.stdout ?? "") + (r.stderr ?? "");
     if (r.status !== 0) {
       return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: `sessions spawn exited ${r.status}: ${content.slice(0, 500)}` };
     }
-    const jsonMatch = content.match(/\{\s*"reinforcement"[\s\S]*"correction"[\s\S]*\}/);
+    // Robust JSON extraction: try full parse first, then locate first {...} block regardless of key order
     let reinforcement: string[] = [];
     let correction: string[] = [];
-    if (jsonMatch) {
+    const trimmedContent = content.trim();
+    if (!trimmedContent) {
+      return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "LLM returned empty output" };
+    }
+    let parsedOutput: unknown;
+    try {
+      parsedOutput = JSON.parse(trimmedContent);
+    } catch {
+      const braceStart = trimmedContent.indexOf("{");
+      const braceEnd = trimmedContent.lastIndexOf("}");
+      if (braceStart === -1 || braceEnd === -1 || braceEnd <= braceStart) {
+        return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "Failed to locate JSON object in LLM output: " + trimmedContent.slice(0, 500) };
+      }
       try {
-        const parsed = JSON.parse(jsonMatch[0]) as { reinforcement?: string[]; correction?: string[] };
-        reinforcement = Array.isArray(parsed.reinforcement) ? parsed.reinforcement.filter((s) => typeof s === "string" && s.trim()) : [];
-        correction = Array.isArray(parsed.correction) ? parsed.correction.filter((s) => typeof s === "string" && s.trim()) : [];
+        parsedOutput = JSON.parse(trimmedContent.slice(braceStart, braceEnd + 1));
       } catch (e) {
         return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "Failed to parse LLM JSON: " + String(e) };
+      }
+    }
+    if (parsedOutput !== null && typeof parsedOutput === "object") {
+      const obj = parsedOutput as { reinforcement?: unknown; correction?: unknown };
+      if (Array.isArray(obj.reinforcement)) {
+        reinforcement = obj.reinforcement.filter((s) => typeof s === "string" && s.trim()) as string[];
+      }
+      if (Array.isArray(obj.correction)) {
+        correction = obj.correction.filter((s) => typeof s === "string" && s.trim()) as string[];
       }
     }
     if (opts.outputPath) {
@@ -2476,6 +2516,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       if (learned) {
         logger.info?.(`memory-hybrid: saved ${merged.reinforcement.length} reinforcement and ${merged.correction.length} correction phrases to .user-feedback-phrases.json`);
       }
+    } else if (!existing.initialRunDone) {
+      // Persist initialRunDone even without --learn so the 30→3-day auto-window works on subsequent runs
+      saveUserFeedbackPhrases(existing);
     }
     return { reinforcement, correction, sessionsScanned: sessionFiles.length, learned };
   } finally {

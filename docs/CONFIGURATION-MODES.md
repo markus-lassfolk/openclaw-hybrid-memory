@@ -89,6 +89,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | wal | ✓ | ✓ | ✓ | ✓ |
 | languageKeywords.autoBuild | — | ✓ | ✓ | ✓ |
 | personaProposals | — | — | ✓ | ✓ |
+| personaProposals.autoApply | — | — | — | — |
 | memoryTiering | — | ✓ | ✓ | ✓ |
 | memoryTiering.compactionOnSessionEnd | — | ✓ | ✓ | ✓ |
 | selfCorrection | — | — | ✓ | ✓ |
@@ -114,6 +115,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 - **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Expert/Full, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
 - **Normal** keeps current product defaults (e.g. graph on, procedures on, reflection off). Essential strips down for low-resource; Expert/Full add reflection, self-correction, and credential capture.
 - **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization) are **off** for Essential and Normal; **Expert** and **Full** enable them by preset. Users on Essential/Normal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
+- **personaProposals.autoApply** is `false` in **all** presets including Expert and Full — it is never set automatically. Enable it only if you want the agent to modify identity files (SOUL.md, IDENTITY.md, USER.md) without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
 
 ---
 

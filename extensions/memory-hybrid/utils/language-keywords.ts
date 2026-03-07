@@ -170,10 +170,7 @@ export const ENGLISH_KEYWORDS = {
     "wow that was good",
     "wow, that was fantastic",
     "wow that was fantastic",
-    "i'm excited about",
-    "im excited about",
     // Explicit appreciation
-    "appreciate",
     "really appreciate",
     "i appreciate",
     "i really appreciate",

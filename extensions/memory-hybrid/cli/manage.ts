@@ -680,8 +680,12 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           }
         }
         const fact = factsDb.get(resolvedId);
-        if (!opts?.yes && fact) {
-          console.log(`About to remove: ${fact.text.slice(0, 80)}${fact.text.length > 80 ? "…" : ""}`);
+        if (!opts?.yes) {
+          if (fact) {
+            console.log(`About to remove: ${fact.text.slice(0, 80)}${fact.text.length > 80 ? "…" : ""}`);
+          } else {
+            console.log(`Memory not found in SQLite (may still exist in LanceDB): ${resolvedId}`);
+          }
           console.log("Run with --yes to confirm, or cancel (Ctrl+C).");
           return;
         }
