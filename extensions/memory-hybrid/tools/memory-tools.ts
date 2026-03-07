@@ -744,6 +744,13 @@ export function registerMemoryTools(
               "Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
           }),
         ),
+        decayFreezeUntil: Type.Optional(
+          Type.Number({
+            description:
+              "Epoch seconds timestamp: halt decay until this date (e.g. for a deadline or reminder). " +
+              "Auto-detected from text when futureDateProtection is enabled; use this to override or set explicitly.",
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
@@ -759,6 +766,7 @@ export function registerMemoryTools(
             supersedes,
             scope: paramScope,
             scopeTarget: paramScopeTarget,
+            decayFreezeUntil: paramDecayFreezeUntil,
           } = params as {
             text: string;
             importance?: number;
@@ -771,6 +779,7 @@ export function registerMemoryTools(
             supersedes?: string;
             scope?: "global" | "user" | "agent" | "session";
             scopeTarget?: string;
+            decayFreezeUntil?: number;
           };
 
           let textToStore = text;
@@ -1064,8 +1073,12 @@ export function registerMemoryTools(
         }
         const nowSec = Math.floor(Date.now() / 1000);
         const storeSessionId = api.context?.sessionId ?? null;
-        // Detect future dates for decay freeze protection (#144)
-        const decayFreezeUntil = detectFutureDate(textToStore, cfg.futureDateProtection);
+        // Detect future dates for decay freeze protection (#144).
+        // Explicit parameter takes precedence over auto-detection.
+        const decayFreezeUntil =
+          paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
+            ? paramDecayFreezeUntil
+            : detectFutureDate(textToStore, cfg.futureDateProtection);
         const entry = factsDb.store({
           text: textToStore,
           category: category as MemoryCategory,
@@ -1199,6 +1212,7 @@ export function registerMemoryTools(
             id: entry.id,
             backend: "both",
             decayClass: entry.decayClass,
+            ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
             ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
             ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
             ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),

@@ -564,3 +564,128 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
     expect(retrieved).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Section 3: Recurring events — must NOT freeze
+// (Recurring phrases don't match any date pattern → naturally return null)
+// ---------------------------------------------------------------------------
+
+describe("detectFutureDate — recurring events: no freeze", () => {
+  it("returns null for 'every Monday'", () => {
+    expect(detectFutureDate("Every Monday standup at 9am", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'every week'", () => {
+    expect(detectFutureDate("Every week we review the backlog", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'every month'", () => {
+    expect(detectFutureDate("Budget review every month", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'weekly' meetings", () => {
+    expect(detectFutureDate("Weekly team sync on Tuesdays", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'monthly' reports", () => {
+    expect(detectFutureDate("Monthly report is due on the 1st", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 4: Explicit decayFreezeUntil parameter — simulates tool handler logic
+// The tool handler uses: paramDecayFreezeUntil ?? detectFutureDate(text, cfg)
+// ---------------------------------------------------------------------------
+
+describe("FactsDB — explicit decayFreezeUntil overrides auto-detection", () => {
+  it("stores an explicit decayFreezeUntil even when text has no date", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    const explicitFreeze = nowSec + 60 * 86400; // 60 days
+
+    const entry = db.store({
+      text: "Agent manually set freeze",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayFreezeUntil: explicitFreeze,
+    });
+    const retrieved = db.getById(entry.id);
+    expect(retrieved?.decayFreezeUntil).toBe(explicitFreeze);
+  });
+
+  it("explicit value takes precedence over auto-detected (simulated tool handler)", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    // Text has "in 3 days" → detectFutureDate would give ~3 days
+    const autoDetected = detectFutureDate("Check in 3 days", ENABLED_CFG, NOW_MS);
+    expect(autoDetected).not.toBeNull();
+
+    // Agent explicitly overrides with a much later date (60 days)
+    const explicitOverride = nowSec + 60 * 86400;
+    // Simulate tool handler logic: explicit wins
+    const effectiveFreeze =
+      explicitOverride != null && Number.isFinite(explicitOverride)
+        ? explicitOverride
+        : autoDetected;
+
+    expect(effectiveFreeze).toBe(explicitOverride);
+    expect(effectiveFreeze).toBeGreaterThan(autoDetected!);
+  });
+
+  it("auto-detection is used when explicit parameter is not provided", () => {
+    // Simulate tool handler when paramDecayFreezeUntil is undefined
+    const paramDecayFreezeUntil: number | undefined = undefined;
+    const text = "Meeting on 2026-04-01";
+
+    const effectiveFreeze =
+      paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
+        ? paramDecayFreezeUntil
+        : detectFutureDate(text, ENABLED_CFG, NOW_MS);
+
+    expect(effectiveFreeze).not.toBeNull();
+    // 2026-04-01 is ~27 days from 2026-03-05
+    expect(daysSince(effectiveFreeze!)).toBeCloseTo(27, 0);
+  });
+
+  it("frozen fact is not pruned; unfrozen expired fact is pruned", () => {
+    const nowSec = Math.floor(NOW_MS / 1000);
+    const freezeUntil = nowSec + 30 * 86400;
+
+    // Frozen — should survive prune
+    const frozenEntry = db.store({
+      text: "Future deadline April 5",
+      category: "other",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "active",
+      decayFreezeUntil: freezeUntil,
+    });
+
+    // Not frozen — should be pruned
+    const expiredEntry = db.store({
+      text: "Old reminder with no future date",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "active",
+    });
+
+    const rawDb = db.getRawDb();
+    const pastExpiry = nowSec - 86400;
+    rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id IN (?, ?)")
+      .run(pastExpiry, frozenEntry.id, expiredEntry.id);
+
+    db.pruneExpired();
+
+    expect(db.getById(frozenEntry.id)).not.toBeNull();
+    expect(db.getById(expiredEntry.id)).toBeNull();
+  });
+});
