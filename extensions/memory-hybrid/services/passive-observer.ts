@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { FactsDB } from '../backends/facts-db.js'
 import type { VectorDB } from '../backends/vector-db.js'
+import type { EventLog, EventType } from '../backends/event-log.js'
 import type { EmbeddingProvider } from './embeddings.js'
 import type OpenAI from 'openai'
 import type { MemoryCategory, ReinforcementConfig } from '../config.js'
@@ -61,6 +62,17 @@ export interface ObserverRunResult {
 
 // Track consecutive failures across runs to prevent infinite retries on bad session files.
 const consecutiveFailures = new Map<string, number>()
+
+/** Map a memory category to the most appropriate episodic event type. */
+function categoryToEventType(category: string): EventType {
+  switch (category) {
+    case 'preference': return 'preference_expressed'
+    case 'decision': return 'decision_made'
+    case 'action': return 'action_taken'
+    case 'entity': return 'entity_mentioned'
+    default: return 'fact_learned'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // JSONL text extraction
@@ -248,6 +260,8 @@ export async function runPassiveObserver(
     proceduresSessionsDir?: string
     /** Confidence reinforcement config (Issue #147). When set and enabled, similar facts get confidence boost instead of silent skip. */
     reinforcement?: ReinforcementConfig
+    /** Episodic event log (Issue #150). When set, write events for each fact stored. */
+    eventLog?: EventLog | null
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -572,6 +586,26 @@ export async function runPassiveObserver(
           scopeTarget: sessionId,
           tags: ['passive-observer'],
         })
+
+        // Write episodic event (Issue #150): record what was learned to Layer 1
+        if (opts.eventLog) {
+          try {
+            opts.eventLog.append({
+              sessionId,
+              timestamp: new Date().toISOString(),
+              eventType: categoryToEventType(fact.category),
+              content: {
+                text: fact.text,
+                factId: stored.id,
+                category: fact.category,
+                importance: fact.importance,
+                source: 'passive-observer',
+              },
+            })
+          } catch {
+            // Non-fatal — event log write failure must never break fact storage
+          }
+        }
 
         // Contradiction detection (Issue #142): check for same entity+key with different value
         // Pass scope so detection stays within session boundary.

@@ -480,7 +480,156 @@ describe("runPassiveObserver", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. Config parsing tests (via hybridConfigSchema)
+// 5. Passive observer writes events to event_log (Issue #150)
+// ---------------------------------------------------------------------------
+
+describe("runPassiveObserver event_log integration", () => {
+  let tmpDir: string;
+  let sessionsDir: string;
+
+  const makeConfig = (overrides: Partial<PassiveObserverConfig> = {}): PassiveObserverConfig => ({
+    enabled: true,
+    intervalMinutes: 15,
+    maxCharsPerChunk: 8000,
+    minImportance: 0.5,
+    deduplicationThreshold: 0.92,
+    ...overrides,
+  });
+
+  const makeLogger = () => ({ info: vi.fn(), warn: vi.fn() });
+
+  const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
+    getRecentFacts: vi.fn().mockReturnValue([]),
+    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
+    detectContradictions: vi.fn(),
+    setEmbeddingModel: vi.fn(),
+    ...overrides,
+  });
+
+  const makeVectorDb = () => ({
+    store: vi.fn().mockResolvedValue(undefined),
+    hasDuplicate: vi.fn().mockResolvedValue(false),
+  });
+
+  const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
+    embed: vi.fn().mockResolvedValue(vec),
+    embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
+    modelName: "mock-model",
+  });
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `observer-eventlog-test-${randomUUID()}`);
+    sessionsDir = join(tmpDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("writes a fact_learned event to event_log when a fact is stored", async () => {
+    const { EventLog } = await import("../backends/event-log.js");
+    const eventLog = new EventLog(join(tmpDir, "event-log.db"));
+
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } }) + "\n";
+    writeFileSync(join(sessionsDir, "sess-abc.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "The team uses TypeScript everywhere", category: "fact", importance: 0.8 }]),
+      );
+
+    const cfg = makeConfig({ sessionsDir });
+    const result = await runPassiveObserver(
+      makeFactsDb() as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact", "decision", "preference"],
+      { model: "test-model", dbDir: tmpDir, eventLog },
+      makeLogger(),
+    );
+
+    expect(result.factsStored).toBe(1);
+    const events = eventLog.getBySession("sess-abc");
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe("fact_learned");
+    expect(events[0].content.source).toBe("passive-observer");
+
+    eventLog.close();
+    chatSpy.mockRestore();
+  });
+
+  it("maps preference category to preference_expressed event type", async () => {
+    const { EventLog } = await import("../backends/event-log.js");
+    const eventLog = new EventLog(join(tmpDir, "event-log-pref.db"));
+
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "I always prefer dark mode." } }) + "\n";
+    writeFileSync(join(sessionsDir, "sess-pref.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "User prefers dark mode", category: "preference", importance: 0.8 }]),
+      );
+
+    const cfg = makeConfig({ sessionsDir });
+    await runPassiveObserver(
+      makeFactsDb() as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact", "preference"],
+      { model: "test-model", dbDir: tmpDir, eventLog },
+      makeLogger(),
+    );
+
+    const events = eventLog.getBySession("sess-pref");
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe("preference_expressed");
+
+    eventLog.close();
+    chatSpy.mockRestore();
+  });
+
+  it("does not write to event_log when eventLog is null", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "The team uses Rust for CLI." } }) + "\n";
+    writeFileSync(join(sessionsDir, "sess-noelog.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(JSON.stringify([{ text: "The team uses Rust", category: "fact", importance: 0.8 }]));
+
+    const appendSpy = vi.fn();
+    const nullEventLog = null;
+
+    const cfg = makeConfig({ sessionsDir });
+    const result = await runPassiveObserver(
+      makeFactsDb() as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir, eventLog: nullEventLog },
+      makeLogger(),
+    );
+
+    expect(result.factsStored).toBe(1);
+    expect(appendSpy).not.toHaveBeenCalled();
+
+    chatSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Config parsing tests (via hybridConfigSchema)
 // ---------------------------------------------------------------------------
 
 describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {

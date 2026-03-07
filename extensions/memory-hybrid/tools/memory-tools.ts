@@ -1144,6 +1144,27 @@ export function registerMemoryTools(
 
         walRemove(walEntryId, api.logger);
 
+        // Issue #150: write fact_learned event to episodic event log
+        if (eventLog) {
+          try {
+            eventLog.append({
+              sessionId: api.context?.sessionId ?? "unknown",
+              timestamp: new Date().toISOString(),
+              eventType: "fact_learned",
+              content: {
+                text: textToStore.slice(0, 500),
+                factId: entry.id,
+                category,
+                importance,
+                source: "memory_store",
+              },
+              entities: entity ? [entity] : undefined,
+            });
+          } catch {
+            // Non-fatal
+          }
+        }
+
         // Issue #149: generate and store retrieval aliases (non-blocking)
         if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
           const aliasModel =

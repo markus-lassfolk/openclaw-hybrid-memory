@@ -19,6 +19,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EventLog } from "../backends/event-log.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
@@ -67,6 +68,7 @@ export interface LifecycleContext {
   credentialsDb: CredentialsDB | null;
   aliasDb: AliasDB | null;
   wal: WriteAheadLog | null;
+  eventLog: EventLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
@@ -436,6 +438,21 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         currentAgentIdRef.value = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
         if (ctx.cfg.multiAgent.defaultStoreScope === "agent" || ctx.cfg.multiAgent.defaultStoreScope === "auto") {
           api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${ctx.cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
+        }
+      }
+
+      // Issue #150: write session_start event to episodic event log
+      if (ctx.eventLog) {
+        const sessionId = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        try {
+          ctx.eventLog.append({
+            sessionId,
+            timestamp: new Date().toISOString(),
+            eventType: "action_taken",
+            content: { action: "session_start", agentId: currentAgentIdRef.value },
+          });
+        } catch {
+          // Non-fatal
         }
       }
     });
@@ -1723,6 +1740,23 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
+    // Issue #150: write session_end event to episodic event log
+    if (ctx.eventLog) {
+      api.on("agent_end", async (event: unknown) => {
+        const sessionId = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        try {
+          ctx.eventLog!.append({
+            sessionId,
+            timestamp: new Date().toISOString(),
+            eventType: "action_taken",
+            content: { action: "session_end", agentId: currentAgentIdRef.value },
+          });
+        } catch {
+          // Non-fatal
+        }
+      });
+    }
+
     // Clear session-start dedup state on session end to avoid unbounded growth over long-lived gateways.
     if (ctx.cfg.autoRecall.enabled) {
       api.on("agent_end", async (event: unknown) => {
