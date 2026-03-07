@@ -125,8 +125,15 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
     throw new Error(`Failed to download ${url}: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`);
   }
   await fs.mkdir(dirname(destPath), { recursive: true });
+  const tempPath = `${destPath}.tmp`;
   const stream = Readable.fromWeb(resp.body as unknown as any);
-  await pipeline(stream, createWriteStream(destPath));
+  try {
+    await pipeline(stream, createWriteStream(tempPath));
+    await fs.rename(tempPath, destPath);
+  } catch (err) {
+    await fs.unlink(tempPath).catch(() => {});
+    throw err;
+  }
 }
 
 async function resolveOnnxModelFiles(
@@ -384,15 +391,20 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
   private async ensureReady(): Promise<void> {
     if (!this.ready) {
       this.ready = (async () => {
-        this.ort = await loadOnnxRuntime();
-        const { modelPath, vocabPath } = await resolveOnnxModelFiles(this.modelName, {
-          cacheDir: this.cacheDir,
-          modelPath: this.modelPath,
-          vocabPath: this.vocabPath,
-        });
-        const vocab = await loadVocab(vocabPath);
-        this.tokenizer = new WordPieceTokenizer(vocab);
-        this.session = await this.ort.InferenceSession.create(modelPath);
+        try {
+          this.ort = await loadOnnxRuntime();
+          const { modelPath, vocabPath } = await resolveOnnxModelFiles(this.modelName, {
+            cacheDir: this.cacheDir,
+            modelPath: this.modelPath,
+            vocabPath: this.vocabPath,
+          });
+          const vocab = await loadVocab(vocabPath);
+          this.tokenizer = new WordPieceTokenizer(vocab);
+          this.session = await this.ort.InferenceSession.create(modelPath);
+        } catch (err) {
+          this.ready = undefined;
+          throw err;
+        }
       })();
     }
     await this.ready;
