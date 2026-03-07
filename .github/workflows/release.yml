@@ -18,6 +18,8 @@ jobs:
     name: Create GitHub Release
     needs: [ci]
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     permissions:
       contents: write
     steps:
@@ -42,3 +44,65 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+  publish-npm:
+    name: Publish to NPM
+    needs: [release]
+    runs-on: ubuntu-latest
+    # Required for NPM Trusted Publishing (OIDC) - no long-lived tokens needed
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: extensions/memory-hybrid
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Get version from tag
+        id: version
+        run: |
+          TAG="${{ needs.release.outputs.tag }}"
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+      - name: Set package version
+        run: |
+          npm version --no-git-tag-version "${{ steps.version.outputs.version }}"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Cache node_modules
+        uses: actions/cache@v5
+        with:
+          path: extensions/memory-hybrid/node_modules
+          key: ${{ runner.os }}-node-24-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify publish
+        run: npm run verify:publish
+      # Trusted Publishing: npm CLI uses OIDC token from GitHub; no NPM_TOKEN secret needed
+      - name: Publish to NPM
+        run: npm publish --provenance --access public
+
+  publish-npm-install:
+    name: Publish openclaw-hybrid-memory-install to NPM
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set package version
+        run: |
+          TAG="${{ needs.release.outputs.tag }}"
+          VERSION="${TAG#v}"
+          cd packages/openclaw-hybrid-memory-install && npm version --no-git-tag-version "$VERSION"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Publish to NPM
+        working-directory: packages/openclaw-hybrid-memory-install
+        run: npm publish --provenance --access public
