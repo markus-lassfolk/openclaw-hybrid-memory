@@ -828,6 +828,7 @@ export async function runVerifyForCli(
 
   log(`  autoRecall.entityLookup: ${bool(cfg.autoRecall.entityLookup.enabled)}`);
   log(`  autoRecall.authFailure (reactive recall): ${bool(cfg.autoRecall.authFailure.enabled)}`);
+  log(`  autoRecall.retrievalDirectives: ${bool(cfg.autoRecall.retrievalDirectives?.enabled)}`);
 
   log(`  activeTask (ACTIVE-TASK.md): ${bool(cfg.activeTask.enabled)}`);
   if (cfg.activeTask.enabled) {
@@ -838,6 +839,12 @@ export async function runVerifyForCli(
     log(`    flushOnComplete: ${bool(cfg.activeTask.flushOnComplete)}`);
     log(`    staleWarning: ${bool(cfg.activeTask.staleWarning.enabled)}`);
   }
+
+  log(`  nightlyCycle (dream-cycle): ${bool(cfg.nightlyCycle?.enabled)}`);
+  log(`  passiveObserver: ${bool(cfg.passiveObserver?.enabled)}`);
+  log(`  extraction (multi-pass): ${bool(cfg.extraction?.extractionPasses)}`);
+  log(`  selfExtension (tool proposals): ${bool(cfg.selfExtension?.enabled)}`);
+  log(`  crystallization (skill proposals): ${bool(cfg.crystallization?.enabled)}`);
 
   log("\n───── Advanced Features ─────");
   if (cfg.search?.hydeEnabled) {

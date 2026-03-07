@@ -1,6 +1,11 @@
 /**
- * Cron job definitions for memory-hybrid plugin.
- * These jobs are created during install and can be restored via verify --fix.
+ * Cron job definitions for memory-hybrid plugin (shell-command form).
+ *
+ * **Canonical source:** The jobs actually created by install and verify --fix
+ * are defined in handlers.ts as MAINTENANCE_CRON_JOBS (agent-run with messages).
+ * This file provides the same 9 jobs as shell commands for reference or for
+ * runners that execute CLI commands directly. See docs/CLI-REFERENCE.md and
+ * docs/MAINTENANCE-TASKS-MATRIX.md.
  */
 
 export type CronSchedule = { kind: "cron"; expr: string };
@@ -21,30 +26,65 @@ export interface PluginCronJob {
 export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
   {
     pluginJobId: "hybrid-mem:nightly-distill",
-    name: "Nightly Distillation",
+    name: "nightly-memory-sweep",
     schedule: { kind: "cron", expr: "0 2 * * *" },
-    command: "hybrid-mem distill --days 3 && hybrid-mem resolve-contradictions && hybrid-mem record-distill",
-    featureGate: null, // always runs
-  },
-  {
-    pluginJobId: "hybrid-mem:weekly-deep-maintenance",
-    name: "Weekly Deep Maintenance",
-    schedule: { kind: "cron", expr: "0 4 * * 6" }, // Saturday 04:00
-    command: "hybrid-mem extract-procedures && hybrid-mem extract-directives && hybrid-mem extract-reinforcement && hybrid-mem self-correction-run && hybrid-mem compact",
+    command: "hybrid-mem prune && hybrid-mem distill --days 3 && hybrid-mem extract-daily && hybrid-mem resolve-contradictions && hybrid-mem record-distill",
     featureGate: null,
   },
   {
+    pluginJobId: "hybrid-mem:self-correction-analysis",
+    name: "self-correction-analysis",
+    schedule: { kind: "cron", expr: "30 2 * * *" },
+    command: "hybrid-mem self-correction-run",
+    featureGate: null,
+  },
+  {
+    pluginJobId: "hybrid-mem:nightly-memory-to-skills",
+    name: "nightly-memory-to-skills",
+    schedule: { kind: "cron", expr: "15 2 * * *" },
+    command: "hybrid-mem skills-suggest",
+    featureGate: "memoryToSkills.enabled",
+  },
+  {
+    pluginJobId: "hybrid-mem:nightly-dream-cycle",
+    name: "nightly-dream-cycle",
+    schedule: { kind: "cron", expr: "45 2 * * *" },
+    command: "hybrid-mem dream-cycle",
+    featureGate: "nightlyCycle.enabled",
+  },
+  {
     pluginJobId: "hybrid-mem:weekly-reflection",
-    name: "Weekly Reflection",
-    schedule: { kind: "cron", expr: "0 3 * * 0" }, // Sunday 03:00
-    command: "hybrid-mem reflect && hybrid-mem reflect-rules && hybrid-mem reflect-meta",
+    name: "weekly-reflection",
+    schedule: { kind: "cron", expr: "0 3 * * 0" },
+    command: "hybrid-mem reflect --verbose && hybrid-mem reflect-rules --verbose && hybrid-mem reflect-meta --verbose",
     featureGate: "reflection.enabled",
   },
   {
+    pluginJobId: "hybrid-mem:weekly-extract-procedures",
+    name: "weekly-extract-procedures",
+    schedule: { kind: "cron", expr: "0 4 * * 0" },
+    command: "hybrid-mem extract-procedures --days 7 && hybrid-mem extract-directives --days 7 && hybrid-mem extract-reinforcement --days 7 && hybrid-mem generate-auto-skills",
+    featureGate: null,
+  },
+  {
+    pluginJobId: "hybrid-mem:weekly-deep-maintenance",
+    name: "weekly-deep-maintenance",
+    schedule: { kind: "cron", expr: "0 4 * * 6" },
+    command: "hybrid-mem compact && hybrid-mem scope promote",
+    featureGate: null,
+  },
+  {
+    pluginJobId: "hybrid-mem:weekly-persona-proposals",
+    name: "weekly-persona-proposals",
+    schedule: { kind: "cron", expr: "0 10 * * 0" },
+    command: "hybrid-mem generate-proposals",
+    featureGate: "personaProposals.enabled",
+  },
+  {
     pluginJobId: "hybrid-mem:monthly-consolidation",
-    name: "Monthly Consolidation",
-    schedule: { kind: "cron", expr: "0 5 1 * *" }, // 1st of month 05:00
-    command: "hybrid-mem consolidate && hybrid-mem build-languages && hybrid-mem generate-auto-skills && hybrid-mem backfill-decay",
+    name: "monthly-consolidation",
+    schedule: { kind: "cron", expr: "0 5 1 * *" },
+    command: "hybrid-mem consolidate --threshold 0.92 && hybrid-mem build-languages && hybrid-mem backfill-decay",
     featureGate: null,
   },
 ];

@@ -10,6 +10,25 @@ All commands are available via `openclaw hybrid-mem <command>`.
 
 ---
 
+## Commands by category
+
+| Category | Commands |
+|----------|----------|
+| **Setup & installation** | `install`, `verify [--fix]` |
+| **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill` |
+| **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
+| **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
+| **Store & ingestion** | `store <text>`, `ingest-files`, `distill`, `distill-window`, `record-distill`, `extract-daily`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `generate-auto-skills`, `skills-suggest`, `generate-proposals` |
+| **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages` |
+| **Dedup & consolidation** | `find-duplicates`, `consolidate` |
+| **Self-correction** | `self-correction-extract`, `self-correction-run` |
+| **Export & config** | `export`, `config-mode <mode>`, `config-set <key> <value>` |
+| **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
+| **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
+| **Working memory** | `active-tasks`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks add <label> <desc>` |
+
+---
+
 ## Commands
 
 | Command | Purpose |
@@ -43,9 +62,9 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `reflect-rules [--dry-run] [--model M] [--force]` | Synthesize patterns into actionable rules. |
 | `reflect-meta [--dry-run] [--model M] [--force]` | Synthesize higher-level meta-patterns. |
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and **maintenance cron jobs** (nightly distill, weekly reflection, weekly extract-procedures, self-correction). Idempotent. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
-| `config-mode <preset>` | Set preset: **essential** \| **normal** \| **expert** \| **full**. Writes to openclaw.json. Restart gateway after. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode full`). |
+| `config-mode <preset>` | Set preset: **essential** \| **normal** \| **expert** \| **full**. Writes to openclaw.json. Restart gateway after. Presets set defaults for most enable/disable options (autoCapture, autoRecall, autoClassify, graph, procedures, reflection, memoryTiering, personaProposals, selfCorrection, etc.); see [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode full`). |
 | `help config-set <key>` | Show current value and a short description (tweet-length) for a config key. Example: `help config-set autoCapture`. |
-| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
+| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `verify` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
@@ -58,13 +77,21 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `self-correction-run [--extract path] [--workspace path] [--dry-run] [--approve] [--model M]` | Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
 | `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
 | `skills-suggest [--dry-run] [--days N] [--verbose]` | Memory-to-skills: cluster procedures, synthesize SKILL.md drafts to `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md). |
+| `generate-proposals [--dry-run] [--verbose]` | Generate persona proposals from recent reflection (patterns, rules, meta). Requires personaProposals enabled. Cron: weekly-persona-proposals. |
+| `run-all [--dry-run]` | Run all maintenance tasks in optimal order: backfill-decay (once), prune, compact, distill, extract-daily, extract-directives, extract-reinforcement, extract-procedures, generate-auto-skills, reflect, reflect-rules, reflect-meta, generate-proposals, self-correction-run, build-languages. See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md). |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
 | `credentials list [--service <pattern>]` | List vault entries (service, type, url; no values). Use `--service` to filter by substring (e.g. `--service unifi`). |
 | `credentials get --service <name> [--type <type>] [--value-only]` | Retrieve a credential value. Use `--type` when multiple types exist for the service. Use `--value-only` for scripting (prints only the secret). |
 | `credentials audit [--json]` | Flag suspicious entries (natural language, long service names, duplicates). |
 | `credentials prune [--yes] [--only-flags ...]` | Remove flagged entries (default: dry-run; use `--yes` to apply). |
-| `scope prune-session <session-id>` | Delete session-scoped memories for a given session (cleared on session end). |
-| `scope promote --id <fact-id> --scope global or agent [--scope-target <target>]` | Promote a session-scoped memory to global or agent scope (persists after session end). |
+| `scope list` | List all scopes present in memory (from facts). |
+| `scope stats` | Show fact counts by scope (global, user, agent, session). |
+| `scope prune --scope <s> [--scope-target <id>]` | Remove all facts in a given scope (destructive). Use `--scope-target` when scope is user/agent/session. |
+| `scope promote [--dry-run] [--threshold-days N] [--min-importance 0.7]` | Promote high-importance session-scoped facts to global. Cron: weekly-deep-maintenance. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
+| `active-tasks` | List active tasks from ACTIVE-TASK.md. |
+| `active-tasks complete <label>` | Mark task Done and flush to memory log. |
+| `active-tasks stale` | Show tasks not updated within staleThreshold. |
+| `active-tasks add <label> <desc>` | Add or update a task entry. |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
 
 ---
@@ -167,12 +194,12 @@ This adds:
 - Embedding API reachability
 - Credentials vault (if enabled)
 - Session distillation last run
-- Optional/suggested jobs (nightly-memory-sweep, weekly-reflection, weekly-extract-procedures, self-correction-analysis)
+- Optional/suggested jobs (all 9 maintenance jobs; see [Maintenance cron jobs](#maintenance-cron-jobs) below)
 - Feature flags (autoCapture, autoRecall, autoClassify, credentials, fuzzyDedupe, classifyBeforeWrite)
 
 Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **other**, with **fixes for each**.
 
-`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs (adds `nightly-memory-sweep`, `weekly-reflection`, `weekly-extract-procedures`, and `self-correction-analysis` to the cron store and to `openclaw.json` when it has a `jobs` array).
+`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs. Adds any missing maintenance cron jobs to `~/.openclaw/cron/jobs.json` (see [Maintenance cron jobs](#maintenance-cron-jobs)); does not re-enable jobs you disabled.
 `--log-file <path>` scans the file for memory-hybrid or cron errors.
 
 **Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect).
@@ -252,20 +279,25 @@ Steps through pending persona proposals and the latest correction report. For ea
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs so the memory system stays healthy without manual scheduling.
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **9 jobs** (Milestones A/B/C: tiering, scope promote, persona proposals, memory-to-skills, dream cycle).
 
 | Job (pluginJobId) | Schedule | Purpose |
 |-------------------|----------|---------|
-| `hybrid-mem:nightly-distill` | 02:00 daily | Session distillation (last 3 days); then run `record-distill`. |
-| `hybrid-mem:weekly-reflection` | Sun 03:00 | Reflection: patterns, rules, meta-patterns. |
-| `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | Procedural memory extraction from sessions. |
-| `hybrid-mem:self-correction-analysis` | 02:30 daily | Self-correction analysis and TOOLS suggestions. |
+| `hybrid-mem:nightly-distill` | 02:00 daily | **nightly-memory-sweep:** prune → distill --days 3 → extract-daily → resolve-contradictions. |
+| `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** self-correction-run. |
+| `hybrid-mem:nightly-memory-to-skills` | 02:15 daily | **nightly-memory-to-skills:** skills-suggest (cluster procedures, draft skills). |
+| `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** dream-cycle (prune → consolidate → reflect). Requires nightlyCycle.enabled. |
+| `hybrid-mem:weekly-reflection` | Sun 03:00 | **weekly-reflection:** reflect → reflect-rules → reflect-meta. Requires reflection.enabled. |
+| `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | **weekly-extract-procedures:** extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills. |
+| `hybrid-mem:weekly-deep-maintenance` | Sat 04:00 | **weekly-deep-maintenance:** compact → scope promote. |
+| `hybrid-mem:weekly-persona-proposals` | Sun 10:00 | **weekly-persona-proposals:** generate-proposals (persona proposals from reflection). Requires personaProposals enabled. |
+| `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay. |
 
-- **Install:** Creates all four jobs (in `~/.openclaw/cron/jobs.json` and in `openclaw.json` if `jobs` exists). Does not change existing jobs or re-enable disabled ones.
-- **Verify --fix:** Adds any missing jobs and **re-enables** any of these jobs that were disabled (so “fix” restores intended behavior).
-- Jobs are identified by **pluginJobId** so upgrades can add new jobs without duplicating or overwriting user renames.
+- **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
+- **Verify --fix:** Adds any missing jobs and can normalize schedule/pluginJobId; does not re-enable disabled jobs by default.
+- Jobs are identified by **pluginJobId** so upgrades can add new jobs without duplicating.
 
-**Feature-gating:** When a feature is disabled in config, the corresponding CLI command exits successfully (code 0) without doing work. So you can leave all cron jobs defined; they no-op when e.g. `procedures.enabled` or `reflection.enabled` is false. No need to remove jobs when turning a feature off.
+**Feature-gating:** When a feature is disabled in config, the corresponding CLI command exits 0 without doing work. Leave all jobs defined; they no-op when e.g. `procedures.enabled` or `reflection.enabled` is false. See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md) for full context.
 
 ---
 

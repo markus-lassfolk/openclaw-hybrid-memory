@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [Unreleased]
+
+### Documentation
+
+- **CLI-REFERENCE.md:** Commands-by-category table; run-all, generate-proposals, scope list/stats/prune/promote, active-tasks; full 9 maintenance cron jobs table (nightly-memory-sweep, self-correction-analysis, nightly-memory-to-skills, nightly-dream-cycle, weekly-reflection, weekly-extract-procedures, weekly-deep-maintenance, weekly-persona-proposals, monthly-consolidation); verify --fix description updated.
+- **cron-jobs.ts:** Aligned with handlers.ts: all 9 jobs with shell-command form; comment that canonical source is MAINTENANCE_CRON_JOBS in handlers.ts.
+
+---
+
 ## [2026.3.70] - 2026-03-07
 
 Major release: Hybrid Memory redesign (Milestones A, B, C), CI/CD automation with NPM Trusted Publishing, search/config improvements, and quality fixes.

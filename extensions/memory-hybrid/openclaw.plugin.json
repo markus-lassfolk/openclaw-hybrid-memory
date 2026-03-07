@@ -380,6 +380,26 @@
       "label": "Memory-to-skills window (days)",
       "help": "Procedures updated in last N days (default 30)"
     },
+    "nightlyCycle.enabled": {
+      "label": "Nightly dream cycle",
+      "help": "Run automated prune → consolidate → reflect pipeline (cron job nightly-dream-cycle). Default: false."
+    },
+    "passiveObserver.enabled": {
+      "label": "Passive observer",
+      "help": "Background fact extraction from session transcripts at interval. Default: false."
+    },
+    "extraction.extractionPasses": {
+      "label": "Multi-pass extraction",
+      "help": "Enable multi-pass LLM extraction with verification (Issue #166). Default: false."
+    },
+    "selfExtension.enabled": {
+      "label": "Self-extension (tool proposals)",
+      "help": "Generate tool proposals from usage-pattern gaps (Milestone C). Requires workflow tracking. Default: false."
+    },
+    "crystallization.enabled": {
+      "label": "Crystallization (skill proposals)",
+      "help": "Generate AgentSkill SKILL.md proposals from workflow patterns (Milestone C). Default: false."
+    },
     "multiAgent.orchestratorId": {
       "label": "Orchestrator Agent ID",
       "placeholder": "main",
