@@ -68,7 +68,7 @@ afterEach(() => {
 describe("deriveToolNameFromSequence", () => {
   it("produces a bulk variant for a single repeated tool", () => {
     expect(deriveToolNameFromSequence(["memory_recall", "memory_recall", "memory_recall"])).toBe(
-      "memory_bulk_recall",
+      "memory_recall_bulk",
     );
   });
 
@@ -427,7 +427,7 @@ describe("ToolProposer", () => {
   it("skips duplicate tool names", () => {
     // Pre-create a proposal with the same name
     proposalStore.create({
-      name: "memory_bulk_recall",
+      name: "memory_recall_bulk",
       description: "pre-existing",
       parameters: "{}",
       rationale: "",

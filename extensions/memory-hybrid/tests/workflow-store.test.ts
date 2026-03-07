@@ -15,6 +15,7 @@ const {
   sequenceSimilarity,
   extractGoalKeywords,
   hashToolSequence,
+  _resetRateLimitForTest,
 } = _testing;
 
 let tmpDir: string;
@@ -23,6 +24,7 @@ let store: InstanceType<typeof WorkflowStore>;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "workflow-store-test-"));
   store = new WorkflowStore(join(tmpDir, "workflow-traces.db"));
+  _resetRateLimitForTest();
 });
 
 afterEach(() => {
@@ -386,6 +388,7 @@ describe("WorkflowTracker", () => {
 
   beforeEach(() => {
     tracker = new WorkflowTracker(store, cfg);
+    _resetRateLimitForTest();
   });
 
   it("buffers tool calls per session", () => {
@@ -439,6 +442,7 @@ describe("WorkflowTracker", () => {
   it("rate limit prevents recording beyond maxTracesPerDay", () => {
     const strictCfg = { enabled: true, maxTracesPerDay: 2, retentionDays: 90 };
     const t = new WorkflowTracker(store, strictCfg);
+    _resetRateLimitForTest();
 
     t.push("s1", "exec");
     t.flush("s1", "g1", "success");

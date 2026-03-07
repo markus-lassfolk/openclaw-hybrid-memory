@@ -294,21 +294,21 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
 export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
 
-  // When errorReporting is not specified, use opt-out defaults (enabled + consent are true)
+  // When errorReporting is not specified, use opt-in defaults (enabled + consent are false)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
-      enabled: true,
+      enabled: false,
       dsn: DEFAULT_GLITCHTIP_DSN,
-      consent: true,
+      consent: false,
       mode: "community",
       sampleRate: 1.0,
     };
   }
 
-  // enabled defaults to true — user must explicitly set enabled: false to opt out
-  let enabled = errorReportingRaw.enabled !== false;
-  // consent defaults to true — user must explicitly set consent: false to opt out
-  const consent = errorReportingRaw.consent !== false;
+  // enabled defaults to false — user must explicitly set enabled: true to opt in
+  let enabled = errorReportingRaw.enabled === true;
+  // consent defaults to false — user must explicitly set consent: true to opt in
+  const consent = errorReportingRaw.consent === true;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
   const modeRaw = typeof errorReportingRaw.mode === "string" ? errorReportingRaw.mode : "community";
   const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
@@ -349,7 +349,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
     enabled,
     consent,
     mode,
-    dsn: dsnRaw || DEFAULT_GLITCHTIP_DSN,
+    dsn: mode === "community" ? (dsnRaw || DEFAULT_GLITCHTIP_DSN) : (dsnRaw || undefined),
     environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
     sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
       ? errorReportingRaw.sampleRate

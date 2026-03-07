@@ -114,20 +114,15 @@ export class CrystallizationProposer {
             continue;
           }
 
-          // Sanitize skill name for output path (same as approveProposal) to prevent path traversal
-          const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
-          const safeName = result.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
-          const outputPath = `${outputDir}/${safeName}/SKILL.md`;
-
-          // Create proposal, write to disk, THEN approve in DB (ensures atomicity)
+          // Create proposal, approve in DB, THEN write to disk (DB is source of truth)
           const proposal = this.crystallizationStore.create({
             patternId: candidate.patternId,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
           });
-          this.writeSkillToDisk(outputPath, result.skillContent);
-          this.crystallizationStore.approve(proposal.id, outputPath);
+          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
+          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
           proposed++;
         } else {
           // Store as pending, awaiting human approval
@@ -192,17 +187,17 @@ export class CrystallizationProposer {
     const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 
-    // Write to disk first, then approve in DB (ensures atomicity)
+    // Approve in DB first (source of truth), then write to disk
+    const updated = this.crystallizationStore.approve(proposalId, outputPath);
+    if (!updated) {
+      return { success: false, message: "Failed to update proposal status" };
+    }
+
     try {
       this.writeSkillToDisk(outputPath, proposal.skillContent);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, message: `Failed to write skill: ${msg}` };
-    }
-
-    const updated = this.crystallizationStore.approve(proposalId, outputPath);
-    if (!updated) {
-      return { success: false, message: "Failed to update proposal status" };
+      return { success: false, message: `Approved but failed to write skill: ${msg}` };
     }
 
     return {

@@ -448,11 +448,11 @@ describe("hybridConfigSchema.parse", () => {
     expect(envMissing.credentials.encryptionKey).toBe("");
   });
 
-  it("errorReporting defaults to opt-out config (enabled+consent=true) when not provided", () => {
+  it("errorReporting defaults to opt-in config (enabled+consent=false) when not provided", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.errorReporting).toBeDefined();
-    expect(result.errorReporting.enabled).toBe(true);
-    expect(result.errorReporting.consent).toBe(true);
+    expect(result.errorReporting.enabled).toBe(false);
+    expect(result.errorReporting.consent).toBe(false);
     expect(result.errorReporting.mode).toBe("community");
     expect(result.errorReporting.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1");
   });
@@ -1052,7 +1052,6 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.model).toBe("legacy-hyde-model");
   });
-
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.multiAgent).toBeDefined();
