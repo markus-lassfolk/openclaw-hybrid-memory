@@ -451,9 +451,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
       if (!inputNames.includes("input_ids")) {
         throw new Error("ONNX model input does not include input_ids");
       }
-      if (inputNames.includes("input_ids")) {
-        feeds["input_ids"] = new this.ort.Tensor("int64", inputIds, [batchSize, maxLen]);
-      }
+      feeds["input_ids"] = new this.ort.Tensor("int64", inputIds, [batchSize, maxLen]);
       if (inputNames.includes("attention_mask")) {
         feeds["attention_mask"] = new this.ort.Tensor("int64", attentionMask, [batchSize, maxLen]);
       }
