@@ -160,7 +160,7 @@ describe("hybridConfigSchema.parse", () => {
 
   it("parses minimal valid config", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.embedding.provider).toBe("ollama");
+    expect(result.embedding.provider).toBe("openai"); // inferred: apiKey + OpenAI model
     expect(result.embedding.model).toBe("text-embedding-3-small");
     expect(result.autoCapture).toBe(true);
     expect(result.autoRecall.enabled).toBe(true);

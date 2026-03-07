@@ -254,7 +254,7 @@ export type MemoryCategory = string;
 
 export type HybridMemoryConfig = {
   embedding: {
-    provider: "openai" | "ollama" | "onnx";
+    provider: "openai" | "ollama" | "onnx" | "google";
     model: string;
     /** Required for openai provider; optional for ollama/onnx. */
     apiKey?: string;
@@ -266,6 +266,13 @@ export type HybridMemoryConfig = {
     endpoint?: string;
     /** Number of texts to embed per batch call (default: 50). */
     batchSize: number;
+    /**
+     * Ordered list of embedding providers to try (failover). First working wins.
+     * When unset, inferred from llm config (ollama if llm.nano/default/heavy contains "ollama/", openai if apiKey set, google if distill.apiKey or llm.providers.google set); default ["ollama", "openai"] when both possible so Ollama acts as a tier.
+     */
+    preferredProviders?: ("ollama" | "openai" | "google")[];
+    /** Resolved by parser from distill.apiKey or llm.providers.google.apiKey when preferredProviders includes "google". Not set by user. */
+    googleApiKey?: string;
     /**
      * Additional embedding models for multi-model support (Issue #158).
      * When non-empty, facts are embedded with all models and stored in the fact_embeddings table.

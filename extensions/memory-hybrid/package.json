@@ -6,6 +6,7 @@
   "files": [
     "index.ts",
     "config.ts",
+    "config",
     "versionInfo.ts",
     "backends",
     "cli",

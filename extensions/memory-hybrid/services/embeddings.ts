@@ -13,18 +13,27 @@ export interface EmbeddingProvider {
   embedBatch(texts: string[]): Promise<number[][]>;
   readonly dimensions: number;
   readonly modelName: string;
+  /** When set, indicates the effective provider in use (e.g. "openai" when FallbackEmbeddingProvider has switched from ollama). */
+  readonly activeProvider?: string;
 }
 
 /** Config shape accepted by createEmbeddingProvider (matches HybridMemoryConfig.embedding). */
 export interface EmbeddingConfig {
-  provider: "openai" | "ollama" | "onnx";
+  provider: "openai" | "ollama" | "onnx" | "google";
   model: string;
   apiKey?: string;
   models?: string[];
   dimensions: number;
   endpoint?: string;
   batchSize: number;
+  /** Ordered list to try (failover). When length > 1, a chain is built. */
+  preferredProviders?: ("ollama" | "openai" | "google")[];
+  /** Set by parser from distill.apiKey or llm.providers.google.apiKey when preferredProviders includes "google". */
+  googleApiKey?: string;
 }
+
+/** Google Gemini OpenAI-compatible embeddings base URL (same as chat). */
+const GOOGLE_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 
 /** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
 const EMBEDDING_CACHE_MAX = 500;
@@ -276,13 +285,21 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
   private lastRetryAttempt = 0;
   private readonly retryIntervalMs = 60000;
   private readonly onSwitch?: (err: unknown) => void;
+  private readonly primaryLabel: string;
+  private readonly fallbackLabel: string;
   readonly dimensions: number;
   modelName: string;
+  /** "ollama" when using primary, "openai" when using fallback (so logs reflect actual provider). */
+  get activeProvider(): string {
+    return this.switched ? this.fallbackLabel : this.primaryLabel;
+  }
 
   constructor(
     primary: EmbeddingProvider,
     fallback: EmbeddingProvider | null,
     onSwitch?: (err: unknown) => void,
+    primaryLabel = "ollama",
+    fallbackLabel = "openai",
   ) {
     if (fallback && fallback.dimensions !== primary.dimensions) {
       throw new Error(
@@ -294,6 +311,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     this.primary = primary;
     this.fallback = fallback;
     this.onSwitch = onSwitch;
+    this.primaryLabel = primaryLabel;
+    this.fallbackLabel = fallbackLabel;
     this.dimensions = primary.dimensions;
     this.modelName = primary.modelName;
   }
@@ -382,7 +401,75 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
 }
 
 /**
+ * Tries a list of embedding providers in order; first success wins (no retry of earlier providers).
+ * Aligns with LLM failover: same idea as getLLMModelPreference / tier; Ollama can be first tier.
+ */
+export class ChainEmbeddingProvider implements EmbeddingProvider {
+  private readonly providers: EmbeddingProvider[];
+  private readonly labels: string[];
+  private activeIndex = 0;
+  readonly dimensions: number;
+  modelName: string;
+  get activeProvider(): string {
+    return this.labels[this.activeIndex];
+  }
+
+  constructor(providers: EmbeddingProvider[], labels: string[]) {
+    if (providers.length === 0 || providers.length !== labels.length) {
+      throw new Error("ChainEmbeddingProvider requires non-empty providers and same-length labels");
+    }
+    const dim = providers[0].dimensions;
+    if (providers.some((p) => p.dimensions !== dim)) {
+      throw new Error("ChainEmbeddingProvider: all providers must have the same dimensions");
+    }
+    this.providers = providers;
+    this.labels = labels;
+    this.dimensions = dim;
+    this.modelName = providers[0].modelName;
+  }
+
+  async embed(text: string): Promise<number[]> {
+    while (this.activeIndex < this.providers.length) {
+      try {
+        return await this.providers[this.activeIndex].embed(text);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "embeddings",
+          operation: "chain-failover",
+          phase: "embed",
+        });
+        this.activeIndex++;
+        if (this.activeIndex < this.providers.length) {
+          this.modelName = this.providers[this.activeIndex].modelName;
+        }
+      }
+    }
+    throw new Error("All embedding providers in the chain failed.");
+  }
+
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    while (this.activeIndex < this.providers.length) {
+      try {
+        return await this.providers[this.activeIndex].embedBatch(texts);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "embeddings",
+          operation: "chain-failover",
+          phase: "embedBatch",
+        });
+        this.activeIndex++;
+        if (this.activeIndex < this.providers.length) {
+          this.modelName = this.providers[this.activeIndex].modelName;
+        }
+      }
+    }
+    throw new Error("All embedding providers in the chain failed.");
+  }
+}
+
+/**
  * Factory: creates the right EmbeddingProvider from plugin config.
+ * - When embedding.preferredProviders has length > 1: chain (try in order; aligns with LLM failover, Ollama-as-tier).
  * - provider='ollama' → OllamaEmbeddingProvider (with optional OpenAI fallback if apiKey set)
  * - provider='openai' → Embeddings (OpenAI)
  * - provider='onnx'   → not yet implemented; falls back to OpenAI when apiKey available
@@ -391,7 +478,51 @@ export function createEmbeddingProvider(
   cfg: EmbeddingConfig,
   onFallback?: (err: unknown) => void,
 ): EmbeddingProvider {
-  const { provider, model, apiKey, models, dimensions, endpoint, batchSize } = cfg;
+  const { provider, model, apiKey, models, dimensions, endpoint, batchSize, preferredProviders } = cfg;
+
+  if (preferredProviders && preferredProviders.length > 1) {
+    const chain: EmbeddingProvider[] = [];
+    const labels: string[] = [];
+    const openaiModels = models?.length ? models : ["text-embedding-3-small"];
+    // All providers in the chain must use the same dimensions (config.dimensions). For ollama+openai, use 1536 and an ollama model that supports it, or 768 with openai dimension override if supported.
+    const ollamaModel = model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
+      ? model
+      : "nomic-embed-text";
+    const googleModel = "text-embedding-004"; // Gemini API embedding model (OpenAI-compat endpoint)
+    for (const name of preferredProviders) {
+      if (name === "ollama") {
+        try {
+          chain.push(new OllamaEmbeddingProvider({ model: ollamaModel, dimensions, endpoint, batchSize }));
+          labels.push("ollama");
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "embeddings", operation: "chain-build-ollama" });
+        }
+      } else if (name === "openai" && apiKey) {
+        try {
+          const client = new OpenAI({ apiKey });
+          chain.push(new Embeddings(client, model && ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model) ? model : openaiModels[0], dimensions, batchSize));
+          labels.push("openai");
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "embeddings", operation: "chain-build-openai" });
+        }
+      } else if (name === "google" && cfg.googleApiKey && cfg.googleApiKey.length >= 10) {
+        try {
+          const client = new OpenAI({ apiKey: cfg.googleApiKey, baseURL: GOOGLE_EMBEDDING_BASE_URL });
+          chain.push(new Embeddings(client, googleModel, dimensions, batchSize));
+          labels.push("google");
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "embeddings", operation: "chain-build-google" });
+        }
+      }
+    }
+    if (chain.length === 0) {
+      throw new Error("embedding.preferredProviders: no provider could be built (check apiKey for openai/google, Ollama for ollama, distill.apiKey or llm.providers.google for Google).");
+    }
+    if (chain.length === 1) {
+      return chain[0];
+    }
+    return new ChainEmbeddingProvider(chain, labels);
+  }
 
   if (provider === "ollama") {
     const primary = new OllamaEmbeddingProvider({ model, dimensions, endpoint, batchSize });
@@ -419,6 +550,14 @@ export function createEmbeddingProvider(
     return new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
   }
 
+  if (provider === "google") {
+    if (!cfg.googleApiKey || cfg.googleApiKey.length < 10) {
+      throw new Error("Google embedding provider requires distill.apiKey or llm.providers.google.apiKey.");
+    }
+    const client = new OpenAI({ apiKey: cfg.googleApiKey, baseURL: GOOGLE_EMBEDDING_BASE_URL });
+    return new Embeddings(client, "text-embedding-004", dimensions, batchSize);
+  }
+
   if (provider === "onnx") {
     // ONNX runtime is not yet implemented. Never silently fall back to a cloud provider —
     // users who configure provider='onnx' explicitly chose local-first, no-cloud operation.
@@ -428,7 +567,7 @@ export function createEmbeddingProvider(
     );
   }
 
-  throw new Error(`Unknown embedding provider: '${provider as string}'. Valid options: openai, ollama, onnx.`);
+  throw new Error(`Unknown embedding provider: '${provider as string}'. Valid options: openai, ollama, onnx, google.`);
 }
 
 /** Centralized embedding with error handling. Returns null on failure and optionally logs. */

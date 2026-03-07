@@ -236,7 +236,7 @@ export function initializeDatabases(
   const vectorDim = cfg.embedding.dimensions;
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim, cfg.vector.autoRepair);
   vectorDb.setLogger(api.logger);
-  // Create embedding provider from config (supports openai, ollama, onnx)
+  // Create embedding provider from config (supports openai, ollama, onnx, google; chain/failover when preferredProviders set)
   const embeddings = createEmbeddingProvider(cfg.embedding, (err) => {
     api.logger.warn(
       `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
@@ -417,7 +417,12 @@ export function initializeDatabases(
     try {
       await embeddings.embed("verify");
       health.embeddingsOk = true;
-      api.logger.info(`memory-hybrid: embedding check OK (provider=${cfg.embedding.provider}, model=${embeddings.modelName})`);
+      const effectiveProvider = embeddings.activeProvider ?? cfg.embedding.provider;
+      api.logger.info(
+        effectiveProvider !== cfg.embedding.provider
+          ? `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${embeddings.modelName} — using fallback; ${cfg.embedding.provider} unavailable)`
+          : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${embeddings.modelName})`,
+      );
     } catch (e) {
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "embeddings",

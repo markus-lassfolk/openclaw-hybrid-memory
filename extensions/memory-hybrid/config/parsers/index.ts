@@ -162,18 +162,40 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
 
   const embedding = cfg.embedding as Record<string, unknown> | undefined;
-  const validProviders = ["openai", "ollama", "onnx"];
-  let embeddingProvider: "openai" | "ollama" | "onnx";
+  const validProviders = ["openai", "ollama", "onnx", "google"];
+  type EmbeddingProviderName = "openai" | "ollama" | "onnx" | "google";
+  const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
+  const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
+  const hasGoogleKey =
+    (typeof distillForEmbed?.apiKey === "string" && distillForEmbed.apiKey.trim().length >= 10) ||
+    (typeof llmProvidersForEmbed?.google?.apiKey === "string" && llmProvidersForEmbed.google.apiKey.trim().length >= 10);
+  let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
-    embeddingProvider = embedding.provider as "openai" | "ollama" | "onnx";
+    embeddingProvider = embedding.provider as EmbeddingProviderName;
   } else if (embedding?.provider !== undefined) {
-    throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx.`);
+    throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx, google.`);
   } else {
-    // Backward compat: previous config defaulted to "ollama" when omitted.
-    if (embedding !== undefined) {
-      console.warn(`memory-hybrid: embedding.provider not set; defaulting to "ollama". Set embedding.provider explicitly (openai, ollama, or onnx).`);
+    // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
+    const hasApiKey =
+      embedding &&
+      typeof embedding.apiKey === "string" &&
+      (embedding.apiKey as string).trim().length >= 10 &&
+      (embedding.apiKey as string).trim() !== "YOUR_OPENAI_API_KEY" &&
+      (embedding.apiKey as string).trim() !== "<OPENAI_API_KEY>";
+    const modelStr = typeof embedding?.model === "string" ? (embedding.model as string).trim() : "";
+    const llm = cfg.llm as { nano?: string[]; default?: string[]; heavy?: string[] } | undefined;
+    const llmListsForProvider = [llm?.nano, llm?.default, llm?.heavy].filter(Array.isArray) as string[][];
+    const hasOllamaInLlmForProvider = llmListsForProvider.some((list) => list.some((m) => typeof m === "string" && (m as string).startsWith("ollama/")));
+    if (hasApiKey && modelStr && isOpenAIModel(modelStr)) {
+      embeddingProvider = "openai";
+    } else if (!hasApiKey && !hasOllamaInLlmForProvider && hasGoogleKey) {
+      embeddingProvider = "google";
+    } else {
+      if (embedding !== undefined) {
+        console.warn(`memory-hybrid: embedding.provider not set; defaulting to "ollama". Set embedding.provider explicitly (openai, ollama, onnx, google).`);
+      }
+      embeddingProvider = "ollama";
     }
-    embeddingProvider = "ollama";
   }
 
   // apiKey is required for openai provider only
@@ -239,6 +261,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     resolvedDimensions = configDimensions;
   } else if (embeddingProvider === "openai") {
     resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
+  } else if (embeddingProvider === "google") {
+    resolvedDimensions = 768; // Google text-embedding-004 default; set embedding.dimensions to override
   } else {
     // For ollama/onnx: require explicit dimensions when the model is unknown to prevent
     // silent schema mismatches with existing LanceDB tables (e.g. 768 vs 1536 dimensions).
@@ -258,6 +282,34 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const resolvedBatchSize = typeof embedding?.batchSize === "number" && embedding.batchSize > 0
     ? Math.floor(embedding.batchSize)
     : 50;
+
+  // preferredProviders: explicit list or infer from LLM config (align with failover / Ollama-as-tier)
+  const preferredProvidersRaw = embedding?.preferredProviders;
+  const validProviderNames = ["ollama", "openai", "google"] as const;
+  type PreferredProvider = "ollama" | "openai" | "google";
+  let preferredProviders: PreferredProvider[];
+  if (Array.isArray(preferredProvidersRaw) && preferredProvidersRaw.length > 0) {
+    preferredProviders = preferredProvidersRaw
+      .filter((p): p is PreferredProvider => typeof p === "string" && validProviderNames.includes(p as PreferredProvider))
+      .filter((p, i, a) => a.indexOf(p) === i); // dedupe
+    if (preferredProviders.length === 0) preferredProviders = ["ollama", "openai"];
+  } else {
+    const inferred: PreferredProvider[] = [];
+    const llm = cfg.llm as { nano?: string[]; default?: string[]; heavy?: string[] } | undefined;
+    const llmLists = [llm?.nano, llm?.default, llm?.heavy].filter(Array.isArray) as string[][];
+    const hasOllamaInLlm = llmLists.some((list) => list.some((m) => typeof m === "string" && m.startsWith("ollama/")));
+    if (hasOllamaInLlm || embeddingProvider === "ollama") inferred.push("ollama");
+    if (resolvedApiKey && resolvedApiKey.length >= 10) inferred.push("openai");
+    if (hasGoogleKey) inferred.push("google");
+    preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
+  }
+  const resolvedGoogleApiKey =
+    (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
+      ? resolveEnvVars((distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim())
+      : undefined;
+  if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
+    throw new Error("embedding.provider is 'google' but no valid key found. Set distill.apiKey or llm.providers.google.apiKey in plugin config.");
+  }
 
   // Parse multi-model embedding config (Issue #158)
   const multiModelsRaw = embedding?.multiModels;
@@ -343,6 +395,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       dimensions: resolvedDimensions,
       endpoint: resolvedEndpoint,
       batchSize: resolvedBatchSize,
+      preferredProviders: preferredProviders.length > 1 ? preferredProviders : undefined,
+      googleApiKey: resolvedGoogleApiKey,
       multiModels: parsedMultiModels.length > 0 ? parsedMultiModels : undefined,
     },
     lanceDbPath:

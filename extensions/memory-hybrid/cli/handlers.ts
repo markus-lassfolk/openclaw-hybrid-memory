@@ -759,6 +759,8 @@ export async function runVerifyForCli(
       fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
     } else if (cfg.embedding.provider === "ollama") {
       fixes.push(`Embedding API: Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and the model "${cfg.embedding.model}" is available. Run 'ollama pull ${cfg.embedding.model}' if needed.`);
+    } else if (cfg.embedding.provider === "google") {
+      fixes.push(`Embedding API: Set distill.apiKey or llm.providers.google.apiKey in plugin config (Gemini API key). Restart gateway after updating.`);
     } else {
       fixes.push(`Embedding API: Check your ${cfg.embedding.provider} provider configuration and ensure the model "${cfg.embedding.model}" is accessible.`);
     }
@@ -867,6 +869,13 @@ export async function runVerifyForCli(
   const nanoOrder = getLLMModelPreference(cronCfgForVerify, "nano");
   const hasExplicitNano = Array.isArray(cfg.llm?.nano) && (cfg.llm.nano as string[]).length > 0;
   const nanoSameAsDefault = nanoOrder[0] === defaultOrder[0];
+  // Include providers that appear in failover lists (e.g. anthropic when keys are in gateway)
+  const providersInFailover = new Set<string>();
+  for (const model of [...nanoOrder, ...defaultOrder, ...heavyOrder]) {
+    const prefix = model.includes("/") ? model.split("/")[0]!.trim() : "";
+    if (prefix) providersInFailover.add(prefix);
+  }
+  const allProviders = [...new Set([...providersWithKeys, ...providersInFailover])].sort();
   log("\n───── LLM / Failover ─────");
   const nanoDisplay = hasExplicitNano
     ? nanoOrder.join(" → ")
@@ -874,7 +883,7 @@ export async function runVerifyForCli(
   log(`  nano tier (autoClassify, HyDE, classifyBeforeWrite, summarize): ${nanoDisplay}${llmSource}`);
   log(`  default tier (reflection, general): ${defaultOrder.join(" → ")}${llmSource}`);
   log(`  heavy tier (distill, self-correction): ${heavyOrder.join(" → ")}${llmSource}`);
-  log(`  providers with keys: ${providersWithKeys.length ? providersWithKeys.join(", ") : "none"}`);
+  log(`  providers with keys: ${allProviders.length ? allProviders.join(", ") : "none"}`);
   if (defaultOrder.length > 1 || heavyOrder.length > 1) {
     log(`  (if a model fails, the next in the list is tried)`);
   }
