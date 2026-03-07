@@ -300,12 +300,11 @@ class WordPieceTokenizer {
     const inputIds = finalTokens.map((t) => this.vocab.get(t) ?? this.vocab.get(this.unkToken)!);
     const attentionMask = new Array(finalTokens.length).fill(1);
     const tokenTypeIds = new Array(finalTokens.length).fill(0);
-    while (inputIds.length < maxLen) {
-      inputIds.push(this.vocab.get(this.padToken)!);
-      attentionMask.push(0);
-      tokenTypeIds.push(0);
-    }
     return { inputIds, attentionMask, tokenTypeIds };
+  }
+
+  getPadTokenId(): number {
+    return this.vocab.get(this.padToken)!;
   }
 }
 
@@ -433,6 +432,14 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
         this.maxSeqLength,
         Math.max(...encoded.map((e) => e.inputIds.length)),
       );
+      const padId = this.tokenizer!.getPadTokenId();
+      for (const e of encoded) {
+        while (e.inputIds.length < maxLen) {
+          e.inputIds.push(padId);
+          e.attentionMask.push(0);
+          e.tokenTypeIds.push(0);
+        }
+      }
       const batchSize = encoded.length;
       const inputIds = new BigInt64Array(batchSize * maxLen);
       const attentionMask = new BigInt64Array(batchSize * maxLen);
