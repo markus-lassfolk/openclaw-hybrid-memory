@@ -18,8 +18,12 @@ import {
   getDecaySessionRegex,
   getDecayActiveRegex,
   getCorrectionSignalRegex,
+  getReinforcementSignalRegex,
   getDirectiveCategoryRegexes,
   getReinforcementCategoryRegexes,
+  getUserFeedbackPhrasesPath,
+  loadUserFeedbackPhrases,
+  saveUserFeedbackPhrases,
   type KeywordGroup,
 } from "../utils/language-keywords.js";
 
@@ -252,6 +256,62 @@ describe("language-keywords", () => {
       setKeywordsPath("");
       const re = getCorrectionSignalRegex();
       expect(re.test("you misunderstood what I said")).toBe(true);
+    });
+
+    it("matches negative emoji and user-saved correction phrases when path set", () => {
+      setKeywordsPath(tmpDir);
+      clearKeywordCache();
+      saveUserFeedbackPhrases({ reinforcement: [], correction: ["my custom nope", "exactly wrong"] });
+      const re = getCorrectionSignalRegex();
+      expect(re.test("👎")).toBe(true);
+      expect(re.test("😠")).toBe(true);
+      expect(re.test("my custom nope")).toBe(true);
+      expect(re.test("that was exactly wrong")).toBe(true);
+    });
+  });
+
+  describe("getReinforcementSignalRegex", () => {
+    it("matches positive emoji and user-saved reinforcement phrases when path set", () => {
+      setKeywordsPath(tmpDir);
+      clearKeywordCache();
+      saveUserFeedbackPhrases({ reinforcement: ["spot on", "perfect match"], correction: [] });
+      const re = getReinforcementSignalRegex();
+      expect(re.test("👍")).toBe(true);
+      expect(re.test("❤️")).toBe(true);
+      expect(re.test("spot on")).toBe(true);
+      expect(re.test("that was a perfect match")).toBe(true);
+    });
+  });
+
+  describe("user feedback phrases (save/load round-trip)", () => {
+    it("getUserFeedbackPhrasesPath returns null when path not set", () => {
+      setKeywordsPath("");
+      expect(getUserFeedbackPhrasesPath()).toBeNull();
+    });
+
+    it("getUserFeedbackPhrasesPath returns path under keywords dir when set", () => {
+      setKeywordsPath(tmpDir);
+      expect(getUserFeedbackPhrasesPath()).toBe(join(tmpDir, ".user-feedback-phrases.json"));
+    });
+
+    it("loadUserFeedbackPhrases returns empty when file missing", () => {
+      setKeywordsPath(tmpDir);
+      clearKeywordCache();
+      const loaded = loadUserFeedbackPhrases();
+      expect(loaded.reinforcement).toEqual([]);
+      expect(loaded.correction).toEqual([]);
+    });
+
+    it("saveUserFeedbackPhrases then loadUserFeedbackPhrases round-trips data", () => {
+      setKeywordsPath(tmpDir);
+      clearKeywordCache();
+      const data = { reinforcement: ["great", "thanks"], correction: ["nope", "wrong"] };
+      saveUserFeedbackPhrases(data);
+      const loaded = loadUserFeedbackPhrases();
+      expect(loaded.reinforcement).toEqual(["great", "thanks"]);
+      expect(loaded.correction).toEqual(["nope", "wrong"]);
+      expect(loaded.updatedAt).toBeDefined();
+      expect(loaded.initialRunDone).toBe(true);
     });
   });
 

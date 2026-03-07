@@ -265,7 +265,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           }, api.logger);
           const applyCtx = {
             proposalsDb: proposalsDb!,
-            cfg: { personaProposals: { allowedFiles: cfg.personaProposals.allowedFiles } },
+            cfg,
             resolvedSqlitePath,
             api: { logger: api.logger },
           };

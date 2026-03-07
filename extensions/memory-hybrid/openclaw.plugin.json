@@ -340,8 +340,8 @@
     },
     "distill.defaultModel": {
       "label": "Distill default model",
-      "placeholder": "gemini-3-pro-preview",
-      "help": "Default LLM for hybrid-mem distill (recommended: gemini-3-pro-preview for 1M context and token I/O)"
+      "placeholder": "gemini-3.1-pro-preview",
+      "help": "Default LLM for hybrid-mem distill (recommended: gemini-3.1-pro-preview for 1M context and token I/O)"
     },
     "languageKeywords.autoBuild": {
       "label": "Multi-language auto-build",
@@ -747,7 +747,7 @@
           },
           "defaultModel": {
             "type": "string",
-            "description": "Default model for distill (recommended: gemini-3-pro-preview)"
+            "description": "Default model for distill (recommended: gemini-3.1-pro-preview)"
           },
           "extractDirectives": {
             "type": "boolean",

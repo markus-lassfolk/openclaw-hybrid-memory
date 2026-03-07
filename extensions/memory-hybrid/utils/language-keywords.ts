@@ -170,7 +170,7 @@ export const ENGLISH_KEYWORDS = {
     "wow that was good",
     "wow, that was fantastic",
     "wow that was fantastic",
-    // Explicit appreciation
+    // Explicit appreciation (bare "appreciate" removed — too broad; use directional forms below)
     "really appreciate",
     "i appreciate",
     "i really appreciate",

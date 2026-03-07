@@ -122,6 +122,27 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
   return !deepEqual(userVal, presetVal);
 }
 
+/** Apply a mode preset to cfg and detect if user overrode any preset value. Single place for preset merge + override detection. */
+function applyModePreset(
+  cfg: Record<string, unknown>,
+  appliedMode: ConfigMode,
+): { cfg: Record<string, unknown>; hasPresetOverrides: boolean } {
+  const preset = PRESET_OVERRIDES[appliedMode];
+  const userRaw = { ...cfg } as Record<string, unknown>;
+  delete userRaw.mode;
+  const merged = deepMergePreset(preset, cfg) as Record<string, unknown>;
+  delete merged.mode;
+  let hasPresetOverrides = false;
+  for (const key of Object.keys(preset)) {
+    if (!(key in userRaw)) continue;
+    if (userOverridesPresetValue(userRaw[key], preset[key])) {
+      hasPresetOverrides = true;
+      break;
+    }
+  }
+  return { cfg: merged, hasPresetOverrides };
+}
+
 export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
   if (!dims) {
@@ -143,6 +164,10 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const modeRaw = cfg.mode;
   const validModes: ConfigMode[] = ["essential", "normal", "expert", "full"];
   const defaultMode: ConfigMode = "full"; // best experience out of the box; use essential/normal for low-resource or cost-conscious setups
+  // Fail fast on typos/invalid modes rather than silently applying full preset
+  if (typeof modeRaw === "string" && modeRaw.trim() !== "" && !validModes.includes(modeRaw as ConfigMode)) {
+    throw new Error(`memory-hybrid config: invalid mode "${modeRaw}"; expected one of: ${validModes.join(", ")}`);
+  }
   // Resolve the mode to apply: use the specified valid mode or fall back to default
   const appliedMode: ConfigMode =
     typeof modeRaw === "string" && validModes.includes(modeRaw as ConfigMode)

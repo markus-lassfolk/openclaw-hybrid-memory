@@ -234,6 +234,21 @@ describe("hybridConfigSchema.parse", () => {
     ).toThrow(/Invalid embedding\.provider/);
   });
 
+  it("throws on invalid mode (e.g. typo)", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...validBase,
+        mode: "ful",
+      }),
+    ).toThrow(/invalid mode "ful"/);
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...validBase,
+        mode: "invalid",
+      }),
+    ).toThrow(/invalid mode "invalid"/);
+  });
+
   it("warns when embedding section present but provider is not set", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

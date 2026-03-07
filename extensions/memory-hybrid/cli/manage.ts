@@ -1449,7 +1449,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   mem
     .command("analyze-feedback-phrases")
     .description("Analyze session logs with an LLM (e.g. Gemini) to discover your praise/frustration phrases; optional --learn to save to .user-feedback-phrases.json")
-    .option("--days <n>", "Days of sessions to analyze (default 30)")
+    .option("--days <n>", "Days of sessions to analyze (omit for auto: 30 on first run, 3 thereafter)")
     .option("--model <m>", "LLM model (e.g. gemini-2.0-flash for 1M context)", "")
     .option("--output <path>", "Write suggested phrases JSON to file", "")
     .option("--learn", "Merge discovered phrases into .user-feedback-phrases.json (reinforcement/correction detection will use them)")

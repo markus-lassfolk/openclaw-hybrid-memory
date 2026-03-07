@@ -28,7 +28,7 @@ const fullDefaults = {
         enabled: true,
         config: {
           embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
-          distill: { defaultModel: "gemini-3-pro-preview" },
+          distill: { defaultModel: "gemini-3.1-pro-preview" },
           autoCapture: true,
           autoRecall: true,
           captureMaxChars: 5000,
