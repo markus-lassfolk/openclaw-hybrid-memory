@@ -1445,7 +1445,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   mem
     .command("analyze-feedback-phrases")
     .description("Analyze session logs with an LLM (e.g. Gemini) to discover your praise/frustration phrases; optional --learn to save to .user-feedback-phrases.json")
-    .option("--days <n>", "Days of sessions to analyze (default 30)", "30")
+    .option("--days <n>", "Days of sessions to analyze (default 30)")
     .option("--model <m>", "LLM model (e.g. gemini-2.0-flash for 1M context)", "")
     .option("--output <path>", "Write suggested phrases JSON to file", "")
     .option("--learn", "Merge discovered phrases into .user-feedback-phrases.json (reinforcement/correction detection will use them)")
@@ -1455,7 +1455,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         process.exitCode = 1;
         return;
       }
-      const days = opts?.days ? parseInt(opts.days, 10) : 30;
+      const days = opts?.days ? parseInt(opts.days, 10) : undefined;
       const outputPath = opts?.output;
       const learn = !!opts?.learn;
       const model = opts?.model?.trim() || undefined;
@@ -1463,7 +1463,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       try {
         res = await runAnalyzeFeedbackPhrases({ days, model, outputPath, learn });
       } catch (err) {
-        capturePluginError(err as Error ? err : new Error(String(err)), { subsystem: "cli", operation: "analyze-feedback-phrases" });
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "analyze-feedback-phrases" });
         throw err;
       }
       if (res.error) {
