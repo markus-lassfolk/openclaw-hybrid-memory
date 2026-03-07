@@ -448,9 +448,13 @@ describe("hybridConfigSchema.parse", () => {
     expect(envMissing.credentials.encryptionKey).toBe("");
   });
 
-  it("errorReporting defaults to undefined when not provided", () => {
+  it("errorReporting defaults to opt-out config (enabled+consent=true) when not provided", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.errorReporting).toBeUndefined();
+    expect(result.errorReporting).toBeDefined();
+    expect(result.errorReporting.enabled).toBe(true);
+    expect(result.errorReporting.consent).toBe(true);
+    expect(result.errorReporting.mode).toBe("community");
+    expect(result.errorReporting.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1");
   });
 
   it("parses errorReporting in community mode", () => {
@@ -466,7 +470,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.errorReporting?.enabled).toBe(true);
     expect(result.errorReporting?.consent).toBe(true);
     expect(result.errorReporting?.mode).toBe("community");
-    expect(result.errorReporting?.dsn).toBeUndefined();
+    expect(result.errorReporting?.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1");
   });
 
   it("disables errorReporting when consent is false", () => {
@@ -1039,14 +1043,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.model).toBeUndefined();
   });
 
-  it("migration shim (#160): search.hydeModel falls back when queryExpansion.enabled=true but model unset", () => {
+  it("migration shim (#160): queryExpansion.enabled=true inherits search.hydeModel when queryExpansion.model unset", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
-      search: { hydeEnabled: true, hydeModel: "openai/gpt-4.1-nano" },
+      search: { hydeEnabled: true, hydeModel: "legacy-hyde-model" },
       queryExpansion: { enabled: true },
     });
     expect(result.queryExpansion.enabled).toBe(true);
-    expect(result.queryExpansion.model).toBe("openai/gpt-4.1-nano");
+    expect(result.queryExpansion.model).toBe("legacy-hyde-model");
   });
 
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {

@@ -335,8 +335,8 @@ export type HybridMemoryConfig = {
   selfCorrection?: SelfCorrectionConfig;
   /** Multi-agent memory scoping — dynamic agent detection and scope defaults (default: orchestratorId="main", defaultStoreScope="global") */
   multiAgent: MultiAgentConfig;
-  /** Optional: error reporting to GlitchTip/Sentry (opt-in, default: disabled) */
-  errorReporting?: ErrorReportingConfig;
+  /** Error reporting to GlitchTip/Sentry (opt-out, default: enabled with community DSN). Set enabled: false or consent: false to opt out. */
+  errorReporting: ErrorReportingConfig;
   /** Active task working memory — ACTIVE-TASK.md persistence and session injection (default: enabled) */
   activeTask: ActiveTaskConfig;
   /** Vector store configuration (LanceDB schema validation and auto-repair, issue #128). */
