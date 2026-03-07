@@ -199,11 +199,17 @@ export class ToolProposer {
         message: `Proposal "${id}" is already ${proposal.status} — cannot approve.`,
       };
     }
-    const updated = this.proposalStore.updateStatus(id, "approved");
+    const updated = this.proposalStore.updateStatus(id, "approved", "proposed");
+    if (!updated) {
+      return {
+        success: false,
+        message: `Proposal "${id}" status changed concurrently — cannot approve.`,
+      };
+    }
     return {
       success: true,
       message: `Proposal "${proposal.name}" approved. Mark as implemented when the tool is built.`,
-      proposal: updated ?? undefined,
+      proposal: updated,
     };
   }
 
@@ -221,11 +227,17 @@ export class ToolProposer {
         message: `Proposal "${id}" is already ${proposal.status} — cannot reject.`,
       };
     }
-    const updated = this.proposalStore.updateStatus(id, "rejected");
+    const updated = this.proposalStore.updateStatus(id, "rejected", "proposed");
+    if (!updated) {
+      return {
+        success: false,
+        message: `Proposal "${id}" status changed concurrently — cannot reject.`,
+      };
+    }
     return {
       success: true,
       message: `Proposal "${proposal.name}" rejected.`,
-      proposal: updated ?? undefined,
+      proposal: updated,
     };
   }
 }

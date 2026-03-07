@@ -157,11 +157,15 @@ export class ToolProposalStore {
   // updateStatus — change proposal status
   // -------------------------------------------------------------------------
 
-  updateStatus(id: string, status: ToolProposalStatus): ToolProposal | null {
+  updateStatus(id: string, status: ToolProposalStatus, fromStatus?: ToolProposalStatus): ToolProposal | null {
     const now = new Date().toISOString();
-    const result = this.db
-      .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?")
-      .run(status, now, id);
+    const result = fromStatus !== undefined
+      ? this.db
+          .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
+          .run(status, now, id, fromStatus)
+      : this.db
+          .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?")
+          .run(status, now, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);

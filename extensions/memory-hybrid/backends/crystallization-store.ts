@@ -138,8 +138,8 @@ export class CrystallizationStore {
       params.push(filter.status);
     }
     if (filter?.skillName) {
-      query += " AND skill_name = ?";
-      params.push(filter.skillName);
+      query += " AND skill_name LIKE ?";
+      params.push(`%${filter.skillName}%`);
     }
 
     query += " ORDER BY created_at DESC";
