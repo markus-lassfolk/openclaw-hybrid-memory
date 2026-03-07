@@ -6,6 +6,8 @@ nav_order: 1
 ---
 # Features — Categories, Decay, Tags, and Auto-Classify
 
+The plugin makes your agent **more personal and tuned** by classifying what it stores, decaying old content, and improving recall over time. This page is the technical reference for how that works: categories, decay, tagging, and LLM auto-classify. For the big-picture “why” and benefits, see the [README](../README.md#why-youll-want-this--in-plain-english).
+
 Detailed reference for the memory-hybrid plugin's classification, decay, tagging, and LLM auto-classify features.
 
 ---
@@ -29,6 +31,8 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Dynamic salience** | [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) | Access-based importance — access boost, time decay, Hebbian co-recall links |
 | **Memory scoping** | [MEMORY-SCOPING.md](MEMORY-SCOPING.md) | Global, user-private, agent-specific, session-scoped memories; privacy in multi-user environments |
 | **Memory tiering** | [MEMORY-TIERING.md](MEMORY-TIERING.md) | Hot/warm/cold tiers, compaction (tasks→COLD, preferences→WARM, blockers→HOT), `hybrid-mem compact` |
+| **Retrieval directives** | [CONFIGURATION.md](CONFIGURATION.md) (autoRecall.retrievalDirectives) | Targeted recall by entity mention, keywords, task type, or session start. Added in 2026.3.70. |
+| **Workflow crystallization & self-extension** | [CONFIGURATION.md](CONFIGURATION.md), release notes [2026.3.70](../release-notes/release-notes-2026.3.70.md) | Tool-sequence patterns, skill proposals (`memory_crystallize`), tool proposals (`memory_propose_tool`). Added in 2026.3.70. |
 
 ---
 

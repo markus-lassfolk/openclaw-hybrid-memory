@@ -98,7 +98,7 @@ If the memory slot points to another plugin or the hybrid-memory plugin is disab
 
 ### 4. If the agent still never responds: check before_agent_start
 
-The plugin runs **auto-recall** in a `before_agent_start` hook. That hook calls the embedding API and, if HyDE is enabled, the LLM. If the gateway is down or those calls hang, the agent can appear stuck.
+The plugin runs **auto-recall** in a `before_agent_start` hook. That hook calls the embedding API and, if query expansion is enabled, the LLM. If the gateway is down or those calls hang, the agent can appear stuck.
 
 - **Temporarily disable auto-recall** to see if the agent starts answering:
   - In plugin config set `autoRecall.enabled` to `false`, then restart the gateway.
@@ -112,10 +112,10 @@ Inspect OpenClaw (or gateway) logs for errors when you send a message. Look for:
 - Gateway/connection errors (e.g. ECONNREFUSED, timeouts).
 - Errors in `before_agent_start` or from the embedding/LLM calls (e.g. 401/403, timeout).
 
-When **nothing relevant appears** (no timeout, no errors) but the agent still doesn’t respond, the turn may be **stuck** in the plugin’s `before_agent_start` (e.g. waiting on the gateway/LLM for HyDE or embeddings). As of recent plugin versions:
+When **nothing relevant appears** (no timeout, no errors) but the agent still doesn’t respond, the turn may be **stuck** in the plugin’s `before_agent_start` (e.g. waiting on the gateway/LLM for query expansion or embeddings). As of recent plugin versions:
 
-- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (HyDE, embedding, or vector search). The plugin now applies timeouts (HyDE/chat: 25s, vector step: 30s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
-- **Temporarily disable auto-recall** (`autoRecall.enabled: false`) or **HyDE** (`search.hydeEnabled: false`) and restart the gateway. If the agent starts responding, the hang was in that path (often gateway/LLM not responding). Re-enable after fixing the gateway or model config.
+- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (query expansion, embedding, or vector search). The plugin applies timeouts (query expansion: 5–25s, vector step: 30s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
+- **Temporarily disable auto-recall** (`autoRecall.enabled: false`) or **query expansion** (`queryExpansion.enabled: false`) and restart the gateway. If the agent starts responding, the hang was in that path (often gateway/LLM not responding). Re-enable after fixing the gateway or model config.
 
 Log location depends on your OpenClaw setup (often under `~/.openclaw/` or wherever the gateway is run).
 
@@ -136,16 +136,16 @@ If scheduled jobs or verify show **"Provider X is in cooldown"** or **"All model
   "heavy":   ["google/gemini-3.1-pro-preview", "anthropic/claude-opus-4-6",  "openai/o3"]
 }
 ```
-Or set `search.hydeModel` to a single fast model (e.g. `google/gemini-2.5-flash-lite`) so HyDE does not depend on the full fallback chain. Set `search.hydeEnabled: false` to disable HyDE entirely.
+Or set `queryExpansion.model` to a single fast model (e.g. `google/gemini-2.5-flash-lite`) so query expansion does not depend on the full fallback chain. Set `queryExpansion.enabled: false` to disable query expansion entirely.
 
-### 7. "HyDE generation failed, using raw prompt" (500, timeout, or "Request was aborted")
+### 7. "Query expansion failed, using raw prompt" (500, timeout, or "Request was aborted")
 
-This means the nano-tier LLM used for HyDE (query expansion) is failing — e.g. provider API error, missing API key, or timeout. The plugin falls back to the raw user prompt, so recall still works.
+This means the nano-tier LLM used for query expansion is failing — e.g. provider API error, missing API key, or timeout. The plugin falls back to the raw user prompt, so recall still works.
 
-- **Fix:** Check which model is being used: `openclaw hybrid-mem verify` shows `search.hydeModel`. Run `openclaw hybrid-mem verify --test-llm` to confirm it is reachable.
-- Add fallback models to `llm.nano` or explicitly set `search.hydeModel` to a reliable model.
-- Set `search.hydeEnabled: false` to disable HyDE if you want zero per-turn LLM calls.
-- **Log noise:** You see at most one "HyDE generation failed" per turn. If the auto-recall vector step times out (30s), HyDE is aborted silently (only "vector step timed out, using FTS-only recall" appears).
+- **Fix:** Check which model is being used: `openclaw hybrid-mem verify` shows `queryExpansion.model` (or nano tier). Run `openclaw hybrid-mem verify --test-llm` to confirm it is reachable.
+- Add fallback models to `llm.nano` or explicitly set `queryExpansion.model` to a reliable model.
+- Set `queryExpansion.enabled: false` to disable query expansion if you want zero per-turn LLM calls.
+- **Log noise:** You see at most one "query expansion failed" (or legacy "HyDE generation failed") per turn. If the auto-recall vector step times out (30s), expansion is aborted silently (only "vector step timed out, using FTS-only recall" appears).
 
 ### 8. "400/404 model not found" from verify --test-llm
 

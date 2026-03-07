@@ -6,7 +6,7 @@ nav_order: 1
 ---
 # Quick Start — Hybrid Memory Plugin
 
-Get the memory-hybrid plugin running in 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md).
+Get an agent that **remembers you** and **gets better at giving the right context** over time — in about 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 

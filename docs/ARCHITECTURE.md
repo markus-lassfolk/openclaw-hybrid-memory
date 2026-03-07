@@ -29,11 +29,10 @@ Four components work together:
 
 ## Prerequisites (API keys and models)
 
-- **OpenAI API key (required).** The memory-hybrid plugin needs an OpenAI API key for embeddings. Without it, the plugin throws at config load and does not register.
+- **Embedding API key (required).** The memory-hybrid plugin needs an API key for embeddings (e.g. OpenAI). Without it, the plugin throws at config load and does not register.
   - **Embeddings:** Used for vector search (LanceDB), auto-recall, storing new facts, and CLI features (find-duplicates, consolidate). Default model: `text-embedding-3-small`.
-  - **Optional LLM features:** Auto-classify, summarize-when-over-budget, and consolidate use the same key with a **chat** model (default `gpt-4o-mini`).
-- **memorySearch** also needs an OpenAI embedding provider/model if enabled; typically the same key and model.
-- **No other embedding/LLM providers** are supported; there is no automatic failover.
+  - **LLM features:** Auto-classify, query expansion, summarize-when-over-budget, consolidation, distillation, and reflection use **chat** models. You can configure multiple providers and model tiers (`llm.nano`, `llm.default`, `llm.heavy`) with ordered fallback lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [CONFIGURATION.md](CONFIGURATION.md).
+- **memorySearch** (if enabled) uses the same embedding provider/model as memory-hybrid when configured.
 
 ---
 

@@ -9,7 +9,7 @@ nav_order: 4
 The hybrid-memory plugin uses **two kinds of model access**:
 
 1. **Embeddings** — turn text into vectors for semantic search (auto-recall, dedup, ingest).
-2. **Chat/completion** — distillation, reflection, classification, HyDE, self-correction, and other LLM-backed features.
+2. **Chat/completion** — distillation, reflection, classification, query expansion, self-correction, and other LLM-backed features.
 
 The plugin calls provider APIs **directly** using the API keys you configure — it does not route LLM calls through the OpenClaw gateway's agent pipeline. Embeddings always go directly to OpenAI.
 
@@ -20,7 +20,7 @@ The plugin calls provider APIs **directly** using the API keys you configure —
 | Requirement | Purpose |
 |-------------|---------|
 | **Embedding access** | Required. An OpenAI API key and embedding model (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config. |
-| **Chat/completion access** | Optional for basic memory (capture/recall). Required for: distillation, reflection, auto-classify, HyDE, self-correction, ingest-files, proposals, build-languages. |
+| **Chat/completion access** | Optional for basic memory (capture/recall). Required for: distillation, reflection, auto-classify, query expansion, self-correction, ingest-files, proposals, build-languages. |
 
 For full features you need at least one chat provider configured. The plugin works with any OpenAI-compatible API.
 
@@ -32,7 +32,7 @@ Every LLM feature belongs to one of three tiers. The tier determines which model
 
 | Tier | Features | Optimised for | Recommended models |
 |------|----------|---------------|-------------------|
-| **nano** | autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize | Cheapest — runs on **every** chat message or write | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
+| **nano** | autoClassify, query expansion, classifyBeforeWrite, auto-recall summarize | Cheapest — runs on **every** chat message or write | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
 | **default** | reflection, language keywords, general analysis | Balanced quality/cost | `gemini-2.5-flash`, `claude-sonnet-4-6`, `gpt-4.1` |
 | **heavy** | Session distillation, self-correction, persona proposals | Most capable; **long context critical** for distill | `gemini-3.1-pro-preview` (1024k), `claude-opus-4-6`, `o3` |
 
@@ -73,7 +73,7 @@ Set `llm.nano`, `llm.default`, and `llm.heavy` with ordered model lists. The plu
 
 | Key | Description |
 |-----|-------------|
-| `nano` | Ordered list for ultra-cheap ops (autoClassify, HyDE, classifyBeforeWrite, summarize). Falls back to `default[0]` when unset. |
+| `nano` | Ordered list for ultra-cheap ops (autoClassify, query expansion, classifyBeforeWrite, summarize). Falls back to `default[0]` when unset. |
 | `default` | Ordered list for default-tier features (reflection, language keywords, general analysis). |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
 | `providers` | Per-provider API config. Keys are provider prefixes from model IDs (`google`, `openai`, `anthropic`, etc.). See [Provider keys](#provider-api-keys) below. |

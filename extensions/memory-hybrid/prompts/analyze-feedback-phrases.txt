@@ -1,0 +1,20 @@
+You are analyzing chat logs to discover how this specific user expresses approval/praise vs frustration/correction when talking to an AI assistant.
+
+Below are USER messages only (one per line, prefixed with "User:") extracted from recent sessions. The same user may use different wording than generic lists (e.g. "nice one", "that's the stuff", "ugh not again", "why would you...").
+
+Your task: Identify short, reusable PHRASES or substrings that indicate:
+1. **Reinforcement (positive)** — the user is happy with what the assistant did (praise, thanks, approval).
+2. **Correction (negative)** — the user is unhappy, correcting, or frustrated (nudges, "wrong", "stop", disappointment).
+
+Rules:
+- Output ONLY a JSON object with two keys: "reinforcement" and "correction", each an array of strings.
+- Each string should be a lowercase phrase or substring that could match in other messages (e.g. "good job", "i give up", "why do you keep").
+- No duplicates. No markdown, no code fences, no explanation.
+- Prefer phrases that are clearly feedback (not generic chat). Skip one-off long sentences; prefer 1–6 word patterns.
+- If a user message is ambiguous (e.g. "ok" alone), you may omit it or put in reinforcement with low confidence—prefer clear signals.
+
+Example output:
+{"reinforcement":["good job","that's the stuff","nice one","thanks that worked"],"correction":["not that way","why would you","i give up","stop doing"]}
+
+User messages (one per line):
+{{user_messages}}

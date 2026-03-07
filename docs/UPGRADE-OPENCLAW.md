@@ -61,6 +61,29 @@ openclaw gateway start
 
 ---
 
+## Config and state directory (if config seems "lost" after upgrade)
+
+OpenClaw stores **config and state** in a **state directory**. After an OpenClaw (core) upgrade, config can appear "lost" if the new version looks in a different place.
+
+- **Default state dir:** `~/.openclaw/` — main config file is `openclaw.json` there.
+- **Overrides:** `OPENCLAW_STATE_DIR` or `--profile` can change the path (e.g. some profiles use `~/.openclaw-<name>/`).
+- **Legacy names:** Older installs used `clawdbot.json` / `moltbot.json` / `moldbot.json`. Newer OpenClaw uses `openclaw.json` in the state dir; when both exist, the core may prefer one and doctor can rename legacy files to `*.migrated`.
+
+**If your config or plugin settings seem missing after an OpenClaw upgrade:**
+
+1. **See where OpenClaw is looking:**  
+   `openclaw status` — check which state directory / profile is in use.
+2. **Run doctor (migrations + repair):**  
+   `openclaw doctor` — applies config migrations and can rename stale legacy configs.
+3. **Confirm config path:**  
+   Ensure `openclaw.json` exists in that state dir (e.g. `~/.openclaw/openclaw.json` if you use the default). If you had a backup or an old install, copy or merge your `openclaw.json` (and plugin entries) into that path.
+4. **Env/profile:**  
+   If you use `OPENCLAW_STATE_DIR` or a profile, run the gateway with the same env/profile so it uses the same state dir you migrated or edited.
+
+OpenClaw’s own docs: [Migrating OpenClaw](https://docs.openclaw.ai/install/migrating) and [Where does OpenClaw store its data?](https://docs.openclaw.ai/help/faq#where-does-openclaw-store-its-data).
+
+---
+
 ## After upgrading: verify
 
 1. Check logs for e.g. `memory-hybrid: initialized`.

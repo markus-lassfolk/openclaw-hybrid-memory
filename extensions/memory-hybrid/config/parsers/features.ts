@@ -223,6 +223,7 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
   const proposalsRaw = cfg.personaProposals as Record<string, unknown> | undefined;
   return {
     enabled: proposalsRaw?.enabled === true,
+    autoApply: proposalsRaw?.autoApply === true,
     allowedFiles: (() => {
       if (!Array.isArray(proposalsRaw?.allowedFiles)) {
         return [...IDENTITY_FILE_TYPES];

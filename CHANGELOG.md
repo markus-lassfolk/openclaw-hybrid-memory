@@ -15,15 +15,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.3.70] - 2026-03-07
+## [2026.3.71] - 2026-03-07
 
-Major release: Hybrid Memory redesign (Milestones A, B, C), CI/CD automation with NPM Trusted Publishing, search/config improvements, and quality fixes.
+Documentation and UX: benefits-first messaging, multilingual, and analyze-feedback-phrases improvements.
 
 ### Added
 
-- **Milestone A — Complete Hybrid Memory Redesign (#198):** Memory-first architecture with 18 features: dynamic memory tiering (hot/warm/cold) with configurable `memoryTiering.hotMaxTokens`, `compactionOnSessionEnd`, `inactivePreferenceDays`, and `hotMaxFacts`; multi-agent scoping with `multiAgent.orchestratorId` and `defaultStoreScope` (global/agent/auto); runtime agent detection for auto-scoped facts; retrieval and storage integrated with tiering and scope filters; preset alignment (normal/expert/full) for tiering and ingest; workflow integration hooks for session start/end and compaction.
-- **Milestone B — Memory-first features (#221):** Enhanced auto-recall with retrieval directives (`autoRecall.retrievalDirectives`): entity-mentioned recall, keyword triggers, task-type triggers, optional session-start recall; configurable `limit`, `maxPerPrompt`; entity lookup and directive recall merged into injection pipeline; agent-scoped memory and scope filtering in recall so specialists see only relevant scoped facts.
-- **Milestone C — Workflow crystallization and self-extension (#208, #209, #210):** (1) **Workflow store & tool-sequence tracking:** Session tool sequences recorded and grouped into patterns with success rates. Tool `memory_workflows`: query patterns by goal (keyword-matched), filter by `minSuccessRate`, optional `limit`. (2) **Crystallization tools:** `memory_crystallize` analyses workflow patterns and generates pending AgentSkill SKILL.md proposals (human approval required); `memory_crystallize_list` / `memory_crystallize_approve` / `memory_crystallize_reject` list and approve/reject; approved proposals write skills to disk. (3) **Self-extension tools:** `memory_propose_tool` runs gap analysis on workflow traces to detect recurring workarounds and generates tool proposals; `memory_tool_proposals` / `memory_tool_approve` / `memory_tool_reject`; requires `selfExtension.enabled: true`; config supports `minFrequency`, `minToolSavings`.
+- **README "Why you'll want this":** Plain-English benefits section (short- and long-term), bullets for remembers you, recalls the right stuff, learns from reactions, gets more personal, multilingual. Technical comparison table under "Why use this? (under the hood)". Documentation table links to new section.
+- **Multilingual callout:** README and benefits now state that the plugin works in your language and adapts (build-languages, feedback-phrase learning).
+- **analyze-feedback-phrases sentiment pre-filter:** Messages already matching reinforcement/correction regexes are skipped. Remaining messages are labeled by a nano-tier model (positive_feedback / negative_feedback / neutral); only positive/negative go to the heavy-tier phrase extractor. If none remain, heavy call is skipped. Model-agnostic (nano + heavy from config).
+- **analyze-feedback-phrases 30/3-day window:** When `--days` is omitted, first run (or no `.user-feedback-phrases.json`) uses 30 days; subsequent runs use 3 days. `UserFeedbackPhrases.initialRunDone` persisted on `--learn`.
+
+### Changed
+
+- **QUICKSTART, FEATURES, HOW-IT-WORKS, FAQ:** Benefits-first intros and links to README "Why you'll want this".
+- **CLI-REFERENCE, SELF-CORRECTION-PIPELINE:** analyze-feedback-phrases documented with nano pre-filter, auto 30/3 days, model-agnostic.
+
+---
+
+## [2026.3.70] - 2026-03-07
+
+Major release: Hybrid Memory redesign, CI/CD automation with NPM Trusted Publishing, search/config improvements, and quality fixes.
+
+### Added
+
+- **Complete Hybrid Memory Redesign (#198):** Memory-first architecture with 18 features: dynamic memory tiering (hot/warm/cold) with configurable `memoryTiering.hotMaxTokens`, `compactionOnSessionEnd`, `inactivePreferenceDays`, and `hotMaxFacts`; multi-agent scoping with `multiAgent.orchestratorId` and `defaultStoreScope` (global/agent/auto); runtime agent detection for auto-scoped facts; retrieval and storage integrated with tiering and scope filters; preset alignment (normal/expert/full) for tiering and ingest; workflow integration hooks for session start/end and compaction.
+- **Memory-first auto-recall features (#221):** Enhanced auto-recall with retrieval directives (`autoRecall.retrievalDirectives`): entity-mentioned recall, keyword triggers, task-type triggers, optional session-start recall; configurable `limit`, `maxPerPrompt`; entity lookup and directive recall merged into injection pipeline; agent-scoped memory and scope filtering in recall so specialists see only relevant scoped facts.
+- **Workflow crystallization and self-extension (#208, #209, #210):** (1) **Workflow store & tool-sequence tracking:** Session tool sequences recorded and grouped into patterns with success rates. Tool `memory_workflows`: query patterns by goal (keyword-matched), filter by `minSuccessRate`, optional `limit`. (2) **Crystallization tools:** `memory_crystallize` analyses workflow patterns and generates pending AgentSkill SKILL.md proposals (human approval required); `memory_crystallize_list` / `memory_crystallize_approve` / `memory_crystallize_reject` list and approve/reject; approved proposals write skills to disk. (3) **Self-extension tools:** `memory_propose_tool` runs gap analysis on workflow traces to detect recurring workarounds and generates tool proposals; `memory_tool_proposals` / `memory_tool_approve` / `memory_tool_reject`; requires `selfExtension.enabled: true`; config supports `minFrequency`, `minToolSavings`.
 - **Scope promote CLI (#134):** Subcommand `openclaw hybrid-mem scope promote` promotes high-importance session-scoped facts to global scope. Options: `--dry-run`, `--threshold-days <n>` (default 7), `--min-importance <n>` (default 0.7). Uses `findSessionFactsForPromotion` then `promoteScope(id, "global", null)`. Integrated into weekly-deep-maintenance cron (Saturday 04:00): compact then scope promote.
 - **CI/CD:** CI workflow (typecheck Node 22/24, lint, test, coverage); PR checks; release workflow (tag `v*` or manual dispatch → CI, GitHub Release, then NPM publish for `openclaw-hybrid-memory` and `openclaw-hybrid-memory-install`). Version from tag; main package runs `verify:publish` before publish. **NPM Trusted Publishing:** OIDC only (no `NPM_TOKEN`); `id-token: write` per publish job; configure Trusted Publisher on npmjs.com for workflow `release.yml` for both packages; MFA can stay enabled.
 - **Security & quality:** CodeQL workflow; Dependabot config; branch protection recommendations; labeler workflow for PRs (`.github/labeler.yml`).

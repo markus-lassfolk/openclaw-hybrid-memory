@@ -481,7 +481,7 @@ describe("extractMultiPass", () => {
 
 describe("ExtractionConfig parsing", () => {
   it("defaults to extractionPasses=false and verificationPass=false", () => {
-    const cfg = hybridConfigSchema.parse(BASE_CONFIG);
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "normal" });
     expect(cfg.extraction.extractionPasses).toBe(false);
     expect(cfg.extraction.verificationPass).toBe(false);
     expect(cfg.extraction.extractionModel).toBeUndefined();

@@ -1,6 +1,6 @@
 # Configuration Modes
 
-You can set a **mode** in plugin config to apply a preset of feature toggles. Modes make it easier to choose a safe default and then override only what you need.
+You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `full`** — everything enabled for the best experience. Set `essential` or `normal` only if you want to reduce API cost or run on low-resource hardware.
 
 ```json
 {
@@ -8,7 +8,7 @@ You can set a **mode** in plugin config to apply a preset of feature toggles. Mo
     "entries": {
       "openclaw-hybrid-memory": {
         "config": {
-          "mode": "normal",
+          "mode": "full",
           "embedding": { "apiKey": "env:OPENAI_API_KEY", "model": "text-embedding-3-small" }
         }
       }
@@ -17,7 +17,7 @@ You can set a **mode** in plugin config to apply a preset of feature toggles. Mo
 }
 ```
 
-Valid values: **`essential`** | **`normal`** | **`expert`** | **`full`**. If you change any feature away from the preset, the effective mode is reported as **Custom** in `openclaw hybrid-mem verify`.
+Valid values: **`essential`** | **`normal`** | **`expert`** | **`full`**. Default when omitted: **`full`**. If you change any feature away from the preset, the effective mode is reported as **Custom** in `openclaw hybrid-mem verify`.
 
 ---
 
@@ -25,11 +25,13 @@ Valid values: **`essential`** | **`normal`** | **`expert`** | **`full`**. If you
 
 | Mode | Best for | Description |
 |------|----------|--------------|
-| **Essential** | Raspberry Pi, low-resource hosts, minimal API cost | Only core memory: auto-capture and auto-recall. No classification, no graph, no procedures, no reflection. Credentials vault off. WAL on for safety. Keeps CPU, memory, and LLM calls to a minimum. |
-| **Normal** | Most users | Balanced defaults: capture, recall, auto-classify (cheap model), graph and procedures on, reflection off. Credentials vault **off** unless you set an encryption key (opt-in). No credential capture from tool I/O. Good mix of capability and cost. |
-| **Expert** | Power users who want most features | Like Normal plus: reflection, persona proposals, memory tiering, self-correction, entity lookup, auth-failure recall. **Credentials vault on** when you set `credentials.encryptionKey` (or env). **Credential capture from tool I/O on** when vault is enabled — scans tool call inputs and stores detected secrets in the vault. Classify-before-write and fuzzy dedupe on. |
-| **Full** | Maximum capability, dev or high-resource | Everything enabled: all of Expert plus HyDE search, ingest, distill directives/reinforcement, error reporting if configured. **Credentials vault and credential tool I/O capture on** when vault is enabled. Highest API and compute use. |
-| **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one toggle). No preset is applied; your explicit settings are used. |
+| **Full** | **Default — best experience** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
+| **Expert** | Like Full with slightly less | Same as Full but no query expansion, no ingest paths, no nightly dream-cycle / passive observer / crystallization / self-extension. Good if you want most features but want to trim a few. |
+| **Normal** | Lower cost or simpler setup | Balanced: capture, recall, auto-classify, graph, procedures; no reflection, no persona proposals, no credential capture from tool I/O. Credentials vault off unless you set an encryption key. |
+| **Essential** | Raspberry Pi, minimal API cost | Only core memory: auto-capture and auto-recall. No classification, graph, procedures, or reflection. Keeps CPU, memory, and LLM calls to a minimum. |
+| **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one toggle). Your explicit settings are used. |
+
+To reduce API or compute usage, set `"mode": "normal"` or `"mode": "essential"` in your plugin config.
 
 ---
 
@@ -87,6 +89,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | wal | ✓ | ✓ | ✓ | ✓ |
 | languageKeywords.autoBuild | — | ✓ | ✓ | ✓ |
 | personaProposals | — | — | ✓ | ✓ |
+| personaProposals.autoApply | — | — | — | — |
 | memoryTiering | — | ✓ | ✓ | ✓ |
 | memoryTiering.compactionOnSessionEnd | — | ✓ | ✓ | ✓ |
 | selfCorrection | — | — | ✓ | ✓ |
@@ -94,16 +97,26 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | selfCorrection.applyToolsByDefault | — | — | ✓ | ✓ |
 | autoRecall.entityLookup | — | — | ✓ | ✓ |
 | autoRecall.authFailure | — | ✓ | ✓ | ✓ |
-| search.hydeEnabled | — | — | — | ✓ |
+| queryExpansion.enabled | — | — | — | ✓ |
 | ingest (paths) | — | — | — | ✓ |
 | distill.extractDirectives | ✓ | ✓ | ✓ | ✓ |
 | distill.extractReinforcement | — | ✓ | ✓ | ✓ |
 | errorReporting | — | — | opt | opt |
+| **Advanced / opt-in** |
+| workflowTracking | — | — | ✓ | ✓ |
+| nightlyCycle (dream-cycle) | — | — | ✓ | ✓ |
+| passiveObserver | — | — | ✓ | ✓ |
+| extraction (multi-pass) | — | — | ✓ | ✓ |
+| selfExtension (tool proposals) | — | — | ✓ | ✓ |
+| crystallization (skill proposals) | — | — | ✓ | ✓ |
 
 **Notes:**
 
 - **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Expert/Full, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
+- **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default; enabling it bypasses the usual safety guarantee that identity files are never modified by the agent automatically.
 - **Normal** keeps current product defaults (e.g. graph on, procedures on, reflection off). Essential strips down for low-resource; Expert/Full add reflection, self-correction, and credential capture.
+- **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization) are **off** for Essential and Normal; **Expert** and **Full** enable them by preset. Users on Essential/Normal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
+- **personaProposals.autoApply** is `false` in **all** presets including Expert and Full — it is never set automatically. Enable it only if you want the agent to modify identity files (SOUL.md, IDENTITY.md, USER.md) without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
 
 ---
 

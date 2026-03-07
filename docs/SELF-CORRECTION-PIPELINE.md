@@ -13,6 +13,42 @@ So for full multi-language support: run `build-languages`, then use the self-cor
 
 ---
 
+## Emoji as signals
+
+User messages that contain **emoji** are treated as implicit feedback and feed into both pipelines:
+
+- **Negative emoji** (e.g. 👎 😠 😤 💩 🙁 😞 😒) — Treated as **correction signals**. A message containing one of these (alone or with text) is picked up by **self-correction-extract**. If you add a follow-up message explaining what was wrong, the analyzer gets both: the emoji shows you were unhappy, and the next message shows what to fix. Useful when you react with a thumbs-down or angry face and then type “the command should use --dry-run first”.
+- **Positive emoji** (e.g. 👍 ❤️ 😊 😄 🔥 ⭐ ✨) — Treated as **reinforcement (enforcer)**. A message containing one of these is picked up by **extract-reinforcement** and used to reinforce the preceding assistant turn (e.g. boost confidence on recalled facts or procedures). A lone “👍” or “❤️” after a good answer is enough to signal “I liked that” and strengthen the associated behavior in memory.
+
+Emoji are **language-agnostic** and are always included in detection; no need to add them to `.language-keywords.json`. The same rate limits, confidence thresholds, and remediation caps apply.
+
+For a short user-facing overview of how your replies and emoji feed into reinforcement and correction, see [FAQ — How does the agent learn from my reactions?](FAQ.md#how-does-the-agent-learn-from-my-reactions-replies-and-emoji).
+
+---
+
+## Learning your feedback wording (user-specific phrases)
+
+Different users express praise and frustration differently. The plugin can **learn your wording** from session logs in a **model-agnostic** way (nano-tier and heavy-tier from your plugin config):
+
+1. **Pre-filter:** Messages that already match reinforcement/correction phrases are skipped. A **nano-tier** model labels the rest as positive/negative/neutral feedback.
+2. **Phrase extraction:** Only positive/negative messages are sent to a **heavy-tier** model to extract candidate phrases.
+3. **Window:** Omitting `--days` uses **30 days** the first time (or when no `.user-feedback-phrases.json` exists), then **3 days** on later runs—suitable for a weekly nightly.
+
+```bash
+# Auto window (30 days first run, 3 days after); models from config
+openclaw hybrid-mem analyze-feedback-phrases
+
+# Optional: override window or model
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model <heavy-model>
+
+# Merge discovered phrases into .user-feedback-phrases.json (used by detection from then on)
+openclaw hybrid-mem analyze-feedback-phrases --learn
+```
+
+Discovered phrases are saved under `~/.openclaw/memory/.user-feedback-phrases.json` and are **merged** with the built-in correction and reinforcement lists when building the detection regexes. So after you run with `--learn`, both self-correction extract and reinforcement extract will match your (and anyone else on the same install’s) typical phrases. Run it periodically (e.g. in a weekly nightly) to keep the list up to date.
+
+---
+
 ## Commands
 
 ### 1. Extract incidents (Phase 1)
@@ -171,4 +207,5 @@ Adjust `--days` and paths as needed. The report is still written to `memory/repo
 
 - [GitHub issue #34: Nightly Self-Correction Analysis](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/34)
 - **build-languages**: [CLI reference](CLI-REFERENCE.md) — run first for non-English correction detection.
+- **Reinforcement (positive signals)**: `openclaw hybrid-mem extract-reinforcement` — uses praise phrases and **positive emoji** (👍 ❤️ etc.) to reinforce facts and procedures; see cron job `extract-reinforcement` and [CLI-REFERENCE.md](CLI-REFERENCE.md).
 - **Session distillation**: [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — separate pipeline (fact extraction from sessions).

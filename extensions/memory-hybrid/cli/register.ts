@@ -37,6 +37,7 @@ import type {
   DistillCliSink,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
+  AnalyzeFeedbackPhrasesResult,
   MigrateToVaultResult,
   CredentialsAuditResult,
   CredentialsPruneResult,
@@ -65,6 +66,7 @@ export type {
   DistillCliSink,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
+  AnalyzeFeedbackPhrasesResult,
   MigrateToVaultResult,
   CredentialsAuditResult,
   CredentialsPruneResult,
@@ -153,6 +155,7 @@ export type HybridMemCliContext = {
     approve?: boolean;
     noApplyTools?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
+  runAnalyzeFeedbackPhrases: (opts: { days?: number; model?: string; outputPath?: string; learn?: boolean }) => Promise<AnalyzeFeedbackPhrasesResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;

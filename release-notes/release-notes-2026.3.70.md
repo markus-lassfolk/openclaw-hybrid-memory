@@ -1,14 +1,14 @@
 ## 2026.3.70 (2026-03-07)
 
-Major release: Hybrid Memory redesign (Milestones A, B, C), CI/CD with automatic NPM publishing via Trusted Publishing, search/config improvements, and quality fixes.
+Major release: Hybrid Memory redesign (dynamic tiering, multi-agent scoping, retrieval directives, workflow crystallization and self-extension), CI/CD with automatic NPM publishing via Trusted Publishing, search/config improvements, and quality fixes.
 
 ---
 
 ### What’s in this release
 
-- **Memory-first redesign (Milestone A)** — Dynamic tiering, multi-agent scoping, and workflow hooks.
-- **Smarter recall (Milestone B)** — Retrieval directives, entity/keyword/task-type triggers, and agent-scoped memory.
-- **Workflow crystallization & self-extension (Milestone C)** — Tool-sequence patterns, skill proposals, and tool proposals from usage gaps.
+- **Memory-first redesign** — Dynamic tiering (hot/warm/cold), multi-agent scoping, and workflow hooks.
+- **Smarter recall** — Retrieval directives, entity/keyword/task-type triggers, and agent-scoped memory.
+- **Workflow crystallization & self-extension** — Tool-sequence patterns, skill proposals, and tool proposals from usage gaps.
 - **Scope promote** — New CLI to promote important session facts to long-term (global) memory.
 - **CI/CD** — Full GitHub Actions pipeline and automatic NPM publish for both packages (Trusted Publishing, no tokens).
 - **Config cleanup** — queryExpansion replaces deprecated HyDE options; error reporting defaults to opt-out.
@@ -17,13 +17,13 @@ Major release: Hybrid Memory redesign (Milestones A, B, C), CI/CD with automatic
 
 ### Added (details)
 
-#### Milestone A — Complete Hybrid Memory Redesign (#198)
+#### Memory-first redesign — tiering and multi-agent scoping (#198)
 
 - **Dynamic memory tiering (hot/warm/cold):** Facts are tiered by recency and access. Config: `memoryTiering.enabled`, `hotMaxTokens` (default 2000), `compactionOnSessionEnd` (default true), `inactivePreferenceDays` (default 7), `hotMaxFacts` (default 50). Presets *normal*, *expert*, and *full* enable tiering with sensible defaults.
 - **Multi-agent scoping:** Facts can be stored as global, user-, agent-, or session-scoped. Config: `multiAgent.orchestratorId` (default `"main"`), `multiAgent.defaultStoreScope` (`global` | `agent` | `auto`). With `auto`, the orchestrator stores globally and specialists store per-agent. Runtime agent ID is detected from context so the right scope is applied automatically.
 - **Workflow integration:** Session start/end and compaction hooks use tiering and scope so recall and storage stay consistent with the new model.
 
-#### Milestone B — Memory-first features (#221)
+#### Smarter recall — retrieval directives and agent-scoped memory (#221)
 
 - **Retrieval directives:** Besides semantic auto-recall, you can trigger targeted recall by:
   - **Entity mentioned:** When the prompt mentions an entity from a list, run a targeted recall for that entity.
@@ -33,7 +33,7 @@ Major release: Hybrid Memory redesign (Milestones A, B, C), CI/CD with automatic
   Config: `autoRecall.retrievalDirectives` with `enabled`, `entityMentioned`, `keywords`, `taskTypes`, `sessionStart`, `limit` (default 3), `maxPerPrompt` (default 4).
 - **Agent-scoped memory:** Recall and injection respect scope filters so specialist agents see only facts relevant to their scope (and global facts).
 
-#### Milestone C — Workflow crystallization and self-extension (#208, #209, #210)
+#### Workflow crystallization and self-extension (#208, #209, #210)
 
 - **Tool-sequence tracking:** The plugin records which tool sequences are used and how often they succeed. Patterns are grouped by similar sequences with success rates and usage counts.
 - **`memory_workflows` tool:** The agent can query these patterns by a natural-language goal (keyword-matched). Options: `goal`, `minSuccessRate` (0–1), `limit`. Returns patterns grouped by similar tool sequences so the agent can reuse what works.

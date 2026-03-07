@@ -488,6 +488,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      mode: "normal",
     });
     expect(cfg.passiveObserver.enabled).toBe(false);
     expect(cfg.passiveObserver.intervalMinutes).toBe(15);

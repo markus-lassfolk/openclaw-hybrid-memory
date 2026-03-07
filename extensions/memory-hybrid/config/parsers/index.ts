@@ -142,22 +142,29 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let cfg = value as Record<string, unknown>;
   const modeRaw = cfg.mode;
   const validModes: ConfigMode[] = ["essential", "normal", "expert", "full"];
-  let appliedMode: ConfigMode | undefined;
+  const defaultMode: ConfigMode = "full"; // best experience out of the box; use essential/normal for low-resource or cost-conscious setups
+  // Fail fast on typos/invalid modes rather than silently applying full preset
+  if (typeof modeRaw === "string" && modeRaw.trim() !== "" && !validModes.includes(modeRaw as ConfigMode)) {
+    throw new Error(`memory-hybrid config: invalid mode "${modeRaw}"; expected one of: ${validModes.join(", ")}`);
+  }
+  // Resolve the mode to apply: use the specified valid mode or fall back to default
+  const appliedMode: ConfigMode =
+    typeof modeRaw === "string" && validModes.includes(modeRaw as ConfigMode)
+      ? (modeRaw as ConfigMode)
+      : defaultMode;
   let hasPresetOverrides = false; // true when user explicitly overrode a preset value (show "Custom" in verify)
-  if (typeof modeRaw === "string" && validModes.includes(modeRaw as ConfigMode)) {
-    appliedMode = modeRaw as ConfigMode;
-    const preset = PRESET_OVERRIDES[appliedMode];
-    const userRaw = { ...cfg } as Record<string, unknown>;
-    delete userRaw.mode;
-    cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
-    delete cfg.mode;
-    // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
-    for (const key of Object.keys(preset)) {
-      if (!(key in userRaw)) continue;
-      if (userOverridesPresetValue(userRaw[key], preset[key])) {
-        hasPresetOverrides = true;
-        break;
-      }
+  // Apply preset for resolved mode (covers both explicit mode and default-mode paths, eliminating duplication)
+  const preset = PRESET_OVERRIDES[appliedMode];
+  const userRaw = { ...cfg } as Record<string, unknown>;
+  delete userRaw.mode;
+  cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
+  delete cfg.mode;
+  // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
+  for (const key of Object.keys(preset)) {
+    if (!(key in userRaw)) continue;
+    if (userOverridesPresetValue(userRaw[key], preset[key])) {
+      hasPresetOverrides = true;
+      break;
     }
   }
 

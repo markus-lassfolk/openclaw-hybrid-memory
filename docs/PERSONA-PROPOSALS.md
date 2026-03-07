@@ -6,7 +6,7 @@ nav_order: 12
 ---
 # Persona Proposals
 
-**Agent self-evolution with human approval** — the agent can propose changes to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns; a human reviews and approves or rejects via CLI. No identity file is ever modified by the agent automatically.
+**Agent self-evolution with human approval** — the agent can propose changes to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns. By default a human reviews and approves or rejects via CLI; optionally you can enable **automatic handling** so proposals are applied without human review.
 
 ---
 
@@ -17,10 +17,12 @@ When persona proposals are enabled, the agent gets two tools:
 - **`persona_propose`** — Submit a proposed change to an identity file (title, observation, suggested text, confidence, evidence sessions).
 - **`persona_proposals_list`** — List proposals filtered by status or target file.
 
-Proposals are stored in a separate SQLite database (`proposals.db` next to `facts.db`). Only **human-only CLI commands** can approve, reject, or apply proposals:
+Proposals are stored in a separate SQLite database (`proposals.db` next to `facts.db`). **Human-only CLI commands** can approve, reject, or apply proposals:
 
 - `openclaw proposals review <id> <approve|reject>`
 - `openclaw proposals apply <id>` — Writes the suggested change into the target file (only for proposals that are already **approved**).
+
+If **`personaProposals.autoApply`** is enabled, proposals that pass validation are **approved and applied automatically** (no human review). See [Automatic handling (opt-in)](#automatic-handling-opt-in) below.
 
 Safety is enforced by: allowed-file allowlist, rate limit (e.g. 5/week), minimum confidence and evidence, optional expiry, and a full audit trail.
 
@@ -38,7 +40,7 @@ Add to the plugin config in `openclaw.json`:
 }
 ```
 
-All other options are optional and have defaults (see [Configuration](#configuration) below).
+To allow the agent to apply proposals **without human review**, set `autoApply: true` (see [Automatic handling (opt-in)](#automatic-handling-opt-in)). All other options are optional and have defaults (see [Configuration](#configuration) below).
 
 ---
 
@@ -63,7 +65,7 @@ Proposes a change to one of the allowed identity files.
 - Confidence ≥ `minConfidence`.
 - `evidenceSessions.length` ≥ `minSessionEvidence`.
 
-On success, the proposal is stored with status `pending` and an expiry (if `proposalTTLDays` &gt; 0). The agent is told the proposal ID and that it awaits human review.
+On success, the proposal is stored with status `pending` and an expiry (if `proposalTTLDays` &gt; 0). If **`autoApply`** is enabled, the proposal is then approved and applied immediately; otherwise the agent is told the proposal ID and that it awaits human review.
 
 ### persona_proposals_list
 
@@ -113,6 +115,7 @@ If the target file is missing or write fails, an error is printed and the propos
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `false` | Turn persona proposals on. |
+| `autoApply` | `false` | When `true`, proposals that pass validation are approved and applied automatically (no human review). **Use with care:** the agent can modify identity files. |
 | `allowedFiles` | `["SOUL.md", "IDENTITY.md", "USER.md"]` | Only these identity files can be modified by proposals. |
 | `maxProposalsPerWeek` | `5` | Rate limit: max new proposals in a rolling 7-day window. |
 | `minConfidence` | `0.7` | Minimum confidence (0–1) for the agent to submit a proposal. |
@@ -123,9 +126,19 @@ See [CONFIGURATION.md](CONFIGURATION.md) for where to put these in `openclaw.jso
 
 ---
 
+## Automatic handling (opt-in)
+
+Set **`personaProposals.autoApply: true`** to allow the agent to apply proposals to identity files **without human review**. When a proposal is created and passes all checks (rate limit, confidence, evidence), it is immediately marked approved and written to the target file (with backup and audit log).
+
+**When to use:** Useful for fully autonomous agents or dev environments where you trust the agent to evolve SOUL.md, IDENTITY.md, or USER.md. Rate limits, min confidence, and min evidence still apply.
+
+**Risks:** The agent can append or (with high-enough confidence) replace content in identity files. Only enable if you are comfortable with automatic changes. You can still inspect the audit trail under the memory directory (`decisions/proposal-<id>.jsonl`) and use backups (`.backup-<timestamp>`) if something goes wrong.
+
+---
+
 ## Safety and behaviour
 
-- **No auto-apply.** Identity files are only changed when a human runs `openclaw proposals apply`.
+- **No auto-apply by default.** Identity files are only changed when a human runs `openclaw proposals apply`, or when `autoApply` is enabled (proposals are then applied immediately after creation).
 - **Allowlist.** Only filenames in `allowedFiles` are accepted; path traversal in `targetFile` is rejected.
 - **Rate limit.** `persona_propose` fails when the 7-day proposal count would exceed `maxProposalsPerWeek`.
 - **Evidence and confidence.** Proposals below `minConfidence` or with fewer than `minSessionEvidence` references are rejected.

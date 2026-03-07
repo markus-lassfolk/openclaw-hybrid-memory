@@ -13,6 +13,7 @@ import { PROPOSAL_STATUSES, type HybridMemoryConfig } from "../config.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { applyApprovedProposal } from "../cli/proposals.js";
 
 export interface PluginContext {
   proposalsDb?: ProposalsDB;
@@ -79,7 +80,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
       name: "persona_propose",
       label: "Propose Persona Change",
       description:
-        "Propose a change to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns. Requires human approval before applying. Rate-limited to prevent spam.",
+        "Propose a change to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns. By default requires human approval; if personaProposals.autoApply is enabled, proposals are applied automatically. Rate-limited to prevent spam.",
       parameters: Type.Object({
         targetFile: stringEnum(cfg.personaProposals.allowedFiles),
         title: Type.String({
@@ -253,6 +254,47 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         }, api.logger);
 
         api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
+
+        if (cfg.personaProposals.autoApply) {
+          proposalsDb!.updateStatus(proposal.id, "approved", "auto");
+          await auditProposal("approved", proposal.id, {
+            reviewedBy: "auto",
+            previousStatus: "pending",
+            newStatus: "approved",
+            reason: "autoApply",
+          }, api.logger);
+          const applyCtx = {
+            proposalsDb: proposalsDb!,
+            cfg,
+            resolvedSqlitePath,
+            api: { logger: api.logger },
+          };
+          const applyResult = await applyApprovedProposal(applyCtx, proposal.id);
+          if (applyResult.ok) {
+            api.logger.info(`memory-hybrid: persona proposal auto-applied — ${proposal.id} → ${applyResult.targetFile}`);
+            const changePreview = applyResult.suggestedChange.length > 500
+              ? applyResult.suggestedChange.slice(0, 500) + "…"
+              : applyResult.suggestedChange;
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Proposal ${proposal.id} created and automatically applied to ${applyResult.targetFile}.\nTitle: ${title}\nBackup: ${applyResult.backupPath}\n\nChange applied (truncated to 500 chars):\n${changePreview}`,
+                },
+              ],
+              details: { proposalId: proposal.id, status: "applied", targetFile: applyResult.targetFile, backupPath: applyResult.backupPath },
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Proposal ${proposal.id} was approved automatically but applying to the file failed: ${applyResult.error}\n\nYou can run \`openclaw proposals apply ${proposal.id}\` after fixing the issue.`,
+              },
+            ],
+            details: { proposalId: proposal.id, status: "approved", applyError: applyResult.error },
+          };
+        }
 
         return {
           content: [

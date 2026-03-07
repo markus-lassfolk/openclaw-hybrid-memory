@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.02.271",
+  "version": "2026.3.71",
   "uiHints": {
     "embedding.apiKey": {
       "label": "OpenAI API Key",
@@ -261,6 +261,10 @@
       "label": "Persona Proposals",
       "help": "Opt-in agent self-evolution: agents can propose changes to identity files (SOUL.md, IDENTITY.md, USER.md) with human approval gate (default: disabled)"
     },
+    "personaProposals.autoApply": {
+      "label": "Auto-apply persona proposals",
+      "help": "When true, approved proposals are applied to identity files automatically without human review (default: false). Only enable if you trust the agent to modify SOUL.md, IDENTITY.md, USER.md."
+    },
     "personaProposals.allowedFiles": {
       "label": "Allowed identity files",
       "help": "Identity files that can be modified via proposals (default: all three)"
@@ -336,8 +340,8 @@
     },
     "distill.defaultModel": {
       "label": "Distill default model",
-      "placeholder": "gemini-3-pro-preview",
-      "help": "Default LLM for hybrid-mem distill (recommended: gemini-3-pro-preview for 1M context and token I/O)"
+      "placeholder": "gemini-3.1-pro-preview",
+      "help": "Default LLM for hybrid-mem distill (recommended: gemini-3.1-pro-preview for 1M context and token I/O)"
     },
     "languageKeywords.autoBuild": {
       "label": "Multi-language auto-build",
@@ -394,11 +398,11 @@
     },
     "selfExtension.enabled": {
       "label": "Self-extension (tool proposals)",
-      "help": "Generate tool proposals from usage-pattern gaps (Milestone C). Requires workflow tracking. Default: false."
+      "help": "Generate tool proposals from usage-pattern gaps. Requires workflow tracking. Default: false."
     },
     "crystallization.enabled": {
       "label": "Crystallization (skill proposals)",
-      "help": "Generate AgentSkill SKILL.md proposals from workflow patterns (Milestone C). Default: false."
+      "help": "Generate AgentSkill SKILL.md proposals from workflow patterns. Default: false."
     },
     "multiAgent.orchestratorId": {
       "label": "Orchestrator Agent ID",
@@ -743,7 +747,7 @@
           },
           "defaultModel": {
             "type": "string",
-            "description": "Default model for distill (recommended: gemini-3-pro-preview)"
+            "description": "Default model for distill (recommended: gemini-3.1-pro-preview)"
           },
           "extractDirectives": {
             "type": "boolean",
@@ -833,6 +837,10 @@
           "enabled": {
             "type": "boolean",
             "description": "Enable agent self-evolution via gated persona proposals (default: false)"
+          },
+          "autoApply": {
+            "type": "boolean",
+            "description": "When true, proposals are applied automatically without human review (default: false)"
           },
           "allowedFiles": {
             "type": "array",

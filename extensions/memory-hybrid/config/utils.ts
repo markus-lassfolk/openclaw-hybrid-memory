@@ -78,6 +78,13 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       analyzeViaSpawn: false,
     },
     distill: { extractDirectives: true, extractReinforcement: true },
+    // Dream-cycle, passive observer, multi-pass extraction, workflow tracking, tool/skill proposals
+    nightlyCycle: { enabled: true },
+    passiveObserver: { enabled: true },
+    extraction: { extractionPasses: true },
+    workflowTracking: { enabled: true },
+    selfExtension: { enabled: true },
+    crystallization: { enabled: true },
   },
   full: {
     autoCapture: true,
@@ -104,5 +111,12 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     queryExpansion: { enabled: true },
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true },
+    // Same as expert: dream-cycle, passive observer, multi-pass extraction, workflow, tool/skill proposals
+    nightlyCycle: { enabled: true },
+    passiveObserver: { enabled: true },
+    extraction: { extractionPasses: true },
+    workflowTracking: { enabled: true },
+    selfExtension: { enabled: true },
+    crystallization: { enabled: true },
   },
 };

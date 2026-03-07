@@ -6,6 +6,8 @@ nav_order: 9
 ---
 # Frequently Asked Questions
 
+Quick answers to common questions. For **why** you’d want this plugin and what benefits you get (short- and long-term), see the [README § Why you'll want this](../README.md#why-youll-want-this--in-plain-english).
+
 ---
 
 ### Can I use Claude or Gemini instead of OpenAI?
@@ -71,14 +73,20 @@ The system degrades gracefully. Fix the key and restart to restore full function
 
 ### Can I delete a specific memory?
 
-**Agent tool:** `memory_forget(id: "fact-id")` — removes a fact from both SQLite and LanceDB.
+**Agent tool:** `memory_forget(id: "fact-id")` or `memory_forget(query: "…")` — removes a fact from both SQLite and LanceDB.
 
-**CLI:** There's no direct delete command, but you can find the fact first:
+**CLI:** Find the fact, then remove it by ID:
 
 ```bash
+# Find the memory (note the id in the results)
 openclaw hybrid-mem search "the fact I want to remove"
-# Note the id from the results, then use the agent tool to forget it
+
+# Remove by full ID or short hex prefix (use --yes to skip confirmation)
+openclaw hybrid-mem forget <id>
+openclaw hybrid-mem forget <id> --yes
 ```
+
+`forget` accepts a full UUID or a short hex prefix (e.g. `a1b2c3d4`). Without `--yes`, it prints a preview and exits; run again with `--yes` to confirm.
 
 ---
 
@@ -157,6 +165,39 @@ The plugin supports **supersession** — new facts can explicitly supersede old 
 | **Size** | One fact/sentence | Any size |
 
 See [EXAMPLES.md](EXAMPLES.md) for detailed guidance.
+
+---
+
+### How does the agent learn from my reactions (replies and emoji)?
+
+The plugin treats your **replies** as implicit feedback and uses them in two pipelines:
+
+- **Positive signals (reinforcement)** — When you say you liked something or react with approval, that response is used to **reinforce** the preceding assistant turn. Examples: “good job!”, “I really appreciate that”, “wow, that was great”, “I really liked it”, or positive emoji like 👍 ❤️ 😊. The nightly **extract-reinforcement** job (or manual `openclaw hybrid-mem extract-reinforcement`) scans session logs for these phrases and emoji, then boosts confidence on the related facts and procedures so they are preferred in future recall. So thanking the agent or saying “great job” after a good answer **strengthens** that behavior in memory.
+
+- **Negative signals (corrections)** — When you signal that something was wrong or frustrating, that response is used as a **correction** incident. Examples: “that was wrong”, “try again”, “nooo!”, “stop doing that”, “why do you keep…”, “I give up”, “never do that”, or negative emoji like 👎 😠 💩. The **self-correction** pipeline extracts these, has an LLM analyze what went wrong, and can store a fact, add a TOOLS.md rule, or propose AGENTS changes so the agent doesn’t repeat the mistake.
+
+**Emoji** are always included (language-agnostic). **Phrases** use English by default and can be extended to other languages via `openclaw hybrid-mem build-languages`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md) (including the “Emoji as signals” section) for the full list and how the pipelines run.
+
+**False positives:** Some phrases (e.g. “I’m excited about…”) can refer to things unrelated to what the agent just did. They are still treated as reinforcement; the system uses confidence scoring so that stronger, unambiguous praise (e.g. “perfect”, “great job”) is weighted more than generic or ambiguous wording.
+
+**Learn your own wording:** Different people use different words for praise and frustration. The plugin can analyze your session logs and discover *your* phrases, then save them so detection uses them too. The flow is **model-agnostic** (uses your configured nano-tier and heavy-tier models from plugin config, not a single provider):
+
+1. **Pre-filter:** Messages that already match built-in or learned reinforcement/correction phrases are skipped. A **cheap (nano-tier)** model labels the rest as positive_feedback, negative_feedback, or neutral.
+2. **Phrase extraction:** Only messages labeled as positive or negative feedback are sent to a **heavy-tier** model to extract candidate phrases.
+3. **First run vs nightly:** When you omit `--days`, the first run (or when no `.user-feedback-phrases.json` exists yet) uses the **last 30 days** to bootstrap; after that, runs use the **last 3 days** so a weekly nightly job only processes new sessions.
+
+```bash
+# Auto window: 30 days first time, then 3 days; models from config (nano + heavy)
+openclaw hybrid-mem analyze-feedback-phrases
+
+# Optional: override window and/or model
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model <your-heavy-model>
+
+# Save discovered phrases so reinforcement/correction detection uses them (per install)
+openclaw hybrid-mem analyze-feedback-phrases --learn
+```
+
+Discovered phrases are stored in `~/.openclaw/memory/.user-feedback-phrases.json` and merged with the built-in lists. Run with `--learn` periodically (e.g. in a weekly nightly) so the system keeps learning how you and others on the same install give feedback.
 
 ---
 
