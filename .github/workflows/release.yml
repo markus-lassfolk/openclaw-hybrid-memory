@@ -67,7 +67,11 @@ jobs:
           echo "version=${TAG#v}" >> $GITHUB_OUTPUT
       - name: Set package version
         run: |
-          npm version --no-git-tag-version "${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          CURRENT=$(node -p "require('./package.json').version")
+          if [ "$CURRENT" != "$VERSION" ]; then
+            npm version --no-git-tag-version "$VERSION"
+          fi
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -98,7 +102,10 @@ jobs:
         run: |
           TAG="${{ needs.release.outputs.tag }}"
           VERSION="${TAG#v}"
-          cd packages/openclaw-hybrid-memory-install && npm version --no-git-tag-version "$VERSION"
+          CURRENT=$(node -p "require('./packages/openclaw-hybrid-memory-install/package.json').version")
+          if [ "$CURRENT" != "$VERSION" ]; then
+            cd packages/openclaw-hybrid-memory-install && npm version --no-git-tag-version "$VERSION"
+          fi
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
