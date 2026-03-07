@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.70] - 2026-03-07
+
+Major release: Hybrid Memory redesign (Milestones A, B, C), CI/CD automation with NPM Trusted Publishing, search/config improvements, and quality fixes.
+
+### Added
+
+- **Milestone A — Complete Hybrid Memory Redesign (#198):** Memory-first architecture with 18 features: dynamic memory tiering (hot/warm/cold) with configurable `memoryTiering.hotMaxTokens`, `compactionOnSessionEnd`, `inactivePreferenceDays`, and `hotMaxFacts`; multi-agent scoping with `multiAgent.orchestratorId` and `defaultStoreScope` (global/agent/auto); runtime agent detection for auto-scoped facts; retrieval and storage integrated with tiering and scope filters; preset alignment (normal/expert/full) for tiering and ingest; workflow integration hooks for session start/end and compaction.
+- **Milestone B — Memory-first features (#221):** Enhanced auto-recall with retrieval directives (`autoRecall.retrievalDirectives`): entity-mentioned recall, keyword triggers, task-type triggers, optional session-start recall; configurable `limit`, `maxPerPrompt`; entity lookup and directive recall merged into injection pipeline; agent-scoped memory and scope filtering in recall so specialists see only relevant scoped facts.
+- **Milestone C — Workflow crystallization and self-extension (#208, #209, #210):** (1) **Workflow store & tool-sequence tracking:** Session tool sequences recorded and grouped into patterns with success rates. Tool `memory_workflows`: query patterns by goal (keyword-matched), filter by `minSuccessRate`, optional `limit`. (2) **Crystallization tools:** `memory_crystallize` analyses workflow patterns and generates pending AgentSkill SKILL.md proposals (human approval required); `memory_crystallize_list` / `memory_crystallize_approve` / `memory_crystallize_reject` list and approve/reject; approved proposals write skills to disk. (3) **Self-extension tools:** `memory_propose_tool` runs gap analysis on workflow traces to detect recurring workarounds and generates tool proposals; `memory_tool_proposals` / `memory_tool_approve` / `memory_tool_reject`; requires `selfExtension.enabled: true`; config supports `minFrequency`, `minToolSavings`.
+- **Scope promote CLI (#134):** Subcommand `openclaw hybrid-mem scope promote` promotes high-importance session-scoped facts to global scope. Options: `--dry-run`, `--threshold-days <n>` (default 7), `--min-importance <n>` (default 0.7). Uses `findSessionFactsForPromotion` then `promoteScope(id, "global", null)`. Integrated into weekly-deep-maintenance cron (Saturday 04:00): compact then scope promote.
+- **CI/CD:** CI workflow (typecheck Node 22/24, lint, test, coverage); PR checks; release workflow (tag `v*` or manual dispatch → CI, GitHub Release, then NPM publish for `openclaw-hybrid-memory` and `openclaw-hybrid-memory-install`). Version from tag; main package runs `verify:publish` before publish. **NPM Trusted Publishing:** OIDC only (no `NPM_TOKEN`); `id-token: write` per publish job; configure Trusted Publisher on npmjs.com for workflow `release.yml` for both packages; MFA can stay enabled.
+- **Security & quality:** CodeQL workflow; Dependabot config; branch protection recommendations; labeler workflow for PRs (`.github/labeler.yml`).
+
+### Changed
+
+- **Search / query expansion (#228, #160):** Deprecated `search.hydeEnabled` and `search.hydeModel` in favor of `queryExpansion.enabled` and `queryExpansion.model`. Migration: if `search.hydeEnabled` is true and `queryExpansion.enabled` not set, queryExpansion is auto-enabled and model defaults to `search.hydeModel` or nano tier; `queryExpansion.enabled: false` overrides. Parser logs deprecation; timeout 25s when migrating from HyDE, 5s for direct queryExpansion. Preset `full` sets `queryExpansion.enabled: true` directly.
+- **Error reporting:** Opt-out defaults: when `errorReporting` omitted, `enabled` and `consent` default to `true`; community mode uses hardcoded DSN. Opt out with `errorReporting.enabled: false` or `consent: false`.
+- **Dependencies:** Actions setup-node/cache/checkout → v6; upload-artifact → v7; codeql-action → v4; minor-and-patch group (#173).
+- **Repo quality:** ESLint + Prettier; Yarbo standards (#175); TypeScript strict mode errors resolved (#174).
+
+### Fixed
+
+- **Promotion:** Inconsistent `superseded_at` filter in `findSessionFactsForPromotion` corrected.
+- **Verify:** `agents.defaults.pruning` correctly flagged as invalid (#105, #138).
+- **Config:** `"env"` added to safe-config-write allowlist (#136).
+- **CI:** Coverage provider; CodeQL matrix; label creation; pagination for label listing and listComments; workflow security/code quality; size label flapping.
+- **Query expansion / HyDE:** HyDE timeout consistency; queryExpansion migration edge cases; model fallback and tests (#228).
+
+---
+
 ## [2026.02.271] - 2026-02-27
 
 Memory-to-skills disabled by default and boilerplate filter fix.
