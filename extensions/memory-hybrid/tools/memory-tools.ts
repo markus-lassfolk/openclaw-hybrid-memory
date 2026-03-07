@@ -44,6 +44,18 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
+import type { EventType } from "../backends/event-log.js";
+
+/** Map a memory category to the most appropriate episodic event type. */
+function categoryToEventType(category: string): EventType {
+  switch (category) {
+    case "preference": return "preference_expressed";
+    case "decision": return "decision_made";
+    case "action": return "action_taken";
+    case "entity": return "entity_mentioned";
+    default: return "fact_learned";
+  }
+}
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -1144,13 +1156,14 @@ export function registerMemoryTools(
 
         walRemove(walEntryId, api.logger);
 
-        // Issue #150: write fact_learned event to episodic event log
+        // Issue #150: write event to episodic event log
         if (eventLog) {
           try {
+            const eventType = categoryToEventType(category);
             eventLog.append({
               sessionId: api.context?.sessionId ?? "unknown",
               timestamp: new Date().toISOString(),
-              eventType: "fact_learned",
+              eventType,
               content: {
                 text: textToStore.slice(0, 500),
                 factId: entry.id,
