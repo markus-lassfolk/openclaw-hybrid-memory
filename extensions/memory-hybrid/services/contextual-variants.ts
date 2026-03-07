@@ -17,6 +17,7 @@ import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { ContextualVariantsConfig } from "../config.js";
+import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
 // Prompt template
@@ -119,30 +120,10 @@ export class ContextualVariantGenerator {
  * containing literal "]" in string values parse correctly.
  */
 export function parseVariantsFromResponse(response: string, maxVariants: number): string[] {
-  const candidates: string[] = [];
-  let start = response.indexOf("[");
-  while (start !== -1) {
-    let end = response.indexOf("]", start + 1);
-    while (end !== -1) {
-      candidates.push(response.slice(start, end + 1));
-      end = response.indexOf("]", end + 1);
-    }
-    start = response.indexOf("[", start + 1);
-  }
-  for (const candidate of candidates) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(parsed)) continue;
-    return parsed
-      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-      .map((v) => v.trim())
-      .slice(0, maxVariants);
-  }
-  return [];
+  return extractJsonArray(response)
+    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    .map((v) => v.trim())
+    .slice(0, maxVariants);
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@
 import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
 import type { RerankingConfig } from "../config.js";
+import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,40 +80,19 @@ export function buildRerankPrompt(query: string, facts: ScoredFact[]): string {
  * bracketed text (e.g. "id-1 first because [it was relevant]") does not over-match.
  */
 export function parseRankedIds(response: string): string[] {
-  const candidates: string[] = [];
-  let start = response.indexOf("[");
-  while (start !== -1) {
-    let end = response.indexOf("]", start + 1);
-    while (end !== -1) {
-      candidates.push(response.slice(start, end + 1));
-      end = response.indexOf("]", end + 1);
+  const trimmed = extractJsonArray(response)
+    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    .map((id) => (id as string).trim());
+  // De-dupe by first occurrence to match lookup behavior.
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const id of trimmed) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      deduped.push(id);
     }
-    start = response.indexOf("[", start + 1);
   }
-  for (const candidate of candidates) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(parsed)) continue;
-    const stringIds = parsed.filter(
-      (v): v is string => typeof v === "string" && v.trim().length > 0,
-    );
-    const trimmed = stringIds.map((id) => id.trim());
-    // De-dupe by first occurrence to match lookup behavior.
-    const seen = new Set<string>();
-    const deduped: string[] = [];
-    for (const id of trimmed) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        deduped.push(id);
-      }
-    }
-    return deduped;
-  }
-  return [];
+  return deduped;
 }
 
 // ---------------------------------------------------------------------------

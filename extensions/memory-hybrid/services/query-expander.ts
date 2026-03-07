@@ -15,6 +15,7 @@
 import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
 import type { QueryExpansionConfig } from "../config.js";
+import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
 // LRU Cache
@@ -85,30 +86,10 @@ Return ONLY a JSON array of strings, no other text. Example: ["alternative one",
  * array does not get included (unlike a single greedy match).
  */
 export function parseExpansionsFromResponse(response: string, maxVariants: number): string[] {
-  const candidates: string[] = [];
-  let start = response.indexOf("[");
-  while (start !== -1) {
-    let end = response.indexOf("]", start + 1);
-    while (end !== -1) {
-      candidates.push(response.slice(start, end + 1));
-      end = response.indexOf("]", end + 1);
-    }
-    start = response.indexOf("[", start + 1);
-  }
-  for (const candidate of candidates) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(parsed)) continue;
-    return parsed
-      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-      .map((v) => v.trim())
-      .slice(0, maxVariants);
-  }
-  return [];
+  return extractJsonArray(response)
+    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    .map((v) => v.trim())
+    .slice(0, maxVariants);
 }
 
 // ---------------------------------------------------------------------------
