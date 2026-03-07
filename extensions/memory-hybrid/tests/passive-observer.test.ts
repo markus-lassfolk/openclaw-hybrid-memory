@@ -606,9 +606,6 @@ describe("runPassiveObserver event_log integration", () => {
       .spyOn(chat, "chatCompleteWithRetry")
       .mockResolvedValue(JSON.stringify([{ text: "The team uses Rust", category: "fact", importance: 0.8 }]));
 
-    const appendSpy = vi.fn();
-    const nullEventLog = null;
-
     const cfg = makeConfig({ sessionsDir });
     const result = await runPassiveObserver(
       makeFactsDb() as never,
@@ -617,12 +614,11 @@ describe("runPassiveObserver event_log integration", () => {
       {} as never,
       cfg,
       ["fact"],
-      { model: "test-model", dbDir: tmpDir, eventLog: nullEventLog },
+      { model: "test-model", dbDir: tmpDir, eventLog: null },
       makeLogger(),
     );
 
     expect(result.factsStored).toBe(1);
-    expect(appendSpy).not.toHaveBeenCalled();
 
     chatSpy.mockRestore();
   });
