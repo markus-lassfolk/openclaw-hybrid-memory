@@ -2466,14 +2466,16 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       }
     }
     let learned = false;
-    if (opts.learn && (reinforcement.length > 0 || correction.length > 0)) {
+    if (opts.learn) {
       const merged = {
         reinforcement: [...new Set([...existing.reinforcement, ...reinforcement])],
         correction: [...new Set([...existing.correction, ...correction])],
       };
       saveUserFeedbackPhrases(merged);
-      learned = true;
-      logger.info?.(`memory-hybrid: saved ${merged.reinforcement.length} reinforcement and ${merged.correction.length} correction phrases to .user-feedback-phrases.json`);
+      learned = reinforcement.length > 0 || correction.length > 0;
+      if (learned) {
+        logger.info?.(`memory-hybrid: saved ${merged.reinforcement.length} reinforcement and ${merged.correction.length} correction phrases to .user-feedback-phrases.json`);
+      }
     }
     return { reinforcement, correction, sessionsScanned: sessionFiles.length, learned };
   } finally {
