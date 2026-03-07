@@ -11,7 +11,7 @@
  * - Rate limiting: 60s dedup window for same error fingerprint
  */
 
-import type * as SentryType from "@sentry/node";
+import * as SentryType from "@sentry/node";
 
 /**
  * Default GlitchTip DSN for anonymous crash reporting.
@@ -40,7 +40,7 @@ export interface ErrorReporterConfig {
 /** Hardcoded DSN for community error reporting (anonymous telemetry) */
 const COMMUNITY_DSN = DEFAULT_GLITCHTIP_DSN;
 
-let Sentry: typeof SentryType | null = null;
+let Sentry: typeof SentryType | null = SentryType;
 let initialized = false;
 let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
@@ -79,13 +79,6 @@ export async function initErrorReporter(
     }
     resolvedDsn = config.dsn;
     logger.info?.('[ErrorReporter] Using self-hosted mode');
-  }
-
-  try {
-    Sentry = await import("@sentry/node");
-  } catch (err) {
-    logger.warn?.('[ErrorReporter] @sentry/node not installed. Error reporting disabled.');
-    return;
   }
 
   if (!Sentry) return;
