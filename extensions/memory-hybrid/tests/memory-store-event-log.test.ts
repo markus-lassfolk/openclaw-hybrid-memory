@@ -138,7 +138,7 @@ describe("memory_store event_log integration", () => {
 
     const events = eventLog.getBySession("test-session-123");
     expect(events).toHaveLength(1);
-    expect(events[0].eventType).toBe("fact_learned");
+    expect(events[0].eventType).toBe("preference_expressed");
     expect(events[0].content.source).toBe("memory_store");
     expect(events[0].content.category).toBe("preference");
     expect(events[0].sessionId).toBe("test-session-123");

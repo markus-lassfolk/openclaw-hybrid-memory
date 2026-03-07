@@ -21,6 +21,16 @@ export type EventType =
   | "preference_expressed"
   | "correction";
 
+export function categoryToEventType(category: string): EventType {
+  switch (category) {
+    case "preference": return "preference_expressed";
+    case "decision": return "decision_made";
+    case "action": return "action_taken";
+    case "entity": return "entity_mentioned";
+    default: return "fact_learned";
+  }
+}
+
 export interface EventLogEntry {
   id: string;
   sessionId: string;

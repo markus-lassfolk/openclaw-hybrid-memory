@@ -15,6 +15,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
@@ -44,18 +45,6 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
-import type { EventType } from "../backends/event-log.js";
-
-/** Map a memory category to the most appropriate episodic event type. */
-function categoryToEventType(category: string): EventType {
-  switch (category) {
-    case "preference": return "preference_expressed";
-    case "decision": return "decision_made";
-    case "action": return "action_taken";
-    case "entity": return "entity_mentioned";
-    default: return "fact_learned";
-  }
-}
 
 export interface PluginContext {
   factsDb: FactsDB;

@@ -17,7 +17,8 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { FactsDB } from '../backends/facts-db.js'
 import type { VectorDB } from '../backends/vector-db.js'
-import type { EventLog, EventType } from '../backends/event-log.js'
+import type { EventLog } from '../backends/event-log.js'
+import { categoryToEventType } from '../backends/event-log.js'
 import type { EmbeddingProvider } from './embeddings.js'
 import type OpenAI from 'openai'
 import type { MemoryCategory, ReinforcementConfig } from '../config.js'
@@ -62,17 +63,6 @@ export interface ObserverRunResult {
 
 // Track consecutive failures across runs to prevent infinite retries on bad session files.
 const consecutiveFailures = new Map<string, number>()
-
-/** Map a memory category to the most appropriate episodic event type. */
-function categoryToEventType(category: string): EventType {
-  switch (category) {
-    case 'preference': return 'preference_expressed'
-    case 'decision': return 'decision_made'
-    case 'action': return 'action_taken'
-    case 'entity': return 'entity_mentioned'
-    default: return 'fact_learned'
-  }
-}
 
 // ---------------------------------------------------------------------------
 // JSONL text extraction
