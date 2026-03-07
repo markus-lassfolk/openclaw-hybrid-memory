@@ -6,7 +6,7 @@ nav_order: 2
 ---
 # How It Works — Runtime Flow
 
-What actually happens under the hood when you chat with an agent that has hybrid memory enabled.
+What actually happens under the hood when you chat with an agent that has hybrid memory enabled. The goal is simple: **the right memories show up automatically so the agent can give you relevant, personal answers** — here’s how that happens each turn.
 
 ---
 

@@ -6,6 +6,8 @@ nav_order: 9
 ---
 # Frequently Asked Questions
 
+Quick answers to common questions. For **why** you’d want this plugin and what benefits you get (short- and long-term), see the [README § Why you'll want this](../README.md#why-youll-want-this--in-plain-english).
+
 ---
 
 ### Can I use Claude or Gemini instead of OpenAI?
@@ -178,17 +180,24 @@ The plugin treats your **replies** as implicit feedback and uses them in two pip
 
 **False positives:** Some phrases (e.g. “I’m excited about…”) can refer to things unrelated to what the agent just did. They are still treated as reinforcement; the system uses confidence scoring so that stronger, unambiguous praise (e.g. “perfect”, “great job”) is weighted more than generic or ambiguous wording.
 
-**Learn your own wording:** Different people use different words for praise and frustration. You can have an LLM (e.g. Gemini with 1M context) analyze your session logs and discover *your* phrases, then save them so detection uses them too:
+**Learn your own wording:** Different people use different words for praise and frustration. The plugin can analyze your session logs and discover *your* phrases, then save them so detection uses them too. The flow is **model-agnostic** (uses your configured nano-tier and heavy-tier models from plugin config, not a single provider):
+
+1. **Pre-filter:** Messages that already match built-in or learned reinforcement/correction phrases are skipped. A **cheap (nano-tier)** model labels the rest as positive_feedback, negative_feedback, or neutral.
+2. **Phrase extraction:** Only messages labeled as positive or negative feedback are sent to a **heavy-tier** model to extract candidate phrases.
+3. **First run vs nightly:** When you omit `--days`, the first run (or when no `.user-feedback-phrases.json` exists yet) uses the **last 30 days** to bootstrap; after that, runs use the **last 3 days** so a weekly nightly job only processes new sessions.
 
 ```bash
-# Analyze last 30 days of sessions; print suggested phrases
-openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash
+# Auto window: 30 days first time, then 3 days; models from config (nano + heavy)
+openclaw hybrid-mem analyze-feedback-phrases
+
+# Optional: override window and/or model
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model <your-heavy-model>
 
 # Save discovered phrases so reinforcement/correction detection uses them (per install)
-openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash --learn
+openclaw hybrid-mem analyze-feedback-phrases --learn
 ```
 
-Discovered phrases are stored in `~/.openclaw/memory/.user-feedback-phrases.json` and merged with the built-in lists. Run `--learn` periodically (e.g. after a few weeks of use) so the system keeps learning how you and others on the same install give feedback.
+Discovered phrases are stored in `~/.openclaw/memory/.user-feedback-phrases.json` and merged with the built-in lists. Run with `--learn` periodically (e.g. in a weekly nightly) so the system keeps learning how you and others on the same install give feedback.
 
 ---
 

@@ -2323,8 +2323,8 @@ function extractTextFromSessionJsonl(filePath: string): string {
   return parts.join("\n\n");
 }
 
-/** Extract only user message lines as "User: <text>" for feedback-phrases analysis. */
-function extractUserMessageLinesFromSessionJsonl(filePath: string): string[] {
+/** Extract raw user message texts from a session file (for regex/sentiment). */
+function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const out: string[] = [];
   for (const line of lines) {
@@ -2337,7 +2337,7 @@ function extractUserMessageLinesFromSessionJsonl(filePath: string): string[] {
       if (!Array.isArray(content)) continue;
       for (const block of content) {
         if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) {
-          out.push("User: " + block.text.trim());
+          out.push(block.text.trim());
         }
       }
     } catch {
@@ -2347,41 +2347,90 @@ function extractUserMessageLinesFromSessionJsonl(filePath: string): string[] {
   return out;
 }
 
+const SENTIMENT_BATCH_SIZE = 40;
+const SENTIMENT_MSG_MAX_CHARS = 200;
+
 /**
- * Analyze session logs with an LLM (e.g. Gemini) to discover user-specific praise/frustration phrases.
- * Optionally merge results into .user-feedback-phrases.json so reinforcement/correction detection learns the user's wording.
+ * Analyze session logs with an LLM to discover user-specific praise/frustration phrases.
+ * Uses a cheap (nano-tier) model first to filter by sentiment; only pre-filtered messages go to the heavy-tier model.
+ * Model-agnostic: nano and heavy models come from config (llm.nano / llm.default and llm.heavy).
+ * When --days is omitted: first run uses 30 days, subsequent runs use 3 days (for weekly nightly).
  */
 export async function runAnalyzeFeedbackPhrasesForCli(
   ctx: HandlerContext,
   opts: { days?: number; model?: string; outputPath?: string; learn?: boolean },
 ): Promise<{ reinforcement: string[]; correction: string[]; sessionsScanned: number; learned?: boolean; error?: string }> {
-  const { cfg, logger } = ctx;
-  const sessionFiles = gatherSessionFiles({ days: opts.days ?? 30 });
+  const { cfg, logger, openai } = ctx;
+  const existing = loadUserFeedbackPhrases();
+  const effectiveDays = opts.days ?? (existing.initialRunDone ? 3 : 30);
+  const sessionFiles = gatherSessionFiles({ days: effectiveDays });
   if (sessionFiles.length === 0) {
-    return { reinforcement: [], correction: [], sessionsScanned: 0, error: "No session files found under ~/.openclaw/agents/*/sessions/ in the last " + (opts.days ?? 30) + " days." };
+    return { reinforcement: [], correction: [], sessionsScanned: 0, error: "No session files found under ~/.openclaw/agents/*/sessions/ in the last " + effectiveDays + " days." };
   }
-  const maxChars = 400_000; // ~100k tokens for Gemini; leave room for prompt
-  let userMessagesBlock = "";
+
+  const reinforcementRegex = getReinforcementSignalRegex();
+  const correctionRegex = getCorrectionSignalRegex();
+  const allTexts: string[] = [];
   for (const { path: fp } of sessionFiles) {
     try {
-      const lines = extractUserMessageLinesFromSessionJsonl(fp);
-      const block = lines.join("\n");
-      if (userMessagesBlock.length + block.length + 2 > maxChars) {
-        userMessagesBlock += "\n[truncated further sessions...]";
-        break;
-      }
-      if (userMessagesBlock) userMessagesBlock += "\n";
-      userMessagesBlock += "--- " + basename(fp) + " ---\n" + block;
+      allTexts.push(...extractUserMessageTextsFromSessionJsonl(fp));
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
     }
   }
-  if (!userMessagesBlock.trim()) {
-    return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "No user messages found in session files." };
+  const unmatched = allTexts.filter((text) => {
+    reinforcementRegex.lastIndex = 0;
+    correctionRegex.lastIndex = 0;
+    return !reinforcementRegex.test(text) && !correctionRegex.test(text);
+  });
+
+  let toAnalyze: string[] = [];
+  if (unmatched.length > 0) {
+    const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+    const nanoModel = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+    const labels: string[] = [];
+    for (let i = 0; i < unmatched.length; i += SENTIMENT_BATCH_SIZE) {
+      const batch = unmatched.slice(i, i + SENTIMENT_BATCH_SIZE);
+      const truncated = batch.map((t) => t.slice(0, SENTIMENT_MSG_MAX_CHARS).replace(/\n/g, " "));
+      const prompt =
+        "For each of the following user messages (one per line), output exactly one word per line in the same order: positive_feedback, negative_feedback, or neutral. Only output the words, one per line.\n\n" +
+        truncated.join("\n");
+      try {
+        const content = await chatCompleteWithRetry({
+          model: nanoModel,
+          content: prompt,
+          temperature: 0,
+          maxTokens: 500,
+          openai,
+          fallbackModels: nanoPref.length > 1 ? nanoPref.slice(1) : undefined,
+          label: "memory-hybrid: feedback-phrases sentiment",
+        });
+        const lines = (content ?? "").split(/\r?\n/).map((l) => l.trim().toLowerCase());
+        for (let j = 0; j < batch.length; j++) {
+          const word = lines[j] ?? "";
+          if (word.includes("positive")) labels.push("positive_feedback");
+          else if (word.includes("negative")) labels.push("negative_feedback");
+          else labels.push("neutral");
+        }
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:sentiment" });
+        labels.push(...batch.map(() => "neutral"));
+      }
+    }
+    toAnalyze = unmatched.filter((_, idx) => labels[idx] !== "neutral");
   }
-  const prompt = fillPrompt(loadPrompt("analyze-feedback-phrases"), { user_messages: userMessagesBlock });
-  const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
-  const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+
+  if (toAnalyze.length === 0) {
+    return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length };
+  }
+
+  const maxChars = 400_000;
+  const userMessagesBlock = toAnalyze.map((t) => "User: " + t).join("\n");
+  const truncatedBlock = userMessagesBlock.length > maxChars ? userMessagesBlock.slice(0, maxChars) + "\n[truncated...]" : userMessagesBlock;
+  const prompt = fillPrompt(loadPrompt("analyze-feedback-phrases"), { user_messages: truncatedBlock });
+  const cronCfg = getCronModelConfig(cfg);
+  const heavyPref = getLLMModelPreference(cronCfg, "heavy");
+  const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(cronCfg, "heavy");
   const { spawnSync } = await import("node:child_process");
   const { tmpdir: osTmp } = await import("node:os");
   const promptPath = join(osTmp(), `analyze-feedback-phrases-${Date.now()}.txt`);
@@ -2418,7 +2467,6 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     }
     let learned = false;
     if (opts.learn && (reinforcement.length > 0 || correction.length > 0)) {
-      const existing = loadUserFeedbackPhrases();
       const merged = {
         reinforcement: [...new Set([...existing.reinforcement, ...reinforcement])],
         correction: [...new Set([...existing.correction, ...correction])],

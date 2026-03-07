@@ -2,13 +2,29 @@
 
 [**Documentation**](https://markus-lassfolk.github.io/openclaw-hybrid-memory/) · [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory)
 
-Your OpenClaw agent forgets everything between sessions. Preferences, decisions, technical context - all gone. You repeat yourself, and the agent can't build on past conversations.
+Your OpenClaw agent forgets everything between sessions. Preferences, decisions, technical context — all gone. You repeat yourself, and the agent can't build on past conversations.
 
-**Hybrid Memory** fixes this. It gives your agent **durable, structured, searchable memory** that persists across sessions, auto-captures what matters, and recalls it when relevant - without you lifting a finger.
+**Hybrid Memory** fixes this. It gives your agent **durable, structured, searchable memory** that persists across sessions, auto-captures what matters, and recalls it when relevant — without you lifting a finger.
 
 ---
 
-## Why use this?
+## Why you’ll want this — in plain English
+
+**Short-term:** From day one, the agent stops starting from zero. It pulls in relevant memories before each reply — your preferences, past decisions, project context, and who/what you’ve mentioned — so you don’t have to repeat yourself. It also learns from how you react: when you say “great” or “that was wrong,” it uses that to reinforce or correct what it did, so the next time it leans into what worked and avoids what didn’t.
+
+**Long-term:** The more you use it, the more **personal and tuned** it gets. It learns your wording (praise and frustration), your style, your language, and your recurring topics. It distills old conversations into lasting facts, reflects on patterns, and keeps the right things in context. You get an agent that **remembers you** and gets **better at giving the right context** over time — not a generic bot that forgets after every session.
+
+- **Remembers you** — preferences, decisions, projects, and how you like to work  
+- **Recalls the right stuff** — injects relevant memories automatically so answers are grounded in your history  
+- **Learns from your reactions** — “good job” and “no, do it differently” shape what it reinforces and corrects  
+- **Gets more personal over time** — learns your phrases, your patterns, and keeps improving recall and behavior  
+- **Multilingual** — works in your language; detection and feedback learning adapt to the languages you use (run `build-languages` to add more)
+
+If you want an agent that feels like it knows you and gets better with use, this is the extension for you. The rest of this doc explains how it works under the hood.
+
+---
+
+## Why use this? (under the hood)
 
 | Without hybrid memory | With hybrid memory |
 |----------------------|-------------------|
@@ -108,7 +124,8 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 | Document | Description |
 |----------|-------------|
-| **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, verify - get running in 10 minutes |
+| **[README § Why you'll want this](README.md#why-youll-want-this--in-plain-english)** | Benefits in plain English: why use this, what you get short- and long-term |
+| **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, verify — get running in 10 minutes |
 | **[HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)** | What happens each turn: auto-recall, auto-capture, background jobs, costs |
 | **[DEEP-DIVE.md](docs/DEEP-DIVE.md)** | Storage internals, search algorithms, tags, links, supersession, deduplication |
 | **[EXAMPLES.md](docs/EXAMPLES.md)** | Real-world recipes: project setup, tuning, tags, backfilling, maintenance routines |

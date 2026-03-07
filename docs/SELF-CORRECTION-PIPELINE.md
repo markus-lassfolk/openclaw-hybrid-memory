@@ -28,19 +28,24 @@ For a short user-facing overview of how your replies and emoji feed into reinfor
 
 ## Learning your feedback wording (user-specific phrases)
 
-Different users express praise and frustration differently. The plugin can **learn your wording** from session logs using an LLM (e.g. Gemini with 1M context):
+Different users express praise and frustration differently. The plugin can **learn your wording** from session logs in a **model-agnostic** way (nano-tier and heavy-tier from your plugin config):
+
+1. **Pre-filter:** Messages that already match reinforcement/correction phrases are skipped. A **nano-tier** model labels the rest as positive/negative/neutral feedback.
+2. **Phrase extraction:** Only positive/negative messages are sent to a **heavy-tier** model to extract candidate phrases.
+3. **Window:** Omitting `--days` uses **30 days** the first time (or when no `.user-feedback-phrases.json` exists), then **3 days** on later runs—suitable for a weekly nightly.
 
 ```bash
-# Analyze last 30 days; print suggested reinforcement/correction phrases
-openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash
+# Auto window (30 days first run, 3 days after); models from config
+openclaw hybrid-mem analyze-feedback-phrases
+
+# Optional: override window or model
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model <heavy-model>
 
 # Merge discovered phrases into .user-feedback-phrases.json (used by detection from then on)
-openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash --learn
+openclaw hybrid-mem analyze-feedback-phrases --learn
 ```
 
-Discovered phrases are saved under `~/.openclaw/memory/.user-feedback-phrases.json` and are **merged** with the built-in correction and reinforcement lists when building the detection regexes. So after you run with `--learn`, both self-correction extract and reinforcement extract will match your (and anyone else on the same install’s) typical phrases. Run it periodically to keep the list up to date.
-
-**Making it automatic during distill:** A future option could run this analysis as part of the nightly distill (or a separate cron step) so the system continuously learns from new sessions without a manual command. The wiring is the same: the same LLM pass over sessions can append new phrases to `.user-feedback-phrases.json`.
+Discovered phrases are saved under `~/.openclaw/memory/.user-feedback-phrases.json` and are **merged** with the built-in correction and reinforcement lists when building the detection regexes. So after you run with `--learn`, both self-correction extract and reinforcement extract will match your (and anyone else on the same install’s) typical phrases. Run it periodically (e.g. in a weekly nightly) to keep the list up to date.
 
 ---
 

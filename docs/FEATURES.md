@@ -6,6 +6,8 @@ nav_order: 1
 ---
 # Features — Categories, Decay, Tags, and Auto-Classify
 
+The plugin makes your agent **more personal and tuned** by classifying what it stores, decaying old content, and improving recall over time. This page is the technical reference for how that works: categories, decay, tagging, and LLM auto-classify. For the big-picture “why” and benefits, see the [README](../README.md#why-youll-want-this--in-plain-english).
+
 Detailed reference for the memory-hybrid plugin's classification, decay, tagging, and LLM auto-classify features.
 
 ---

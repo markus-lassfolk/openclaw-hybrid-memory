@@ -299,7 +299,13 @@ export function getUserFeedbackPhrasesPath(): string | null {
   return join(keywordsPath, USER_FEEDBACK_PHRASES_FILE);
 }
 
-export type UserFeedbackPhrases = { reinforcement: string[]; correction: string[]; updatedAt?: string };
+export type UserFeedbackPhrases = {
+  reinforcement: string[];
+  correction: string[];
+  updatedAt?: string;
+  /** Set true after first run so next runs use 3 days instead of 30. */
+  initialRunDone?: boolean;
+};
 
 /** Load user-discovered feedback phrases from .user-feedback-phrases.json. Returns empty arrays if missing. */
 export function loadUserFeedbackPhrases(): UserFeedbackPhrases {
@@ -312,6 +318,7 @@ export function loadUserFeedbackPhrases(): UserFeedbackPhrases {
       reinforcement: Array.isArray(data.reinforcement) ? data.reinforcement.filter((s) => typeof s === "string" && s.trim()) : [],
       correction: Array.isArray(data.correction) ? data.correction.filter((s) => typeof s === "string" && s.trim()) : [],
       updatedAt: data.updatedAt,
+      initialRunDone: data.initialRunDone === true,
     };
   } catch {
     return { reinforcement: [], correction: [] };
@@ -324,7 +331,7 @@ export function saveUserFeedbackPhrases(data: UserFeedbackPhrases): void {
   if (!filePath) return;
   const dir = dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const out = { ...data, updatedAt: new Date().toISOString() };
+  const out = { ...data, updatedAt: new Date().toISOString(), initialRunDone: true };
   writeFileSync(filePath, JSON.stringify(out, null, 2), "utf-8");
 }
 
