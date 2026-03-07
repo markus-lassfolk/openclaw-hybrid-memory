@@ -15,6 +15,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.71] - 2026-03-07
+
+Documentation and UX: benefits-first messaging, multilingual, and analyze-feedback-phrases improvements.
+
+### Added
+
+- **README "Why you'll want this":** Plain-English benefits section (short- and long-term), bullets for remembers you, recalls the right stuff, learns from reactions, gets more personal, multilingual. Technical comparison table under "Why use this? (under the hood)". Documentation table links to new section.
+- **Multilingual callout:** README and benefits now state that the plugin works in your language and adapts (build-languages, feedback-phrase learning).
+- **analyze-feedback-phrases sentiment pre-filter:** Messages already matching reinforcement/correction regexes are skipped. Remaining messages are labeled by a nano-tier model (positive_feedback / negative_feedback / neutral); only positive/negative go to the heavy-tier phrase extractor. If none remain, heavy call is skipped. Model-agnostic (nano + heavy from config).
+- **analyze-feedback-phrases 30/3-day window:** When `--days` is omitted, first run (or no `.user-feedback-phrases.json`) uses 30 days; subsequent runs use 3 days. `UserFeedbackPhrases.initialRunDone` persisted on `--learn`.
+
+### Changed
+
+- **QUICKSTART, FEATURES, HOW-IT-WORKS, FAQ:** Benefits-first intros and links to README "Why you'll want this".
+- **CLI-REFERENCE, SELF-CORRECTION-PIPELINE:** analyze-feedback-phrases documented with nano pre-filter, auto 30/3 days, model-agnostic.
+
+---
+
 ## [2026.3.70] - 2026-03-07
 
 Major release: Hybrid Memory redesign, CI/CD automation with NPM Trusted Publishing, search/config improvements, and quality fixes.
