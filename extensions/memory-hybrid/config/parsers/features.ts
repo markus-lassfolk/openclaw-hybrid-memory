@@ -294,21 +294,21 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
 export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
 
-  // When errorReporting is not specified, use opt-in defaults (enabled + consent are false)
+  // When errorReporting is not specified, use opt-out defaults (enabled + consent are true)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
-      enabled: false,
+      enabled: true,
       dsn: DEFAULT_GLITCHTIP_DSN,
-      consent: false,
+      consent: true,
       mode: "community",
       sampleRate: 1.0,
     };
   }
 
-  // enabled defaults to false — user must explicitly set enabled: true to opt in
-  let enabled = errorReportingRaw.enabled === true;
-  // consent defaults to false — user must explicitly set consent: true to opt in
-  const consent = errorReportingRaw.consent === true;
+  // enabled defaults to true — user must explicitly set enabled: false to opt out
+  let enabled = errorReportingRaw.enabled !== false;
+  // consent defaults to true — user must explicitly set consent: false to opt out
+  const consent = errorReportingRaw.consent !== false;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
   const modeRaw = typeof errorReportingRaw.mode === "string" ? errorReportingRaw.mode : "community";
   const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";

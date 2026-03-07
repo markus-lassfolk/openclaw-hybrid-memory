@@ -2,7 +2,7 @@
  * Error Reporter Service for GlitchTip/Sentry Integration
  *
  * SECURITY REQUIREMENTS (NON-NEGOTIABLE):
- * - consent: false by default — user must explicitly opt IN
+ * - consent: true by default — user must explicitly opt OUT
  * - sendDefaultPii: false always
  * - maxBreadcrumbs: 10 — only plugin.* category allowed, message/data stripped
  * - Only safe Sentry integrations enabled: LinkedErrors, InboundFilters, FunctionToString
