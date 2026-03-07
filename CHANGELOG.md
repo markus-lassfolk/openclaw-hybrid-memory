@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.72] - 2026-03-07
+
+### Fixed
+
+- **Release workflow:** "Set package version" step no longer fails when package.json already matches the tag (avoids `npm error Version not changed` on publish).
+
+---
+
 ## [2026.3.71] - 2026-03-07
 
 Documentation and UX: benefits-first messaging, multilingual, and analyze-feedback-phrases improvements.
