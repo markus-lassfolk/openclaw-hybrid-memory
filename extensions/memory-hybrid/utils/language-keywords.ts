@@ -310,18 +310,33 @@ export type UserFeedbackPhrases = {
 /** Load user-discovered feedback phrases from .user-feedback-phrases.json. Returns empty arrays if missing. */
 export function loadUserFeedbackPhrases(): UserFeedbackPhrases {
   const filePath = getUserFeedbackPhrasesPath();
-  if (!filePath || !existsSync(filePath)) return { reinforcement: [], correction: [] };
+  if (!filePath) return { reinforcement: [], correction: [] };
+  
+  if (userFeedbackPhrasesCache && userFeedbackPhrasesCache.path === filePath) {
+    return userFeedbackPhrasesCache.data;
+  }
+  
+  if (!existsSync(filePath)) {
+    const emptyData = { reinforcement: [], correction: [] };
+    userFeedbackPhrasesCache = { data: emptyData, path: filePath };
+    return emptyData;
+  }
+  
   try {
     const raw = readFileSync(filePath, "utf-8");
     const data = JSON.parse(raw) as UserFeedbackPhrases;
-    return {
+    const parsed = {
       reinforcement: Array.isArray(data.reinforcement) ? data.reinforcement.filter((s) => typeof s === "string" && s.trim()) : [],
       correction: Array.isArray(data.correction) ? data.correction.filter((s) => typeof s === "string" && s.trim()) : [],
       updatedAt: data.updatedAt,
       initialRunDone: data.initialRunDone === true,
     };
+    userFeedbackPhrasesCache = { data: parsed, path: filePath };
+    return parsed;
   } catch {
-    return { reinforcement: [], correction: [] };
+    const emptyData = { reinforcement: [], correction: [] };
+    userFeedbackPhrasesCache = { data: emptyData, path: filePath };
+    return emptyData;
   }
 }
 
@@ -333,6 +348,7 @@ export function saveUserFeedbackPhrases(data: UserFeedbackPhrases): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const out = { ...data, updatedAt: new Date().toISOString(), initialRunDone: true };
   writeFileSync(filePath, JSON.stringify(out, null, 2), "utf-8");
+  userFeedbackPhrasesCache = null;
 }
 
 let cache: {
@@ -342,6 +358,11 @@ let cache: {
   extraction: Record<string, LanguageExtractionTemplate>;
   /** From file reinforcementCategories.genericPoliteness; used by getReinforcementCategoryRegexes. */
   reinforcementGenericPoliteness?: string[];
+} | null = null;
+
+let userFeedbackPhrasesCache: {
+  data: UserFeedbackPhrases;
+  path: string;
 } | null = null;
 
 function escapeRegex(s: string): string {
@@ -447,6 +468,7 @@ export function loadMergedKeywords(): MergedKeywords {
 /** Clear cached merged keywords (e.g. after writing new file or in tests). */
 export async function clearKeywordCache(): Promise<void> {
   cache = null;
+  userFeedbackPhrasesCache = null;
   // Also clear dependent regex caches in directive and reinforcement extraction
   try {
     const { clearDirectiveCategoryCache } = await import("../services/directive-extract.js");

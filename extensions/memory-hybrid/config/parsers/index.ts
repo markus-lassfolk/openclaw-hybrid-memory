@@ -163,8 +163,18 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   } else {
     // No mode or invalid mode: apply default preset (full) so new users get the best experience
     const preset = PRESET_OVERRIDES[appliedMode];
+    const userRaw = { ...cfg } as Record<string, unknown>;
+    delete userRaw.mode;
     cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
     delete cfg.mode;
+    // Check for overrides even when mode is not explicitly set
+    for (const key of Object.keys(preset)) {
+      if (!(key in userRaw)) continue;
+      if (userOverridesPresetValue(userRaw[key], preset[key])) {
+        hasPresetOverrides = true;
+        break;
+      }
+    }
   }
 
   const embedding = cfg.embedding as Record<string, unknown> | undefined;

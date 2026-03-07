@@ -1235,5 +1235,14 @@ describe("hybridConfigSchema.parse", () => {
       const result = hybridConfigSchema.parse(validBase);
       expect(result.mode).toBe("full");
     });
+
+    it("no mode but user overrides preset: result.mode is 'custom'", () => {
+      const result = hybridConfigSchema.parse({
+        ...validBase,
+        graph: { enabled: false },
+      });
+      expect(result.mode).toBe("custom"); // overrides full preset's graph.enabled: true
+      expect(result.graph.enabled).toBe(false);
+    });
   });
 });
