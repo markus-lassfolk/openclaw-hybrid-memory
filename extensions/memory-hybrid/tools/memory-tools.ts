@@ -18,6 +18,7 @@ import type { EventLog } from "../backends/event-log.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import { toFloat32Array } from "../services/embedding-registry.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
@@ -64,10 +65,6 @@ export interface PluginContext {
   pendingLLMWarnings: PendingLLMWarnings;
 }
 
-function toFloat32Array(vec: number[] | Float32Array): Float32Array {
-  return vec instanceof Float32Array ? vec : new Float32Array(vec);
-}
-
 async function storeRegistryEmbeddings({
   factsDb,
   embeddingRegistry,
@@ -110,6 +107,18 @@ async function storeRegistryEmbeddings({
           s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
           { subsystem: "embeddings", operation },
         );
+      }
+    }
+    if (!vector) {
+      try {
+        const vec = await embeddingRegistry.embed(text);
+        const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
+        vectors.set(modelName, vec);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "embeddings",
+          operation,
+        });
       }
     }
   } else if (!vector) {

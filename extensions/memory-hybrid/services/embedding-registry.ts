@@ -211,7 +211,7 @@ function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
 // ---------------------------------------------------------------------------
 
 /** Convert number[] or Float32Array to Float32Array. */
-function toFloat32Array(vec: number[] | Float32Array): Float32Array {
+export function toFloat32Array(vec: number[] | Float32Array): Float32Array {
   return vec instanceof Float32Array ? vec : new Float32Array(vec);
 }
 
