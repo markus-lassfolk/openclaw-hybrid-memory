@@ -3423,6 +3423,80 @@ export function runConfigSetForCli(
     }
     return { ok: true, configPath, message: `Set credentials.enabled = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
   }
+  // Object toggles: "config-set <key> enabled" must set <key>: { enabled: true }, never replace with boolean (parsers expect cfg.<key>?.enabled === true).
+  const boolVal = value === "true" || value === "enabled";
+  const objectToggles: Array<{ key: string; prop: string }> = [
+    { key: "nightlyCycle", prop: "enabled" },
+    { key: "passiveObserver", prop: "enabled" },
+    { key: "selfExtension", prop: "enabled" },
+    { key: "crystallization", prop: "enabled" },
+    { key: "personaProposals", prop: "enabled" },
+    { key: "reflection", prop: "enabled" },
+    { key: "procedures", prop: "enabled" },
+    { key: "graph", prop: "enabled" },
+    { key: "wal", prop: "enabled" },
+    { key: "aliases", prop: "enabled" },
+    { key: "ambient", prop: "enabled" },
+    { key: "documents", prop: "enabled" },
+    { key: "workflowTracking", prop: "enabled" },
+    { key: "queryExpansion", prop: "enabled" },
+    { key: "reranking", prop: "enabled" },
+    { key: "contextualVariants", prop: "enabled" },
+    { key: "verification", prop: "enabled" },
+    { key: "provenance", prop: "enabled" },
+    { key: "graphRetrieval", prop: "enabled" },
+    { key: "clusters", prop: "enabled" },
+    { key: "gaps", prop: "enabled" },
+    { key: "health", prop: "enabled" },
+    { key: "memoryTiering", prop: "enabled" },
+    { key: "reinforcement", prop: "enabled" },
+    { key: "futureDateProtection", prop: "enabled" },
+    { key: "path", prop: "enabled" },
+    { key: "activeTask", prop: "enabled" },
+  ];
+  for (const { key, prop } of objectToggles) {
+    if (k === key && !k.includes(".")) {
+      let obj = out.config[key] as Record<string, unknown> | undefined;
+      if (typeof obj !== "object" || obj === null) obj = {};
+      (obj as Record<string, unknown>)[prop] = boolVal;
+      out.config[key] = obj;
+      try {
+        hybridConfigSchema.parse(out.config);
+      } catch (schemaErr: unknown) {
+        capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-" + key });
+        return { ok: false, error: `Invalid config value: ${schemaErr}` };
+      }
+      try {
+        writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+        writeFileSync(getRestartPendingPath(), "", "utf-8");
+      } catch (e) {
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-" + key });
+        return { ok: false, error: `Could not write config: ${e}` };
+      }
+      return { ok: true, configPath, message: `Set ${key}.${prop} = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+    }
+  }
+  // extraction uses .extractionPasses not .enabled
+  if (k === "extraction" && !k.includes(".")) {
+    const ext = out.config.extraction as Record<string, unknown> | undefined;
+    const obj = typeof ext === "object" && ext !== null ? { ...ext } : {};
+    (obj as Record<string, unknown>).extractionPasses = boolVal;
+    out.config.extraction = obj;
+    try {
+      hybridConfigSchema.parse(out.config);
+    } catch (schemaErr: unknown) {
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-extraction" });
+      return { ok: false, error: `Invalid config value: ${schemaErr}` };
+    }
+    try {
+      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+      writeFileSync(getRestartPendingPath(), "", "utf-8");
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-extraction" });
+      return { ok: false, error: `Could not write config: ${e}` };
+    }
+    return { ok: true, configPath, message: `Set extraction.extractionPasses = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+  }
   if (!setNested(out.config, k, value)) {
     return { ok: false, error: `Invalid config key: ${key}` };
   }
