@@ -10,7 +10,7 @@ All settings live in `~/.openclaw/openclaw.json`. Merge these into your existing
 
 **Quick setup:** Run `openclaw hybrid-mem install` to apply all recommended defaults at once. Then customise as needed below.
 
-**Configuration modes:** You can set `"mode": "essential" | "normal" | "expert" | "full"` to apply a preset of feature toggles (e.g. **Essential** for Raspberry Pi, **Normal** for most users, **Expert**/**Full** for power users). See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) for the matrix and where credentials vault and credential capture from tool I/O fit in.
+**Configuration modes:** Default is **Full** (best experience). You can set `"mode": "essential" | "normal" | "expert" | "full"` to apply a preset (e.g. **Essential** or **Normal** to reduce API cost or for low-resource hosts). See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) for the matrix.
 
 ---
 
@@ -124,6 +124,40 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `progressivePinnedRecallCount` | `3` | In `progressive_hybrid`: facts with recallCount ≥ this or permanent decay are injected in full |
 | `scopeFilter` | (none) | Multi-user: restrict auto-recall to global + matching scopes. `{ "userId": "alice", "agentId": "support-bot", "sessionId": "sess-xyz" }` — omit any to not filter by that dimension. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
 
+### Retrieval directives
+
+Besides semantic auto-recall, you can trigger **targeted recall** by entity mention, keywords, task types, or once at session start. When the prompt matches, directive recall runs and results are merged into the injection pipeline. Agent-scoped memory and scope filtering apply so specialists see only relevant scoped facts.
+
+```json
+{
+  "autoRecall": {
+    "enabled": true,
+    "retrievalDirectives": {
+      "enabled": true,
+      "entityMentioned": true,
+      "keywords": ["oncall", "incident"],
+      "taskTypes": {
+        "debug": ["bug", "fix", "crash"],
+        "research": ["summarize", "find papers"]
+      },
+      "sessionStart": false,
+      "limit": 3,
+      "maxPerPrompt": 4
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` when `autoRecall` is object | Enable retrieval directives (entity/keyword/task-type/session-start) |
+| `entityMentioned` | `true` | When the prompt mentions an entity from entity lookup list, run targeted recall for that entity |
+| `keywords` | `[]` | Case-insensitive keyword triggers; when prompt contains one, run targeted recall |
+| `taskTypes` | `{}` | Map task type → keyword list; matched task type triggers recall with those keywords |
+| `sessionStart` | `false` | Run a one-time targeted recall when a new session starts |
+| `limit` | `3` | Max results per directive recall |
+| `maxPerPrompt` | `4` | Hard cap on directive recalls per prompt (limits latency) |
+
 ---
 
 ## Memory tiering (hot/warm/cold)
@@ -153,6 +187,26 @@ Dynamic tiering keeps a small **HOT** set always loaded, uses **WARM** for seman
 **Compaction rules:** Completed tasks (category `decision` or tag `task`) → COLD. Inactive preferences (in HOT, not accessed recently) → WARM. Active blockers (tag `blocker`) → HOT, capped by `hotMaxTokens` and `hotMaxFacts`.
 
 → Full detail: [MEMORY-TIERING.md](MEMORY-TIERING.md)
+
+---
+
+## Multi-agent scoping
+
+Facts can be stored and recalled by scope: global, user, agent, or session. With **multi-agent** config, the orchestrator can store globally while specialists store per-agent; auto-recall filters by scope so each agent sees only relevant memories. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md) for full detail.
+
+```json
+{
+  "multiAgent": {
+    "orchestratorId": "main",
+    "defaultStoreScope": "auto"
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `orchestratorId` | `"main"` | Agent ID of the main orchestrator (sees all memories; no scope filter) |
+| `defaultStoreScope` | `"global"` | `global` = all store global; `agent` = all store agent-scoped; `auto` = orchestrator stores global, specialists store agent-scoped |
 
 ---
 
@@ -390,7 +444,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
 
 | Tier | Used for | Recommended models |
 |------|----------|--------------------|
-| `nano` | autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize (runs every message) | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
+| `nano` | autoClassify, query expansion, classifyBeforeWrite, auto-recall summarize (runs every message) | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
 | `default` | reflection, language keywords, general analysis | `gemini-2.5-flash`, `claude-sonnet-4-6`, `gpt-4.1` |
 | `heavy` | distillation, self-correction, persona proposals | `gemini-3.1-pro-preview`, `claude-opus-4-6`, `o3` |
 
@@ -418,7 +472,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
 | Key | Description |
 |-----|-------------|
 | `nano` | Ordered list for ultra-cheap nano-tier ops. Falls back to `default[0]` when unset. |
-| `default` | Ordered list for default-tier features (reflection, classify, ingest, HyDE, build-languages). First working model wins. |
+| `default` | Ordered list for default-tier features (reflection, classify, ingest, query expansion, build-languages). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
 | `providers` | Per-provider API keys and optional `baseURL`. Built-in: `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key). Any other OpenAI-compatible provider can be added here. |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
@@ -526,9 +580,9 @@ Index workspace markdown (skills, TOOLS.md, AGENTS.md) as facts. See [SEARCH-RRF
 
 ---
 
-## Search (HyDE query expansion, issue #33)
+## Query expansion (queryExpansion)
 
-Opt-in HyDE generates a hypothetical answer before embedding for vector search. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md).
+Opt-in **query expansion** generates a hypothetical answer (or expanded query) before embedding for vector search, improving recall. Replaces the deprecated **search.hydeEnabled** / **search.hydeModel** (see migration below). See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md).
 
 ```json
 {
@@ -536,9 +590,10 @@ Opt-in HyDE generates a hypothetical answer before embedding for vector search. 
     "entries": {
       "openclaw-hybrid-memory": {
         "config": {
-          "search": {
-            "hydeEnabled": false,
-            "hydeModel": "google/gemini-2.5-flash-lite"
+          "queryExpansion": {
+            "enabled": true,
+            "model": "google/gemini-2.5-flash-lite",
+            "timeoutMs": 5000
           }
         }
       }
@@ -549,8 +604,15 @@ Opt-in HyDE generates a hypothetical answer before embedding for vector search. 
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `hydeEnabled` | `false` | Generate hypothetical answer before embedding |
-| `hydeModel` | (unset) | Model for HyDE generation; when omitted, uses first model from `llm.default` or legacy default (issue #92) |
+| `enabled` | `false` | Enable query expansion before embedding (uses nano-tier model when `model` unset) |
+| `model` | (nano tier) | Model for expansion; when omitted, uses first model from `llm.nano` |
+| `timeoutMs` | `5000` (25s when migrating from HyDE) | Timeout for expansion call in ms |
+| `maxVariants` | `4` | Max query variants to generate and merge |
+| `cacheSize` | `100` | Cache size for expansion results |
+
+**Migration from HyDE:** If you still have `search.hydeEnabled: true`, the plugin auto-enables `queryExpansion` and uses `search.hydeModel` (or nano tier) for the model. You will see a deprecation warning in the logs. Set `queryExpansion.enabled` and `queryExpansion.model` in config and remove `search.hydeEnabled` / `search.hydeModel` to silence it. Explicit `queryExpansion.enabled: false` overrides the old flag.
+
+**Deprecated (do not use in new config):** `search.hydeEnabled`, `search.hydeModel` — use `queryExpansion.enabled` and `queryExpansion.model` instead.
 
 ---
 
@@ -591,6 +653,64 @@ Optional config for the self-correction pipeline: semantic dedup before storing 
 | `analyzeViaSpawn` | `false` | When true and incidents > spawnThreshold, run Phase 2 via `openclaw sessions spawn` |
 | `spawnThreshold` | `15` | Use spawn for Phase 2 when incident count exceeds this |
 | `spawnModel` | `gemini` | Model for spawn when analyzeViaSpawn is true |
+
+---
+
+## Workflow crystallization
+
+Workflow crystallization analyses tool-sequence patterns and generates pending **AgentSkill SKILL.md** proposals. No skills are written until a human approves via `memory_crystallize_approve` or the CLI. Requires the workflow store (tool-sequence tracking). See release notes 2026.3.70 and [CLI-REFERENCE.md](CLI-REFERENCE.md).
+
+```json
+{
+  "crystallization": {
+    "enabled": false,
+    "minUsageCount": 5,
+    "minSuccessRate": 0.7,
+    "autoApprove": false,
+    "outputDir": "~/.openclaw/workspace/skills/auto",
+    "maxCrystallized": 50,
+    "pruneUnusedDays": 30
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable crystallization (skill proposals from workflow patterns) |
+| `minUsageCount` | `5` | Minimum uses of a pattern to be a crystallization candidate |
+| `minSuccessRate` | `0.7` | Minimum success rate (0–1) for a pattern |
+| `autoApprove` | `false` | If true, approved proposals write to disk without manual approve (not recommended) |
+| `outputDir` | `~/.openclaw/workspace/skills/auto` | Directory for approved SKILL.md files |
+| `maxCrystallized` | `50` | Max number of crystallized skills to keep |
+| `pruneUnusedDays` | `30` | Prune proposals unused for this many days |
+
+**Agent tools:** `memory_crystallize`, `memory_crystallize_list`, `memory_crystallize_approve`, `memory_crystallize_reject`.
+
+---
+
+## Self-extension / tool proposals
+
+Self-extension analyses workflow traces for recurring multi-step workarounds and generates **tool proposals** (specifications for a human or LLM to implement). Requires `selfExtension.enabled: true` and workflow tracking. See release notes 2026.3.70.
+
+```json
+{
+  "selfExtension": {
+    "enabled": false,
+    "minGapFrequency": 3,
+    "minToolSavings": 2,
+    "maxProposals": 20
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable tool proposal generation from usage-pattern gaps |
+| `minGapFrequency` | `3` | Minimum occurrences of a gap pattern to propose a tool |
+| `minToolSavings` | `2` | Minimum tool calls the proposed tool would save per use |
+| `maxProposals` | `20` | Maximum number of proposals to keep |
+
+**Agent tools:** `memory_propose_tool`, `memory_tool_proposals`, `memory_tool_approve`, `memory_tool_reject`.
 
 ---
 

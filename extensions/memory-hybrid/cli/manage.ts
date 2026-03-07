@@ -17,6 +17,7 @@ import type {
   IngestFilesSink,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
+  AnalyzeFeedbackPhrasesResult,
   MigrateToVaultResult,
   CredentialsAuditResult,
   CredentialsPruneResult,
@@ -101,6 +102,7 @@ export type ManageContext = {
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
   }>;
   runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
+  runAnalyzeFeedbackPhrases?: (opts: { days?: number; model?: string; outputPath?: string; learn?: boolean }) => Promise<AnalyzeFeedbackPhrasesResult>;
   runSelfCorrectionRun: (opts: {
     extractPath?: string;
     incidents?: Array<{ userMessage: string; precedingAssistant: string; followingAssistant: string; timestamp?: string; sessionFile: string }>;
@@ -178,6 +180,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     autoClassifyConfig,
     runSelfCorrectionExtract,
     runSelfCorrectionRun,
+    runAnalyzeFeedbackPhrases,
     runCompaction,
     runDistill,
     runExtractProcedures,
@@ -653,6 +656,53 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(JSON.stringify(fact, null, 2));
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "lookup" });
+        throw err;
+      }
+    }));
+
+  mem
+    .command("forget <id>")
+    .description("Remove a memory by ID (from SQLite and LanceDB). ID can be full UUID or a short hex prefix.")
+    .option("--yes", "Skip confirmation")
+    .action(withExit(async (id: string, opts?: { yes?: boolean }) => {
+      try {
+        let resolvedId = id;
+        if (id.length < 36 && !id.includes("-")) {
+          const prefixResult = factsDb.findByIdPrefix(id);
+          if (prefixResult && "ambiguous" in prefixResult) {
+            const countText = prefixResult.count >= 3 ? `${prefixResult.count}+` : `${prefixResult.count}`;
+            console.error(`Prefix "${id}" is ambiguous (matches ${countText} facts). Use the full UUID from search or lookup.`);
+            process.exitCode = 1;
+            return;
+          }
+          if (prefixResult && "id" in prefixResult) {
+            resolvedId = prefixResult.id;
+          }
+        }
+        const fact = factsDb.get(resolvedId);
+        if (!opts?.yes && fact) {
+          console.log(`About to remove: ${fact.text.slice(0, 80)}${fact.text.length > 80 ? "…" : ""}`);
+          console.log("Run with --yes to confirm, or cancel (Ctrl+C).");
+          return;
+        }
+        const sqlDeleted = factsDb.delete(resolvedId);
+        let lanceDeleted = false;
+        try {
+          lanceDeleted = await vectorDb.delete(resolvedId);
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "forget" });
+          console.error(`LanceDB delete failed: ${err}`);
+        }
+        aliasDb?.deleteByFactId(resolvedId);
+        if (!sqlDeleted && !lanceDeleted) {
+          console.error(`Memory not found: ${id}`);
+          process.exitCode = 1;
+          return;
+        }
+        const note = resolvedId !== id ? ` (resolved from prefix "${id}")` : "";
+        console.log(`Forgotten${note}. SQLite: ${sqlDeleted}, LanceDB: ${lanceDeleted}`);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "forget" });
         throw err;
       }
     }));
@@ -1389,6 +1439,54 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }
       if (res.toolsApplied != null && res.toolsApplied > 0) {
         console.log(`TOOLS.md updates applied: ${res.toolsApplied}`);
+      }
+    }));
+
+  mem
+    .command("analyze-feedback-phrases")
+    .description("Analyze session logs with an LLM (e.g. Gemini) to discover your praise/frustration phrases; optional --learn to save to .user-feedback-phrases.json")
+    .option("--days <n>", "Days of sessions to analyze (default 30)", "30")
+    .option("--model <m>", "LLM model (e.g. gemini-2.0-flash for 1M context)", "")
+    .option("--output <path>", "Write suggested phrases JSON to file", "")
+    .option("--learn", "Merge discovered phrases into .user-feedback-phrases.json (reinforcement/correction detection will use them)")
+    .action(withExit(async (opts?: { days?: string; model?: string; output?: string; learn?: boolean }) => {
+      if (!runAnalyzeFeedbackPhrases) {
+        console.error("analyze-feedback-phrases is not available in this context.");
+        process.exitCode = 1;
+        return;
+      }
+      const days = opts?.days ? parseInt(opts.days, 10) : 30;
+      const outputPath = opts?.output;
+      const learn = !!opts?.learn;
+      const model = opts?.model?.trim() || undefined;
+      let res;
+      try {
+        res = await runAnalyzeFeedbackPhrases({ days, model, outputPath, learn });
+      } catch (err) {
+        capturePluginError(err as Error ? err : new Error(String(err)), { subsystem: "cli", operation: "analyze-feedback-phrases" });
+        throw err;
+      }
+      if (res.error) {
+        console.error(res.error);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Sessions scanned: ${res.sessionsScanned}`);
+      console.log(`Reinforcement phrases: ${res.reinforcement.length}`);
+      if (res.reinforcement.length > 0) {
+        res.reinforcement.slice(0, 15).forEach((p) => console.log(`  + ${p}`));
+        if (res.reinforcement.length > 15) console.log(`  ... and ${res.reinforcement.length - 15} more`);
+      }
+      console.log(`Correction phrases: ${res.correction.length}`);
+      if (res.correction.length > 0) {
+        res.correction.slice(0, 15).forEach((p) => console.log(`  - ${p}`));
+        if (res.correction.length > 15) console.log(`  ... and ${res.correction.length - 15} more`);
+      }
+      if (res.learned) {
+        console.log("Phrases saved to .user-feedback-phrases.json (reinforcement/correction detection will use them).");
+      }
+      if (outputPath) {
+        console.log(`Output written to ${outputPath}`);
       }
     }));
 

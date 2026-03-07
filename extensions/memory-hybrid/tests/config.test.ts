@@ -374,14 +374,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.captureMaxChars).toBe(10000);
   });
 
-  it("defaults store.fuzzyDedupe to false", () => {
+  it("no mode applies full preset: store.fuzzyDedupe is true", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.store.fuzzyDedupe).toBe(false);
+    expect(result.store.fuzzyDedupe).toBe(true);
   });
 
-  it("defaults store.classifyBeforeWrite to false", () => {
+  it("no mode applies full preset: store.classifyBeforeWrite is true", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.store.classifyBeforeWrite).toBe(false);
+    expect(result.store.classifyBeforeWrite).toBe(true);
   });
 
   it("defaults store.classifyModel to undefined", () => {
@@ -600,9 +600,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.categories).toContain("fact");
   });
 
-  it("autoClassify defaults to disabled", () => {
+  it("no mode applies full preset: autoClassify.enabled is true", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.autoClassify.enabled).toBe(false);
+    expect(result.autoClassify.enabled).toBe(true);
     expect(result.autoClassify.model).toBeUndefined();
     expect(result.autoClassify.batchSize).toBe(20);
   });
@@ -685,9 +685,11 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill?.defaultModel).toBe("gemini-2.0-flash");
   });
 
-  it("distill is undefined when omitted", () => {
+  it("no mode applies full preset: distill is defined with preset defaults", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.distill).toBeUndefined();
+    expect(result.distill).toBeDefined();
+    expect(result.distill?.extractDirectives).toBe(true);
+    expect(result.distill?.extractReinforcement).toBe(true);
   });
 
   it("parses llm config when default and heavy arrays are non-empty", () => {
@@ -930,9 +932,10 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.selfCorrection?.applyToolsByDefault).toBe(false);
   });
 
-  it("selfCorrection is undefined when omitted", () => {
+  it("no mode applies full preset: selfCorrection is defined with preset defaults", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.selfCorrection).toBeUndefined();
+    expect(result.selfCorrection).toBeDefined();
+    expect(result.selfCorrection?.applyToolsByDefault).toBe(true);
   });
 
   it("languageKeywords defaults when omitted", () => {
@@ -1026,9 +1029,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.model).toBe("new-model");
   });
 
-  it("migration shim (#160): queryExpansion stays disabled when neither search.hydeEnabled nor queryExpansion.enabled is set", () => {
+  it("migration shim (#160): queryExpansion enabled by default when no mode (full preset)", () => {
     const result = hybridConfigSchema.parse({ ...validBase });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
   });
 
   it("migration shim (#160): explicit queryExpansion.enabled=false overrides search.hydeEnabled=true", () => {
@@ -1228,9 +1231,9 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.autoClassify.enabled).toBe(false);
     });
 
-    it("no mode: result.mode is undefined", () => {
+    it("no mode: result.mode is 'full' (default)", () => {
       const result = hybridConfigSchema.parse(validBase);
-      expect(result.mode).toBeUndefined();
+      expect(result.mode).toBe("full");
     });
   });
 });

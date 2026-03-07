@@ -142,7 +142,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let cfg = value as Record<string, unknown>;
   const modeRaw = cfg.mode;
   const validModes: ConfigMode[] = ["essential", "normal", "expert", "full"];
-  let appliedMode: ConfigMode | undefined;
+  const defaultMode: ConfigMode = "full"; // best experience out of the box; use essential/normal for low-resource or cost-conscious setups
+  let appliedMode: ConfigMode = defaultMode;
   let hasPresetOverrides = false; // true when user explicitly overrode a preset value (show "Custom" in verify)
   if (typeof modeRaw === "string" && validModes.includes(modeRaw as ConfigMode)) {
     appliedMode = modeRaw as ConfigMode;
@@ -159,6 +160,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         break;
       }
     }
+  } else {
+    // No mode or invalid mode: apply default preset (full) so new users get the best experience
+    const preset = PRESET_OVERRIDES[appliedMode];
+    cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
+    delete cfg.mode;
   }
 
   const embedding = cfg.embedding as Record<string, unknown> | undefined;

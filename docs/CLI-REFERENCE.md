@@ -15,8 +15,8 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | Category | Commands |
 |----------|----------|
 | **Setup & installation** | `install`, `verify [--fix]` |
-| **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill` |
-| **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
+| **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill`, `dream-cycle`, `resolve-contradictions` |
+| **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
 | **Store & ingestion** | `store <text>`, `ingest-files`, `distill`, `distill-window`, `record-distill`, `extract-daily`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `generate-auto-skills`, `skills-suggest`, `generate-proposals` |
 | **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages` |
@@ -40,6 +40,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `store --text <text> [options]` | Store a fact (for scripts; agents use `memory_store`). |
 | `lookup <entity> [--key <key>] [--tag <tag>] [--as-of <date>] [--include-superseded]` | Exact lookup in SQLite. `--as-of` = point-in-time (ISO or epoch); `--include-superseded` = include historical facts. |
 | `search <query> [--tag <tag>] [--as-of <date>] [--include-superseded] [--user-id <id>] ...` | Semantic search over LanceDB + FTS5. `--as-of`, `--include-superseded` for bi-temporal queries. Scope filters for user/agent/session. |
+| `forget <id> [--yes]` | Remove a memory by ID (SQLite + LanceDB). ID can be full UUID or a short hex prefix. Without `--yes`, prints a preview and exits; use `--yes` to confirm. |
 | `extract-daily [--dry-run] --days N` | Extract facts from daily logs (`memory/YYYY-MM-DD.md`). |
 | `prune [--hard] [--soft] [--dry-run]` | Remove expired facts (decay/TTL). `--hard` only expired; `--soft` only confidence decay. |
 | `checkpoint` | Create a checkpoint (pre-flight state). |
@@ -69,19 +70,21 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 | `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
 | `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
-| `export --output <path> [--include-credentials] [--source X,Y,Z] [--mode replace\|additive]` | Export memory to vanilla OpenClaw–compatible `MEMORY.md` + `memory/` directory layout. Plain markdown, one file per fact. Default: exclude credentials, replace mode. Filter by fact source (e.g. conversation, distillation, cli, ingest, reflection). |
+| `export --output <path> [--include-credentials] [--sources X,Y,Z] [--mode replace\|additive]` | Export memory to vanilla OpenClaw–compatible `MEMORY.md` + `memory/` directory layout. Plain markdown, one file per fact. Default: exclude credentials, replace mode. Filter by fact source with `--sources` (e.g. conversation, distillation, cli, ingest, reflection). |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
 | `record-distill` | Record that session distillation was run (timestamp for `verify`). |
 | `extract-procedures [--dir path] [--days N] [--dry-run]` | Extract tool-call procedures from session JSONL; store positive/negative procedures. |
 | `self-correction-extract [--days N] [--output path]` | Extract user correction incidents from session JSONL (last N days). Uses `.language-keywords.json` — run `build-languages` first for non-English. |
-| `self-correction-run [--extract path] [--workspace path] [--dry-run] [--approve] [--model M]` | Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
+| `self-correction-run [--extract-path path] [--workspace path] [--dry-run] [--approve] [--model M] [--no-apply-tools]` | Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
 | `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
 | `skills-suggest [--dry-run] [--days N] [--verbose]` | Memory-to-skills: cluster procedures, synthesize SKILL.md drafts to `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md). |
 | `generate-proposals [--dry-run] [--verbose]` | Generate persona proposals from recent reflection (patterns, rules, meta). Requires personaProposals enabled. Cron: weekly-persona-proposals. |
-| `run-all [--dry-run]` | Run all maintenance tasks in optimal order: backfill-decay (once), prune, compact, distill, extract-daily, extract-directives, extract-reinforcement, extract-procedures, generate-auto-skills, reflect, reflect-rules, reflect-meta, generate-proposals, self-correction-run, build-languages. See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md). |
+| `run-all [--dry-run] [--verbose]` | Run all maintenance tasks in optimal order: backfill-decay (once), prune, compact, distill, extract-daily, extract-directives, extract-reinforcement, extract-procedures, generate-auto-skills, reflect, reflect-rules, reflect-meta, generate-proposals, self-correction-run, build-languages. Steps are feature-gated. See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md). |
+| `dream-cycle` | Nightly pipeline: prune expired facts, consolidate event log into facts, reflect, reflect-rules. Requires `nightlyCycle.enabled`. Cron: nightly-dream-cycle. |
+| `resolve-contradictions` | Resolve conflicting/superseded facts (classify-before-write style). Cron: step 4 of nightly-memory-sweep. |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
 | `credentials list [--service <pattern>]` | List vault entries (service, type, url; no values). Use `--service` to filter by substring (e.g. `--service unifi`). |
-| `credentials get --service <name> [--type <type>] [--value-only]` | Retrieve a credential value. Use `--type` when multiple types exist for the service. Use `--value-only` for scripting (prints only the secret). |
+| `credentials get --service <name> [--type <type>] [--value-only] [--show-value]` | Retrieve a credential value. Use `--type` when multiple types exist for the service. `--value-only`: print only the secret (for piping). `--show-value`: reveal the secret in the default (metadata) output. |
 | `credentials audit [--json]` | Flag suspicious entries (natural language, long service names, duplicates). |
 | `credentials prune [--yes] [--only-flags ...]` | Remove flagged entries (default: dry-run; use `--yes` to apply). |
 | `scope list` | List all scopes present in memory (from facts). |
@@ -99,7 +102,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 ## Export
 
 ```
-openclaw hybrid-mem export --output <path> [--include-credentials] [--source <sources>] [--mode replace|additive]
+openclaw hybrid-mem export --output <path> [--include-credentials] [--sources <sources>] [--mode replace|additive]
 ```
 
 Export all memory (facts + procedures) to a vanilla OpenClaw–compatible layout: `MEMORY.md` root index + `memory/<category>/` markdown files. Plain markdown, one file per fact; compatible with memorySearch and memory-core. Use for inspection, backup, or copying to another bot.
@@ -108,7 +111,7 @@ Export all memory (facts + procedures) to a vanilla OpenClaw–compatible layout
 |--------|-------------|
 | `--output <path>` | Output directory (created if missing). **Required.** |
 | `--include-credentials` | Include credential pointer facts (default: exclude). Never exports actual secrets. |
-| `--source <sources>` | Filter by fact source: comma-separated (e.g. `conversation,cli,distillation,ingest,reflection`). Omit for all. |
+| `--sources <sources>` | Filter by fact source: comma-separated (e.g. `conversation,cli,distillation,ingest,reflection`). Omit for all. |
 | `--mode replace` | Clear output directory first, then write (default). |
 | `--mode additive` | Add/overwrite; do not clear. Existing files overwritten on conflict. |
 
@@ -279,14 +282,14 @@ Steps through pending persona proposals and the latest correction report. For ea
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **9 jobs** (Milestones A/B/C: tiering, scope promote, persona proposals, memory-to-skills, dream cycle).
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **9 jobs** (tiering, scope promote, persona proposals, memory-to-skills, dream cycle, and others; see table below).
 
 | Job (pluginJobId) | Schedule | Purpose |
 |-------------------|----------|---------|
 | `hybrid-mem:nightly-distill` | 02:00 daily | **nightly-memory-sweep:** prune → distill --days 3 → extract-daily → resolve-contradictions. |
-| `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** self-correction-run. |
-| `hybrid-mem:nightly-memory-to-skills` | 02:15 daily | **nightly-memory-to-skills:** skills-suggest (cluster procedures, draft skills). |
-| `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** dream-cycle (prune → consolidate → reflect). Requires nightlyCycle.enabled. |
+| `hybrid-mem:nightly-memory-to-skills` | 02:15 daily | **nightly-memory-to-skills:** skills-suggest (cluster procedures, draft skills). Exit 0 if memoryToSkills.enabled is false. |
+| `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** self-correction-run. Exit 0 if selfCorrection disabled. |
+| `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** dream-cycle (prune → consolidate → reflect). Requires nightlyCycle.enabled. Exit 0 if disabled. |
 | `hybrid-mem:weekly-reflection` | Sun 03:00 | **weekly-reflection:** reflect → reflect-rules → reflect-meta. Requires reflection.enabled. |
 | `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | **weekly-extract-procedures:** extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills. |
 | `hybrid-mem:weekly-deep-maintenance` | Sat 04:00 | **weekly-deep-maintenance:** compact → scope promote. |
@@ -305,7 +308,7 @@ Steps through pending persona proposals and the latest correction report. For ea
 - [REFLECTION.md](REFLECTION.md) — Reflection layer (`reflect`, `reflect-rules`, `reflect-meta`)
 - [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault (`credentials migrate-to-vault`)
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Session distillation (`distill-window`, `record-distill`)
-- [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) — RRF merge, `ingest-files`, HyDE
+- [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) — RRF merge, `ingest-files`, query expansion
 - [MEMORY-SCOPING.md](MEMORY-SCOPING.md) — Scope types, store/recall filters, session cleanup, promote
 - [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) — Procedural memory (`extract-procedures`, `generate-auto-skills`)
 - [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md) — Multi-language triggers, categories, decay (`build-languages`)

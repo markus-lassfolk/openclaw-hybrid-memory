@@ -114,9 +114,11 @@ openclaw hybrid-mem scope prune-session sess-xyz
 
 ## Promote Session → Durable
 
-Promote a session-scoped memory to global or agent scope before session end so it persists:
+Promote session-scoped memories to global (or agent) scope so they persist across sessions and are available to all agents.
 
-### memory_promote tool
+### Single-fact promote: memory_promote tool
+
+To promote one fact by ID (e.g. after the agent decides it is important), use the **memory_promote** tool:
 
 ```json
 {
@@ -135,12 +137,23 @@ Or promote to agent scope:
 }
 ```
 
-### CLI
+### Bulk promote: CLI (session → global)
+
+To promote **high-importance session-scoped facts** in bulk (e.g. those that are at least N days old and above an importance threshold), use the CLI. This is the main way to move durable session context into long-term memory.
 
 ```bash
-openclaw hybrid-mem scope promote --id abc-123 --scope global
-openclaw hybrid-mem scope promote --id abc-123 --scope agent --scope-target support-bot
+openclaw hybrid-mem scope promote [--dry-run] [--threshold-days 7] [--min-importance 0.7]
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--dry-run` | — | Show which facts would be promoted without changing anything |
+| `--threshold-days <n>` | `7` | Only consider session facts at least this many days old |
+| `--min-importance <n>` | `0.7` | Minimum importance score 0–1 |
+
+Example: `openclaw hybrid-mem scope promote --threshold-days 7 --min-importance 0.7`
+
+The **weekly-deep-maintenance** cron job (Saturday 04:00) runs `compact` then `scope promote`; you can rely on that or run promote manually. See [CLI-REFERENCE.md](CLI-REFERENCE.md).
 
 ## Secure Multi-Tenant Setup
 

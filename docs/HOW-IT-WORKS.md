@@ -65,11 +65,12 @@ When you send a message, **before the agent sees it**, the plugin:
 
 **Optional enhancements:**
 - **Entity lookup** — if your prompt mentions a known entity (e.g. "user"), lookup facts for that entity are merged in.
+- **Retrieval directives** — targeted recall when the prompt mentions an entity, matches keywords, or matches a task type; optional one-time recall at session start. Results are merged with semantic recall. Agent-scoped memory and scope filters apply so specialists see only relevant facts.
 - **Summary injection** — long facts are injected as short summaries to save tokens.
 - **Graph traversal** — if graph memory is enabled, related facts are discovered via typed links (zero LLM cost).
-- **HyDE (Hypothetical Document Embeddings)** — when `search.hydeEnabled` is true, the plugin asks the LLM for a short “hypothetical answer” to your message, then embeds that instead of the raw message. The hypothetical text often sits closer in embedding space to stored facts, so vector search can return better matches. Uses the **nano tier** model (e.g. `gemini-2.5-flash-lite` or `gpt-4.1-nano`) — very cheap; see [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md#hyde-hypothetical-document-embeddings).
+- **Query expansion** — when `queryExpansion.enabled` is true, the plugin asks the LLM for a short hypothetical answer or expanded query, then embeds that for vector search. The expanded text often sits closer in embedding space to stored facts. Uses the **nano tier** model. (Legacy: `search.hydeEnabled` is deprecated; use `queryExpansion.enabled`.) See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md).
 
-**Cost per turn:** One embedding API call (~$0.00002 for `text-embedding-3-small`). One nano-tier LLM call if HyDE is enabled (~$0.0001 for `gemini-2.5-flash-lite` / `gpt-4.1-nano`).
+**Cost per turn:** One embedding API call (~$0.00002 for `text-embedding-3-small`). One nano-tier LLM call if query expansion is enabled (~$0.0001 for nano-tier models).
 
 ---
 
@@ -205,7 +206,7 @@ Background (automatic):
 | Operation | Cost | When | Model tier |
 |-----------|------|------|----------|
 | Auto-recall (per turn) | ~$0.00002 | Every turn | embedding only |
-| HyDE (per turn, if enabled) | ~$0.0001 | Every turn | **nano** |
+| Query expansion (per turn, if enabled) | ~$0.0001 | Every turn | **nano** |
 | Auto-capture (per captured fact) | ~$0.00002 | When a fact is captured | embedding only |
 | ClassifyBeforeWrite (per write, if enabled) | ~$0.0001 | On every memory write | **nano** |
 | Auto-classify batch (20 facts) | ~$0.0002–0.001 | Once per 24h | **nano** |
@@ -214,7 +215,7 @@ Background (automatic):
 | Session distillation (per session) | ~$0.01–0.05 | On-demand / nightly cron | **heavy** |
 | SQLite operations | Free | Always | — |
 
-With the nano tier (`gemini-2.5-flash-lite` or `gpt-4.1-nano`), per-message LLM costs drop 5–10× vs mid-tier models. At typical usage (~50 turns/day with HyDE and auto-classify): roughly **$0.10–0.20/month** total.
+With the nano tier (`gemini-2.5-flash-lite` or `gpt-4.1-nano`), per-message LLM costs drop 5–10× vs mid-tier models. At typical usage (~50 turns/day with query expansion and auto-classify): roughly **$0.10–0.20/month** total.
 
 ---
 

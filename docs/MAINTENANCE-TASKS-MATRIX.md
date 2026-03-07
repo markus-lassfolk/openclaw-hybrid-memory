@@ -39,7 +39,7 @@ This matrix shows **which maintenance tasks run** in each context (installation,
 ### After installation (`openclaw hybrid-mem install`)
 
 - **Writes** `~/.openclaw/openclaw.json` with full defaults (memory slot, plugin config, compaction prompts, bootstrap limits, etc.).
-- **Creates** `~/.openclaw/memory` and **ensures maintenance cron job definitions** in `~/.openclaw/cron/jobs.json`: any of the 7 canonical jobs that are missing are added (existing jobs are left as-is; disabled jobs are **not** re-enabled). The jobs are **not executed** by install; the scheduler (OpenClaw or system cron) runs them later.
+- **Creates** `~/.openclaw/memory` and **ensures maintenance cron job definitions** in `~/.openclaw/cron/jobs.json`: any of the **9** canonical jobs that are missing are added (existing jobs are left as-is; disabled jobs are **not** re-enabled). The jobs are **not executed** by install; the scheduler (OpenClaw or system cron) runs them later.
 - **Does not run** any maintenance tasks (no prune, distill, reflect, etc.). User should restart the gateway and optionally run `verify [--fix]` and/or `run-all` manually.
 
 ### After update (`openclaw hybrid-mem upgrade` + gateway restart)
@@ -71,13 +71,15 @@ The plugin **ensures** these job definitions exist in `~/.openclaw/cron/jobs.jso
 
 | Job name                      | Schedule           | Steps (what the job message tells the agent to run)                                    |
 | ----------------------------- | ------------------ | -------------------------------------------------------------------------------------- |
-| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 3 3. extract-daily                                          |
-| **self-correction-analysis**  | Daily 02:30        | self-correction-run                                                                    |
-| **weekly-reflection**         | Sun 03:00          | reflect → reflect-rules → reflect-meta                                                 |
-| **weekly-extract-procedures** | Sun 04:00          | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills |
+| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 3 3. extract-daily 4. resolve-contradictions                  |
+| **nightly-memory-to-skills**  | Daily 02:15        | skills-suggest (cluster procedures, draft skills). Exit 0 if memoryToSkills.enabled false. |
+| **self-correction-analysis**  | Daily 02:30        | self-correction-run. Exit 0 if selfCorrection disabled.                                |
+| **nightly-dream-cycle**       | Daily 02:45        | dream-cycle (prune → consolidate → reflect). Exit 0 if nightlyCycle.enabled false.     |
+| **weekly-reflection**         | Sun 03:00          | reflect → reflect-rules → reflect-meta. Exit 0 if reflection.enabled false.              |
+| **weekly-extract-procedures** | Sun 04:00          | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills  |
 | **weekly-deep-maintenance**   | Sat 04:00          | compact → scope promote                                                                |
-| **weekly-persona-proposals**  | Sun 10:00          | generate-proposals (and notify if pending)                                             |
-| **monthly-consolidation**     | 1st of month 05:00 | consolidate → build-languages → backfill-decay                                         |
+| **weekly-persona-proposals**  | Sun 10:00          | generate-proposals (and notify if pending). Exit 0 if personaProposals disabled.        |
+| **monthly-consolidation**     | 1st of month 05:00 | consolidate --threshold 0.92 → build-languages → backfill-decay                         |
 
 
 ### In `run-all` (`openclaw hybrid-mem run-all`)

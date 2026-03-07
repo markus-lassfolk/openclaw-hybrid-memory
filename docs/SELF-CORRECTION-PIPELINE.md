@@ -13,6 +13,37 @@ So for full multi-language support: run `build-languages`, then use the self-cor
 
 ---
 
+## Emoji as signals
+
+User messages that contain **emoji** are treated as implicit feedback and feed into both pipelines:
+
+- **Negative emoji** (e.g. 👎 😠 😤 💩 🙁 😞 😒) — Treated as **correction signals**. A message containing one of these (alone or with text) is picked up by **self-correction-extract**. If you add a follow-up message explaining what was wrong, the analyzer gets both: the emoji shows you were unhappy, and the next message shows what to fix. Useful when you react with a thumbs-down or angry face and then type “the command should use --dry-run first”.
+- **Positive emoji** (e.g. 👍 ❤️ 😊 😄 🔥 ⭐ ✨) — Treated as **reinforcement (enforcer)**. A message containing one of these is picked up by **extract-reinforcement** and used to reinforce the preceding assistant turn (e.g. boost confidence on recalled facts or procedures). A lone “👍” or “❤️” after a good answer is enough to signal “I liked that” and strengthen the associated behavior in memory.
+
+Emoji are **language-agnostic** and are always included in detection; no need to add them to `.language-keywords.json`. The same rate limits, confidence thresholds, and remediation caps apply.
+
+For a short user-facing overview of how your replies and emoji feed into reinforcement and correction, see [FAQ — How does the agent learn from my reactions?](FAQ.md#how-does-the-agent-learn-from-my-reactions-replies-and-emoji).
+
+---
+
+## Learning your feedback wording (user-specific phrases)
+
+Different users express praise and frustration differently. The plugin can **learn your wording** from session logs using an LLM (e.g. Gemini with 1M context):
+
+```bash
+# Analyze last 30 days; print suggested reinforcement/correction phrases
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash
+
+# Merge discovered phrases into .user-feedback-phrases.json (used by detection from then on)
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash --learn
+```
+
+Discovered phrases are saved under `~/.openclaw/memory/.user-feedback-phrases.json` and are **merged** with the built-in correction and reinforcement lists when building the detection regexes. So after you run with `--learn`, both self-correction extract and reinforcement extract will match your (and anyone else on the same install’s) typical phrases. Run it periodically to keep the list up to date.
+
+**Making it automatic during distill:** A future option could run this analysis as part of the nightly distill (or a separate cron step) so the system continuously learns from new sessions without a manual command. The wiring is the same: the same LLM pass over sessions can append new phrases to `.user-feedback-phrases.json`.
+
+---
+
 ## Commands
 
 ### 1. Extract incidents (Phase 1)
@@ -171,4 +202,5 @@ Adjust `--days` and paths as needed. The report is still written to `memory/repo
 
 - [GitHub issue #34: Nightly Self-Correction Analysis](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/34)
 - **build-languages**: [CLI reference](CLI-REFERENCE.md) — run first for non-English correction detection.
+- **Reinforcement (positive signals)**: `openclaw hybrid-mem extract-reinforcement` — uses praise phrases and **positive emoji** (👍 ❤️ etc.) to reinforce facts and procedures; see cron job `extract-reinforcement` and [CLI-REFERENCE.md](CLI-REFERENCE.md).
 - **Session distillation**: [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — separate pipeline (fact extraction from sessions).

@@ -1,16 +1,16 @@
 ---
 layout: default
-title: Search improvements (RRF, ingest-files, HyDE)
+title: Search improvements (RRF, ingest-files, query expansion)
 parent: Features
 nav_order: 14
 ---
-# Search Improvements — RRF, ingest-files, HyDE
+# Search Improvements — RRF, ingest-files, query expansion
 
 [GitHub issue #33](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/33) adds three improvements to hybrid memory search:
 
 1. **Reciprocal Rank Fusion (RRF)** — Better merging of SQLite FTS5 and LanceDB vector results
 2. **`ingest-files`** — Index workspace markdown (skills, TOOLS.md, etc.) as searchable facts
-3. **HyDE** — Hypothetical Document Embeddings for query expansion (opt-in)
+3. **Query expansion** — Optional LLM-generated hypothetical answer or expanded query before embedding (opt-in; config: `queryExpansion.enabled`). Legacy config `search.hydeEnabled` is deprecated.
 
 ---
 
@@ -180,41 +180,47 @@ Indexing a `skills/` folder can give ~+10% recall in benchmarks by making capabi
 
 ---
 
-## HyDE (Hypothetical Document Embeddings)
+## Query expansion (formerly HyDE)
 
 ### Overview
 
-HyDE generates a short "hypothetical answer" to the user query before embedding. The embedding of that hypothetical text is used for vector search instead of the raw query. This can improve recall because hypothetical answers are closer in embedding space to actual stored facts.
+**Query expansion** (config: `queryExpansion.enabled`) generates a short hypothetical answer or expanded query before embedding. The embedding of that text is used for vector search instead of the raw query. This can improve recall because the expanded text is often closer in embedding space to actual stored facts.
+
+**Deprecated:** `search.hydeEnabled` and `search.hydeModel` are deprecated. Use `queryExpansion.enabled` and `queryExpansion.model` instead. If you still have `search.hydeEnabled: true`, the plugin auto-enables query expansion and logs a deprecation warning.
 
 ### Config
 
 ```json
 {
-  "search": {
-    "hydeEnabled": true,
-    "hydeModel": "gpt-4o-mini"
+  "queryExpansion": {
+    "enabled": true,
+    "model": "openai/gpt-4.1-nano",
+    "timeoutMs": 5000
   }
 }
 ```
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `hydeEnabled` | `false` | Enable HyDE for vector search |
-| `hydeModel` | (unset) | Model for HyDE; when omitted, uses `llm.default` or legacy default (issue #92) |
+| `enabled` | `false` | Enable query expansion for vector search |
+| `model` | (nano tier) | Model for expansion; when omitted, uses `llm.nano[0]` or legacy default |
+| `timeoutMs` | `5000` (25s when migrating from HyDE) | Timeout for expansion call in ms |
+
+See [CONFIGURATION.md](CONFIGURATION.md#query-expansion-queryexpansion) for the full `queryExpansion` block.
 
 ### Where it applies
 
 - `memory_recall` tool
 - Auto-recall (injection at session start)
 
-CLI `hybrid-mem search` does **not** use HyDE (no LLM available in that context).
+CLI `hybrid-mem search` does **not** use query expansion (no LLM available in that context).
 
 ### Trade-offs
 
 - **Pros:** Can improve recall (~+5–8% in some benchmarks).
 - **Cons:** Extra LLM call per search; adds latency and API cost.
 
-HyDE is off by default. Enable when the recall gain justifies the extra cost.
+Query expansion is off by default. Enable when the recall gain justifies the extra cost.
 
 ---
 

@@ -55,7 +55,7 @@ import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens, chunkSessionText, chunkTextByChars } from "../utils/text.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
-import { getExtractionTemplates, getCorrectionSignalRegex, getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
+import { getExtractionTemplates, getCorrectionSignalRegex, getDirectiveSignalRegex, getReinforcementSignalRegex, loadUserFeedbackPhrases, saveUserFeedbackPhrases } from "../utils/language-keywords.js";
 import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "../services/self-correction-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
@@ -523,6 +523,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         [PLUGIN_ID]: {
           enabled: true,
           config: {
+            mode: "full",
             embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
             distill: { defaultModel: "gemini-3-pro-preview" },
             autoCapture: true,
@@ -2320,6 +2321,120 @@ function extractTextFromSessionJsonl(filePath: string): string {
     }
   }
   return parts.join("\n\n");
+}
+
+/** Extract only user message lines as "User: <text>" for feedback-phrases analysis. */
+function extractUserMessageLinesFromSessionJsonl(filePath: string): string[] {
+  const lines = readFileSync(filePath, "utf-8").split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
+      if (obj.type !== "message" || !obj.message || obj.message.role !== "user") continue;
+      const content = obj.message.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) {
+          out.push("User: " + block.text.trim());
+        }
+      }
+    } catch {
+      // skip malformed
+    }
+  }
+  return out;
+}
+
+/**
+ * Analyze session logs with an LLM (e.g. Gemini) to discover user-specific praise/frustration phrases.
+ * Optionally merge results into .user-feedback-phrases.json so reinforcement/correction detection learns the user's wording.
+ */
+export async function runAnalyzeFeedbackPhrasesForCli(
+  ctx: HandlerContext,
+  opts: { days?: number; model?: string; outputPath?: string; learn?: boolean },
+): Promise<{ reinforcement: string[]; correction: string[]; sessionsScanned: number; learned?: boolean; error?: string }> {
+  const { cfg, logger } = ctx;
+  const sessionFiles = gatherSessionFiles({ days: opts.days ?? 30 });
+  if (sessionFiles.length === 0) {
+    return { reinforcement: [], correction: [], sessionsScanned: 0, error: "No session files found under ~/.openclaw/agents/*/sessions/ in the last " + (opts.days ?? 30) + " days." };
+  }
+  const maxChars = 400_000; // ~100k tokens for Gemini; leave room for prompt
+  let userMessagesBlock = "";
+  for (const { path: fp } of sessionFiles) {
+    try {
+      const lines = extractUserMessageLinesFromSessionJsonl(fp);
+      const block = lines.join("\n");
+      if (userMessagesBlock.length + block.length + 2 > maxChars) {
+        userMessagesBlock += "\n[truncated further sessions...]";
+        break;
+      }
+      if (userMessagesBlock) userMessagesBlock += "\n";
+      userMessagesBlock += "--- " + basename(fp) + " ---\n" + block;
+    } catch (err) {
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
+    }
+  }
+  if (!userMessagesBlock.trim()) {
+    return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "No user messages found in session files." };
+  }
+  const prompt = fillPrompt(loadPrompt("analyze-feedback-phrases"), { user_messages: userMessagesBlock });
+  const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
+  const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+  const { spawnSync } = await import("node:child_process");
+  const { tmpdir: osTmp } = await import("node:os");
+  const promptPath = join(osTmp(), `analyze-feedback-phrases-${Date.now()}.txt`);
+  writeFileSync(promptPath, prompt, "utf-8");
+  try {
+    const r = spawnSync(
+      "openclaw",
+      ["sessions", "spawn", "--model", model, "--message", "Analyze the attached file and output ONLY a JSON object with keys reinforcement and correction (arrays of strings). No markdown, no code fences.", "--attach", promptPath],
+      { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
+    );
+    const content = (r.stdout ?? "") + (r.stderr ?? "");
+    if (r.status !== 0) {
+      return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: `sessions spawn exited ${r.status}: ${content.slice(0, 500)}` };
+    }
+    const jsonMatch = content.match(/\{\s*"reinforcement"[\s\S]*"correction"[\s\S]*\}/);
+    let reinforcement: string[] = [];
+    let correction: string[] = [];
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]) as { reinforcement?: string[]; correction?: string[] };
+        reinforcement = Array.isArray(parsed.reinforcement) ? parsed.reinforcement.filter((s) => typeof s === "string" && s.trim()) : [];
+        correction = Array.isArray(parsed.correction) ? parsed.correction.filter((s) => typeof s === "string" && s.trim()) : [];
+      } catch (e) {
+        return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "Failed to parse LLM JSON: " + String(e) };
+      }
+    }
+    if (opts.outputPath) {
+      try {
+        mkdirSync(dirname(opts.outputPath), { recursive: true });
+        writeFileSync(opts.outputPath, JSON.stringify({ reinforcement, correction, sessionsScanned: sessionFiles.length }, null, 2), "utf-8");
+      } catch (e) {
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:write-output" });
+      }
+    }
+    let learned = false;
+    if (opts.learn && (reinforcement.length > 0 || correction.length > 0)) {
+      const existing = loadUserFeedbackPhrases();
+      const merged = {
+        reinforcement: [...new Set([...existing.reinforcement, ...reinforcement])],
+        correction: [...new Set([...existing.correction, ...correction])],
+      };
+      saveUserFeedbackPhrases(merged);
+      learned = true;
+      logger.info?.(`memory-hybrid: saved ${merged.reinforcement.length} reinforcement and ${merged.correction.length} correction phrases to .user-feedback-phrases.json`);
+    }
+    return { reinforcement, correction, sessionsScanned: sessionFiles.length, learned };
+  } finally {
+    try {
+      if (existsSync(promptPath)) rmSync(promptPath, { force: true });
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /**

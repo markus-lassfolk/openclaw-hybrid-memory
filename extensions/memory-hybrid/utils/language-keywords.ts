@@ -5,8 +5,8 @@
  * Used for shouldCapture, detectCategory, and decay classification.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { capturePluginError } from "../services/error-reporter.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
@@ -56,6 +56,19 @@ export const ENGLISH_KEYWORDS = {
     "just check",
     "just use",
     "just do",
+    // Strong frustration / stop / give up
+    "nooo",
+    "noooo",
+    "nooooo",
+    "stop!",
+    "don't do",
+    "stop doing",
+    "never do",
+    "why are you",
+    "why do you keep",
+    "ffs",
+    "i give up",
+    "never ever",
   ],
   /** Directive extraction — phrases indicating user wants agent to remember/change behavior (10 categories merged). */
   directiveSignals: [
@@ -147,6 +160,25 @@ export const ENGLISH_KEYWORDS = {
     "excellent",
     "fantastic",
     "great job",
+    "good job",
+    "good job!",
+    "great job!",
+    "i really liked",
+    "wow, that was great",
+    "wow that was great",
+    "wow, that was good",
+    "wow that was good",
+    "wow, that was fantastic",
+    "wow that was fantastic",
+    "i'm excited about",
+    "im excited about",
+    // Explicit appreciation
+    "appreciate",
+    "really appreciate",
+    "i appreciate",
+    "i really appreciate",
+    "appreciate that",
+    "thank you for",
     // Method confirmation
     "yes, like that",
     "keep this format",
@@ -180,7 +212,7 @@ export const ENGLISH_KEYWORDS = {
     "will share this",
   ],
   /** Strong praise keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementStrongPraise: ["perfect", "brilliant", "amazing", "excellent", "you nailed it", "spot on", "love it"],
+  reinforcementStrongPraise: ["perfect", "brilliant", "amazing", "excellent", "you nailed it", "spot on", "love it", "really appreciate", "i really appreciate", "good job", "great job", "wow, that was great", "wow that was fantastic"],
   /** Method confirmation keywords (subset of reinforcementSignals for confidence scoring). */
   reinforcementMethodConfirmation: ["keep this format", "yes, like that", "this is how it should be", "do it like this"],
   /** Relief keywords (subset of reinforcementSignals for confidence scoring). */
@@ -257,6 +289,43 @@ export function getKeywordsPath(): string | null {
 export function getLanguageKeywordsFilePath(): string | null {
   if (!keywordsPath) return null;
   return join(keywordsPath, LANG_FILE_NAME);
+}
+
+const USER_FEEDBACK_PHRASES_FILE = ".user-feedback-phrases.json";
+
+/** Path to per-user discovered feedback phrases (reinforcement/correction). Merged into regex at runtime. */
+export function getUserFeedbackPhrasesPath(): string | null {
+  if (!keywordsPath) return null;
+  return join(keywordsPath, USER_FEEDBACK_PHRASES_FILE);
+}
+
+export type UserFeedbackPhrases = { reinforcement: string[]; correction: string[]; updatedAt?: string };
+
+/** Load user-discovered feedback phrases from .user-feedback-phrases.json. Returns empty arrays if missing. */
+export function loadUserFeedbackPhrases(): UserFeedbackPhrases {
+  const filePath = getUserFeedbackPhrasesPath();
+  if (!filePath || !existsSync(filePath)) return { reinforcement: [], correction: [] };
+  try {
+    const raw = readFileSync(filePath, "utf-8");
+    const data = JSON.parse(raw) as UserFeedbackPhrases;
+    return {
+      reinforcement: Array.isArray(data.reinforcement) ? data.reinforcement.filter((s) => typeof s === "string" && s.trim()) : [],
+      correction: Array.isArray(data.correction) ? data.correction.filter((s) => typeof s === "string" && s.trim()) : [],
+      updatedAt: data.updatedAt,
+    };
+  } catch {
+    return { reinforcement: [], correction: [] };
+  }
+}
+
+/** Save user-discovered feedback phrases to .user-feedback-phrases.json. */
+export function saveUserFeedbackPhrases(data: UserFeedbackPhrases): void {
+  const filePath = getUserFeedbackPhrasesPath();
+  if (!filePath) return;
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const out = { ...data, updatedAt: new Date().toISOString() };
+  writeFileSync(filePath, JSON.stringify(out, null, 2), "utf-8");
 }
 
 let cache: {
@@ -459,9 +528,17 @@ export function getDecayActiveRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().decayActive);
 }
 
-/** Regex to detect user messages that look like corrections/nudges. Uses English + translated correctionSignals from .language-keywords.json after build-languages. */
+/** Emoji that indicate user dissatisfaction — trigger self-correction extraction (with or without follow-up text). */
+const CORRECTION_EMOJIS = ["👎", "😠", "😤", "💩", "🙁", "😞", "😒", "😑", "🤬"];
+
+/** Emoji that indicate user approval — trigger reinforcement extraction (enforcer). */
+const REINFORCEMENT_EMOJIS = ["👍", "❤️", "💙", "💚", "💜", "😊", "😄", "🙂", "🔥", "⭐", "✨"];
+
+/** Regex to detect user messages that look like corrections/nudges. Uses English + translated correctionSignals, negative emoji, and user-discovered phrases from .user-feedback-phrases.json. */
 export function getCorrectionSignalRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().correctionSignals);
+  const merged = loadMergedKeywords();
+  const user = loadUserFeedbackPhrases();
+  return buildRegexFromKeywords([...(merged.correctionSignals || []), ...CORRECTION_EMOJIS, ...user.correction]);
 }
 
 /** Regex to detect user messages that contain directive phrases (10 categories merged). */
@@ -469,9 +546,11 @@ export function getDirectiveSignalRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().directiveSignals);
 }
 
-/** Regex to detect user messages that contain reinforcement/praise phrases. */
+/** Regex to detect user messages that contain reinforcement/praise phrases. Uses English + file translations, positive emoji, and user-discovered phrases from .user-feedback-phrases.json. */
 export function getReinforcementSignalRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().reinforcementSignals);
+  const merged = loadMergedKeywords();
+  const user = loadUserFeedbackPhrases();
+  return buildRegexFromKeywords([...(merged.reinforcementSignals || []), ...REINFORCEMENT_EMOJIS, ...user.reinforcement]);
 }
 
 /** Get category-specific directive regexes for multilingual detection. */

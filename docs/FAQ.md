@@ -71,14 +71,20 @@ The system degrades gracefully. Fix the key and restart to restore full function
 
 ### Can I delete a specific memory?
 
-**Agent tool:** `memory_forget(id: "fact-id")` — removes a fact from both SQLite and LanceDB.
+**Agent tool:** `memory_forget(id: "fact-id")` or `memory_forget(query: "…")` — removes a fact from both SQLite and LanceDB.
 
-**CLI:** There's no direct delete command, but you can find the fact first:
+**CLI:** Find the fact, then remove it by ID:
 
 ```bash
+# Find the memory (note the id in the results)
 openclaw hybrid-mem search "the fact I want to remove"
-# Note the id from the results, then use the agent tool to forget it
+
+# Remove by full ID or short hex prefix (use --yes to skip confirmation)
+openclaw hybrid-mem forget <id>
+openclaw hybrid-mem forget <id> --yes
 ```
+
+`forget` accepts a full UUID or a short hex prefix (e.g. `a1b2c3d4`). Without `--yes`, it prints a preview and exits; run again with `--yes` to confirm.
 
 ---
 
@@ -157,6 +163,32 @@ The plugin supports **supersession** — new facts can explicitly supersede old 
 | **Size** | One fact/sentence | Any size |
 
 See [EXAMPLES.md](EXAMPLES.md) for detailed guidance.
+
+---
+
+### How does the agent learn from my reactions (replies and emoji)?
+
+The plugin treats your **replies** as implicit feedback and uses them in two pipelines:
+
+- **Positive signals (reinforcement)** — When you say you liked something or react with approval, that response is used to **reinforce** the preceding assistant turn. Examples: “good job!”, “I really appreciate that”, “wow, that was great”, “I really liked it”, or positive emoji like 👍 ❤️ 😊. The nightly **extract-reinforcement** job (or manual `openclaw hybrid-mem extract-reinforcement`) scans session logs for these phrases and emoji, then boosts confidence on the related facts and procedures so they are preferred in future recall. So thanking the agent or saying “great job” after a good answer **strengthens** that behavior in memory.
+
+- **Negative signals (corrections)** — When you signal that something was wrong or frustrating, that response is used as a **correction** incident. Examples: “that was wrong”, “try again”, “nooo!”, “stop doing that”, “why do you keep…”, “I give up”, “never do that”, or negative emoji like 👎 😠 💩. The **self-correction** pipeline extracts these, has an LLM analyze what went wrong, and can store a fact, add a TOOLS.md rule, or propose AGENTS changes so the agent doesn’t repeat the mistake.
+
+**Emoji** are always included (language-agnostic). **Phrases** use English by default and can be extended to other languages via `openclaw hybrid-mem build-languages`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md) (including the “Emoji as signals” section) for the full list and how the pipelines run.
+
+**False positives:** Some phrases (e.g. “I’m excited about…”) can refer to things unrelated to what the agent just did. They are still treated as reinforcement; the system uses confidence scoring so that stronger, unambiguous praise (e.g. “perfect”, “great job”) is weighted more than generic or ambiguous wording.
+
+**Learn your own wording:** Different people use different words for praise and frustration. You can have an LLM (e.g. Gemini with 1M context) analyze your session logs and discover *your* phrases, then save them so detection uses them too:
+
+```bash
+# Analyze last 30 days of sessions; print suggested phrases
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash
+
+# Save discovered phrases so reinforcement/correction detection uses them (per install)
+openclaw hybrid-mem analyze-feedback-phrases --days 30 --model gemini-2.0-flash --learn
+```
+
+Discovered phrases are stored in `~/.openclaw/memory/.user-feedback-phrases.json` and merged with the built-in lists. Run `--learn` periodically (e.g. after a few weeks of use) so the system keeps learning how you and others on the same install give feedback.
 
 ---
 

@@ -25,6 +25,8 @@ export type MultiAgentConfig = {
 /** Opt-in persona proposals: agent self-evolution with human approval gate */
 export type PersonaProposalsConfig = {
   enabled: boolean;
+  /** When true, approved proposals are applied automatically without human review (default: false). */
+  autoApply: boolean;
   /** Identity files that can be modified via proposals (default: ["SOUL.md", "IDENTITY.md", "USER.md"]) */
   allowedFiles: IdentityFileType[];
   /** Max proposals per week to prevent spam (default: 5) */

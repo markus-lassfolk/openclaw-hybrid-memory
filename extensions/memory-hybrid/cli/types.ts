@@ -87,6 +87,15 @@ export type SelfCorrectionRunResult = {
   toolsApplied?: number;
   error?: string;
 };
+
+export type AnalyzeFeedbackPhrasesResult = {
+  reinforcement: string[];
+  correction: string[];
+  sessionsScanned: number;
+  learned?: boolean;
+  error?: string;
+};
+
 export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
 
 export type CredentialsAuditEntry = {

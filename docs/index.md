@@ -63,7 +63,9 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 | [WAL Crash Resilience](WAL-CRASH-RESILIENCE) | Write-ahead log design and recovery |
 | [Reflection Layer](REFLECTION) | Pattern synthesis from accumulated facts |
 | [Conflicting Memories](CONFLICTING-MEMORIES) | Classify-before-write, supersession, bi-temporal |
-| [Search improvements (RRF, ingest, HyDE)](SEARCH-RRF-INGEST) | RRF fusion, ingest-files, HyDE query expansion |
+| [Memory Tiering](MEMORY-TIERING) | Hot/warm/cold tiers, compaction, session-end hooks |
+| [Memory Scoping](MEMORY-SCOPING) | Global, user, agent, session scope; multi-agent; scope promote |
+| [Search improvements (RRF, ingest, query expansion)](SEARCH-RRF-INGEST) | RRF fusion, ingest-files, query expansion |
 | [Multilingual language keywords](LANGUAGE-KEYWORDS) | Auto-capture and categories in multiple languages; auto-build and build-languages |
 | [Automatic Categories](AUTOMATIC-CATEGORIES) | Category discovery from "other" facts |
 | [Dynamic Derived Data](DYNAMIC-DERIVED-DATA) | Index: tags, categories, decay, and other derived data |
@@ -72,7 +74,7 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 
 | Document | Description |
 |----------|-------------|
-| [CLI Reference](CLI-REFERENCE) | All 34 `openclaw hybrid-mem` commands |
+| [CLI Reference](CLI-REFERENCE) | All `openclaw hybrid-mem` commands by category |
 | [Operations](OPERATIONS) | Day-to-day operational procedures |
 | [Uninstall](UNINSTALL) | Revert to default memory; optional data removal |
 | [Upgrade OpenClaw](UPGRADE-OPENCLAW) | What to do after every OpenClaw upgrade |
