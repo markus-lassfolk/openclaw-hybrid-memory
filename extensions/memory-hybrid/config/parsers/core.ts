@@ -22,6 +22,7 @@ export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-ada-002": 1536,
   // Local / HuggingFace models that users may have previously generated vectors with
   "all-MiniLM-L6-v2": 384,
+  "bge-small-en-v1.5": 384,
   // Common Ollama embedding models
   "nomic-embed-text": 768,
   "mxbai-embed-large": 1024,

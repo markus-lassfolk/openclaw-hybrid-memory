@@ -9,13 +9,22 @@ import {
   Embeddings,
   OllamaEmbeddingProvider,
   FallbackEmbeddingProvider,
+  OnnxEmbeddingProvider,
   createEmbeddingProvider,
+  __setOnnxRuntimeLoaderForTests,
   type EmbeddingConfig,
 } from "../services/embeddings.js";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
+
+afterEach(() => {
+  __setOnnxRuntimeLoaderForTests(null);
+});
 
 /** Build a mock OpenAI client that returns a fixed embedding vector.
  * Supports batch input: returns one copy of `vector` per input text. */
@@ -427,25 +436,23 @@ describe("createEmbeddingProvider factory", () => {
     expect(() => createEmbeddingProvider(cfg)).toThrow(/apiKey/);
   });
 
-  it("throws for provider='onnx' regardless of apiKey presence", () => {
+  it("falls back to OpenAI when ONNX runtime is missing and apiKey is set", async () => {
+    __setOnnxRuntimeLoaderForTests(async () => {
+      throw new Error("onnxruntime-node not installed");
+    });
+    const openaiVec = [0.9, 0.8];
     const cfg: EmbeddingConfig = {
       provider: "onnx",
-      model: "text-embedding-3-small",
+      model: "all-MiniLM-L6-v2",
       apiKey: "sk-test-1234567890",
-      dimensions: 1536,
+      dimensions: 2,
       batchSize: 50,
     };
-    expect(() => createEmbeddingProvider(cfg)).toThrow(/ONNX/);
-  });
-
-  it("throws for provider='onnx' without apiKey", () => {
-    const cfg: EmbeddingConfig = {
-      provider: "onnx",
-      model: "some-model",
-      dimensions: 512,
-      batchSize: 50,
-    };
-    expect(() => createEmbeddingProvider(cfg)).toThrow(/ONNX/);
+    const embedSpy = vi.spyOn(Embeddings.prototype, "embed").mockResolvedValue(openaiVec);
+    const provider = createEmbeddingProvider(cfg);
+    const result = await provider.embed("test");
+    expect(result).toEqual(openaiVec);
+    embedSpy.mockRestore();
   });
 
   it("throws for unknown provider", () => {
@@ -502,6 +509,62 @@ describe("createEmbeddingProvider factory", () => {
     const result = await provider.embed("test");
     expect(result).toEqual(openaiVec);
     embedSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OnnxEmbeddingProvider
+// ---------------------------------------------------------------------------
+
+describe("OnnxEmbeddingProvider", () => {
+  it("creates embeddings with the expected dimensions (mocked runtime)", async () => {
+    class FakeTensor {
+      constructor(
+        readonly type: string,
+        readonly data: Float32Array | BigInt64Array,
+        readonly dims: number[],
+      ) {}
+    }
+
+    const fakeRuntime = {
+      Tensor: FakeTensor,
+      InferenceSession: {
+        create: async () => ({
+          inputNames: ["input_ids", "attention_mask", "token_type_ids"],
+          run: async (feeds: Record<string, { dims: number[] }>) => {
+            const batch = feeds.input_ids.dims[0];
+            const dim = 3;
+            const data = new Float32Array(batch * dim);
+            for (let i = 0; i < batch; i++) {
+              data[i * dim] = 1;
+              data[i * dim + 1] = 2;
+              data[i * dim + 2] = 3;
+            }
+            return { sentence_embedding: new FakeTensor("float32", data, [batch, dim]) };
+          },
+        }),
+      },
+    };
+
+    __setOnnxRuntimeLoaderForTests(async () => fakeRuntime as unknown as import("onnxruntime-node"));
+
+    const tmp = await fs.mkdtemp(join(tmpdir(), "onnx-test-"));
+    const modelPath = join(tmp, "model.onnx");
+    const vocabPath = join(tmp, "vocab.txt");
+    await fs.writeFile(modelPath, "");
+    await fs.writeFile(vocabPath, ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "hello", "world"].join("\n"));
+
+    const provider = new OnnxEmbeddingProvider({
+      model: modelPath,
+      modelPath,
+      vocabPath,
+      dimensions: 3,
+      batchSize: 2,
+    });
+    const results = await provider.embedBatch(["hello world", "test"]);
+    expect(results).toHaveLength(2);
+    expect(results[0]).toHaveLength(3);
+    expect(results[1]).toHaveLength(3);
   });
 });
 

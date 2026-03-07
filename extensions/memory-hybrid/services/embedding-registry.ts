@@ -14,6 +14,7 @@ import type { EmbeddingModelConfig } from "../config.js";
 import {
   Embeddings,
   OllamaEmbeddingProvider,
+  OnnxEmbeddingProvider,
   type EmbeddingProvider,
 } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -194,10 +195,10 @@ function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
   }
 
   if (cfg.provider === "onnx") {
-    throw new Error(
-      `EmbeddingModelConfig for '${cfg.name}': ONNX provider is not yet implemented. ` +
-        "Use provider='ollama' or provider='openai'.",
-    );
+    return new OnnxEmbeddingProvider({
+      model: cfg.name,
+      dimensions: cfg.dimensions,
+    });
   }
 
   throw new Error(
