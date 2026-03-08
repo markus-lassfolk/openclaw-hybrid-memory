@@ -178,17 +178,27 @@ export class VerificationStore {
   private readonly reverificationDays: number;
   private readonly logger?: { warn?: (msg: string) => void; error?: (msg: string) => void };
 
+  /**
+   * @param dbPathOrInstance - Either a file path string (opens its own connection) or an
+   *   existing Database instance to share (e.g. FactsDB.getRawDb()). When sharing an
+   *   instance, the caller is responsible for pragma setup and lifecycle.
+   */
   constructor(
-    dbPath: string,
+    dbPathOrInstance: string | Database.Database,
     options?: {
       backupPath?: string;
       reverificationDays?: number;
       logger?: { warn?: (msg: string) => void; error?: (msg: string) => void };
     },
   ) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.applyPragmas();
+    if (typeof dbPathOrInstance === "string") {
+      mkdirSync(dirname(dbPathOrInstance), { recursive: true });
+      this.db = new Database(dbPathOrInstance);
+      this.applyPragmas();
+    } else {
+      // Shared instance — caller owns the connection lifecycle
+      this.db = dbPathOrInstance;
+    }
     this.reverificationDays = options?.reverificationDays ?? 30;
     this.logger = options?.logger;
 

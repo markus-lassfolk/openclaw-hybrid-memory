@@ -261,7 +261,7 @@ function buildCliContextServices(
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
         return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
       }
-      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb);
+      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
@@ -269,15 +269,15 @@ function buildCliContextServices(
         defaultWindow: cfg.reflection.defaultWindow,
         minObservations: cfg.reflection.minObservations,
         enabled: cfg.reflection.enabled,
-      }, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
+      }, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
     },
     runReflectionRules: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      return runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
+      return runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
     },
     runReflectionMeta: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
+      return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
     },
     runClassify: (opts) =>
       runClassifyForCli(factsDb, openai, cfg.autoClassify, { ...opts, model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel }, discoveredPath, logSink, undefined),

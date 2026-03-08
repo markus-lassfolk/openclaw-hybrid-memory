@@ -520,15 +520,18 @@ export class FactsDB {
       CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
       CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
     `);
+    // Run FK back-fill for DBs created before the FK was added to the schema.
+    // For new DBs (table just created above with FK) this is a no-op — the guard
+    // inside migrateVerifiedFactsAddFk detects the FK and returns immediately.
     this.migrateVerifiedFactsAddFk();
   }
 
-  /** Add FK to verified_facts for existing DBs created before FK was in schema. */
+  /** Add FK to verified_facts for existing DBs created before FK was in schema. Idempotent. */
   private migrateVerifiedFactsAddFk(): void {
     const tableInfo = this.liveDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_facts'").get();
     if (!tableInfo) return;
     const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)") as Array<{ table: string }> | undefined;
-    if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // already has FK
+    if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // FK already present — nothing to do
     this.liveDb.exec(`
       CREATE TABLE verified_facts_new (
         id TEXT PRIMARY KEY,

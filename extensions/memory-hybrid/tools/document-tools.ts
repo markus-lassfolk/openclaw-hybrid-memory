@@ -22,6 +22,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { getCronModelConfig, getLLMModelPreference, getMemoryCategories, type HybridMemoryConfig, type MemoryCategory } from "../config.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "openclaw/plugin-sdk";
+import type { ProvenanceService } from "../services/provenance.js";
 
 export interface DocumentToolsContext {
   factsDb: FactsDB;
@@ -30,6 +31,7 @@ export interface DocumentToolsContext {
   embeddings: EmbeddingProvider;
   openai: OpenAI;
   pythonBridge: PythonBridge;
+  provenanceService?: ProvenanceService | null;
   onProgress?: (progress: { stage: string; pct: number; message: string }) => void;
 }
 
@@ -265,7 +267,7 @@ async function describeImageWithVision(opts: {
  * Only called when cfg.documents.enabled is true.
  */
 export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPluginApi): void {
-  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, onProgress } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, onProgress } = ctx;
   const docCfg = cfg.documents;
 
   const tagSafe = (s: string): string =>
@@ -593,6 +595,22 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         continue;
       }
 
+      if (provenanceService) {
+        try {
+          provenanceService.addEdge(entry.id, {
+            edgeType: "DERIVED_FROM",
+            sourceType: "document",
+            sourceId: fingerprint,
+            sourceText: chunkText.slice(0, 500),
+          });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "documents",
+            operation: "provenance",
+          });
+        }
+      }
+
       try {
         const vector = await embeddings.embed(chunkText);
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
@@ -615,6 +633,8 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       }
 
       storedCount++;
+      const pct = 50 + Math.round(((i + 1) / chunks.length) * 50);
+      opts.onProgress?.({ stage: "store", pct, message: `Stored chunk ${i + 1}/${chunks.length}` });
       if ((i + 1) % 25 === 0 || i === chunks.length - 1) {
         api.logger.info(`memory-hybrid: ${fileName} storing chunk ${i + 1}/${chunks.length}`);
       }

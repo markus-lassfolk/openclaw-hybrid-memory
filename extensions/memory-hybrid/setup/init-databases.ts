@@ -372,10 +372,12 @@ export function initializeDatabases(
   const toolProposalStore = new ToolProposalStore(toolProposalStorePath);
   api.logger.info(`memory-hybrid: tool proposal store initialized (${toolProposalStorePath})`);
 
-  // Initialize VerificationStore when enabled (Issue #162)
+  // Initialize VerificationStore when enabled (Issue #162).
+  // Share FactsDB's db instance so verified_facts lives in the same connection —
+  // avoids a second Database handle on facts.db and prevents dual table-creation conflicts.
   let verificationStore: VerificationStore | null = null;
   if (cfg.verification.enabled) {
-    verificationStore = new VerificationStore(resolvedSqlitePath, {
+    verificationStore = new VerificationStore(factsDb.getRawDb(), {
       backupPath: cfg.verification.backupPath,
       reverificationDays: cfg.verification.reverificationDays,
       logger: api.logger,
