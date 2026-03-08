@@ -177,6 +177,8 @@ export class VerificationStore {
   private readonly backupPath: string;
   private readonly reverificationDays: number;
   private readonly logger?: { warn?: (msg: string) => void; error?: (msg: string) => void };
+  /** When false, connection is shared (e.g. FactsDB.getRawDb()); close() must not call db.close(). */
+  private readonly ownsConnection: boolean;
 
   /**
    * @param dbPathOrInstance - Either a file path string (opens its own connection) or an
@@ -194,10 +196,12 @@ export class VerificationStore {
     if (typeof dbPathOrInstance === "string") {
       mkdirSync(dirname(dbPathOrInstance), { recursive: true });
       this.db = new Database(dbPathOrInstance);
+      this.ownsConnection = true;
       this.applyPragmas();
     } else {
       // Shared instance — caller owns the connection lifecycle
       this.db = dbPathOrInstance;
+      this.ownsConnection = false;
     }
     this.reverificationDays = options?.reverificationDays ?? 30;
     this.logger = options?.logger;
@@ -475,7 +479,9 @@ export class VerificationStore {
   // -------------------------------------------------------------------------
 
   close(): void {
-    this.db.close();
+    if (this.ownsConnection && this.db.open) {
+      this.db.close();
+    }
   }
 
   private validateRowChecksum(row: VerifiedFactRow): boolean {

@@ -313,15 +313,21 @@ export class EventLog {
           }
         })());
 
+        let pipelineCompleted = false;
         await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
-        
+        pipelineCompleted = true;
+
         renameSync(tempPath, filePath);
-        
-        const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
-        const deleteBatch = this.liveDb.transaction((batch: string[]) => {
-          for (const id of batch) del.run(id);
-        });
-        deleteBatch(ids);
+
+        // Only delete rows whose ids were fully written — pipelineCompleted guards
+        // against partial deletion if the pipeline threw after some ids were collected.
+        if (pipelineCompleted) {
+          const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
+          const deleteBatch = this.liveDb.transaction((batch: string[]) => {
+            for (const id of batch) del.run(id);
+          });
+          deleteBatch(ids);
+        }
         files.push(filePath);
         archived += ids.length;
       } catch (err) {
