@@ -167,7 +167,7 @@ describe("ContextualVariantGenerator — disabled", () => {
   it("returns empty array when config.enabled is false", async () => {
     const openai = makeMockOpenAI('["variant"]');
     const gen = new ContextualVariantGenerator(DISABLED_CFG, openai as never);
-    const result = await gen.generateVariants("HA runs on Proxmox VM 100", "fact");
+    const result = await gen.generateVariants("HA runs on Proxmox VM 100", "fact", "contextual-means");
     expect(result).toEqual([]);
     expect((openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create).not.toHaveBeenCalled();
   });
@@ -177,21 +177,21 @@ describe("ContextualVariantGenerator — category filter", () => {
   it("returns empty array when fact category is not in config.categories", async () => {
     const openai = makeMockOpenAI('["variant"]');
     const gen = new ContextualVariantGenerator(CATEGORY_FILTERED_CFG, openai as never);
-    const result = await gen.generateVariants("User prefers dark mode", "preference");
+    const result = await gen.generateVariants("User prefers dark mode", "preference", "contextual-means");
     expect(result).toEqual([]);
   });
 
   it("generates variants when fact category is in config.categories", async () => {
     const openai = makeMockOpenAI('["smart home server infrastructure"]');
     const gen = new ContextualVariantGenerator(CATEGORY_FILTERED_CFG, openai as never);
-    const result = await gen.generateVariants("HA runs on Proxmox VM 100", "fact");
+    const result = await gen.generateVariants("HA runs on Proxmox VM 100", "fact", "contextual-means");
     expect(result).toEqual(["smart home server infrastructure"]);
   });
 
   it("generates variants for all categories when categories is empty/undefined", async () => {
     const openai = makeMockOpenAI('["any category variant"]');
     const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
-    const result = await gen.generateVariants("some fact", "preference");
+    const result = await gen.generateVariants("some fact", "preference", "contextual-means");
     expect(result).toEqual(["any category variant"]);
   });
 });
@@ -200,29 +200,36 @@ describe("ContextualVariantGenerator — LLM call", () => {
   it("calls LLM and returns parsed variants", async () => {
     const openai = makeMockOpenAI('["server infrastructure", "home automation system"]');
     const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
-    const result = await gen.generateVariants("HA runs on Proxmox VM 100 at 192.168.1.212", "fact");
+    const result = await gen.generateVariants("HA runs on Proxmox VM 100 at 192.168.1.212", "fact", "contextual-means");
     expect(result).toEqual(["server infrastructure", "home automation system"]);
+  });
+
+  it("generates contextual-search variants", async () => {
+    const openai = makeMockOpenAI('["home automation search", "proxmox vm 100 ip", "ha server details"]');
+    const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
+    const result = await gen.generateVariants("HA runs on Proxmox VM 100 at 192.168.1.212", "fact", "contextual-search");
+    expect(result).toEqual(["home automation search", "proxmox vm 100 ip", "ha server details"]);
   });
 
   it("respects maxVariantsPerFact by truncating excess variants", async () => {
     const cfg: ContextualVariantsConfig = { ...ENABLED_CFG, maxVariantsPerFact: 1 };
     const openai = makeMockOpenAI('["first variant", "second variant", "third variant"]');
     const gen = new ContextualVariantGenerator(cfg, openai as never);
-    const result = await gen.generateVariants("some fact text", "fact");
+    const result = await gen.generateVariants("some fact text", "fact", "contextual-means");
     expect(result).toHaveLength(1);
   });
 
   it("returns empty array on LLM error (graceful degradation)", async () => {
     const openai = makeMockOpenAI(new Error("API timeout"));
     const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
-    const result = await gen.generateVariants("some fact text", "fact");
+    const result = await gen.generateVariants("some fact text", "fact", "contextual-means");
     expect(result).toEqual([]);
   });
 
   it("returns empty array when LLM returns non-JSON", async () => {
     const openai = makeMockOpenAI("Here are some variants: variant one, variant two.");
     const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
-    const result = await gen.generateVariants("some fact text", "fact");
+    const result = await gen.generateVariants("some fact text", "fact", "contextual-means");
     expect(result).toEqual([]);
   });
 });
@@ -235,11 +242,11 @@ describe("ContextualVariantGenerator — rate limiting", () => {
 
     // First 3 calls should succeed
     for (let i = 0; i < 3; i++) {
-      const result = await gen.generateVariants("fact text", "fact");
+      const result = await gen.generateVariants("fact text", "fact", "contextual-means");
       expect(result).toEqual(["variant"]);
     }
     // 4th call should be rate-limited
-    const limited = await gen.generateVariants("fact text", "fact");
+    const limited = await gen.generateVariants("fact text", "fact", "contextual-means");
     expect(limited).toEqual([]);
   });
 
@@ -249,14 +256,14 @@ describe("ContextualVariantGenerator — rate limiting", () => {
     const gen = new ContextualVariantGenerator(cfg, openai as never);
 
     // First call succeeds
-    await gen.generateVariants("fact text", "fact");
+    await gen.generateVariants("fact text", "fact", "contextual-means");
     // Second should be rate-limited
-    const limited = await gen.generateVariants("fact text", "fact");
+    const limited = await gen.generateVariants("fact text", "fact", "contextual-means");
     expect(limited).toEqual([]);
 
     // Reset rate limit (simulates window expiry)
     gen._resetRateLimit();
-    const result = await gen.generateVariants("fact text", "fact");
+    const result = await gen.generateVariants("fact text", "fact", "contextual-means");
     expect(result).toEqual(["variant"]);
   });
 
@@ -266,9 +273,9 @@ describe("ContextualVariantGenerator — rate limiting", () => {
     const gen = new ContextualVariantGenerator(cfg, openai as never);
 
     expect(gen.callsInWindow).toBe(0);
-    await gen.generateVariants("fact", "fact");
+    await gen.generateVariants("fact", "fact", "contextual-means");
     expect(gen.callsInWindow).toBe(1);
-    await gen.generateVariants("fact", "fact");
+    await gen.generateVariants("fact", "fact", "contextual-means");
     expect(gen.callsInWindow).toBe(2);
   });
 });
@@ -278,7 +285,7 @@ describe("ContextualVariantGenerator — rate limiting", () => {
 // ---------------------------------------------------------------------------
 
 describe("VariantGenerationQueue", () => {
-  it("calls onVariantsGenerated with correct factId and variants", async () => {
+  it("calls onVariantsGenerated for both variant types", async () => {
     const openai = makeMockOpenAI('["generated variant"]');
     const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
     const onVariantsGenerated = vi.fn().mockResolvedValue(undefined);
@@ -289,7 +296,16 @@ describe("VariantGenerationQueue", () => {
     // Wait for async processing
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(onVariantsGenerated).toHaveBeenCalledWith("fact-1", ["generated variant"]);
+    expect(onVariantsGenerated).toHaveBeenCalledWith(
+      "fact-1",
+      "contextual-means",
+      ["generated variant"],
+    );
+    expect(onVariantsGenerated).toHaveBeenCalledWith(
+      "fact-1",
+      "contextual-search",
+      ["generated variant"],
+    );
   });
 
   it("does not call onVariantsGenerated when generator returns empty array", async () => {
@@ -308,9 +324,9 @@ describe("VariantGenerationQueue", () => {
   it("processes multiple enqueued items", async () => {
     const openai = makeMockOpenAI('["variant"]');
     const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
-    const calls: string[] = [];
-    const onVariantsGenerated = vi.fn().mockImplementation(async (factId: string) => {
-      calls.push(factId);
+    const calls: Array<{ factId: string; variantType: string }> = [];
+    const onVariantsGenerated = vi.fn().mockImplementation(async (factId: string, variantType: string) => {
+      calls.push({ factId, variantType });
     });
     const queue = new VariantGenerationQueue(gen, onVariantsGenerated);
 
@@ -320,7 +336,15 @@ describe("VariantGenerationQueue", () => {
 
     await new Promise((r) => setTimeout(r, 100));
 
-    expect(calls.sort()).toEqual(["fact-1", "fact-2", "fact-3"]);
+    const byFact = calls.reduce<Record<string, string[]>>((acc, call) => {
+      acc[call.factId] = acc[call.factId] ?? [];
+      acc[call.factId].push(call.variantType);
+      return acc;
+    }, {});
+    expect(Object.keys(byFact).sort()).toEqual(["fact-1", "fact-2", "fact-3"]);
+    expect(byFact["fact-1"].sort()).toEqual(["contextual-means", "contextual-search"]);
+    expect(byFact["fact-2"].sort()).toEqual(["contextual-means", "contextual-search"]);
+    expect(byFact["fact-3"].sort()).toEqual(["contextual-means", "contextual-search"]);
   });
 
   it("gracefully handles onVariantsGenerated errors without stopping queue", async () => {
@@ -338,8 +362,31 @@ describe("VariantGenerationQueue", () => {
 
     await new Promise((r) => setTimeout(r, 100));
 
-    // Both items should have been attempted
-    expect(onVariantsGenerated).toHaveBeenCalledTimes(2);
+    // Both items and variant types should have been attempted
+    expect(onVariantsGenerated).toHaveBeenCalledTimes(4);
+  });
+
+  it("stores both variant types in fact_embeddings", async () => {
+    const localTmpDir = mkdtempSync(join(tmpdir(), "contextual-variants-embeddings-"));
+    const localDb = new FactsDB(join(localTmpDir, "test.db"));
+    const factId = storeTestFact(localDb, "embedded fact");
+    const openai = makeMockOpenAI('["variant"]');
+    const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
+    const onVariantsGenerated = vi.fn().mockImplementation(async (id: string, variantType: string) => {
+      const value = variantType === "contextual-search" ? 0.8 : 0.2;
+      const vec = new Float32Array([value, value, value, value]);
+      localDb.storeEmbedding(id, "test-model", variantType, vec, vec.length);
+    });
+    const queue = new VariantGenerationQueue(gen, onVariantsGenerated);
+
+    queue.enqueue({ factId, text: "some fact", category: "fact" });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const stored = localDb.getEmbeddings(factId).map((r) => r.variant).sort();
+    expect(stored).toEqual(["contextual-means", "contextual-search"]);
+
+    localDb.close();
+    rmSync(localTmpDir, { recursive: true });
   });
 
   it("reports correct queueLength before processing starts", () => {
