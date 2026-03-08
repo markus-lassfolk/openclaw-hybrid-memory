@@ -253,6 +253,8 @@ export async function runPassiveObserver(
     reinforcement?: ReinforcementConfig
     /** Provenance tracking (Issue #163). */
     provenanceService?: ProvenanceService | null
+    /** Episodic event log (Issue #150). When set, each stored fact is also appended to Layer 1. */
+    eventLog?: EventLog | null
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -562,6 +564,28 @@ export async function runPassiveObserver(
           continue
         }
 
+        // Write episodic event FIRST (Issue #150, Layer 1): record before factsDb so that if
+        // factsDb fails we still have the event record. If eventLog fails we continue to store
+        // the fact — event log unavailability must never block fact writes.
+        let eventId: string | null = null
+        if (opts.eventLog) {
+          try {
+            eventId = opts.eventLog.append({
+              sessionId,
+              timestamp: new Date().toISOString(),
+              eventType: categoryToEventType(fact.category),
+              content: {
+                text: fact.text,
+                category: fact.category,
+                importance: fact.importance,
+                source: 'passive-observer',
+              },
+            })
+          } catch {
+            // Non-fatal — event log write failure must never block fact storage
+          }
+        }
+
         // Store to SQLite — tag with session scope so facts can be scoped to session lifecycle
         const stored = factsDb.store({
           text: fact.text,
@@ -580,12 +604,13 @@ export async function runPassiveObserver(
           extractionMethod: 'passive',
           extractionConfidence: fact.importance,
         })
+
         if (opts.provenanceService) {
           try {
             opts.provenanceService.addEdge(stored.id, {
               edgeType: "DERIVED_FROM",
               sourceType: "event_log",
-              sourceId: sessionId,
+              sourceId: eventId ?? sessionId,
               sourceText: fact.text,
             })
           } catch (err) {
@@ -594,26 +619,6 @@ export async function runPassiveObserver(
               subsystem: 'provenance',
               factId: stored.id,
             })
-          }
-        }
-
-        // Write episodic event (Issue #150): record what was learned to Layer 1
-        if (opts.eventLog) {
-          try {
-            opts.eventLog.append({
-              sessionId,
-              timestamp: new Date().toISOString(),
-              eventType: categoryToEventType(fact.category),
-              content: {
-                text: fact.text,
-                factId: stored.id,
-                category: fact.category,
-                importance: fact.importance,
-                source: 'passive-observer',
-              },
-            })
-          } catch {
-            // Non-fatal — event log write failure must never break fact storage
           }
         }
 

@@ -622,6 +622,47 @@ describe("runPassiveObserver event_log integration", () => {
 
     chatSpy.mockRestore();
   });
+
+  it("writes to event_log before factsDb.store (Layer 1 write order)", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "We use Postgres as our primary database." } }) + "\n";
+    writeFileSync(join(sessionsDir, "sess-order.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "We use Postgres as primary database", category: "fact", importance: 0.8 }]),
+      );
+
+    const callOrder: string[] = [];
+    const eventLog = {
+      append: vi.fn().mockImplementation(() => { callOrder.push("eventLog.append"); return "evt-id"; }),
+    };
+    const factsDb = {
+      getRecentFacts: vi.fn().mockReturnValue([]),
+      store: vi.fn().mockImplementation(() => { callOrder.push("factsDb.store"); return { id: "fact-1" }; }),
+      detectContradictions: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+
+    const cfg = makeConfig({ sessionsDir });
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir, eventLog: eventLog as never },
+      makeLogger(),
+    );
+
+    expect(eventLog.append).toHaveBeenCalledTimes(1);
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    expect(callOrder).toEqual(["eventLog.append", "factsDb.store"]);
+
+    chatSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -332,11 +332,12 @@ export function initializeDatabases(
     api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
   }
 
-  // Initialize EventLog when nightlyCycle is enabled (episodic consolidation, nightly
-  // contradiction resolution) or graph.autoSupersede is on (contradiction events). This avoids creating event-log.db for
-  // users who don't need it.
+  // Initialize EventLog whenever any episodic feature is enabled: nightlyCycle (consolidation,
+  // contradiction resolution), graph.autoSupersede (contradiction events), or passiveObserver
+  // (Layer 1 write-before-store, Issue #150). This ensures any code path that appends to
+  // event_log gets a live instance rather than silently skipping.
   let eventLog: EventLog | null = null;
-  if (cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede) {
+  if (cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede || cfg.passiveObserver.enabled) {
     const eventLogPath = join(dirname(resolvedSqlitePath), "event-log.db");
     eventLog = new EventLog(eventLogPath);
     api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
