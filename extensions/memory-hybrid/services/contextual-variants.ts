@@ -52,8 +52,8 @@ const VARIANT_TYPES: ContextualVariantType[] = ["contextual-means", "contextual-
  * Implements rate limiting and graceful degradation.
  */
 export class ContextualVariantGenerator {
-  /** Sliding-window call timestamps for rate limiting (ms epoch). */
-  private callTimestamps: number[] = [];
+  /** Sliding-window call timestamps for rate limiting (ms epoch), per variant type. */
+  private callTimestamps: Map<ContextualVariantType, number[]> = new Map();
 
   constructor(
     private readonly config: ContextualVariantsConfig,
@@ -80,14 +80,16 @@ export class ContextualVariantGenerator {
       return [];
     }
 
-    // Rate limiting: sliding window of maxPerMinute calls per 60s.
+    // Rate limiting: sliding window of maxPerMinute calls per 60s, per variant type.
     const now = Date.now();
     const windowMs = 60_000;
-    this.callTimestamps = this.callTimestamps.filter((t) => now - t < windowMs);
-    if (this.callTimestamps.length >= this.config.maxPerMinute) {
+    let timestamps = this.callTimestamps.get(variantType) ?? [];
+    timestamps = timestamps.filter((t) => now - t < windowMs);
+    if (timestamps.length >= this.config.maxPerMinute) {
       return [];
     }
-    this.callTimestamps.push(now);
+    timestamps.push(now);
+    this.callTimestamps.set(variantType, timestamps);
 
     const count =
       variantType === "contextual-search"
@@ -132,12 +134,16 @@ export class ContextualVariantGenerator {
   /** Expose call count in window for testing rate limiting. */
   get callsInWindow(): number {
     const now = Date.now();
-    return this.callTimestamps.filter((t) => now - t < 60_000).length;
+    let total = 0;
+    for (const timestamps of this.callTimestamps.values()) {
+      total += timestamps.filter((t) => now - t < 60_000).length;
+    }
+    return total;
   }
 
   /** Reset call timestamps (for testing). */
   _resetRateLimit(): void {
-    this.callTimestamps = [];
+    this.callTimestamps.clear();
   }
 }
 

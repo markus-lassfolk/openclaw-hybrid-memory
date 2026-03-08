@@ -8,14 +8,15 @@
 
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, createWriteStream, existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { mkdirSync, createWriteStream, createReadStream, existsSync, renameSync, unlinkSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createGzip, gunzipSync } from "node:zlib";
+import { createGzip, createGunzip } from "node:zlib";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { expandTilde } from "../utils/path.js";
 
 export type EventType =
   | "fact_learned"
@@ -263,42 +264,54 @@ export class EventLog {
       );
       const filePath = join(resolvedDir, `${month}.jsonl.gz`);
       const tempPath = `${filePath}.tmp`;
-      
+      const self = this;
+
       try {
-        let existingLines = "";
-        if (existsSync(filePath)) {
-          try {
-            const compressed = readFileSync(filePath);
-            existingLines = gunzipSync(compressed).toString("utf8");
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "read-existing-archive",
-              severity: "info",
-              subsystem: "event-log",
-            });
-            const backupPath = `${filePath}.corrupted.${Date.now()}`;
+        const lineStream = Readable.from((async function* () {
+          const seenIds = new Set<string>();
+
+          if (existsSync(filePath)) {
             try {
-              renameSync(filePath, backupPath);
-            } catch (renameErr) {
-              capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
-                operation: "backup-corrupted-archive",
+              const input = createReadStream(filePath).pipe(createGunzip());
+              const rl = createInterface({ input, crlfDelay: Infinity });
+              for await (const line of rl) {
+                if (!line.trim()) continue;
+                try {
+                  const o = JSON.parse(line) as { id?: string };
+                  if (o.id) seenIds.add(o.id);
+                } catch {
+                  // Skip corrupt line but still yield to preserve archive
+                }
+                yield line + "\n";
+              }
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "read-existing-archive",
                 severity: "info",
                 subsystem: "event-log",
               });
+              const backupPath = `${filePath}.corrupted.${Date.now()}`;
+              try {
+                renameSync(filePath, backupPath);
+              } catch (renameErr) {
+                capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
+                  operation: "backup-corrupted-archive",
+                  severity: "info",
+                  subsystem: "event-log",
+                });
+              }
             }
           }
-        }
 
-        const lineStream = Readable.from((function* (self: EventLog) {
-          if (existingLines) {
-            yield existingLines;
-          }
           for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
             const entry = self.rowToEntry(r);
             ids.push(entry.id);
-            yield JSON.stringify(entry) + "\n";
+            if (!seenIds.has(entry.id)) {
+              seenIds.add(entry.id);
+              yield JSON.stringify(entry) + "\n";
+            }
           }
-        })(this));
+        })());
 
         await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
         
@@ -455,11 +468,4 @@ export class EventLog {
       });
     }
   }
-}
-
-function expandTilde(p: string): string {
-  if (p === "~" || p.startsWith("~/")) {
-    return join(homedir(), p.slice(1));
-  }
-  return p;
 }

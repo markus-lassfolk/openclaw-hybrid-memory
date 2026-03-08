@@ -758,6 +758,56 @@ export async function runRetrievalPipeline(
     if (topScore < threshold) {
       return runOnce({ useLlm: true, variants: null, skipReranking: false });
     }
+    // When above threshold we skipped LLM expansion but must still apply reranking if enabled.
+    if (rerankingConfig?.enabled && rerankingOpenai) {
+      try {
+        const rrfScoreMap = new Map(initial.fused.map((r) => [r.factId, r.finalScore]));
+        const scoredFacts: ScoredFact[] = initial.entries.map((entry, i) => {
+          const factId = initial.fused[i]?.factId ?? initial.packedFactIds[i];
+          const storedSec = entry.sourceDate ?? entry.createdAt;
+          return {
+            factId,
+            text: entry.text,
+            confidence: entry.confidence,
+            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+            finalScore: rrfScoreMap.get(factId) ?? 0,
+          };
+        });
+        const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
+        const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
+        const factIdToEntry = new Map(initial.entries.map((e, i) => [initial.fused[i]?.factId ?? initial.packedFactIds[i], e]));
+        const orderedEntriesReranked = reranked.map((f) => ({ factId: f.factId, entry: factIdToEntry.get(f.factId)! })).filter((x) => x.entry);
+        const fusedReranked = orderedEntriesReranked.map(({ factId }) => initial.fused.find((r) => r.factId === factId)!).filter(Boolean);
+        const contradictedIds = new Set<string>();
+        if (factsDb.getContradictedIds) {
+          const allIds = orderedEntriesReranked.map((e) => e.factId);
+          const batch = factsDb.getContradictedIds(allIds);
+          for (const id of batch) contradictedIds.add(id);
+        } else if (factsDb.isContradicted) {
+          for (const { factId } of orderedEntriesReranked) {
+            if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
+          }
+        }
+        const { packed, tokensUsed } = packIntoBudget(
+          orderedEntriesReranked.map((e) => e.entry),
+          budgetTokens,
+          { contradictedIds },
+        );
+        const packedFactIdsReranked = orderedEntriesReranked.slice(0, packed.length).map((e) => e.factId);
+        return {
+          fused: fusedReranked,
+          packed,
+          packedFactIds: packedFactIdsReranked,
+          tokensUsed,
+          entries: orderedEntriesReranked.map((e) => e.entry),
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "retrieval",
+          operation: "reranking-conditional",
+        });
+      }
+    }
     return initial;
   }
 

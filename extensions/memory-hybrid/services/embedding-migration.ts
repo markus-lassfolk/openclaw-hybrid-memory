@@ -88,8 +88,12 @@ export async function migrateEmbeddings(
 
   const log = logger ?? { info: console.info, warn: console.warn };
 
-  const facts = factsDb.getAll({ includeSuperseded: false });
-  const total = facts.length;
+  const useBatched =
+    typeof (factsDb as { getCount?: unknown }).getCount === "function" &&
+    typeof (factsDb as { getBatch?: unknown }).getBatch === "function";
+  const total = useBatched
+    ? (factsDb as { getCount: (opts: { includeSuperseded: boolean }) => number }).getCount({ includeSuperseded: false })
+    : factsDb.getAll({ includeSuperseded: false }).length;
   let migrated = 0;
   let skipped = 0;
   const errors: string[] = [];
@@ -100,8 +104,10 @@ export async function migrateEmbeddings(
   );
 
   const initialGeneration = vectorDb.getCloseGeneration();
+  let offset = 0;
+  const facts = useBatched ? null : factsDb.getAll({ includeSuperseded: false });
 
-  for (let i = 0; i < facts.length; i += batchSize) {
+  while (offset < total) {
     // Abort if the VectorDB was closed (hot-reload or shutdown)
     if (vectorDb.getCloseGeneration() !== initialGeneration) {
       log.warn(
@@ -110,7 +116,10 @@ export async function migrateEmbeddings(
       break;
     }
 
-    const batch = facts.slice(i, i + batchSize);
+    const batch = useBatched
+      ? (factsDb as { getBatch: (offset: number, limit: number, opts: { includeSuperseded: boolean }) => Array<{ id: string; text: string; importance?: number; category: string }> }).getBatch(offset, batchSize, { includeSuperseded: false })
+      : facts!.slice(offset, offset + batchSize);
+    if (batch.length === 0) break;
     const texts = batch.map((f) => f.text);
 
     // Attempt batch embed first; fall back to per-fact embeds on failure
@@ -124,7 +133,7 @@ export async function migrateEmbeddings(
         operation: "migration-embed-batch",
       });
       log.warn(
-        `memory-hybrid: embedding-migration: batch embed failed at offset ${i} — falling back to per-fact embeds: ${batchErr}`,
+        `memory-hybrid: embedding-migration: batch embed failed at offset ${offset} — falling back to per-fact embeds: ${batchErr}`,
       );
       vectors = await Promise.all(
         batch.map(async (fact) => {
@@ -183,13 +192,13 @@ export async function migrateEmbeddings(
       }
     }
 
-    const processed = Math.min(i + batchSize, total);
-    onProgress?.(processed, total);
+    offset += batch.length;
+    onProgress?.(offset, total);
 
     // Periodic progress log for large datasets
-    if (total >= 100 && processed % 100 === 0) {
+    if (total >= 100 && offset % 100 < batch.length) {
       log.info(
-        `memory-hybrid: embedding-migration: ${processed}/${total} processed ` +
+        `memory-hybrid: embedding-migration: ${offset}/${total} processed ` +
           `(${migrated} migrated, ${errors.length} errors)`,
       );
     }
@@ -264,6 +273,7 @@ export async function runEmbeddingMaintenance(
         `Set embedding.autoMigrate=true in plugin config to automatically re-generate ` +
         `embeddings when the model changes, or run the maintenance command manually.`,
     );
+    factsDb.setEmbeddingMeta(currentProvider, currentModel);
     return { changed: true, migrated: false };
   }
 

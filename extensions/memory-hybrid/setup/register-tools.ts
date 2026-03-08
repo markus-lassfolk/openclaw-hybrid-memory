@@ -134,7 +134,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
+    { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),

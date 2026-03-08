@@ -594,6 +594,10 @@ describe("LLM vision integration", () => {
         },
       },
     };
+    const bridgeThatThrows = {
+      ...makeMockBridge(),
+      convert: vi.fn().mockRejectedValue(new Error("bridge fallback failed")),
+    };
 
     registerDocumentTools(
       {
@@ -602,7 +606,7 @@ describe("LLM vision integration", () => {
         cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
-        pythonBridge: makeMockBridge() as never,
+        pythonBridge: bridgeThatThrows as never,
       },
       api as never,
     );

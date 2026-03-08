@@ -31,6 +31,7 @@ import {
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { QueryExpander } from "../services/query-expander.js";
 import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
 import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
 import {
@@ -48,6 +49,7 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { detectFutureDate } from "../utils/date-detector.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 
@@ -63,6 +65,7 @@ export interface PluginContext {
   credentialsDb: CredentialsDB | null;
   eventLog: EventLog | null;
   provenanceService?: ProvenanceService | null;
+  verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
@@ -179,7 +182,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, provenanceService, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, embeddingRegistry, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
 
   api.registerTool(
     {
@@ -479,6 +482,14 @@ export function registerMemoryTools(
             ? cfg.retrieval.strategies.filter((s) => s !== "semantic")
             : cfg.retrieval.strategies;
           const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
+          const queryExpander =
+            cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
+              ? new QueryExpander(cfg.queryExpansion, openai)
+              : null;
+          const embedFn =
+            queryExpander && queryVector != null
+              ? (text: string) => embeddings.embed(text)
+              : null;
           const rrfOutput = await runRetrievalPipeline(
             query,
             queryVector,
@@ -496,9 +507,9 @@ export function registerMemoryTools(
             cfg.clusters,
             embeddingRegistry ?? null,
             factsDb,
-            null, // queryExpander (not wired here)
-            null, // embedFn (not wired here)
-            undefined, // queryExpansionContext
+            queryExpander ?? null,
+            embedFn,
+            undefined, // queryExpansionContext (could pass recent conversation if available)
             cfg.reranking,
             openai,
           );
@@ -1286,7 +1297,7 @@ export function registerMemoryTools(
         const decayFreezeUntil =
           paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
             ? paramDecayFreezeUntil
-            : detectFutureDate(textToStore, cfg.futureDateProtection);
+            : detectFutureDate(textToStore, cfg.futureDateProtection ?? { enabled: false });
 
         const nowSec = Math.floor(Date.now() / 1000);
         const storeSessionId = api.context?.sessionId ?? null;

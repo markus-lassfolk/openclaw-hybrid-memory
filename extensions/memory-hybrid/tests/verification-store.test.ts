@@ -315,6 +315,9 @@ describe("VerificationStore.listDueForReverification", () => {
     db.prepare(
       `UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`
     ).run(id);
+    db.prepare(
+      `UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`
+    ).run(newId);
 
     const due = store.listDueForReverification();
     const ids = due.map((d) => d.id);

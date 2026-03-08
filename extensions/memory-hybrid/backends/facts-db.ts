@@ -514,8 +514,38 @@ export class FactsDB {
         next_verification TEXT,
         version INTEGER DEFAULT 1,
         previous_version_id TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
       );
+      CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
+      CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
+    `);
+    this.migrateVerifiedFactsAddFk();
+  }
+
+  /** Add FK to verified_facts for existing DBs created before FK was in schema. */
+  private migrateVerifiedFactsAddFk(): void {
+    const tableInfo = this.liveDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_facts'").get();
+    if (!tableInfo) return;
+    const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)", { simple: true }) as Array<{ table: string }> | undefined;
+    if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // already has FK
+    this.liveDb.exec(`
+      CREATE TABLE verified_facts_new (
+        id TEXT PRIMARY KEY,
+        fact_id TEXT NOT NULL,
+        canonical_text TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        verified_at TEXT NOT NULL,
+        verified_by TEXT NOT NULL,
+        next_verification TEXT,
+        version INTEGER DEFAULT 1,
+        previous_version_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+      );
+      INSERT INTO verified_facts_new SELECT * FROM verified_facts;
+      DROP TABLE verified_facts;
+      ALTER TABLE verified_facts_new RENAME TO verified_facts;
       CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
       CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
     `);
@@ -1983,6 +2013,41 @@ export class FactsDB {
         `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}${scopeClause} ORDER BY created_at DESC`,
       )
       .all(...params) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
+  /**
+   * Count non-expired facts (for migration progress). Same filter as getAll with includeSuperseded.
+   */
+  getCount(options?: { includeSuperseded?: boolean }): number {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const { includeSuperseded = false } = options ?? {};
+    const temporalFilter = includeSuperseded ? "" : " AND superseded_at IS NULL";
+    const row = this.liveDb
+      .prepare(
+        `SELECT COUNT(*) AS count FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}`,
+      )
+      .get(nowSec) as { count: number };
+    return row?.count ?? 0;
+  }
+
+  /**
+   * Get a batch of non-expired facts (for migration without loading all into memory).
+   * Same ordering and filter as getAll; offset/limit applied.
+   */
+  getBatch(
+    offset: number,
+    limit: number,
+    options?: { includeSuperseded?: boolean },
+  ): MemoryEntry[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const { includeSuperseded = false } = options ?? {};
+    const temporalFilter = includeSuperseded ? "" : " AND superseded_at IS NULL";
+    const rows = this.liveDb
+      .prepare(
+        `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      )
+      .all(nowSec, limit, offset) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToEntry(row));
   }
 

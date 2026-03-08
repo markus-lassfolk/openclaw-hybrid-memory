@@ -352,7 +352,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               openai,
               cfg.passiveObserver,
               cfg.categories,
-              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement, provenanceService },
+              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement, provenanceService, eventLog },
               api.logger,
             );
             if (result.factsStored > 0 || result.factsExtracted > 0 || result.factsReinforced > 0) {

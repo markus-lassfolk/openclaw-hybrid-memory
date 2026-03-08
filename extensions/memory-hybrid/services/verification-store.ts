@@ -7,10 +7,10 @@
 
 import Database from "better-sqlite3";
 import { mkdirSync, appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { homedir } from "node:os";
 import { capturePluginError } from "./error-reporter.js";
+import { expandTilde } from "../utils/path.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
 
 // ---------------------------------------------------------------------------
@@ -78,13 +78,6 @@ function containsHostname(text: string): boolean {
     }
   }
   return false;
-}
-
-function expandTilde(p: string): string {
-  if (p === "~" || p.startsWith("~/")) {
-    return join(homedir(), p.slice(1));
-  }
-  return p;
 }
 
 function toISODate(d: Date): string {
@@ -266,12 +259,17 @@ export class VerificationStore {
       .run(id, factId, text, checksum, now, verifiedBy, nextVerification, now);
 
     this.writeBackup({
+      action: "verify",
+      id,
       fact_id: factId,
       canonical_text: text,
       checksum,
       verified_at: now,
       verified_by: verifiedBy,
       version: 1,
+      nextVerification,
+      previousVersionId: null,
+      ts: now,
     });
 
     return id;
@@ -446,12 +444,17 @@ export class VerificationStore {
     })();
 
     this.writeBackup({
+      action: "update",
+      id: newId,
       fact_id: existing.fact_id,
       canonical_text: newText,
       checksum,
       verified_at: now,
       verified_by: verifiedBy,
       version: newVersion,
+      nextVerification,
+      previousVersionId: id,
+      ts: now,
     });
 
     return newId;
@@ -493,12 +496,17 @@ export class VerificationStore {
   private hasLoggedBackupError = false;
 
   private writeBackup(entry: {
+    action: "verify" | "update";
+    id: string;
     fact_id: string;
     canonical_text: string;
     checksum: string;
     verified_at: string;
     verified_by: string;
     version: number;
+    nextVerification: string | null;
+    previousVersionId: string | null;
+    ts: string;
   }): void {
     try {
       const line = JSON.stringify(entry) + "\n";

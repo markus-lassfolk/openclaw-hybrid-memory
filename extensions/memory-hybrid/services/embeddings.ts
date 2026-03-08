@@ -8,7 +8,7 @@ import { promises as fs } from "node:fs";
 import { createWriteStream } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { capturePluginError } from "./error-reporter.js";
 import { withLLMRetry } from "./chat.js";
@@ -118,17 +118,41 @@ function splitRepoAndRevision(input: string): { repo: string; revision: string }
   return { repo: input, revision: "main" };
 }
 
+const ONNX_DOWNLOAD_TIMEOUT_MS = 120_000;
+const ONNX_DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024; // 500 MiB
+
 async function downloadFile(url: string, destPath: string): Promise<void> {
-  const resp = await fetch(url);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ONNX_DOWNLOAD_TIMEOUT_MS);
+  const resp = await fetch(url, { signal: controller.signal });
+  clearTimeout(timeoutId);
   if (!resp.ok || !resp.body) {
     const body = await resp.text().catch(() => "");
     throw new Error(`Failed to download ${url}: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`);
   }
+  const contentLength = resp.headers.get("content-length");
+  if (contentLength) {
+    const len = Number.parseInt(contentLength, 10);
+    if (!Number.isNaN(len) && len > ONNX_DOWNLOAD_MAX_BYTES) {
+      throw new Error(`Refusing to download ${url}: size ${len} exceeds limit ${ONNX_DOWNLOAD_MAX_BYTES}`);
+    }
+  }
   await fs.mkdir(dirname(destPath), { recursive: true });
   const tempPath = `${destPath}.tmp`;
-  const stream = Readable.fromWeb(resp.body as unknown as any);
+  const stream = Readable.fromWeb(resp.body as import("stream/web").ReadableStream<Uint8Array>);
   try {
-    await pipeline(stream, createWriteStream(tempPath));
+    let bytesWritten = 0;
+    const countStream = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        bytesWritten += chunk.length;
+        if (bytesWritten > ONNX_DOWNLOAD_MAX_BYTES) {
+          cb(new Error(`Download size exceeds limit ${ONNX_DOWNLOAD_MAX_BYTES}`));
+          return;
+        }
+        cb(null, chunk);
+      },
+    });
+    await pipeline(stream, countStream, createWriteStream(tempPath));
     await fs.rename(tempPath, destPath);
   } catch (err) {
     await fs.unlink(tempPath).catch(() => {});
