@@ -872,6 +872,11 @@ export function registerMemoryTools(
             description: "Optional verification tier override (e.g. 'critical') to force verification store enrollment.",
           }),
         ),
+        decayFreezeUntil: Type.Optional(
+          Type.Number({
+            description: "Unix epoch seconds until which confidence decay is paused. Auto-detected from future dates in text if omitted.",
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
@@ -888,6 +893,7 @@ export function registerMemoryTools(
             scope: paramScope,
             scopeTarget: paramScopeTarget,
             verification_tier: verificationTier,
+            decayFreezeUntil: paramDecayFreezeUntil,
           } = params as {
             text: string;
             importance?: number;
@@ -901,6 +907,7 @@ export function registerMemoryTools(
             scope?: "global" | "user" | "agent" | "session";
             scopeTarget?: string;
             verification_tier?: string;
+            decayFreezeUntil?: number;
           };
 
           let textToStore = text;
@@ -1300,6 +1307,7 @@ export function registerMemoryTools(
           provenanceSession: provenanceSessionId,
           extractionMethod: "active",
           extractionConfidence: importance,
+          decayFreezeUntil: decayFreezeUntil ?? undefined,
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
