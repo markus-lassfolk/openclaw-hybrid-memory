@@ -176,7 +176,7 @@ import { PatternDetector, computePatternId, scorePattern } from "./services/patt
 import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
 import { SkillValidator } from "./services/skill-validator.js";
 import { CrystallizationProposer } from "./services/crystallization-proposer.js";
-import { VerificationStore, shouldAutoClassify, VerificationError } from "./services/verification-store.js";
+import { VerificationStore, shouldAutoVerify, VerificationError } from "./services/verification-store.js";
 import { ProvenanceService } from "./services/provenance.js";
 import { ToolProposalStore } from "./backends/tool-proposal-store.js";
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
@@ -229,6 +229,7 @@ let workflowStore: WorkflowStore | null = null;
 let crystallizationStore: import("./backends/crystallization-store.js").CrystallizationStore | null = null;
 let toolProposalStore: import("./backends/tool-proposal-store.js").ToolProposalStore | null = null;
 let provenanceService: ProvenanceService | null = null;
+let verificationStore: VerificationStore | null = null;
 let pythonBridge: PythonBridge | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
@@ -292,7 +293,7 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, provenanceService });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
@@ -303,6 +304,7 @@ const memoryHybridPlugin = {
     crystallizationStore = null;
     toolProposalStore = null;
     provenanceService = null;
+    verificationStore = null;
     // pythonBridge shutdown will be added by #206
     if (pythonBridge) {
       pythonBridge.shutdown().catch(() => {});
@@ -334,6 +336,7 @@ const memoryHybridPlugin = {
       crystallizationStore = dbContext.crystallizationStore;
       toolProposalStore = dbContext.toolProposalStore;
       provenanceService = dbContext.provenanceService;
+      verificationStore = dbContext.verificationStore;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -371,6 +374,7 @@ const memoryHybridPlugin = {
       workflowStore,
       crystallizationStore,
       toolProposalStore,
+      verificationStore,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -588,7 +592,7 @@ export const _testing = {
   deriveToolNameFromSequence,
   // Verification store for critical facts (Issue #162)
   VerificationStore,
-  shouldAutoClassify,
+  shouldAutoVerify,
   VerificationError,
   // Provenance tracing (Issue #163)
   ProvenanceService,

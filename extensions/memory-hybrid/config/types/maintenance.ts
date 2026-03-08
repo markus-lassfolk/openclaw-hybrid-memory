@@ -6,7 +6,7 @@ export type VerificationConfig = {
   backupPath: string;
   /** Days until a verified fact should be re-verified (default: 30). */
   reverificationDays: number;
-  /** When true, suggest verification for IP/infrastructure facts (does NOT auto-enroll; default: true). */
+  /** When true, auto-enroll critical facts into verification (default: true). */
   autoClassify: boolean;
   /** Enable continuous verification cycle (Issue #164, default: false). */
   continuousVerification: boolean;

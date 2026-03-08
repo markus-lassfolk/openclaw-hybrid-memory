@@ -33,6 +33,8 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
+import { registerVerificationTools } from "../tools/verification-tools.js";
+import type { VerificationStore } from "../services/verification-store.js";
 import {
   registerUtilityTools,
   type RunReflectionFn,
@@ -60,6 +62,7 @@ export interface ToolsContext {
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
   toolProposalStore?: ToolProposalStore | null;
+  verificationStore?: VerificationStore | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -109,6 +112,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     workflowStore,
     crystallizationStore,
     toolProposalStore,
+    verificationStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -125,8 +129,8 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   } = ctx;
 
   // Memory tools (core recall, store, forget operations)
-  registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, embeddingRegistry: ctx.embeddingRegistry ?? null, openai, wal, credentialsDb, eventLog, aliasDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
+    registerMemoryTools(
+    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, verificationStore, aliasDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),
@@ -189,6 +193,11 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Document ingestion tool (opt-in, requires Python + markitdown)
   if (cfg.documents.enabled && pythonBridge) {
     registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge }, api);
+  }
+
+  // Verification tools (Issue #162)
+  if (cfg.verification.enabled && verificationStore) {
+    registerVerificationTools({ factsDb, verificationStore }, api);
   }
 
   // Issue lifecycle tracking (always enabled — lightweight, Issue #137)

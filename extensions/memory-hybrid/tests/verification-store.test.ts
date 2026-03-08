@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { _testing } from "../index.js";
 
-const { VerificationStore, shouldAutoClassify, VerificationError } = _testing;
+const { VerificationStore, shouldAutoVerify, VerificationError } = _testing;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -22,13 +22,16 @@ function sha256(text: string): string {
 let tmpDir: string;
 let store: InstanceType<typeof VerificationStore>;
 let backupPath: string;
+let logger: { warn: (msg: string) => void; error: (msg: string) => void };
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "verification-store-test-"));
   backupPath = join(tmpDir, "backup.json");
+  logger = { warn: vi.fn() as unknown as (msg: string) => void, error: vi.fn() as unknown as (msg: string) => void };
   store = new VerificationStore(join(tmpDir, "verified.db"), {
     backupPath,
     reverificationDays: 30,
+    logger,
   });
 });
 
@@ -132,6 +135,7 @@ describe("VerificationStore.getVerified", () => {
     ).run("fact-corrupted");
 
     expect(() => store.getVerified("fact-corrupted")).toThrow(VerificationError);
+    expect(logger.error).toHaveBeenCalled();
   });
 
   it("throws VerificationError whose message mentions the fact", async () => {
@@ -142,6 +146,7 @@ describe("VerificationStore.getVerified", () => {
     ).run("important-fact");
 
     expect(() => store.getVerified("important-fact")).toThrow(/important-fact/);
+    expect(logger.error).toHaveBeenCalled();
   });
 });
 
@@ -294,25 +299,25 @@ describe("VerificationStore.listDueForReverification", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. shouldAutoClassify
+// 6. shouldAutoVerify
 // ---------------------------------------------------------------------------
 
-describe("shouldAutoClassify", () => {
+describe("shouldAutoVerify", () => {
   it("returns true for a fact containing an IP address", () => {
     expect(
-      shouldAutoClassify({ text: "Server at 192.168.1.1", category: "fact", tags: [] })
+      shouldAutoVerify({ text: "Server at 192.168.1.1", category: "fact", tags: [] })
     ).toBe(true);
   });
 
   it("returns true for various valid IPv4 addresses", () => {
-    expect(shouldAutoClassify({ text: "Host: 10.0.0.1", category: "other", tags: [] })).toBe(true);
-    expect(shouldAutoClassify({ text: "IP=172.16.254.1", category: "other", tags: [] })).toBe(true);
-    expect(shouldAutoClassify({ text: "255.255.255.0 netmask", category: "other", tags: [] })).toBe(true);
+    expect(shouldAutoVerify({ text: "Host: 10.0.0.1", category: "other", tags: [] })).toBe(true);
+    expect(shouldAutoVerify({ text: "IP=172.16.254.1", category: "other", tags: [] })).toBe(true);
+    expect(shouldAutoVerify({ text: "255.255.255.0 netmask", category: "other", tags: [] })).toBe(true);
   });
 
   it("returns true for infrastructure tag + technical category", () => {
     expect(
-      shouldAutoClassify({
+      shouldAutoVerify({
         text: "Load balancer config",
         category: "technical",
         tags: ["infrastructure"],
@@ -320,9 +325,43 @@ describe("shouldAutoClassify", () => {
     ).toBe(true);
   });
 
+  it("returns true for hostname-like entities", () => {
+    expect(
+      shouldAutoVerify({
+        text: "Admin endpoint",
+        category: "other",
+        tags: [],
+        entity: "api.example.com",
+      })
+    ).toBe(true);
+  });
+
+  it("returns true for credential references", () => {
+    expect(
+      shouldAutoVerify({
+        text: "Credential for api.example.com",
+        category: "technical",
+        tags: [],
+        entity: "Credentials",
+        value: "vault:api.example.com:token",
+      })
+    ).toBe(true);
+  });
+
+  it("returns true when explicitly marked critical", () => {
+    expect(
+      shouldAutoVerify({
+        text: "Sensitive system detail",
+        category: "other",
+        tags: [],
+        verificationTier: "critical",
+      })
+    ).toBe(true);
+  });
+
   it("returns false for plain fact without IP or infra tags", () => {
     expect(
-      shouldAutoClassify({
+      shouldAutoVerify({
         text: "User prefers dark mode",
         category: "preference",
         tags: [],
@@ -332,7 +371,7 @@ describe("shouldAutoClassify", () => {
 
   it("returns false when infrastructure tag is present but category is not technical", () => {
     expect(
-      shouldAutoClassify({
+      shouldAutoVerify({
         text: "Load balancer",
         category: "fact",
         tags: ["infrastructure"],
@@ -342,7 +381,7 @@ describe("shouldAutoClassify", () => {
 
   it("returns false when category is technical but infrastructure tag is absent", () => {
     expect(
-      shouldAutoClassify({
+      shouldAutoVerify({
         text: "Algorithm uses O(n log n)",
         category: "technical",
         tags: ["algorithm"],

@@ -47,7 +47,8 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { detectFutureDate } from "../utils/date-detector.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import { shouldAutoVerify } from "../services/verification-store.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -60,6 +61,7 @@ export interface PluginContext {
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   eventLog: EventLog | null;
+  verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
@@ -176,7 +178,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
 
   api.registerTool(
     {
@@ -864,10 +866,9 @@ export function registerMemoryTools(
               "Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
           }),
         ),
-        decayFreezeUntil: Type.Optional(
-          Type.Number({
-            description:
-              "Epoch seconds: halt decay until this date (for deadlines/reminders). Auto-detected from text when futureDateProtection is enabled; use this to override.",
+        verification_tier: Type.Optional(
+          Type.String({
+            description: "Optional verification tier override (e.g. 'critical') to force verification store enrollment.",
           }),
         ),
       }),
@@ -885,7 +886,7 @@ export function registerMemoryTools(
             supersedes,
             scope: paramScope,
             scopeTarget: paramScopeTarget,
-            decayFreezeUntil: paramDecayFreezeUntil,
+            verification_tier: verificationTier,
           } = params as {
             text: string;
             importance?: number;
@@ -898,7 +899,7 @@ export function registerMemoryTools(
             supersedes?: string;
             scope?: "global" | "user" | "agent" | "session";
             scopeTarget?: string;
-            decayFreezeUntil?: number;
+            verification_tier?: string;
           };
 
           let textToStore = text;
@@ -936,6 +937,30 @@ export function registerMemoryTools(
           };
         }
 
+        const explicitVerificationTier = (verificationTier ?? "").trim().toLowerCase();
+
+        const maybeAutoVerify = (factId: string, factText: string, autoTags: string[], autoEntity?: string | null, autoKey?: string | null, autoValue?: string | null) => {
+          if (!cfg.verification.enabled || !verificationStore) return;
+          const shouldEnroll =
+            explicitVerificationTier === "critical" ||
+            (cfg.verification.autoClassify && shouldAutoVerify({
+              text: factText,
+              category,
+              tags: autoTags,
+              entity: autoEntity,
+              key: autoKey,
+              value: autoValue,
+              verificationTier: verificationTier ?? null,
+            }));
+          if (!shouldEnroll) return;
+          try {
+            const verifiedBy = explicitVerificationTier === "critical" ? "agent" : "system";
+            verificationStore.verify(factId, factText, verifiedBy);
+          } catch (err) {
+            api.logger.warn?.(`memory-hybrid: auto-verify failed for ${factId}: ${err}`);
+          }
+        };
+
         // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
         // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
         if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
@@ -969,6 +994,14 @@ export function registerMemoryTools(
               decayClass: paramDecayClass ?? "permanent",
               tags: ["auth", ...extractTags(pointerText, "Credentials")],
             });
+            maybeAutoVerify(
+              pointerEntry.id,
+              pointerText,
+              pointerEntry.tags ?? ["auth"],
+              pointerEntry.entity,
+              pointerEntry.key,
+              pointerEntry.value,
+            );
             try {
               addOperationBreadcrumb("vector", "store-credential-pointer");
               const vector = await embeddings.embed(pointerText);
@@ -1100,6 +1133,14 @@ export function registerMemoryTools(
                 });
                 factsDb.supersede(classification.targetId, newEntry.id);
                 aliasDb?.deleteByFactId(classification.targetId);
+                maybeAutoVerify(
+                  newEntry.id,
+                  textToStore,
+                  newEntry.tags ?? tags,
+                  newEntry.entity,
+                  newEntry.key,
+                  newEntry.value,
+                );
 
                 const finalImportance = Math.max(importance, oldFact.importance);
                 try {
@@ -1242,6 +1283,14 @@ export function registerMemoryTools(
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
         });
+        maybeAutoVerify(
+          entry.id,
+          textToStore,
+          entry.tags ?? tags,
+          entry.entity,
+          entry.key,
+          entry.value,
+        );
         if (supersedes?.trim()) {
           factsDb.supersede(supersedes.trim(), entry.id);
           aliasDb?.deleteByFactId(supersedes.trim());

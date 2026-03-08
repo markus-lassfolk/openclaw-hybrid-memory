@@ -531,6 +531,12 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
             captureMaxChars: 5000,
             store: { fuzzyDedupe: false },
             autoClassify: { enabled: true, batchSize: 20 },
+            verification: {
+              enabled: false,
+              backupPath: "~/.openclaw/verified-facts.json",
+              reverificationDays: 30,
+              autoClassify: true,
+            },
             categories: [] as string[],
             credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
             languageKeywords: { autoBuild: true, weeklyIntervalDays: 7 },

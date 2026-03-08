@@ -25,6 +25,7 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProvenanceService } from "../services/provenance.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
+import { VerificationStore } from "../services/verification-store.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -206,6 +207,7 @@ export interface DatabaseContext {
   workflowStore: WorkflowStore;
   crystallizationStore: CrystallizationStore;
   toolProposalStore: ToolProposalStore;
+  verificationStore: VerificationStore | null;
   provenanceService: ProvenanceService | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
@@ -368,6 +370,17 @@ export function initializeDatabases(
   const toolProposalStorePath = join(dirname(resolvedSqlitePath), "tool-proposals.db");
   const toolProposalStore = new ToolProposalStore(toolProposalStorePath);
   api.logger.info(`memory-hybrid: tool proposal store initialized (${toolProposalStorePath})`);
+
+  // Initialize VerificationStore when enabled (Issue #162)
+  let verificationStore: VerificationStore | null = null;
+  if (cfg.verification.enabled) {
+    verificationStore = new VerificationStore(resolvedSqlitePath, {
+      backupPath: cfg.verification.backupPath,
+      reverificationDays: cfg.verification.reverificationDays,
+      logger: api.logger,
+    });
+    api.logger.info("memory-hybrid: verification store enabled");
+  }
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -685,6 +698,7 @@ export function initializeDatabases(
     workflowStore,
     crystallizationStore,
     toolProposalStore,
+    verificationStore,
     provenanceService,
     resolvedLancePath,
     resolvedSqlitePath,
@@ -723,9 +737,10 @@ export function closeOldDatabases(context: {
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
   toolProposalStore?: ToolProposalStore | null;
+  verificationStore?: VerificationStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, provenanceService } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -797,6 +812,13 @@ export function closeOldDatabases(context: {
       toolProposalStore.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "toolProposalStore" });
+    }
+  }
+  if (verificationStore) {
+    try {
+      verificationStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "verificationStore" });
     }
   }
   if (provenanceService) {
