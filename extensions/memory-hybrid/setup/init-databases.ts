@@ -15,6 +15,7 @@ import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
+import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
@@ -523,6 +524,34 @@ export function initializeDatabases(
     });
     api.logger.warn(`memory-hybrid: async initialization encountered an error: ${err}`);
   });
+
+  // autoMigrate path: use the embedding-migration service when autoMigrate=true (Issue #153).
+  // Runs asynchronously so it does not block plugin start.
+  if (cfg.embedding.autoMigrate && embeddingConfigChanged) {
+    void (async () => {
+      try {
+        await runEmbeddingMaintenance({
+          factsDb,
+          vectorDb,
+          embeddings,
+          currentProvider: cfg.embedding.provider,
+          currentModel: cfg.embedding.model,
+          autoMigrate: true,
+          batchSize: cfg.embedding.batchSize,
+          logger: {
+            info: (msg) => api.logger.info(msg),
+            warn: (msg) => api.logger.warn(msg),
+          },
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "autoMigrate-embedding",
+          subsystem: "embeddings",
+        });
+        api.logger.warn(`memory-hybrid: autoMigrate embedding run failed: ${err}`);
+      }
+    })();
+  }
 
   // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.

@@ -405,6 +405,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       preferredProviders: preferredProviders.length > 1 ? preferredProviders : undefined,
       googleApiKey: resolvedGoogleApiKey,
       multiModels: parsedMultiModels.length > 0 ? parsedMultiModels : undefined,
+      autoMigrate: embedding?.autoMigrate === true,
     },
     lanceDbPath:
       typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,

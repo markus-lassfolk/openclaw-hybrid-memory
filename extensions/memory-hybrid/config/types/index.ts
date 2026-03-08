@@ -280,6 +280,13 @@ export type HybridMemoryConfig = {
      * When empty/undefined, the system works in single-model mode (backward compatible).
      */
     multiModels?: EmbeddingModelConfig[];
+    /**
+     * When `true`, automatically re-generate embeddings for all facts whenever the
+     * embedding model or provider changes on startup (Issue #153).
+     * Default: `false` — changes are logged but no re-embedding is performed automatically.
+     * Enable when switching models to avoid stale vectors causing poor search quality.
+     */
+    autoMigrate?: boolean;
   };
   lanceDbPath: string;
   sqlitePath: string;
