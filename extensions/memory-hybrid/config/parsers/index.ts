@@ -58,6 +58,8 @@ import {
   parseWorkflowTrackingConfig,
   parseCrystallizationConfig,
   parseSelfExtensionConfig,
+  parseImplicitFeedbackConfig,
+  parseClosedLoopConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -471,6 +473,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     workflowTracking: parseWorkflowTrackingConfig(cfg),
     crystallization: parseCrystallizationConfig(cfg),
     selfExtension: parseSelfExtensionConfig(cfg),
+    implicitFeedback: parseImplicitFeedbackConfig(cfg),
+    closedLoop: parseClosedLoopConfig(cfg),
     contextualVariants: parseContextualVariantsConfig(cfg),
     queryExpansion: parseQueryExpansionConfig(cfg),
     reranking: parseRerankingConfig(cfg),
