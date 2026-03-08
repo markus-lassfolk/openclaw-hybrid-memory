@@ -429,7 +429,7 @@ export async function runRetrievalPipeline(
   rerankingConfig?: RerankingConfig | null,
   rerankingOpenai?: import("openai").default | null,
 ): Promise<OrchestratorResult> {
-  const runOnce = async (expansion: { useLlm: boolean; variants: string[] | null }): Promise<OrchestratorResult> => {
+  const runOnce = async (expansion: { useLlm: boolean; variants: string[] | null; skipReranking?: boolean }): Promise<OrchestratorResult> => {
     const k = config.rrf_k;
     const { strategies, semanticTopK, fts5TopK } = config;
 
@@ -676,7 +676,8 @@ export async function runRetrievalPipeline(
   // --- LLM Re-ranking (Issue #161) ---
   // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
   // On any failure or timeout, falls back to the original RRF order (no behavior change).
-  if (rerankingConfig?.enabled && rerankingOpenai) {
+  // Skip re-ranking if explicitly requested (e.g., conditional mode first pass).
+  if (rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
     try {
       const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
       const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
@@ -748,14 +749,14 @@ export async function runRetrievalPipeline(
       queryExpander && typeof (queryExpander as QueryExpander).getRuleBasedAlias === "function"
         ? queryExpander.getRuleBasedAlias(query)
         : null;
-    const initial = await runOnce({ useLlm: false, variants: alias ? [alias] : [] });
+    const initial = await runOnce({ useLlm: false, variants: alias ? [alias] : [], skipReranking: true });
     const threshold =
       queryExpander && typeof (queryExpander as QueryExpander).getThreshold === "function"
         ? queryExpander.getThreshold()
         : 0.03;
     const topScore = initial.fused[0]?.finalScore ?? 0;
     if (topScore < threshold) {
-      return runOnce({ useLlm: true, variants: null });
+      return runOnce({ useLlm: true, variants: null, skipReranking: false });
     }
     return initial;
   }
