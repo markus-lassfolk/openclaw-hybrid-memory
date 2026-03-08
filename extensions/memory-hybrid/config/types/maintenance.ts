@@ -38,6 +38,10 @@ export type NightlyCycleConfig = {
   model?: string;
   /** Days before consolidating episodic events into facts (default: 7). */
   consolidateAfterDays: number;
+  /** Archive consolidated event log entries older than this many days (default: 0 = disabled). */
+  eventLogArchivalDays?: number;
+  /** Directory for compressed JSONL archives (default: '~/.openclaw/event-log-archive'). */
+  eventLogArchivePath?: string;
   /** Legacy: max age for unconsolidated event log entries before deletion (default: 90). */
   maxUnconsolidatedAgeDays: number;
 };
