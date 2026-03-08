@@ -4116,14 +4116,14 @@ export async function runExtractImplicitFeedbackForCli(
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const sig of positiveSignals) {
         try {
-          const matches = factsDb.search(sig.context.agentMessage, 3);
+          const matches = factsDb.search(sig.context.userMessage, 3);
           const context: ReinforcementContext = {
             querySnippet: sig.context.userMessage.slice(0, 200),
             topic: sig.type,
             sessionFile: sig.context.sessionFile,
           };
           for (const match of matches) {
-            factsDb.reinforceFact(match.entry.id, sig.context.agentMessage, context, {
+            factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
               trackContext,
               maxEventsPerFact,
               boostAmount: 0.5 * sig.confidence, // weaker than explicit praise
@@ -4234,11 +4234,9 @@ export async function runExtractImplicitFeedbackForCli(
       const clCfg = cfg.closedLoop ?? { enabled: true };
       if (clCfg.enabled !== false) {
         const report = runClosedLoopAnalysis(factsDb, clCfg);
-        if (report.rulesAnalyzed > 0) {
+        if (opts.verbose && report.rulesAnalyzed > 0) {
           closedLoopReport = getEffectivenessReport(factsDb);
-          if (opts.verbose) {
-            logger?.info?.(`Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`);
-          }
+          logger?.info?.(`Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`);
         }
       }
     } catch (err) {

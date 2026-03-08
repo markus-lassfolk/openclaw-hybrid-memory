@@ -24,6 +24,13 @@ import type { ImplicitFeedbackConfig } from "../config/types/features.js";
 const DEFAULT_CONFIG: ImplicitFeedbackConfig = {
   enabled: true,
   minConfidence: 0.0, // allow all for testing
+  signalTypes: [] as any,
+  rephraseThreshold: 0.8,
+  topicChangeThreshold: 0.3,
+  terseResponseRatio: 0.4,
+  feedToReinforcement: true,
+  feedToSelfCorrection: true,
+  trajectoryLLMAnalysis: false,
 };
 
 // ---------------------------------------------------------------------------

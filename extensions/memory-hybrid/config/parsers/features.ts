@@ -488,6 +488,7 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
         : 0.4,
     feedToReinforcement: raw?.feedToReinforcement !== false,
     feedToSelfCorrection: raw?.feedToSelfCorrection !== false,
+    trajectoryLLMAnalysis: raw?.trajectoryLLMAnalysis === true,
   };
 }
 

@@ -217,6 +217,8 @@ export type ImplicitFeedbackConfig = {
   feedToReinforcement: boolean;
   /** Feed negative implicit signals into the self-correction pipeline (default: true). */
   feedToSelfCorrection: boolean;
+  /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
+  trajectoryLLMAnalysis: boolean;
 };
 
 /** Closed-loop rule effectiveness measurement (Issue #262). */

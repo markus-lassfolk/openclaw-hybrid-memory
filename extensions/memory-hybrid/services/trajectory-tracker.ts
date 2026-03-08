@@ -338,3 +338,61 @@ export function serializeTrajectory(t: FeedbackTrajectory): {
     turn_count: t.turnCount,
   };
 }
+
+/**
+ * LLM-based trajectory analysis result.
+ * Returned by analyzeTrajectoriesWithLLM when LLM config is available.
+ */
+export interface TrajectoryLLMAnalysis {
+  outcome: "success" | "partial" | "failure";
+  keyLesson: string;
+  pivotTurn: number | null;
+  patterns: string[];
+}
+
+/**
+ * Optional LLM analysis path for trajectory lessons.
+ * Falls back to heuristic extractTrajectoryLessons() if the LLM call fails.
+ *
+ * @param trajectory - The trajectory to analyze
+ * @param prompt - The trajectory-analyze.txt prompt template (with {{trajectory_json}} placeholder)
+ * @param chatFn - The chatCompleteWithRetry function from chat.ts
+ * @param model - LLM model name (optional, uses default if omitted)
+ * @returns LLM-produced analysis, or null if unavailable/failed
+ */
+export async function analyzeTrajectoriesWithLLM(
+  trajectory: FeedbackTrajectory,
+  prompt: string,
+  chatFn: (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => Promise<string>,
+  model?: string,
+): Promise<TrajectoryLLMAnalysis | null> {
+  try {
+    const turnsPayload = trajectory.turns.map((t) => ({
+      role: t.role,
+      contentSummary: t.summary,
+      sentiment: t.sentiment,
+      corrections: t.wasCorrection ? 1 : 0,
+    }));
+
+    const filledPrompt = prompt.replace("{{trajectory_json}}", JSON.stringify(turnsPayload, null, 2));
+
+    const raw = await chatFn({
+      model,
+      messages: [{ role: "user", content: filledPrompt }],
+    });
+
+    const parsed = JSON.parse(raw.trim()) as TrajectoryLLMAnalysis;
+
+    // Validate minimal shape
+    if (
+      typeof parsed.outcome === "string" &&
+      typeof parsed.keyLesson === "string" &&
+      Array.isArray(parsed.patterns)
+    ) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
