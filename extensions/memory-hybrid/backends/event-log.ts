@@ -264,7 +264,7 @@ export class EventLog {
       );
       const filePath = join(resolvedDir, `${month}.jsonl.gz`);
       const tempPath = `${filePath}.tmp`;
-      const self = this;
+      const rowToEntry = this.rowToEntry.bind(this);
 
       try {
         const lineStream = Readable.from((async function* () {
@@ -304,7 +304,7 @@ export class EventLog {
           }
 
           for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
-            const entry = self.rowToEntry(r);
+            const entry = rowToEntry(r);
             ids.push(entry.id);
             if (!seenIds.has(entry.id)) {
               seenIds.add(entry.id);
