@@ -225,10 +225,8 @@ describe("DB lifecycle: distinct store paths (init-databases pattern)", () => {
     const pathList = Object.entries(paths).map(([name, p]) => ({ name, path: p }));
     const pathStrings = pathList.map(({ path }) => path);
     const uniquePaths = new Set(pathStrings);
-    expect(uniquePaths.size).toBe(pathStrings.length).toBe(
-      pathList.length,
-      "every store must have a unique path"
-    );
+    expect(uniquePaths.size).toBe(pathStrings.length);
+    expect(pathStrings.length).toBe(pathList.length);
 
     expect(paths.facts).toBe(resolvedSqlitePath);
     const others = Object.entries(paths).filter(([k]) => k !== "facts");
