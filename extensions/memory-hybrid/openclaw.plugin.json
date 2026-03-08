@@ -9,7 +9,7 @@
       "help": "Embedding provider: 'openai' (requires apiKey), 'ollama' (local, no apiKey needed), or 'onnx' (local ONNX runtime, no apiKey needed). Default: 'openai'."
     },
     "embedding.apiKey": {
-      "label": "OpenAI API Key",
+      "label": "OpenAI / Google API Key",
       "sensitive": true,
       "placeholder": "sk-proj-...",
       "help": "API key for OpenAI embeddings (or use ${OPENAI_API_KEY}). Only required when provider='openai'. Omit for local providers (ollama, onnx)."
@@ -27,7 +27,20 @@
     "embedding.onnxModelPath": {
       "label": "ONNX Model Path",
       "placeholder": "all-MiniLM-L6-v2",
-      "help": "ONNX model path or identifier (alias for 'model' when provider='onnx'). E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim). No API key required."
+      "help": "ONNX model path or identifier (alias for 'model' when provider='onnx'). E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim). No API key required.",
+      "advanced": true
+    },
+    "embedding.onnxTokenizerPath": {
+      "label": "ONNX Tokenizer Path",
+      "placeholder": "/path/to/tokenizer.json",
+      "help": "Path to ONNX tokenizer JSON file",
+      "advanced": true
+    },
+    "embedding.onnxDimensions": {
+      "label": "ONNX Dimensions",
+      "placeholder": "384",
+      "help": "Embedding output dimensions for the ONNX model",
+      "advanced": true
     },
     "mode": {
       "label": "Configuration preset",
@@ -446,13 +459,13 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["openai", "ollama", "onnx"],
+            "enum": ["openai", "ollama", "onnx", "google"],
             "default": "openai",
-            "description": "Embedding provider. 'openai' requires apiKey. 'ollama' and 'onnx' run locally without an API key."
+            "description": "Embedding provider. 'openai'/'google' require apiKey. 'ollama' and 'onnx' run locally without an API key."
           },
           "apiKey": {
             "type": "string",
-            "description": "Required when provider='openai'. Omit for local providers (ollama, onnx). Supports ${ENV_VAR} substitution."
+            "description": "Required when provider='openai' or 'google'. Omit for local providers (ollama, onnx). Supports ${ENV_VAR} substitution."
           },
           "model": {
             "type": "string",
@@ -465,6 +478,10 @@
           "onnxModelPath": {
             "type": "string",
             "description": "ONNX model path or identifier — alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
+          },
+          "onnxTokenizerPath": {
+            "type": "string",
+            "description": "Path to ONNX tokenizer JSON file"
           },
           "dimensions": {
             "type": "number",
