@@ -160,9 +160,16 @@ export function classifyTrajectoryOutcome(trajectoryTurns: TrajectoryTurn[]): {
   // Last user turn is positive → success or partial
   if (lastUserTurn.sentiment === "positive") {
     if (hasCorrections || hasRephrases) {
-      // Found the turn where things changed for the better
+      // Find the last correction/rephrase, then the first positive turn after it
+      let lastCorrectionIndex = -1;
+      for (let i = trajectoryTurns.length - 1; i >= 0; i--) {
+        if (trajectoryTurns[i].wasCorrection || trajectoryTurns[i].wasRephrase) {
+          lastCorrectionIndex = i;
+          break;
+        }
+      }
       let keyPivot: number | undefined;
-      for (let i = 0; i < trajectoryTurns.length; i++) {
+      for (let i = lastCorrectionIndex + 1; i < trajectoryTurns.length; i++) {
         const t = trajectoryTurns[i];
         if (t.role === "user" && t.sentiment === "positive" && !t.wasCorrection) {
           keyPivot = i;
