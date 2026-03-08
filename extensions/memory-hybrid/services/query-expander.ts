@@ -18,6 +18,37 @@ import type { QueryExpansionConfig } from "../config.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
+// Rule-based alias expansion
+// ---------------------------------------------------------------------------
+
+const RULE_BASED_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /\bHA\b/gi, replacement: "Home Assistant" },
+  { pattern: /\bVM\b/gi, replacement: "virtual machine" },
+  { pattern: /\bDB\b/gi, replacement: "database" },
+  { pattern: /\bAPI\b/gi, replacement: "application programming interface" },
+  { pattern: /\bconfig\b/gi, replacement: "configuration" },
+  { pattern: /\bsettings\b/gi, replacement: "configuration" },
+  { pattern: /\bauth\b/gi, replacement: "authentication" },
+  { pattern: /\bcreds\b/gi, replacement: "credentials" },
+  { pattern: /\brepo\b/gi, replacement: "repository" },
+  { pattern: /\bdocs\b/gi, replacement: "documentation" },
+  { pattern: /\benv\b/gi, replacement: "environment" },
+  { pattern: /\bsvc\b/gi, replacement: "service" },
+];
+
+export function generateRuleBasedAlias(query: string): string | null {
+  if (!query.trim()) return null;
+  let alias = query;
+  for (const { pattern, replacement } of RULE_BASED_REPLACEMENTS) {
+    alias = alias.replace(pattern, replacement);
+  }
+  alias = alias.replace(/\s+/g, " ").trim();
+  if (!alias) return null;
+  if (alias.toLowerCase() === query.trim().toLowerCase()) return null;
+  return alias;
+}
+
+// ---------------------------------------------------------------------------
 // LRU Cache
 // ---------------------------------------------------------------------------
 
@@ -110,6 +141,19 @@ export class QueryExpander {
     this.cache = new LRUCache(config.cacheSize);
   }
 
+  getMode(): "always" | "conditional" | "off" {
+    if (!this.config.enabled) return "off";
+    return this.config.mode ?? "always";
+  }
+
+  getThreshold(): number {
+    return this.config.threshold ?? 0.03;
+  }
+
+  getRuleBasedAlias(query: string): string | null {
+    return generateRuleBasedAlias(query);
+  }
+
   /**
    * Expand a query into multiple alternative queries.
    *
@@ -117,7 +161,7 @@ export class QueryExpander {
    *   On any failure or when disabled, returns [query] (original only).
    */
   async expandQuery(query: string, context?: string): Promise<string[]> {
-    if (!this.config.enabled) return [query];
+    if (this.getMode() === "off") return [query];
     if (!query.trim()) return [query];
 
     const cacheKey = context ? `${query}\x00${context}` : query;
