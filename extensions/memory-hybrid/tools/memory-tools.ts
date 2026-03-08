@@ -403,6 +403,13 @@ export function registerMemoryTools(
             asOfSec ?? undefined,
             cfg.aliases?.enabled ? aliasDb : null,
             cfg.clusters,
+            null, // embeddingRegistry (multi-model, not wired here)
+            null, // factsDbForEmbeddings (multi-model, not wired here)
+            null, // queryExpander (not wired here)
+            null, // embedFn (not wired here)
+            undefined, // queryExpansionContext
+            cfg.reranking,
+            openai,
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).
