@@ -1854,13 +1854,10 @@ export async function runExtractReinforcementForCli(
           sessionFile: incident.sessionFile,
         };
 
-        // Reinforce recalled memories with rich context, boosted by diversity score (#259)
-        const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
+        // Reinforce recalled memories with rich context (#259)
         const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
         for (const memId of incident.recalledMemoryIds) {
-          const diversityScore = factsDb.calculateDiversityScore(memId);
-          const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
-          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact, boostAmount: effectiveBoost });
+          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact, boostAmount: baseBoost });
         }
 
         // Reinforce procedures based on tool call sequence
@@ -4116,7 +4113,8 @@ export async function runExtractImplicitFeedbackForCli(
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const sig of positiveSignals) {
         try {
-          const matches = factsDb.search(sig.context.userMessage, 3);
+          const searchQuery = sig.context.agentMessage || sig.context.userMessage;
+          const matches = factsDb.search(searchQuery, 3);
           const context: ReinforcementContext = {
             querySnippet: sig.context.userMessage.slice(0, 200),
             topic: sig.type,
