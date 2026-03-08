@@ -1168,6 +1168,214 @@ pip install markitdown
 
 ---
 
+## Nightly dream cycle (nightlyCycle)
+
+The dream cycle runs a nightly maintenance pipeline: prune expired facts → consolidate episodic event log entries into Layer 2 facts → reflect → reflect-rules. Disabled by default; enable with `nightlyCycle.enabled: true`. The corresponding cron job (`hybrid-mem:nightly-dream-cycle`) is added by `install` / `verify --fix` and exits 0 when the feature is disabled.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "nightlyCycle": {
+            "enabled": false,
+            "schedule": "45 2 * * *",
+            "reflectWindowDays": 7,
+            "pruneMode": "both",
+            "consolidateAfterDays": 7,
+            "maxUnconsolidatedAgeDays": 90
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable the nightly dream cycle |
+| `schedule` | `"45 2 * * *"` | Cron expression for nightly run (default: 2:45 AM) |
+| `reflectWindowDays` | `7` | Reflection window in days (passed to the reflect step) |
+| `pruneMode` | `"both"` | `"expired"` = hard-prune only; `"decay"` = soft-decay only; `"both"` = both |
+| `consolidateAfterDays` | `7` | Consolidate episodic event log entries older than this many days into Layer 2 facts |
+| `maxUnconsolidatedAgeDays` | `90` | Max age (days) for unconsolidated event log entries before deletion |
+| `model` | (llm.default) | LLM for the reflection step; omit to use the default tier |
+| `eventLogArchivalDays` | (uses `eventLog.archivalDays`) | Override archival cutoff for event log entries during dream cycle |
+| `eventLogArchivePath` | (uses `eventLog.archivePath`) | Override archive directory during dream cycle |
+
+CLI: `openclaw hybrid-mem dream-cycle`
+
+---
+
+## Passive observer (passiveObserver)
+
+The passive observer reads recent session transcripts on a timer and extracts facts automatically, without waiting for explicit `memory_store` calls. Useful for capturing information the agent hasn't been explicitly asked to store. Disabled by default (opt-in).
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "passiveObserver": {
+            "enabled": false,
+            "intervalMinutes": 15,
+            "maxCharsPerChunk": 8000,
+            "minImportance": 0.5,
+            "deduplicationThreshold": 0.92
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable the passive observer |
+| `intervalMinutes` | `15` | How often to scan recent transcripts (minutes) |
+| `model` | (nano tier) | LLM for extraction; when unset, uses `llm.nano[0]` |
+| `maxCharsPerChunk` | `8000` | Max characters per transcript chunk sent to LLM |
+| `minImportance` | `0.5` | Minimum importance score (0–1) to store a fact |
+| `deduplicationThreshold` | `0.92` | Cosine similarity above which a new fact is treated as a duplicate and skipped |
+| `sessionsDir` | (auto) | Override sessions directory (default: same as `procedures.sessionsDir`) |
+
+---
+
+## Workflow tracking (workflowTracking)
+
+Records tool-call sequences per session so the crystallization and self-extension features can detect patterns. Disabled by default; required for `crystallization` and `selfExtension`.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "workflowTracking": {
+            "enabled": false,
+            "maxTracesPerDay": 100,
+            "retentionDays": 90
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable workflow trace recording (opt-in) |
+| `maxTracesPerDay` | `100` | Maximum traces recorded per day across all sessions |
+| `retentionDays` | `90` | Days to retain traces before auto-pruning |
+| `goalExtractionModel` | (nano tier) | Model used for goal extraction from conversation context; when unset uses nano tier |
+
+---
+
+## Enhanced ambient retrieval (ambient)
+
+Generates multiple queries per retrieval trigger using an LLM, then merges the results. More aggressive than standard auto-recall; useful when relevant memories may be phrased very differently from the current prompt. Disabled by default.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "ambient": {
+            "enabled": false,
+            "multiQuery": false,
+            "topicShiftThreshold": 0.4,
+            "maxQueriesPerTrigger": 4,
+            "budgetTokens": 2000
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable enhanced ambient retrieval |
+| `multiQuery` | `false` | When true, generate 2–4 queries per trigger instead of one |
+| `topicShiftThreshold` | `0.4` | Cosine distance threshold (0–1) for detecting a topic shift that triggers a new retrieval |
+| `maxQueriesPerTrigger` | `4` | Cap on LLM-generated queries per trigger (max 4) |
+| `budgetTokens` | `2000` | Token budget for ambient context injection |
+
+---
+
+## Confidence reinforcement (reinforcement)
+
+Boosts confidence on facts that are recalled or re-stored frequently. Enabled by default; helps frequently-used facts stay highly ranked while rare facts gradually fade.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "reinforcement": {
+            "enabled": true,
+            "passiveBoost": 0.1,
+            "activeBoost": 0.05,
+            "maxConfidence": 1.0,
+            "similarityThreshold": 0.85
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Enable confidence reinforcement on repeated mentions |
+| `passiveBoost` | `0.1` | Confidence delta when a semantically similar fact is stored again |
+| `activeBoost` | `0.05` | Confidence delta when a fact is retrieved via `memory_recall` |
+| `maxConfidence` | `1.0` | Upper cap for confidence after reinforcement |
+| `similarityThreshold` | `0.85` | Cosine similarity above which a new fact counts as a repeat of an existing one |
+
+---
+
+## GraphRAG retrieval (graphRetrieval)
+
+Controls BFS graph expansion in `memory_recall`. When a query returns top results, the plugin optionally traverses the link graph from those results to surface related context. Enabled by default but does **not** expand by default — pass `expandGraph: true` to the tool, or set `defaultExpand: true` to expand on every call.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "graphRetrieval": {
+            "enabled": true,
+            "defaultExpand": false,
+            "maxExpandDepth": 3,
+            "maxExpandedResults": 20
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Enable GraphRAG expansion in `memory_recall` |
+| `defaultExpand` | `false` | When true, expand the graph on every `memory_recall` call even without `expandGraph: true` (backward-compatible: false) |
+| `maxExpandDepth` | `3` | Maximum BFS depth cap — `expandDepth` parameter is clamped to this value |
+| `maxExpandedResults` | `20` | Maximum number of graph-expanded results appended to direct matches |
+
+---
+
 ## Custom categories
 
 ```json
