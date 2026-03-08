@@ -439,9 +439,15 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     try {
       const isImage = IMAGE_EXTENSIONS.has(extname(realPath).toLowerCase());
       if (isImage && docCfg.visionEnabled) {
-        const vision = await describeImageWithVision({ openai, cfg, filePath: realPath });
-        markdown = vision.text;
-        title = basename(realPath);
+        try {
+          const vision = await describeImageWithVision({ openai, cfg, filePath: realPath });
+          markdown = vision.text;
+          title = basename(realPath);
+        } catch (visionErr) {
+          const result = await pythonBridge.convert(realPath);
+          markdown = result.markdown;
+          title = result.title;
+        }
       } else {
         const result = await pythonBridge.convert(realPath);
         markdown = result.markdown;
