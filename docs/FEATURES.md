@@ -33,6 +33,15 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Memory tiering** | [MEMORY-TIERING.md](MEMORY-TIERING.md) | Hot/warm/cold tiers, compaction (tasks→COLD, preferences→WARM, blockers→HOT), `hybrid-mem compact` |
 | **Retrieval directives** | [CONFIGURATION.md](CONFIGURATION.md) (autoRecall.retrievalDirectives) | Targeted recall by entity mention, keywords, task type, or session start. Added in 2026.3.70. |
 | **Workflow crystallization & self-extension** | [CONFIGURATION.md](CONFIGURATION.md), release notes [2026.3.70](../release-notes/release-notes-2026.3.70.md) | Tool-sequence patterns, skill proposals (`memory_crystallize`), tool proposals (`memory_propose_tool`). Added in 2026.3.70. |
+| **Future-date decay protection** | [CONFIGURATION.md](CONFIGURATION.md#future-date-decay-protection-144) | Facts with future dates have their decay frozen until the date passes. Default: enabled. (#144) |
+| **Episodic event log (Layer 1)** | [event-log.md](../extensions/memory-hybrid/docs/event-log.md) | Append-only session event journal; raw capture layer for Dream Cycle consolidation. (#150) |
+| **Local embeddings (Ollama/ONNX)** | [CONFIGURATION.md](CONFIGURATION.md#local-embedding-providers-153) | Run embeddings locally without an API key using Ollama or ONNX providers. (#153) |
+| **Multi-model embedding registry** | [CONFIGURATION.md](CONFIGURATION.md#multi-model-embedding-registry-158) | Embed each fact with multiple models in parallel; merge results via RRF at recall. (#158) |
+| **Contextual variants at index time** | [CONFIGURATION.md](CONFIGURATION.md#contextual-variants-at-index-time-159) | LLM-generated alternative phrasings embedded alongside facts to improve recall. (#159) |
+| **LLM re-ranking** | [CONFIGURATION.md](CONFIGURATION.md#llm-re-ranking-161) | Re-order RRF fusion results with an LLM for higher-precision recall. (#161) |
+| **Verification store** | [CONFIGURATION.md](CONFIGURATION.md#verification-store-162) | Integrity layer for critical facts: `memory_verify`, `memory_verified_list`, re-verification schedule. (#162) |
+| **Provenance tracing** | [CONFIGURATION.md](CONFIGURATION.md#provenance-tracing-163) | Full origin chain from any fact back to its source events via `memory_provenance`. (#163) |
+| **Document ingestion** | [CONFIGURATION.md](CONFIGURATION.md#document-ingestion-206) | Ingest PDF, DOCX, HTML, images, and more as searchable fact chunks (`memory_ingest_document`, `memory_ingest_folder`). (#206) |
 
 ---
 

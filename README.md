@@ -167,6 +167,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 | [SEARCH-RRF-INGEST.md](docs/SEARCH-RRF-INGEST.md) | RRF fusion, ingest-files, query expansion (formerly HyDE) |
 | [AUTOMATIC-CATEGORIES.md](docs/AUTOMATIC-CATEGORIES.md) | Automatic category discovery from "other" facts |
 | [DYNAMIC-DERIVED-DATA.md](docs/DYNAMIC-DERIVED-DATA.md) | Index of dynamic/derived data: tags, categories, decay, supersession |
+| [event-log.md](extensions/memory-hybrid/docs/event-log.md) | Episodic event log (Layer 1): passive session capture, Dream Cycle input (#150) |
 
 ### Specialized
 
@@ -206,4 +207,4 @@ The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down 
 
 ### What this repo adds
 
-This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, **memory tiering** (hot/warm/cold) and **multi-agent scoping**, **retrieval directives** and **query expansion**, **workflow crystallization** (skill proposals) and **self-extension** (tool proposals), graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, **scope promote** and 9 maintenance cron jobs, full CLI, verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.
+This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, **memory tiering** (hot/warm/cold) and **multi-agent scoping**, **retrieval directives** and **query expansion** (#160), **LLM re-ranking** (#161), **contextual variants at index time** (#159), **multi-model embedding registry with RRF merge** (#158), **local embedding providers** (Ollama/ONNX, #153), **future-date decay protection** (#144), **episodic event log Layer 1** (#150), **verification store** (#162), **provenance tracing** (#163), **document ingestion** (PDF/DOCX/HTML/images, #206), **workflow crystallization** (skill proposals) and **self-extension** (tool proposals), graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, **scope promote** and 9 maintenance cron jobs, full CLI, verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.

@@ -714,6 +714,460 @@ Self-extension analyses workflow traces for recurring multi-step workarounds and
 
 ---
 
+## Future-date decay protection (#144)
+
+When a fact mentions a future date (e.g. "Meeting on 2027-06-15"), the plugin automatically **freezes decay** for that fact until the date passes. This prevents time-sensitive reminders from silently expiring before they are relevant.
+
+Enabled by default; no config required. Tune or disable with `futureDateProtection`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "futureDateProtection": {
+            "enabled": true,
+            "maxFreezeDays": 365
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Freeze decay on facts that contain a future date |
+| `maxFreezeDays` | `365` | Maximum days to freeze decay ahead. `0` = no limit. Prevents facts with dates far in the future from freezing indefinitely. |
+
+**How it works:** At store time, the parser scans the fact text for ISO-8601 dates and natural-language date phrases. If the earliest future date found is within `maxFreezeDays`, the fact's `decay_freeze_until` column is set to that Unix timestamp. The prune/decay jobs skip the fact until `decay_freeze_until` has passed.
+
+---
+
+## Episodic event log (#150)
+
+The event log is **Layer 1** of the three-layer memory architecture — a high-fidelity, append-only journal of everything that happens during a session. It captures raw episodic events (facts learned, decisions made, actions taken, entities mentioned, preferences expressed, corrections) before deciding whether they deserve long-term storage.
+
+The event log is enabled automatically when `autoCapture` is true; no explicit config is required. Tune archival behaviour with `eventLog`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "eventLog": {
+            "archivalDays": 90,
+            "archivePath": "~/.openclaw/event-archive"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `archivalDays` | `90` | Days before consolidated event log entries are archived and deleted from SQLite |
+| `archivePath` | `~/.openclaw/event-archive` | Directory for compressed `.jsonl.gz` archives |
+
+The event log lives in `event-log.db` alongside `memory.db`. Unconsolidated events remain available for the Dream Cycle (`nightlyCycle`) to consolidate into Layer 2 facts. Consolidated events are archived after `archivalDays`.
+
+**Three-layer architecture:**
+```
+Layer 1 — Event Log       Raw episodic events (event-log.db)
+Layer 2 — Facts           SQLite + FTS5 (memory.db)
+Layer 3 — Vector Index    LanceDB embeddings
+```
+
+For full API documentation see [extensions/memory-hybrid/docs/event-log.md](../extensions/memory-hybrid/docs/event-log.md).
+
+---
+
+## Local embedding providers (#153)
+
+In addition to `openai` and `google`, the plugin supports **local** embedding providers that require no API key:
+
+- **`ollama`** — connects to a locally running [Ollama](https://ollama.ai) server
+- **`onnx`** — runs an ONNX model file directly in-process via `@xenova/transformers`
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "embedding": {
+            "provider": "ollama",
+            "model": "nomic-embed-text",
+            "dimensions": 768,
+            "endpoint": "http://localhost:11434"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Ollama example:**
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `provider` | `openai` | Set to `"ollama"` |
+| `model` | — | Ollama model name, e.g. `"nomic-embed-text"` (768-dim), `"mxbai-embed-large"` (1024-dim), `"all-minilm"` (384-dim) |
+| `dimensions` | auto | Vector dimensions. Auto-detected for known models; required for unknown models. |
+| `endpoint` | `http://localhost:11434` | Custom Ollama endpoint |
+
+**ONNX example:**
+
+```json
+{
+  "embedding": {
+    "provider": "onnx",
+    "onnxModelPath": "all-MiniLM-L6-v2",
+    "dimensions": 384
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `provider` | — | Set to `"onnx"` |
+| `onnxModelPath` | — | Model identifier or path, e.g. `"all-MiniLM-L6-v2"`, `"bge-small-en-v1.5"` |
+| `onnxTokenizerPath` | — | Path to tokenizer JSON file (auto-resolved for known models) |
+| `dimensions` | auto | Required for unknown ONNX models |
+
+**Auto-migration on model switch:** Set `embedding.autoMigrate: true` to automatically re-embed all existing facts when the provider or model changes on startup. Without this, stale vectors in LanceDB will cause poor search quality until you run `openclaw hybrid-mem backfill-decay` manually.
+
+---
+
+## Multi-model embedding registry (#158)
+
+Use **multiple embedding models in parallel** — each model contributes a separate vector index, and results are merged via Reciprocal Rank Fusion (RRF) at retrieval time.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "embedding": {
+            "provider": "openai",
+            "apiKey": "${OPENAI_API_KEY}",
+            "model": "text-embedding-3-small",
+            "multiModels": [
+              {
+                "name": "text-embedding-3-small",
+                "provider": "openai",
+                "dimensions": 1536,
+                "role": "general"
+              },
+              {
+                "name": "nomic-embed-text",
+                "provider": "ollama",
+                "dimensions": 768,
+                "role": "domain"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Each entry in `multiModels`:
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `name` | ✅ | Model identifier (e.g. `"text-embedding-3-small"`, `"nomic-embed-text"`) |
+| `provider` | ✅ | `"openai"`, `"ollama"`, or `"onnx"` |
+| `dimensions` | ✅ | Output vector dimensions for this model |
+| `role` | ✅ | `"general"`, `"domain"`, `"query"`, or `"custom"` |
+| `apiKey` | — | Overrides `embedding.apiKey` for this model (OpenAI only) |
+| `endpoint` | — | Overrides `embedding.endpoint` for this model (Ollama only) |
+| `enabled` | `true` | Set to `false` to disable without removing the entry |
+
+When `multiModels` is set, each fact is embedded by all enabled models at store time. At recall time, each model contributes a ranked list and RRF merges them into a single result. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) for RRF details.
+
+---
+
+## Contextual variants at index time (#159)
+
+**Contextual variants** generate alternative phrasings of a fact at index time using a cheap LLM, then embed all variants alongside the original. This improves recall for paraphrased queries without expanding the query at retrieval time.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "contextualVariants": {
+            "enabled": true,
+            "model": "openai/gpt-4.1-nano",
+            "maxVariantsPerFact": 2,
+            "maxPerMinute": 30,
+            "categories": ["preference", "fact"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable contextual variant generation at store time |
+| `model` | `openai/gpt-4.1-nano` | LLM for variant generation |
+| `maxVariantsPerFact` | `2` | Max alternative phrasings per fact (capped at 5) |
+| `maxPerMinute` | `30` | Rate limit on LLM calls to avoid bursting |
+| `categories` | (all) | Restrict variant generation to facts in these categories. Omit to apply to all categories. |
+
+Variants are stored as additional LanceDB vectors linked to the parent fact. At recall, any matching variant surfaces its parent.
+
+---
+
+## LLM re-ranking (#161)
+
+After RRF fusion produces the initial ranked list, **LLM re-ranking** re-orders the top candidates using a language model that understands semantic context beyond embedding similarity.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "reranking": {
+            "enabled": true,
+            "model": "openai/gpt-4.1-nano",
+            "candidateCount": 50,
+            "outputCount": 20,
+            "timeoutMs": 10000
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable LLM re-ranking of RRF fusion results |
+| `model` | `openai/gpt-4.1-nano` | LLM for re-ranking |
+| `candidateCount` | `50` | Top-N RRF candidates to present to the LLM |
+| `outputCount` | `20` | Results to return after re-ranking |
+| `timeoutMs` | `10000` | LLM call timeout in ms; on timeout, falls back to original RRF order |
+
+Re-ranking runs for both `memory_recall` (explicit) and auto-recall (ambient injection) when enabled.
+
+---
+
+## Verification store (#162)
+
+The verification store provides an **integrity layer** for critical facts. Verified facts are persisted to an append-only JSON backup and tracked for scheduled re-verification, ensuring that important memories remain accurate over time.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "verification": {
+            "enabled": true,
+            "backupPath": "~/.openclaw/verified-facts.json",
+            "reverificationDays": 30,
+            "autoClassify": true,
+            "continuousVerification": false,
+            "cycleDays": 30
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable the verification store |
+| `backupPath` | `~/.openclaw/verified-facts.json` | Path to the append-only backup file |
+| `reverificationDays` | `30` | Days until a verified fact should be re-verified |
+| `autoClassify` | `true` | Automatically enroll facts tagged as `critical` into verification |
+| `continuousVerification` | `false` | Enable continuous background re-verification cycle |
+| `cycleDays` | `30` | Days between continuous verification cycles |
+| `verificationModel` | (nano tier) | LLM for continuous verification; omit to use default nano model |
+
+**Agent tools:**
+
+| Tool | Description |
+|------|-------------|
+| `memory_verify` | Mark a fact as verified. Params: `factId: string` |
+| `memory_verified_list` | List all verified facts with verification metadata |
+| `memory_verification_status` | Check whether a specific fact is verified. Params: `factId: string` |
+
+**Example usage:**
+```
+memory_verify(factId: "abc-123")
+→ "Verified fact abc-123 (verification id: v-xyz)."
+
+memory_verified_list()
+→ "- abc-123 (v1) verified_at=2026-03-08T12:00:00Z: My AWS account ID is 123456789..."
+
+memory_verification_status(factId: "abc-123")
+→ "Fact abc-123 is verified (v1), verified_at=2026-03-08T12:00:00Z."
+```
+
+---
+
+## Provenance tracing (#163)
+
+**Provenance tracing** records the origin chain of every fact — which session it came from, which episodic events it was derived from, and which other facts it was consolidated from. This creates an auditable trail from any stored fact back to its raw source material.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "provenance": {
+            "enabled": true,
+            "retentionDays": 365
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable provenance tracing (opt-in; requires additional storage) |
+| `retentionDays` | `365` | Days to retain provenance edges before pruning |
+
+Provenance data is stored in a separate `provenance.db` alongside `memory.db`. Edges use the `DERIVED_FROM` type to link facts to their source events and `CONSOLIDATED_FROM` to link consolidated facts to their pre-merge predecessors.
+
+**Agent tool: `memory_provenance`**
+
+Returns the full provenance chain for a fact, traversing up to 10 hops.
+
+```
+memory_provenance(factId: "abc-123")
+```
+
+Returns:
+```json
+{
+  "fact": { "id": "abc-123", "text": "...", "confidence": 0.9 },
+  "source": {
+    "session_id": "session-42",
+    "timestamp": "2026-03-08T10:00:00.000Z",
+    "turn": 5,
+    "extraction_method": "auto_capture",
+    "extraction_confidence": 0.85
+  },
+  "derivedFrom": [
+    {
+      "event_id": "evt-456",
+      "event_text": "User said: my API key is...",
+      "timestamp": "2026-03-08T10:00:00.000Z",
+      "source_type": "event_log"
+    }
+  ],
+  "consolidationChain": []
+}
+```
+
+**When provenance is disabled**, calling `memory_provenance` returns a message explaining that provenance tracing must be enabled. Disabling provenance does **not** affect normal memory operations.
+
+---
+
+## Document ingestion (#206)
+
+The document ingestion feature converts files (PDF, DOCX, XLSX, PPTX, HTML, images, and more) to Markdown via the **MarkItDown Python bridge**, chunks the result, and stores each chunk as a fact. This makes the content of documents searchable through normal memory recall.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "documents": {
+            "enabled": true,
+            "pythonPath": "python3",
+            "chunkSize": 2000,
+            "chunkOverlap": 200,
+            "maxDocumentSize": 52428800,
+            "autoTag": true,
+            "visionEnabled": false,
+            "allowedPaths": ["/home/user/docs", "/data/reports"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable the `memory_ingest_document` and `memory_ingest_folder` tools (opt-in) |
+| `pythonPath` | `"python3"` | Python executable to use for the MarkItDown bridge |
+| `chunkSize` | `2000` | Max characters per chunk when splitting the converted Markdown |
+| `chunkOverlap` | `200` | Character overlap between consecutive chunks |
+| `maxDocumentSize` | `52428800` | Max file size in bytes before rejection (default 50 MB) |
+| `autoTag` | `true` | Automatically add the filename as a tag to all ingested facts |
+| `visionEnabled` | `false` | Use LLM vision for image files (PNG, JPG, etc.) instead of MarkItDown |
+| `visionModel` | (llm.default) | Vision model to use when `visionEnabled` is true |
+| `allowedPaths` | — | Allowlist of absolute directory paths; ingestion is restricted to files under these paths when set |
+
+**Supported file types:** PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX, CSV, TSV, Markdown, TXT, RTF, HTML, JSON, YAML, EPUB, ODF formats, and images (PNG, JPG, GIF, WebP, BMP, TIFF).
+
+**Prerequisites:** Python 3 with `markitdown` installed:
+```bash
+pip install markitdown
+```
+
+**Agent tools:**
+
+| Tool | Description |
+|------|-------------|
+| `memory_ingest_document` | Convert and store a single document as chunked facts |
+| `memory_ingest_folder` | Recursively ingest all supported documents in a folder |
+
+**`memory_ingest_document` parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `path` | ✅ | Absolute path to the document file |
+| `tags` | — | Additional tags to attach to each stored fact |
+| `category` | — | Category for stored facts (default: `fact`) |
+| `dryRun` | — | When `true`, convert and chunk but do NOT store — returns a preview |
+
+**`memory_ingest_folder` parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `path` | ✅ | Absolute path to the folder |
+| `filter.glob` | — | Glob pattern to match files (e.g. `**/*.pdf`) |
+| `filter.extensions` | — | File extensions to include (e.g. `[".pdf", ".docx"]`) |
+| `tags` | — | Additional tags for all ingested facts |
+| `category` | — | Category for all stored facts |
+| `dryRun` | — | When `true`, list matching files without ingesting |
+
+**Hash deduplication:** Each document is fingerprinted (SHA-256 of content). Ingesting the same file twice skips the second run and reports `skipped_duplicate`.
+
+**Progress callbacks:** Long-running ingestion emits structured progress events (`{ stage, pct, message }`) so agents can report status to the user.
+
+---
+
 ## Custom categories
 
 ```json
@@ -755,3 +1209,5 @@ At runtime: `openclaw hybrid-mem stats` shows versions.
 - [CREDENTIALS.md](CREDENTIALS.md) — Credentials vault configuration
 - [REFLECTION.md](REFLECTION.md) — Reflection layer configuration
 - [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph memory configuration
+- [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md) — RRF fusion, query expansion, document ingestion
+- [../extensions/memory-hybrid/docs/event-log.md](../extensions/memory-hybrid/docs/event-log.md) — Episodic event log (Layer 1) API reference
