@@ -71,10 +71,12 @@ describe("computeSimpleSimilarity", () => {
 
 describe("detectRephrase", () => {
   it("detects rephrase when similar user messages appear in sequence", () => {
+    // Use messages that share enough unigrams AND bigrams to score above 0.5 with the
+    // bigram-enhanced computeSimpleSimilarity (deploy + aws + production shared, plus aws_production bigram).
     const turns: ConversationTurn[] = [
-      { role: "user", content: "How do I deploy my application to AWS" },
+      { role: "user", content: "How do I deploy my application to AWS production environment" },
       { role: "assistant", content: "You can use the AWS CLI or console." },
-      { role: "user", content: "How can I deploy my app to AWS S3" }, // similar topic, different wording
+      { role: "user", content: "How can I deploy my app to AWS production environment" }, // similar topic, slightly different wording
     ];
     const signal = detectRephrase(turns, { rephraseThreshold: 0.5 }, 2);
     expect(signal).not.toBeNull();

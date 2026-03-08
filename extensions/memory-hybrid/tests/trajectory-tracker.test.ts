@@ -241,10 +241,13 @@ describe("buildTrajectories", () => {
   });
 
   it("correctly identifies success outcome", () => {
+    // Turn 2 must stay similar enough to turn 0 that detectTrajectoryBoundaries does NOT end the
+    // trajectory early (sim must be > 0.2 even with bigram-enhanced computeSimpleSimilarity).
+    // Using messages that share "webpack", "configuration", "set" keeps similarity well above 0.2.
     const turns: ConversationTurn[] = [
       { role: "user", content: "How do I set up webpack configuration for my project?" },
       { role: "assistant", content: "Create a webpack.config.js with entry and output." },
-      { role: "user", content: "How do I configure webpack entry point and output path?" },
+      { role: "user", content: "How do I set up the webpack configuration entry point and output?" },
       { role: "assistant", content: "Set entry to src/index.js and output to dist." },
       { role: "user", content: "Perfect, that worked great! Thanks." },
     ];

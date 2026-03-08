@@ -40,28 +40,54 @@ const STOP_WORDS = new Set([
   "more", "very", "well", "get", "got", "going", "there", "here",
 ]);
 
+// Synonym map for common paraphrases — maps word → canonical form
+const SYNONYMS: Record<string, string> = {
+  good: "great", great: "great", excellent: "great", awesome: "great",
+  bad: "terrible", terrible: "terrible", poor: "terrible",
+  fix: "repair", repair: "repair", resolve: "repair", fixed: "repair", resolved: "repair",
+  broken: "failed", failed: "failed", error: "failed", wrong: "failed",
+  show: "display", display: "display", print: "display",
+  make: "create", create: "create", build: "create",
+  remove: "delete", delete: "delete",
+  help: "assist", assist: "assist",
+};
+
 /**
- * Simple bag-of-words cosine similarity.
- * Tokenizes by whitespace, lowercases, removes stop words, computes TF vectors, returns cosine.
+ * Bag-of-words + bigram cosine similarity with synonym normalization.
+ * Tokenizes by whitespace, lowercases, removes stop words, maps synonyms,
+ * adds bigrams (weighted 0.5x) alongside unigrams, computes cosine similarity.
  */
 export function computeSimpleSimilarity(a: string, b: string): number {
-  const tokenize = (text: string): Map<string, number> => {
-    const tokens = text
+  const tokenize = (text: string): string[] => {
+    return text
       .toLowerCase()
       .replace(/[^\w\s]/g, " ")
       .split(/\s+/)
-      .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+      .filter((t) => t.length > 1 && !STOP_WORDS.has(t))
+      .map((t) => SYNONYMS[t] ?? t);
+  };
+
+  const buildVector = (tokens: string[]): Map<string, number> => {
     const freq = new Map<string, number>();
+    // Unigrams (weight 1.0)
     for (const t of tokens) {
       freq.set(t, (freq.get(t) ?? 0) + 1);
+    }
+    // Bigrams (weight 0.5 for paraphrase sensitivity)
+    for (let i = 0; i < tokens.length - 1; i++) {
+      const bigram = `${tokens[i]}_${tokens[i + 1]}`;
+      freq.set(bigram, (freq.get(bigram) ?? 0) + 0.5);
     }
     return freq;
   };
 
-  const vecA = tokenize(a);
-  const vecB = tokenize(b);
+  const tokensA = tokenize(a);
+  const tokensB = tokenize(b);
 
-  if (vecA.size === 0 || vecB.size === 0) return 0;
+  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+
+  const vecA = buildVector(tokensA);
+  const vecB = buildVector(tokensB);
 
   // Dot product
   let dot = 0;
@@ -127,7 +153,7 @@ export function detectRephrase(
     }
     return {
       type: "rephrase",
-      confidence: 0.6 + (sim - threshold) * 2, // scales 0.6-0.8
+      confidence: Math.min(1, 0.6 + (sim - threshold) * 2), // scales 0.6-1.0, clamped
       polarity: "negative",
       context: {
         userMessage: trunc(current.content),
@@ -534,14 +560,21 @@ export function detectSilenceAfterAction(
 
   // Check if previous agent turn had tool calls
   let prevAgentWithToolsIdx = -1;
-  let prevUserIdx = -1;
   for (let i = turnIndex - 1; i >= Math.max(0, turnIndex - 6); i--) {
     if (turns[i].role === "assistant" && (turns[i].toolCalls?.length ?? 0) > 0) {
       prevAgentWithToolsIdx = i;
       break;
     }
-    if (turns[i].role === "user") {
-      prevUserIdx = i;
+  }
+
+  // Find the user turn that prompted the tool call (scan back from the tool-call turn)
+  let prevUserIdx = -1;
+  if (prevAgentWithToolsIdx > 0) {
+    for (let i = prevAgentWithToolsIdx - 1; i >= Math.max(0, prevAgentWithToolsIdx - 4); i--) {
+      if (turns[i].role === "user") {
+        prevUserIdx = i;
+        break;
+      }
     }
   }
 

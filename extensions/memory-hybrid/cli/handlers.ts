@@ -4108,6 +4108,66 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
+    // Route positive signals to reinforcement pipeline
+    if (!opts.dryRun && implicitCfg.feedToReinforcement !== false && signals.length > 0) {
+      const minConf = implicitCfg.minConfidence ?? 0.5;
+      const positiveSignals = signals.filter((s) => s.polarity === "positive" && s.confidence >= minConf);
+      const trackContext = cfg.reinforcement?.trackContext !== false;
+      const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
+      for (const sig of positiveSignals) {
+        try {
+          const matches = factsDb.search(sig.context.userMessage, 3);
+          const context: ReinforcementContext = {
+            querySnippet: sig.context.userMessage.slice(0, 200),
+            topic: sig.type,
+            sessionFile: sig.context.sessionFile,
+          };
+          for (const match of matches) {
+            factsDb.reinforceFact(match.id, sig.context.userMessage, context, {
+              trackContext,
+              maxEventsPerFact,
+              boostAmount: 0.5 * sig.confidence, // weaker than explicit praise
+            });
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
+            severity: "info",
+            subsystem: "implicit-feedback",
+          });
+        }
+      }
+    }
+
+    // Route negative signals to self-correction pipeline as pattern facts
+    if (!opts.dryRun && implicitCfg.feedToSelfCorrection !== false && signals.length > 0) {
+      const minConf = implicitCfg.minConfidence ?? 0.5;
+      const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
+      for (const sig of negativeSignals) {
+        try {
+          const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
+          if (!factsDb.hasDuplicate(text)) {
+            factsDb.store({
+              text,
+              category: "pattern",
+              importance: Math.max(0.3, sig.confidence * 0.6),
+              entity: null,
+              key: null,
+              value: text.slice(0, 200),
+              source: "implicit-feedback",
+              tags: ["implicit-feedback", "negative", sig.type],
+            });
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "runExtractImplicitFeedbackForCli:feed-self-correction",
+            severity: "info",
+            subsystem: "implicit-feedback",
+          });
+        }
+      }
+    }
+
     // Phase 2: Build trajectories
     if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
       try {

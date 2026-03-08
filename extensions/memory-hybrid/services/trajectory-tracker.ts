@@ -52,8 +52,10 @@ function classifySentiment(content: string): "positive" | "negative" | "neutral"
 
 /**
  * Detect boundaries of multi-turn task sequences.
- * Start: user message that leads to agent action (tool call or substantial response).
- * End: topic change, grateful_close, or 3+ turns gap.
+ * Start: user message with content length > 20 characters.
+ * End: grateful_close signal (short thank-you message) or significant topic change (cosine
+ *   similarity to the opening message drops below 0.2).  Any open trajectory is also closed at
+ *   the end of the conversation.  Minimum trajectory length is 3 turns (start + at least 2 more).
  */
 export function detectTrajectoryBoundaries(turns: ConversationTurn[]): TrajectoryBoundary[] {
   const boundaries: TrajectoryBoundary[] = [];
@@ -206,7 +208,7 @@ export function extractTrajectoryLessons(trajectory: FeedbackTrajectory): string
   const lessons: string[] = [];
   const { outcome, turns, keyPivot, toolsUsed, turnCount, topic } = trajectory;
 
-  const topicStr = topic ? `on "${topic}"` : "in this conversation";
+  const topicStr = topic ? ` on "${topic}"` : " in this conversation";
 
   if (outcome === "success") {
     if (turnCount <= 3) {
