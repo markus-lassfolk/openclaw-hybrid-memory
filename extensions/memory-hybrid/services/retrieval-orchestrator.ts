@@ -581,160 +581,160 @@ export async function runRetrievalPipeline(
       }
     }
 
-  // --- RRF Fusion ---
-  const fused = fuseResults(strategyMap, k);
+    // --- RRF Fusion ---
+    const fused = fuseResults(strategyMap, k);
 
-  if (fused.length === 0) {
-    return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
-  }
-
-  // --- Build metadata map for post-RRF adjustments ---
-  // Apply scope and asOf filters when resolving fused fact IDs to prevent returning
-  // facts from outside the caller's scope (scope/session/agent boundary enforcement).
-  const getByIdOpts = (scopeFilter || asOf != null)
-    ? { scopeFilter, asOf }
-    : undefined;
-
-  const factMetaMap = new Map<string, FactMetadata>();
-  const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
-
-  // Effective timestamp for superseded/expired checks: prefer asOf, fall back to nowSec.
-  const effectiveNow = asOf ?? nowSec;
-
-  for (const result of fused) {
-    const entry = factsDb.getById(result.factId, getByIdOpts);
-    if (entry) {
-      // When not including superseded/expired facts, filter them out here so that
-      // semantic results (which lack SQL-level filtering) are held to the same standard
-      // as FTS5 results. This is the single enforcement point for all strategies.
-      if (!includeSuperseded) {
-        if (entry.supersededAt != null) continue;
-        if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
-      }
-      factMetaMap.set(result.factId, {
-        id: entry.id,
-        confidence: entry.confidence,
-        lastAccessed: entry.lastAccessed ?? null,
-        recallCount: entry.recallCount ?? 0,
-      });
-      orderedEntries.push({ factId: result.factId, entry });
+    if (fused.length === 0) {
+      return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
     }
-  }
 
-  // Filter fused array to remove out-of-scope or superseded/expired facts not resolved above.
-  const scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
+    // --- Build metadata map for post-RRF adjustments ---
+    // Apply scope and asOf filters when resolving fused fact IDs to prevent returning
+    // facts from outside the caller's scope (scope/session/agent boundary enforcement).
+    const getByIdOpts = (scopeFilter || asOf != null)
+      ? { scopeFilter, asOf }
+      : undefined;
 
-  // --- Post-RRF adjustments ---
-  applyPostRrfAdjustments(scopedFused, factMetaMap, nowSec);
+    const factMetaMap = new Map<string, FactMetadata>();
+    const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
 
-  // --- Cluster sibling boost (Issue #146) ---
-  if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {
-    try {
-      const clusterByFact = clusterCache.getClusterMap(
-        factsDb,
-        clustersConfig.minClusterSize,
-      );
-      if (clusterByFact.size > 0) {
-        const clusterToIndices = new Map<string, number[]>();
-        for (let i = 0; i < scopedFused.length; i++) {
-          const clusterId = clusterByFact.get(scopedFused[i].factId);
-          if (!clusterId) continue;
-          const list = clusterToIndices.get(clusterId) ?? [];
-          list.push(i);
-          clusterToIndices.set(clusterId, list);
+    // Effective timestamp for superseded/expired checks: prefer asOf, fall back to nowSec.
+    const effectiveNow = asOf ?? nowSec;
+
+    for (const result of fused) {
+      const entry = factsDb.getById(result.factId, getByIdOpts);
+      if (entry) {
+        // When not including superseded/expired facts, filter them out here so that
+        // semantic results (which lack SQL-level filtering) are held to the same standard
+        // as FTS5 results. This is the single enforcement point for all strategies.
+        if (!includeSuperseded) {
+          if (entry.supersededAt != null) continue;
+          if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
         }
+        factMetaMap.set(result.factId, {
+          id: entry.id,
+          confidence: entry.confidence,
+          lastAccessed: entry.lastAccessed ?? null,
+          recallCount: entry.recallCount ?? 0,
+        });
+        orderedEntries.push({ factId: result.factId, entry });
+      }
+    }
 
-        const BOOST_MULTIPLIER = 1.1;
-        for (const indices of clusterToIndices.values()) {
-          if (indices.length < 2) continue;
-          let bestIndex = indices[0];
-          for (const idx of indices) {
-            if (scopedFused[idx].finalScore > scopedFused[bestIndex].finalScore) {
-              bestIndex = idx;
+    // Filter fused array to remove out-of-scope or superseded/expired facts not resolved above.
+    const scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
+
+    // --- Post-RRF adjustments ---
+    applyPostRrfAdjustments(scopedFused, factMetaMap, nowSec);
+
+    // --- Cluster sibling boost (Issue #146) ---
+    if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {
+      try {
+        const clusterByFact = clusterCache.getClusterMap(
+          factsDb,
+          clustersConfig.minClusterSize,
+        );
+        if (clusterByFact.size > 0) {
+          const clusterToIndices = new Map<string, number[]>();
+          for (let i = 0; i < scopedFused.length; i++) {
+            const clusterId = clusterByFact.get(scopedFused[i].factId);
+            if (!clusterId) continue;
+            const list = clusterToIndices.get(clusterId) ?? [];
+            list.push(i);
+            clusterToIndices.set(clusterId, list);
+          }
+
+          const BOOST_MULTIPLIER = 1.1;
+          for (const indices of clusterToIndices.values()) {
+            if (indices.length < 2) continue;
+            let bestIndex = indices[0];
+            for (const idx of indices) {
+              if (scopedFused[idx].finalScore > scopedFused[bestIndex].finalScore) {
+                bestIndex = idx;
+              }
+            }
+            for (const idx of indices) {
+              if (idx === bestIndex) continue;
+              scopedFused[idx].finalScore *= BOOST_MULTIPLIER;
             }
           }
-          for (const idx of indices) {
-            if (idx === bestIndex) continue;
-            scopedFused[idx].finalScore *= BOOST_MULTIPLIER;
-          }
+
+          scopedFused.sort((a, b) => b.finalScore - a.finalScore);
         }
-
-        scopedFused.sort((a, b) => b.finalScore - a.finalScore);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "retrieval",
+          operation: "cluster-boost",
+        });
       }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "retrieval",
-        operation: "cluster-boost",
-      });
     }
-  }
 
-  // Re-sort entries to match final order
-  const finalOrder = new Map<string, number>(scopedFused.map((r, i) => [r.factId, i]));
-  orderedEntries.sort((a, b) => (finalOrder.get(a.factId) ?? 0) - (finalOrder.get(b.factId) ?? 0));
+    // Re-sort entries to match final order
+    const finalOrder = new Map<string, number>(scopedFused.map((r, i) => [r.factId, i]));
+    orderedEntries.sort((a, b) => (finalOrder.get(a.factId) ?? 0) - (finalOrder.get(b.factId) ?? 0));
 
-  // --- LLM Re-ranking (Issue #161) ---
-  // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
-  // On any failure or timeout, falls back to the original RRF order (no behavior change).
-  // Skip re-ranking if explicitly requested (e.g., conditional mode first pass).
-  if (rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
-    try {
-      const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
-      const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
-        const storedSec = entry.sourceDate ?? entry.createdAt;
-        return {
-          factId,
-          text: entry.text,
-          confidence: entry.confidence,
-          storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
-          finalScore: rrfScoreMap.get(factId) ?? 0,
-        };
-      });
+    // --- LLM Re-ranking (Issue #161) ---
+    // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
+    // On any failure or timeout, falls back to the original RRF order (no behavior change).
+    // Skip re-ranking if explicitly requested (e.g., conditional mode first pass).
+    if (rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
+      try {
+        const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
+        const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
+          const storedSec = entry.sourceDate ?? entry.createdAt;
+          return {
+            factId,
+            text: entry.text,
+            confidence: entry.confidence,
+            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+            finalScore: rrfScoreMap.get(factId) ?? 0,
+          };
+        });
 
-      const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
+        const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
 
-      // Rebuild orderedEntries in the new order.
-      const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
-      orderedEntries.sort(
-        (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
-      );
-      // Trim to the outputCount returned by the reranker.
-      if (orderedEntries.length > reranked.length) {
-        orderedEntries.length = reranked.length;
+        // Rebuild orderedEntries in the new order.
+        const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
+        orderedEntries.sort(
+          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+        );
+        // Trim to the outputCount returned by the reranker.
+        if (orderedEntries.length > reranked.length) {
+          orderedEntries.length = reranked.length;
+        }
+        // Also reorder scopedFused to stay consistent with orderedEntries.
+        scopedFused.sort(
+          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+        );
+        if (scopedFused.length > reranked.length) {
+          scopedFused.length = reranked.length;
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "retrieval",
+          operation: "reranking",
+        });
       }
-      // Also reorder scopedFused to stay consistent with orderedEntries.
-      scopedFused.sort(
-        (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
-      );
-      if (scopedFused.length > reranked.length) {
-        scopedFused.length = reranked.length;
+    }
+
+    // --- Token budget packing ---
+    // Build contradicted set so contradicted facts are marked with a warning in the packed output.
+    // Prefer the batch method (single query) over per-entry isContradicted calls (N queries).
+    const contradictedIds = new Set<string>();
+    if (factsDb.getContradictedIds) {
+      const allIds = orderedEntries.map((e) => e.factId);
+      const batch = factsDb.getContradictedIds(allIds);
+      for (const id of batch) contradictedIds.add(id);
+    } else if (factsDb.isContradicted) {
+      for (const { factId } of orderedEntries) {
+        if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
       }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "retrieval",
-        operation: "reranking",
-      });
     }
-  }
+    const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, { contradictedIds });
+    const packedFactIds = orderedEntries.slice(0, packed.length).map((e) => e.factId);
 
-  // --- Token budget packing ---
-  // Build contradicted set so contradicted facts are marked with a warning in the packed output.
-  // Prefer the batch method (single query) over per-entry isContradicted calls (N queries).
-  const contradictedIds = new Set<string>();
-  if (factsDb.getContradictedIds) {
-    const allIds = orderedEntries.map((e) => e.factId);
-    const batch = factsDb.getContradictedIds(allIds);
-    for (const id of batch) contradictedIds.add(id);
-  } else if (factsDb.isContradicted) {
-    for (const { factId } of orderedEntries) {
-      if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
-    }
-  }
-  const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, { contradictedIds });
-  const packedFactIds = orderedEntries.slice(0, packed.length).map((e) => e.factId);
-
-  // Extract resolved entries in final order for caller (avoids double lookup)
-  const resolvedEntries = orderedEntries.map((e) => e.entry);
+    // Extract resolved entries in final order for caller (avoids double lookup)
+    const resolvedEntries = orderedEntries.map((e) => e.entry);
 
     return { fused: scopedFused, packed, packedFactIds, tokensUsed, entries: resolvedEntries };
   };
