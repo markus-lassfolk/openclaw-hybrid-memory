@@ -162,7 +162,7 @@ function collectFilesRecursive(dir: string, predicate: (path: string) => boolean
   try {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = resolve(dir, entry.name);
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
         out.push(...collectFilesRecursive(full, predicate));
       } else if (entry.isFile() && predicate(full)) {
         out.push(full);
