@@ -346,6 +346,7 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_created ON implicit_signals(created_at)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_polarity ON implicit_signals(polarity)`);
+    this.liveDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_is_unique ON implicit_signals(session_file, signal_type, user_message, polarity)`);
   }
 
   /** Create feedback_trajectories table for multi-turn task sequence learning (#262). */

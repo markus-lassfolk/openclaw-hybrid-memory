@@ -4077,7 +4077,7 @@ export async function runExtractImplicitFeedbackForCli(
       // Store raw signals in implicit_signals table
       try {
         const insert = rawDb.prepare(`
-          INSERT INTO implicit_signals (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
+          INSERT OR IGNORE INTO implicit_signals (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'implicit')
         `);
         for (const sig of signals) {
