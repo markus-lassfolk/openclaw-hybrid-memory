@@ -398,7 +398,9 @@ export function initializeDatabases(
       (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
         previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
-    if (!previousEmbeddingMeta || embeddingConfigChanged) {
+    // When autoMigrate is enabled, let runEmbeddingMaintenance handle the meta update
+    // to avoid pre-updating the meta before the migration service can detect the change.
+    if (!cfg.embedding.autoMigrate && (!previousEmbeddingMeta || embeddingConfigChanged)) {
       factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
     }
   } catch (err) {
@@ -556,7 +558,8 @@ export function initializeDatabases(
   // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.
   // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
-  if (cfg.vector.autoRepair || embeddingConfigChanged) {
+  // Skip this block when autoMigrate is enabled and config changed — runEmbeddingMaintenance handles it.
+  if ((cfg.vector.autoRepair || embeddingConfigChanged) && !(cfg.embedding.autoMigrate && embeddingConfigChanged)) {
     void (async () => {
       const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
