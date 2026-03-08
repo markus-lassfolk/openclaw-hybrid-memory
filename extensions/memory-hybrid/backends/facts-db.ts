@@ -1459,9 +1459,11 @@ export class FactsDB {
       scopeFilter?: ScopeFilter | null;
       /** Reinforcement boost — added to score when reinforced_count > 0 (default: 0.1). */
       reinforcementBoost?: number;
+      /** Weight applied to diversity score when calculating effective boost (default: 1.0). */
+      diversityWeight?: number;
     } = {},
   ): SearchResult[] {
-    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter, reinforcementBoost = 0.1 } = options;
+    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter, reinforcementBoost = 0.1, diversityWeight = 1.0 } = options;
 
     const sanitized = this.sanitizeFTS5Query(query);
     const safeQuery = sanitized
@@ -1534,8 +1536,24 @@ export class FactsDB {
       const freshness = (row.freshness as number) || 1.0;
       const confidence = (row.confidence as number) || 1.0;
       const reinforcedCount = (row.reinforced_count as number) || 0;
-      // Add reinforcement boost when fact has been praised
-      const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
+      // Add reinforcement boost when fact has been praised, weighted by diversity
+      let reinforcement = 0;
+      if (reinforcedCount > 0) {
+        const events = this.getReinforcementEvents(row.id as string);
+        if (events.length === 0) {
+          // No events tracked (trackContext was false or events evicted): use full boost
+          reinforcement = reinforcementBoost;
+        } else {
+          // Calculate diversity score and weight boost: high diversity = higher boost
+          const stems = events.map((e) => {
+            if (!e.querySnippet) return "";
+            return e.querySnippet.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50);
+          });
+          const uniqueStems = new Set(stems).size;
+          const diversityScore = uniqueStems / events.length;
+          reinforcement = reinforcementBoost * diversityScore * diversityWeight;
+        }
+      }
       const composite = Math.min(1.0, bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15 + reinforcement);
       const entry = this.rowToEntry(row);
       // Apply dynamic salience (access boost + time decay)

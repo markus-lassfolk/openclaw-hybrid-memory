@@ -175,6 +175,15 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
       typeof reinforcementRaw?.similarityThreshold === "number" && reinforcementRaw.similarityThreshold > 0 && reinforcementRaw.similarityThreshold <= 1
         ? reinforcementRaw.similarityThreshold
         : 0.85,
+    maxEventsPerFact:
+      typeof reinforcementRaw?.maxEventsPerFact === "number" && reinforcementRaw.maxEventsPerFact > 0
+        ? Math.floor(reinforcementRaw.maxEventsPerFact)
+        : 50,
+    diversityWeight:
+      typeof reinforcementRaw?.diversityWeight === "number" && reinforcementRaw.diversityWeight >= 0
+        ? reinforcementRaw.diversityWeight
+        : 1.0,
+    trackContext: reinforcementRaw?.trackContext !== false,
   };
 }
 
