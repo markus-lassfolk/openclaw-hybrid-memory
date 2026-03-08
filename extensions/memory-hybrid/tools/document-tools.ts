@@ -30,6 +30,7 @@ export interface DocumentToolsContext {
   embeddings: EmbeddingProvider;
   openai: OpenAI;
   pythonBridge: PythonBridge;
+  onProgress?: (progress: { stage: string; pct: number; message: string }) => void;
 }
 
 type ProgressTracker = {
@@ -264,7 +265,7 @@ async function describeImageWithVision(opts: {
  * Only called when cfg.documents.enabled is true.
  */
 export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPluginApi): void {
-  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, onProgress } = ctx;
   const docCfg = cfg.documents;
 
   const tagSafe = (s: string): string =>
@@ -303,9 +304,11 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     category: string;
     dryRun: boolean;
     progressLabel?: string;
+    onProgress?: (progress: { stage: string; pct: number; message: string }) => void;
   }): Promise<IngestSummary> {
     const filePath = opts.path;
     const progress = createProgressTracker(api.logger, opts.progressLabel);
+    opts.onProgress?.({ stage: "start", pct: 0, message: `Starting ingestion of ${basename(filePath)}` });
 
     if (!isAbsolute(filePath)) {
       return {
@@ -433,6 +436,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     }
 
     progress.add("Converting...");
+    opts.onProgress?.({ stage: "converting", pct: 10, message: "Converting..." });
     let markdown: string;
     let title: string;
 
@@ -507,6 +511,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     }
 
     progress.add(`Chunking (${chunks.length} chunks)...`);
+    opts.onProgress?.({ stage: "chunking", pct: 40, message: `Chunking (${chunks.length} chunks)...` });
 
     if (opts.dryRun) {
       const preview = chunks
@@ -514,6 +519,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         .map((c, i) => `Chunk ${i + 1}/${chunks.length} [${c.sectionHeading ?? "no heading"}]:\n${c.text.slice(0, 200)}...`)
         .join("\n\n");
       progress.add("Done (dry run)");
+      opts.onProgress?.({ stage: "complete", pct: 100, message: "Done (dry run)" });
       const response: IngestResult = {
         content: [
           {
@@ -537,6 +543,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     }
 
     progress.add("Storing...");
+    opts.onProgress?.({ stage: "store", pct: 50, message: "Storing..." });
 
     const fileName = basename(realPath);
     const sourceName = `document:${fingerprint}`;
@@ -614,6 +621,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     }
 
     progress.add("Done");
+    opts.onProgress?.({ stage: "complete", pct: 100, message: "Done" });
 
     const response: IngestResult = {
       content: [
@@ -690,6 +698,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           tags: params.tags,
           category: categoryParam,
           dryRun: isDryRun,
+          onProgress,
         });
         return summary.response;
       },
@@ -815,6 +824,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
             category: categoryParam,
             dryRun: false,
             progressLabel: label,
+            onProgress,
           });
           summaries.push(summary);
           totalChunks += summary.chunkCount ?? 0;

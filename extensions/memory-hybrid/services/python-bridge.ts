@@ -173,11 +173,34 @@ export class PythonBridge {
     await this.send<{ pong: boolean }>("ping", {}, PING_TIMEOUT_MS);
   }
 
+  private isWorkerError(err: Error): boolean {
+    return (
+      err.message.includes("Python worker exited") ||
+      err.message.includes("Python worker error:") ||
+      err.message.includes("Python RPC timeout")
+    );
+  }
+
   async convert(filePath: string): Promise<ConvertResult> {
     await this.ensureStarted();
     const uri = filePath.startsWith("file://") ? filePath : pathToFileURL(filePath).href;
-    const result = await this.send<ConvertResult>("convert", { uri }, 60_000);
-    return result;
+    let firstError: Error | undefined;
+    try {
+      return await this.send<ConvertResult>("convert", { uri }, 60_000);
+    } catch (err) {
+      firstError = err instanceof Error ? err : new Error(String(err));
+      if (!this.isWorkerError(firstError)) throw firstError;
+    }
+    // Worker died mid-conversion — kill lingering process if any and retry once
+    if (this.proc && !this.proc.killed) this.proc.kill();
+    this.proc = null;
+    this.pending.clear();
+    try {
+      await this.ensureStarted();
+      return await this.send<ConvertResult>("convert", { uri }, 60_000);
+    } catch {
+      throw firstError;
+    }
   }
 
   async shutdown(): Promise<void> {

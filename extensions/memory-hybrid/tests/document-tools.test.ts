@@ -266,6 +266,35 @@ describe("memory_ingest_document", () => {
     expect(vectorDb.store).not.toHaveBeenCalled();
   });
 
+  it("fires onProgress callback with at least start and complete events", async () => {
+    const api = makeMockApi();
+    const bridge = makeMockBridge("## Section\n\nContent.", "Test Doc");
+    const events: { stage: string; pct: number; message: string }[] = [];
+    const onProgress = vi.fn((p: { stage: string; pct: number; message: string }) => events.push(p));
+
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: makeCfg() as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        pythonBridge: bridge as never,
+        onProgress,
+      },
+      api as never,
+    );
+
+    const tool = api.getTool("memory_ingest_document");
+    await (tool!.execute as AnyFn)("tc-progress", { path: testFilePath });
+
+    const stages = events.map((e) => e.stage);
+    expect(stages).toContain("start");
+    expect(stages).toContain("complete");
+    expect(events.find((e) => e.stage === "start")!.pct).toBe(0);
+    expect(events.find((e) => e.stage === "complete")!.pct).toBe(100);
+  });
+
   it("returns error when bridge convert fails", async () => {
     const api = makeMockApi();
     const bridge = {

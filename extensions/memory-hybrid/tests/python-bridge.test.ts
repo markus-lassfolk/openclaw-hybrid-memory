@@ -129,12 +129,12 @@ describe("PythonBridge", () => {
     await expect(convertPromise).rejects.toThrow("File not found");
   });
 
-  it("rejects all pending when process exits unexpectedly", async () => {
+  it("rejects all pending when process exits unexpectedly (retry also fails)", async () => {
     const convertPromise = bridge.convert("/tmp/test.pdf");
 
     await new Promise((r) => setImmediate(r));
 
-    // Respond to ping so we get past ensureStarted
+    // Respond to ping so we get past ensureStarted (id=1)
     fakeProc.respond({ jsonrpc: "2.0", id: 1, result: { pong: true } });
 
     await new Promise((r) => setImmediate(r));
@@ -143,7 +143,83 @@ describe("PythonBridge", () => {
     fakeProc.killed = true;
     fakeProc.emit("exit", 1, null);
 
+    // Retry kicks in: proc2 spawns and sends ping (id=3)
+    await new Promise((r) => setImmediate(r));
+    fakeProc.respond({ jsonrpc: "2.0", id: 3, result: { pong: true } });
+    await new Promise((r) => setImmediate(r));
+
+    // proc2 also exits before convert response → retry fails → original error propagated
+    fakeProc.killed = true;
+    fakeProc.emit("exit", 2, null);
+
     await expect(convertPromise).rejects.toThrow(/exited/i);
+  });
+
+  it("retries convert once when worker exits mid-conversion", async () => {
+    const convertPromise = bridge.convert("/tmp/retry.pdf");
+
+    await new Promise((r) => setImmediate(r));
+
+    // Save reference to first process before retry replaces it
+    const proc1 = fakeProc;
+
+    // Respond to ping (id=1) on first process
+    proc1.respond({ jsonrpc: "2.0", id: 1, result: { pong: true } });
+
+    await new Promise((r) => setImmediate(r));
+
+    // Simulate worker exit before convert response arrives
+    proc1.killed = true;
+    proc1.emit("exit", 1, null);
+
+    // Let microtasks flush: catch block runs, retry starts, second process spawned, ping sent (id=3)
+    await new Promise((r) => setImmediate(r));
+
+    // fakeProc is now the second (retry) process; respond to its ping
+    fakeProc.respond({ jsonrpc: "2.0", id: 3, result: { pong: true } });
+
+    // Let microtasks flush: ping resolves, convert retry sent (id=4)
+    await new Promise((r) => setImmediate(r));
+
+    // Respond to the retried convert request
+    fakeProc.respond({ jsonrpc: "2.0", id: 4, result: { markdown: "# Retry", title: "retry.pdf" } });
+
+    const result = await convertPromise;
+    expect(result.title).toBe("retry.pdf");
+    expect(result.markdown).toBe("# Retry");
+    // A second process must have been spawned for the retry
+    expect(fakeProc).not.toBe(proc1);
+  });
+
+  it("propagates original error when retry also fails", async () => {
+    const convertPromise = bridge.convert("/tmp/fail-twice.pdf");
+
+    await new Promise((r) => setImmediate(r));
+
+    const proc1 = fakeProc;
+
+    // Respond to ping on first process
+    proc1.respond({ jsonrpc: "2.0", id: 1, result: { pong: true } });
+
+    await new Promise((r) => setImmediate(r));
+
+    // First process exits mid-convert
+    proc1.killed = true;
+    proc1.emit("exit", 1, null);
+
+    await new Promise((r) => setImmediate(r));
+
+    // Respond to ping on second process (id=3)
+    fakeProc.respond({ jsonrpc: "2.0", id: 3, result: { pong: true } });
+
+    await new Promise((r) => setImmediate(r));
+
+    // Second process also exits before responding to convert (id=4)
+    const proc2 = fakeProc;
+    proc2.killed = true;
+    proc2.emit("exit", 2, null);
+
+    await expect(convertPromise).rejects.toThrow(/Python worker exited.*code=1/i);
   });
 
   it("shutdown sends shutdown RPC then kills process", async () => {
