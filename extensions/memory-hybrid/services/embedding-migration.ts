@@ -212,8 +212,9 @@ export async function migrateEmbeddings(
  * config (stored in the SQLite `embedding_meta` table). When a change is detected and
  * `autoMigrate` is `true`, triggers a full re-embedding run via `migrateEmbeddings`.
  *
- * On config change the meta record is always updated to reflect the new provider/model
- * (regardless of `autoMigrate`), so subsequent runs don't re-detect the same change.
+ * On first run (no previous meta), the current config is recorded and no migration occurs.
+ * On config change with `autoMigrate=true`, the meta is updated only after successful migration,
+ * ensuring failed migrations will retry on the next restart.
  *
  * @returns `changed`  — whether provider or model differed from the recorded values.
  *          `migrated` — whether re-embedding was actually performed.
@@ -226,19 +227,19 @@ export async function runEmbeddingMaintenance(
   const log = logger ?? { info: console.info, warn: console.warn };
 
   let changed = false;
+  let previousMeta;
 
   try {
-    const previousMeta = factsDb.getEmbeddingMeta();
+    previousMeta = factsDb.getEmbeddingMeta();
 
     if (previousMeta) {
       changed =
         previousMeta.provider !== currentProvider ||
         previousMeta.model !== currentModel;
-    }
-
-    // Persist current config — first run records initial state; subsequent changes overwrite.
-    if (!previousMeta || changed) {
+    } else {
+      // First run — record initial state and return early
       factsDb.setEmbeddingMeta(currentProvider, currentModel);
+      return { changed: false, migrated: false };
     }
   } catch (err) {
     log.warn(
@@ -272,6 +273,8 @@ export async function runEmbeddingMaintenance(
 
   try {
     const result = await migrateEmbeddings(opts);
+    // Only update meta after successful migration
+    factsDb.setEmbeddingMeta(currentProvider, currentModel);
     return { changed: true, migrated: true, result };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
