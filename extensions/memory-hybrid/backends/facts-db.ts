@@ -1587,12 +1587,7 @@ export class FactsDB {
           reinforcement = reinforcementBoost;
         } else {
           // Calculate diversity score and weight boost: high diversity = higher boost
-          const stems = events.map((e) => {
-            if (!e.querySnippet) return "";
-            return e.querySnippet.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50);
-          });
-          const uniqueStems = new Set(stems).size;
-          const diversityScore = uniqueStems / events.length;
+          const diversityScore = FactsDB.computeDiversityFromEvents(events);
           reinforcement = reinforcementBoost * (1 - diversityWeight + diversityWeight * diversityScore);
         }
       }
@@ -2480,6 +2475,22 @@ export class FactsDB {
   }
 
   /**
+   * Compute diversity score from reinforcement events.
+   * Filters out null/empty query snippets (treats them as fully diverse).
+   * Returns 1.0 if no valid snippets exist, otherwise unique stems / valid snippet count.
+   */
+  private static computeDiversityFromEvents(events: ReinforcementEvent[]): number {
+    if (events.length === 0) return 1.0;
+    const stems = events
+      .map((e) => e.querySnippet?.trim())
+      .filter((s): s is string => !!s)
+      .map((s) => s.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50));
+    if (stems.length === 0) return 1.0;
+    const uniqueStems = new Set(stems).size;
+    return uniqueStems / stems.length;
+  }
+
+  /**
    * Batch-fetch reinforcement events for multiple facts in a single query.
    * Returns a Map<factId, ReinforcementEvent[]> for efficient lookup.
    */
@@ -2524,13 +2535,7 @@ export class FactsDB {
    */
   calculateDiversityScore(factId: string): number {
     const events = this.getReinforcementEvents(factId);
-    if (events.length === 0) return 1.0;
-    const stems = events.map((e) => {
-      if (!e.querySnippet) return "";
-      return e.querySnippet.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50);
-    });
-    const uniqueStems = new Set(stems).size;
-    return uniqueStems / events.length;
+    return FactsDB.computeDiversityFromEvents(events);
   }
 
   /**
