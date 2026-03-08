@@ -70,6 +70,19 @@ function countFeedbackInWindow(
   let implicitNegative = 0;
 
   try {
+    // Corrections from facts table (source = 'self-correction')
+    const correctionsQ = topic
+      ? `SELECT COUNT(*) as cnt FROM facts WHERE source = 'self-correction' AND created_at >= ? AND created_at <= ? AND (text LIKE ? OR summary LIKE ?)`
+      : `SELECT COUNT(*) as cnt FROM facts WHERE source = 'self-correction' AND created_at >= ? AND created_at <= ?`;
+    const correctionsRow = topic
+      ? (db.prepare(correctionsQ).get(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as { cnt: number })
+      : (db.prepare(correctionsQ).get(windowStart, windowEnd) as { cnt: number });
+    corrections = correctionsRow?.cnt ?? 0;
+  } catch {
+    // table may not exist
+  }
+
+  try {
     // Praise from reinforcement_log (positive signal = reinforcement)
     const praiseQ = topic
       ? `SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ? AND (topic LIKE ?)`
@@ -85,9 +98,11 @@ function countFeedbackInWindow(
   try {
     // Implicit signals
     const implQ = topic
-      ? `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? GROUP BY polarity`
+      ? `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? AND (user_message LIKE ? OR agent_message LIKE ?) GROUP BY polarity`
       : `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? GROUP BY polarity`;
-    const implRows = db.prepare(implQ).all(windowStart, windowEnd) as Array<{ polarity: string; cnt: number }>;
+    const implRows = topic
+      ? (db.prepare(implQ).all(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as Array<{ polarity: string; cnt: number }>)
+      : (db.prepare(implQ).all(windowStart, windowEnd) as Array<{ polarity: string; cnt: number }>);
     for (const row of implRows) {
       if (row.polarity === "positive") implicitPositive = row.cnt;
       if (row.polarity === "negative") implicitNegative = row.cnt;

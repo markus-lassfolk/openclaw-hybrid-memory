@@ -109,18 +109,6 @@ function trunc(s: string, maxLen = 500): string {
   return s.length > maxLen ? s.slice(0, maxLen) : s;
 }
 
-/** Get user turns from a list of conversation turns */
-function userTurns(turns: ConversationTurn[]): ConversationTurn[] {
-  return turns.filter((t) => t.role === "user");
-}
-
-/** Compute average user message length in a session */
-function avgUserMessageLength(turns: ConversationTurn[]): number {
-  const msgs = userTurns(turns);
-  if (msgs.length === 0) return 0;
-  return msgs.reduce((sum, t) => sum + t.content.length, 0) / msgs.length;
-}
-
 /**
  * Detect rephrase: user re-asked the same question with different wording.
  * Similarity > rephraseThreshold (0.8) but wording differs > 30%.
