@@ -234,6 +234,73 @@ describe("hybridConfigSchema.parse", () => {
     ).toThrow(/Invalid embedding\.provider/);
   });
 
+  // ---------------------------------------------------------------------------
+  // Local provider validation (#153 — plugin schema gap fix)
+  // ---------------------------------------------------------------------------
+
+  it("ONNX config without apiKey passes validation (provider='onnx', model set)", () => {
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "onnx", model: "all-MiniLM-L6-v2" },
+    });
+    expect(result.embedding.provider).toBe("onnx");
+    expect(result.embedding.model).toBe("all-MiniLM-L6-v2");
+    expect(result.embedding.apiKey).toBeUndefined();
+    expect(result.embedding.dimensions).toBe(384);
+  });
+
+  it("ONNX config using onnxModelPath alias (no apiKey) passes validation", () => {
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "onnx", onnxModelPath: "bge-small-en-v1.5" },
+    });
+    expect(result.embedding.provider).toBe("onnx");
+    expect(result.embedding.model).toBe("bge-small-en-v1.5");
+    expect(result.embedding.apiKey).toBeUndefined();
+  });
+
+  it("Ollama config without apiKey passes validation (provider='ollama', model set)", () => {
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", model: "nomic-embed-text" },
+    });
+    expect(result.embedding.provider).toBe("ollama");
+    expect(result.embedding.model).toBe("nomic-embed-text");
+    expect(result.embedding.apiKey).toBeUndefined();
+    expect(result.embedding.dimensions).toBe(768);
+  });
+
+  it("Ollama config using ollamaModel alias (no apiKey) passes validation", () => {
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", ollamaModel: "mxbai-embed-large" },
+    });
+    expect(result.embedding.provider).toBe("ollama");
+    expect(result.embedding.model).toBe("mxbai-embed-large");
+    expect(result.embedding.apiKey).toBeUndefined();
+    expect(result.embedding.dimensions).toBe(1024);
+  });
+
+  it("OpenAI config without apiKey fails validation with clear message", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "openai" },
+      }),
+    ).toThrow(/embedding\.apiKey/);
+  });
+
+  it("ONNX missing model fails with hint to use embedding.model or embedding.onnxModelPath", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "onnx" },
+      }),
+    ).toThrow(/embedding\.model.*embedding\.onnxModelPath/);
+  });
+
+  it("Ollama missing model fails with hint to use embedding.model or embedding.ollamaModel", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "ollama" },
+      }),
+    ).toThrow(/embedding\.model.*embedding\.ollamaModel/);
+  });
+
   it("throws on invalid mode (e.g. typo)", () => {
     expect(() =>
       hybridConfigSchema.parse({

@@ -3,16 +3,31 @@
   "kind": "memory",
   "version": "2026.3.72",
   "uiHints": {
+    "embedding.provider": {
+      "label": "Embedding Provider",
+      "placeholder": "openai",
+      "help": "Embedding provider: 'openai' (requires apiKey), 'ollama' (local, no apiKey needed), or 'onnx' (local ONNX runtime, no apiKey needed). Default: 'openai'."
+    },
     "embedding.apiKey": {
       "label": "OpenAI API Key",
       "sensitive": true,
       "placeholder": "sk-proj-...",
-      "help": "API key for OpenAI embeddings (or use ${OPENAI_API_KEY})"
+      "help": "API key for OpenAI embeddings (or use ${OPENAI_API_KEY}). Only required when provider='openai'. Omit for local providers (ollama, onnx)."
     },
     "embedding.model": {
       "label": "Embedding Model",
       "placeholder": "text-embedding-3-small",
-      "help": "OpenAI embedding model to use"
+      "help": "Embedding model name. OpenAI: 'text-embedding-3-small' (default) or 'text-embedding-3-large'. Ollama: e.g. 'nomic-embed-text', 'mxbai-embed-large'. ONNX: model identifier (e.g. 'all-MiniLM-L6-v2')."
+    },
+    "embedding.ollamaModel": {
+      "label": "Ollama Model",
+      "placeholder": "nomic-embed-text",
+      "help": "Ollama embedding model name (alias for 'model' when provider='ollama'). E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim). Requires Ollama running locally."
+    },
+    "embedding.onnxModelPath": {
+      "label": "ONNX Model Path",
+      "placeholder": "all-MiniLM-L6-v2",
+      "help": "ONNX model path or identifier (alias for 'model' when provider='onnx'). E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim). No API key required."
     },
     "mode": {
       "label": "Configuration preset",
@@ -427,16 +442,39 @@
       "embedding": {
         "type": "object",
         "additionalProperties": false,
+        "description": "Embedding provider configuration. Use provider='openai' (requires apiKey) or 'ollama'/'onnx' for local inference (no apiKey needed). Examples: {provider:'ollama',model:'nomic-embed-text'} or {provider:'onnx',onnxModelPath:'all-MiniLM-L6-v2'}.",
         "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["openai", "ollama", "onnx"],
+            "default": "openai",
+            "description": "Embedding provider. 'openai' requires apiKey. 'ollama' and 'onnx' run locally without an API key."
+          },
           "apiKey": {
-            "type": "string"
+            "type": "string",
+            "description": "Required when provider='openai'. Omit for local providers (ollama, onnx). Supports ${ENV_VAR} substitution."
           },
           "model": {
             "type": "string",
-            "enum": ["text-embedding-3-small", "text-embedding-3-large"]
+            "description": "Embedding model name. OpenAI: 'text-embedding-3-small' (default) or 'text-embedding-3-large'. Ollama: e.g. 'nomic-embed-text'. ONNX: model identifier."
+          },
+          "ollamaModel": {
+            "type": "string",
+            "description": "Ollama model name — alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
+          },
+          "onnxModelPath": {
+            "type": "string",
+            "description": "ONNX model path or identifier — alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
+          },
+          "dimensions": {
+            "type": "number",
+            "description": "Vector dimensions. Auto-detected for known models. Required for unknown Ollama/ONNX models not in the built-in list."
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "Custom endpoint URL. For Ollama: defaults to 'http://localhost:11434'. For OpenAI-compatible APIs."
           }
-        },
-        "required": ["apiKey"]
+        }
       },
       "lanceDbPath": {
         "type": "string"
