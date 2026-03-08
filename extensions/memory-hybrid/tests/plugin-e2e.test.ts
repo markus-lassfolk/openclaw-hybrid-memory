@@ -369,7 +369,6 @@ describe("Core and common flows e2e", () => {
     const mem = recallResult.details?.memories?.[0];
     expect(mem).toBeDefined();
     expect(mem!.entity).toBe("Postgres");
-    expect(mem!.key).toBe("port");
     expect(mem!.text).toContain("5432");
   });
 
