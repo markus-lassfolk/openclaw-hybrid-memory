@@ -25,6 +25,7 @@ type DerivedFromEntry = {
   event_text: string;
   timestamp?: string;
   source_type?: string;
+  fact_chain?: ProvenanceChainOutput | null;
 };
 
 type ProvenanceChainOutput = {
@@ -42,7 +43,12 @@ type ProvenanceChainOutput = {
 
 function buildDerivedFrom(
   edges: Array<{ edgeType: ProvenanceEdgeType; sourceType: ProvenanceSourceType; sourceId: string; sourceText?: string; createdAt: string }>,
+  factsDb: FactsDB,
   eventLog: EventLog | null,
+  provenanceService: ProvenanceService,
+  visited: Set<string>,
+  depth: number,
+  maxDepth: number,
 ): DerivedFromEntry[] {
   return edges
     .filter((e) => e.edgeType === "DERIVED_FROM")
@@ -57,11 +63,30 @@ function buildDerivedFrom(
           timestamp = event.timestamp ?? timestamp;
         }
       }
+
+      let factChain: ProvenanceChainOutput | null = null;
+      if (depth < maxDepth) {
+        const sourceFact = factsDb.getById(edge.sourceId);
+        if (sourceFact) {
+          factChain = buildProvenanceChain(
+            factsDb,
+            eventLog,
+            provenanceService,
+            edge.sourceId,
+            visited,
+            edge.sourceText ?? sourceFact.text,
+            depth + 1,
+            maxDepth,
+          );
+        }
+      }
+
       return {
         event_id: edge.sourceId,
         event_text: eventText,
         timestamp,
         source_type: edge.sourceType,
+        fact_chain: factChain,
       };
     });
 }
@@ -73,7 +98,17 @@ function buildProvenanceChain(
   factId: string,
   visited: Set<string>,
   fallbackText?: string,
+  depth = 0,
+  maxDepth = 10,
 ): ProvenanceChainOutput {
+  if (depth >= maxDepth) {
+    return {
+      fact: { id: factId, text: fallbackText ?? "", confidence: 0 },
+      source: { turn: null },
+      derivedFrom: [],
+      consolidationChain: [],
+    };
+  }
   if (visited.has(factId)) {
     return {
       fact: { id: factId, text: fallbackText ?? "", confidence: 0 },
@@ -102,6 +137,8 @@ function buildProvenanceChain(
         edge.sourceId,
         visited,
         edge.sourceText ?? undefined,
+        depth + 1,
+        maxDepth,
       ),
     );
 
@@ -118,7 +155,15 @@ function buildProvenanceChain(
       extraction_method: chain.source.extractionMethod,
       extraction_confidence: chain.source.extractionConfidence,
     },
-    derivedFrom: buildDerivedFrom(chain.edges, eventLog),
+    derivedFrom: buildDerivedFrom(
+      chain.edges,
+      factsDb,
+      eventLog,
+      provenanceService,
+      visited,
+      depth,
+      maxDepth,
+    ),
     consolidationChain,
   };
 }

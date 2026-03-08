@@ -122,6 +122,85 @@ describe("memory_provenance tool", () => {
     expect(chain.consolidationChain).toHaveLength(1);
     expect(chain.consolidationChain[0].fact.id).toBe(sourceFact.id);
   });
+
+  it("recursively follows derived_from and consolidation chains", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
+      provenance: { enabled: true },
+    });
+    const api = makeMockApi("sess-abc");
+
+    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
+
+    const factC = factsDb.store({
+      text: "C: User likes coffee",
+      category: "fact",
+      importance: 0.5,
+      entity: "User",
+      key: "preference",
+      value: "coffee",
+      source: "conversation",
+    });
+    const factD = factsDb.store({
+      text: "D: User likes espresso",
+      category: "fact",
+      importance: 0.5,
+      entity: "User",
+      key: "preference",
+      value: "espresso",
+      source: "conversation",
+    });
+    const factB = factsDb.store({
+      text: "B: User prefers coffee drinks",
+      category: "fact",
+      importance: 0.7,
+      entity: "User",
+      key: "preference",
+      value: "coffee drinks",
+      source: "conversation",
+    });
+    const factA = factsDb.store({
+      text: "A: User is a coffee fan",
+      category: "fact",
+      importance: 0.8,
+      entity: "User",
+      key: "preference",
+      value: "coffee fan",
+      source: "conversation",
+    });
+
+    provenanceService.addEdge(factA.id, {
+      edgeType: "DERIVED_FROM",
+      sourceType: "consolidation",
+      sourceId: factB.id,
+      sourceText: factB.text,
+    });
+    provenanceService.addEdge(factB.id, {
+      edgeType: "CONSOLIDATED_FROM",
+      sourceType: "consolidation",
+      sourceId: factC.id,
+      sourceText: factC.text,
+    });
+    provenanceService.addEdge(factB.id, {
+      edgeType: "CONSOLIDATED_FROM",
+      sourceType: "consolidation",
+      sourceId: factD.id,
+      sourceText: factD.text,
+    });
+
+    const result = await api.callTool("memory_provenance", { factId: factA.id }) as any;
+    const chain = result.details.provenance;
+
+    expect(chain.derivedFrom).toHaveLength(1);
+    const derived = chain.derivedFrom[0];
+    expect(derived.event_id).toBe(factB.id);
+    expect(derived.fact_chain?.fact.id).toBe(factB.id);
+    expect(derived.fact_chain?.consolidationChain).toHaveLength(2);
+    const consolidationIds = (derived.fact_chain?.consolidationChain ?? [])
+      .map((entry: any) => entry.fact.id)
+      .sort();
+    expect(consolidationIds).toEqual([factC.id, factD.id].sort());
+  });
 });
 
 describe("memory_store provenance", () => {
