@@ -62,10 +62,10 @@ function countFeedbackInWindow(
   let implicitNegative = 0;
 
   try {
-    // Corrections from facts table (source = 'self-correction')
+    // Corrections from facts table (source = 'self-correction-analysis')
     const correctionsQ = topic
-      ? `SELECT COUNT(*) as cnt FROM facts WHERE source = 'self-correction' AND created_at >= ? AND created_at <= ? AND (text LIKE ? OR summary LIKE ?)`
-      : `SELECT COUNT(*) as cnt FROM facts WHERE source = 'self-correction' AND created_at >= ? AND created_at <= ?`;
+      ? `SELECT COUNT(*) as cnt FROM facts WHERE source = 'self-correction-analysis' AND created_at >= ? AND created_at <= ? AND (text LIKE ? OR summary LIKE ?)`
+      : `SELECT COUNT(*) as cnt FROM facts WHERE source = 'self-correction-analysis' AND created_at >= ? AND created_at <= ?`;
     const correctionsRow = topic
       ? (db.prepare(correctionsQ).get(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as { cnt: number })
       : (db.prepare(correctionsQ).get(windowStart, windowEnd) as { cnt: number });
