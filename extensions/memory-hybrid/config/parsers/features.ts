@@ -213,6 +213,11 @@ export function parseDocumentsConfig(cfg: Record<string, unknown>): DocumentsCon
         ? Math.floor(documentsRaw.maxDocumentSize)
         : 50 * 1024 * 1024,
     autoTag: documentsRaw?.autoTag !== false,
+    visionEnabled: documentsRaw?.visionEnabled === true,
+    visionModel:
+      typeof documentsRaw?.visionModel === "string" && documentsRaw.visionModel.trim().length > 0
+        ? documentsRaw.visionModel.trim()
+        : undefined,
     allowedPaths: Array.isArray(documentsRaw?.allowedPaths)
       ? (documentsRaw.allowedPaths as string[]).filter((p) => typeof p === "string" && p.trim().length > 0).map((p) => p.trim())
       : undefined,

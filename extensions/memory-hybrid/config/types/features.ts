@@ -157,6 +157,10 @@ export type DocumentsConfig = {
   maxDocumentSize: number;
   /** Automatically add filename as a tag to ingested facts (default: true) */
   autoTag: boolean;
+  /** Enable LLM vision for image ingestion (default: false) */
+  visionEnabled: boolean;
+  /** Optional vision model (default: resolved from llm.default) */
+  visionModel?: string;
   /** Optional allowlist of absolute directory paths; when set, ingestion only allows files under these paths */
   allowedPaths?: string[];
 };

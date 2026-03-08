@@ -201,7 +201,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Document ingestion tool (opt-in, requires Python + markitdown)
   if (cfg.documents.enabled && pythonBridge) {
-    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge }, api);
+    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge, openai }, api);
   }
 
   // Verification tools (Issue #162)
