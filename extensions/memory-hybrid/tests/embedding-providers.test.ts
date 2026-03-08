@@ -546,7 +546,7 @@ describe("OnnxEmbeddingProvider", () => {
       },
     };
 
-    __setOnnxRuntimeLoaderForTests(async () => fakeRuntime as unknown as import("onnxruntime-node"));
+    __setOnnxRuntimeLoaderForTests(async () => fakeRuntime as unknown as typeof import("onnxruntime-node"));
 
     const tmp = await fs.mkdtemp(join(tmpdir(), "onnx-test-"));
     const modelPath = join(tmp, "model.onnx");
