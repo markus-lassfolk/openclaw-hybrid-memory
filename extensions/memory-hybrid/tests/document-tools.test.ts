@@ -8,7 +8,7 @@
 type AnyFn = (...args: any[]) => any;
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { registerDocumentTools } from "../tools/document-tools.js";
@@ -84,6 +84,7 @@ function makeCfg(overrides: Partial<{ chunkSize: number; chunkOverlap: number; a
       chunkOverlap: overrides.chunkOverlap ?? 200,
       maxDocumentSize: overrides.maxDocumentSize ?? 50 * 1024 * 1024,
       autoTag: overrides.autoTag ?? true,
+      visionEnabled: false,
     },
     // Minimal categories for stringEnum
     categories: ["fact", "preference", "decision", "technical", "other"],
@@ -121,6 +122,7 @@ describe("memory_ingest_document", () => {
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: bridge as never,
       },
       api as never,
@@ -143,6 +145,7 @@ describe("memory_ingest_document", () => {
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: makeMockBridge() as never,
       },
       api as never,
@@ -162,6 +165,7 @@ describe("memory_ingest_document", () => {
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: bridge as never,
       },
       api as never,
@@ -182,6 +186,7 @@ describe("memory_ingest_document", () => {
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ maxDocumentSize: 1 }) as never, // 1 byte limit
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: bridge as never,
       },
       api as never,
@@ -202,6 +207,7 @@ describe("memory_ingest_document", () => {
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: bridge as never,
       },
       api as never,
@@ -228,6 +234,7 @@ describe("memory_ingest_document", () => {
         vectorDb: vectorDb as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: bridge as never,
       },
       api as never,
@@ -256,6 +263,7 @@ describe("memory_ingest_document", () => {
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: bridge as never,
       },
       api as never,
@@ -278,6 +286,7 @@ describe("memory_ingest_document", () => {
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ autoTag: true }) as never,
         embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
         pythonBridge: bridge as never,
       },
       api as never,
@@ -293,5 +302,70 @@ describe("memory_ingest_document", () => {
     // Then re-ingesting should detect it as duplicate
     const result2 = await (tool!.execute as AnyFn)("tc-7b", { path: testFilePath });
     expect(result2.details.action).toBe("skipped_duplicate");
+  });
+});
+
+describe("memory_ingest_folder", () => {
+  it("lists matching files in dry run mode", async () => {
+    const api = makeMockApi();
+    const bridge = makeMockBridge();
+    const folder = join(tmpDir, "docs");
+    const pdfPath = join(folder, "a.pdf");
+    const txtPath = join(folder, "b.txt");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(pdfPath, "PDF content placeholder");
+    writeFileSync(txtPath, "text content placeholder");
+
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: makeCfg() as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        pythonBridge: bridge as never,
+      },
+      api as never,
+    );
+
+    const tool = api.getTool("memory_ingest_folder");
+    const result = await (tool!.execute as AnyFn)("tc-folder-dry", {
+      path: folder,
+      dryRun: true,
+      filter: { extensions: [".pdf"] },
+    });
+    expect(result.details.dryRun).toBe(true);
+    expect(result.details.fileCount).toBe(1);
+    expect(result.details.files[0]).toContain("a.pdf");
+  });
+
+  it("ingests multiple files and reports summary", async () => {
+    const api = makeMockApi();
+    const bridge = makeMockBridge("## Section\n\nSome content here.", "Folder Doc");
+    const vectorDb = makeMockVectorDb();
+    const folder = join(tmpDir, "docs2");
+    const pdfPath = join(folder, "a.pdf");
+    const txtPath = join(folder, "b.txt");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(pdfPath, "PDF content placeholder");
+    writeFileSync(txtPath, "text content placeholder");
+
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        vectorDb: vectorDb as never,
+        cfg: makeCfg() as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        pythonBridge: bridge as never,
+      },
+      api as never,
+    );
+
+    const tool = api.getTool("memory_ingest_folder");
+    const result = await (tool!.execute as AnyFn)("tc-folder", { path: folder });
+    expect(result.details.fileCount).toBe(2);
+    expect(result.details.totalStored).toBeGreaterThan(0);
+    expect(result.content[0].text).toContain("Folder ingest complete");
   });
 });
