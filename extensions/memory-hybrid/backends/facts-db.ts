@@ -1530,6 +1530,12 @@ export class FactsDB {
     const maxScore = Math.max(...rows.map((r) => r.fts_score as number));
     const range = maxScore - minScore || 1;
 
+    // Batch-fetch reinforcement events for all reinforced facts to avoid N+1 queries
+    const reinforcedFactIds = rows
+      .filter((row) => ((row.reinforced_count as number) || 0) > 0)
+      .map((row) => row.id as string);
+    const eventsByFactId = this.batchGetReinforcementEvents(reinforcedFactIds);
+
     const results = rows.map((row) => {
       const rawScore = 1 - ((row.fts_score as number) - minScore) / range;
       const bm25Score = Number.isNaN(rawScore) ? 0.8 : rawScore;
@@ -1539,7 +1545,7 @@ export class FactsDB {
       // Add reinforcement boost when fact has been praised, weighted by diversity
       let reinforcement = 0;
       if (reinforcedCount > 0) {
-        const events = this.getReinforcementEvents(row.id as string);
+        const events = eventsByFactId.get(row.id as string) || [];
         if (events.length === 0) {
           // No events tracked (trackContext was false or events evicted): use full boost
           reinforcement = reinforcementBoost;
@@ -1551,7 +1557,7 @@ export class FactsDB {
           });
           const uniqueStems = new Set(stems).size;
           const diversityScore = uniqueStems / events.length;
-          reinforcement = reinforcementBoost * diversityScore * diversityWeight;
+          reinforcement = reinforcementBoost * (1 - diversityWeight + diversityWeight * diversityScore);
         }
       }
       const composite = Math.min(1.0, bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15 + reinforcement);
@@ -2438,12 +2444,51 @@ export class FactsDB {
   }
 
   /**
+   * Batch-fetch reinforcement events for multiple facts in a single query.
+   * Returns a Map<factId, ReinforcementEvent[]> for efficient lookup.
+   */
+  private batchGetReinforcementEvents(factIds: string[]): Map<string, ReinforcementEvent[]> {
+    if (factIds.length === 0) return new Map();
+    const placeholders = factIds.map(() => "?").join(",");
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM reinforcement_log WHERE fact_id IN (${placeholders}) ORDER BY fact_id, occurred_at DESC`)
+      .all(...factIds) as Array<{
+        id: string;
+        fact_id: string;
+        signal: string;
+        query_snippet: string | null;
+        topic: string | null;
+        tool_sequence: string | null;
+        session_file: string | null;
+        occurred_at: number;
+      }>;
+    const eventsByFactId = new Map<string, ReinforcementEvent[]>();
+    for (const r of rows) {
+      const event: ReinforcementEvent = {
+        id: r.id,
+        factId: r.fact_id,
+        signal: (r.signal === "negative" ? "negative" : "positive") as "positive" | "negative",
+        querySnippet: r.query_snippet,
+        topic: r.topic,
+        toolSequence: r.tool_sequence ? (JSON.parse(r.tool_sequence) as string[]) : null,
+        sessionFile: r.session_file,
+        occurredAt: r.occurred_at,
+      };
+      if (!eventsByFactId.has(r.fact_id)) {
+        eventsByFactId.set(r.fact_id, []);
+      }
+      eventsByFactId.get(r.fact_id)!.push(event);
+    }
+    return eventsByFactId;
+  }
+
+  /**
    * Calculate diversity score for a fact: unique query stems / total events.
    * Score 1.0 = all events from different queries; 0.0 = all from same query (#259).
    */
   calculateDiversityScore(factId: string): number {
     const events = this.getReinforcementEvents(factId);
-    if (events.length === 0) return 0;
+    if (events.length === 0) return 1.0;
     const stems = events.map((e) => {
       if (!e.querySnippet) return "";
       return e.querySnippet.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50);
