@@ -137,7 +137,8 @@ function globToRegex(pattern: string): RegExp {
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*\*/g, "§§DOUBLE_STAR§§")
     .replace(/\*/g, "[^/]*")
-    .replace(/§§DOUBLE_STAR§§/g, ".*");
+    .replace(/§§DOUBLE_STAR§§/g, ".*")
+    .replace(/\?/g, ".");
   return new RegExp(`^${escaped}$`, "i");
 }
 
@@ -158,13 +159,17 @@ function isSupportedExtension(filePath: string, customExts?: string[], glob?: st
 
 function collectFilesRecursive(dir: string, predicate: (path: string) => boolean): string[] {
   const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = resolve(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...collectFilesRecursive(full, predicate));
-    } else if (entry.isFile() && predicate(full)) {
-      out.push(full);
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        out.push(...collectFilesRecursive(full, predicate));
+      } else if (entry.isFile() && predicate(full)) {
+        out.push(full);
+      }
     }
+  } catch (err) {
+    // Skip unreadable directories (permission denied, broken mounts, etc.)
   }
   return out;
 }
