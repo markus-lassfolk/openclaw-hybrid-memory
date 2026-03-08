@@ -271,7 +271,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const threshold =
     typeof qeRaw?.threshold === "number" && qeRaw.threshold >= 0 && qeRaw.threshold <= 1
       ? qeRaw.threshold
-      : 0.7;
+      : 0.03;
 
   // queryExpansion.model wins when set; fall back to search.hydeModel when model is missing and expansion is enabled (migration compat)
   const hydeModel =

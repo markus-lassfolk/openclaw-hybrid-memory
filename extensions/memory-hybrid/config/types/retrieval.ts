@@ -116,7 +116,7 @@ export type QueryExpansionConfig = {
   enabled: boolean;
   /** Expansion mode: always run LLM, conditional for threshold-based LLM, or off (default: "always" when enabled). */
   mode?: "always" | "conditional" | "off";
-  /** Score threshold for conditional mode (default: 0.7). */
+  /** Score threshold for conditional mode (default: 0.03). */
   threshold?: number;
   /** LLM model for expansion; when unset, defaults to "openai/gpt-4.1-nano". */
   model?: string;

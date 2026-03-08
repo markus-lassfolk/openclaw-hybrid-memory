@@ -147,7 +147,7 @@ export class QueryExpander {
   }
 
   getThreshold(): number {
-    return this.config.threshold ?? 0.7;
+    return this.config.threshold ?? 0.03;
   }
 
   getRuleBasedAlias(query: string): string | null {

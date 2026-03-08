@@ -752,7 +752,7 @@ export async function runRetrievalPipeline(
     const threshold =
       queryExpander && typeof (queryExpander as QueryExpander).getThreshold === "function"
         ? queryExpander.getThreshold()
-        : 0.7;
+        : 0.03;
     const topScore = initial.fused[0]?.finalScore ?? 0;
     if (topScore < threshold) {
       return runOnce({ useLlm: true, variants: null });
