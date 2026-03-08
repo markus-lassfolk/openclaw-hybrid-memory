@@ -4123,7 +4123,7 @@ export async function runExtractImplicitFeedbackForCli(
             sessionFile: sig.context.sessionFile,
           };
           for (const match of matches) {
-            factsDb.reinforceFact(match.id, sig.context.userMessage, context, {
+            factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
               trackContext,
               maxEventsPerFact,
               boostAmount: 0.5 * sig.confidence, // weaker than explicit praise

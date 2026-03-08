@@ -1334,7 +1334,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         // Extract implicit feedback signals as part of nightly cycle
         if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
           try {
-            const implRes = await runExtractImplicitFeedback({ days: 3, dryRun: false });
+            const implRes = await runExtractImplicitFeedback({ days: 3, dryRun: false, includeClosedLoop: false });
             console.log(`Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsScanned} sessions.`);
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:extract-implicit" });
