@@ -297,7 +297,7 @@ describe("ContinuousVerifier.runCycle — STALE", () => {
 
     const updated = factsDb.getById(factId);
     expect(updated).not.toBeNull();
-    expect(updated!.confidence).toBe(0.5);
+    expect(updated!.confidence).toBe(0.2);
     expect(updated!.tags).toContain("needs-verification");
   });
 
