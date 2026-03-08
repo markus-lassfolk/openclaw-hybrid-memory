@@ -59,6 +59,7 @@ import {
   SessionSeenFacts,
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
+import { detectFrustration, buildFrustrationHint, type FrustrationConversationTurn } from "../services/frustration-detector.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -1746,6 +1747,64 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
   };
 
+  // ---- Phase 1: Frustration detection (Issue #263) ----
+  // Per-session frustration state: maps sessionKey → { level, turns[] }
+  const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
+
+  const onFrustrationDetect = (api: ClawdbotPluginApi) => {
+    if (ctx.cfg.frustrationDetection?.enabled === false) return;
+    const fCfg = ctx.cfg.frustrationDetection;
+
+    // Capture each incoming user turn
+    api.on("before_agent_start", async (event: unknown) => {
+      const e = event as { prompt?: string; messages?: Array<{ role?: string; content?: unknown }>; agentId?: string; session?: { agentId?: string } };
+      const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+
+      try {
+        // Extract user prompt from event
+        let userContent: string | undefined;
+        if (typeof e.prompt === "string" && e.prompt.trim().length > 0) {
+          userContent = e.prompt;
+        } else if (Array.isArray(e.messages)) {
+          // Find the last user message
+          const userMsgs = e.messages.filter((m) => m && typeof m === "object" && m.role === "user");
+          const lastUser = userMsgs[userMsgs.length - 1];
+          if (lastUser && typeof lastUser.content === "string") {
+            userContent = lastUser.content;
+          }
+        }
+
+        if (!userContent || userContent.trim().length < 5) return;
+
+        // Append to session turn history (keep last 20 user turns)
+        const state = frustrationStateMap.get(sessionKey) ?? { level: 0, turns: [] };
+        state.turns.push({ role: "user", content: userContent });
+        if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
+
+        // Run frustration detection
+        const frustrationResult = detectFrustration(state.turns, fCfg, state.level);
+        state.level = frustrationResult.level;
+        frustrationStateMap.set(sessionKey, state);
+
+        // Build hint and inject if above threshold
+        const hint = buildFrustrationHint(frustrationResult, fCfg);
+        if (hint) {
+          api.logger.debug?.(`memory-hybrid: ${hint}`);
+          return {
+            prependContext: `\n<frustration-signal>${hint}</frustration-signal>\n`,
+          };
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "frustration-detection",
+          subsystem: "frustration",
+          severity: "info",
+        });
+      }
+      return undefined;
+    });
+  };
+
   const onAgentEnd = (api: ClawdbotPluginApi) => {
     // Issue #150: write session_end event to episodic event log
     if (ctx.eventLog) {
@@ -2191,5 +2250,5 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     });
   };
 
-  return { onAgentStart, onAgentEnd };
+  return { onAgentStart, onAgentEnd, onFrustrationDetect };
 }

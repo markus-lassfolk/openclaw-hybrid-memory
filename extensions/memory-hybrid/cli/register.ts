@@ -189,6 +189,8 @@ export type HybridMemCliContext = {
   resolvePath?: (file: string) => string;
   /** Active task working memory context (required when activeTask.enabled = true) */
   activeTask?: ActiveTaskContext;
+  runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
+  runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
 };
 
 /** Chainable command type (Commander-style). */
