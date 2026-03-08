@@ -4,7 +4,7 @@
  *
  * Algorithm:
  *   frustrationLevel = Σ(signal.weight × recency_factor) / normalizer
- *   recency_factor = 1.0 for current turn, decays 0.85^turnsAgo
+ *   recency_factor = 1.0 for current turn, decays decayRate^turnsAgo (default 0.9)
  *   normalizer = number of turns in window
  *
  * Supports 9 signal types: short_reply, imperative_tone, repeated_instruction,
@@ -282,7 +282,7 @@ export function detectFrustration(
   for (let i = 0; i < userTurns.length; i++) {
     const turn = userTurns[i]!;
     const turnsAgo = userTurns.length - 1 - i; // 0 = most recent
-    const recency = Math.pow(0.85, turnsAgo);
+    const recency = Math.pow(decayRate, turnsAgo);
 
     // Previous user messages relative to this turn
     const prevUserMsgsForTurn = allUserContents
