@@ -1570,16 +1570,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         process.exitCode = 1;
         return;
       }
+      if (!cfg.crossAgentLearning?.enabled) {
+        console.log("Cross-agent learning is disabled (crossAgentLearning.enabled = false).");
+        return;
+      }
       let res;
       try {
         res = await runCrossAgentLearning();
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "cross-agent-learning" });
         throw err;
-      }
-      if (!cfg.crossAgentLearning?.enabled) {
-        console.log("Cross-agent learning is disabled (crossAgentLearning.enabled = false).");
-        return;
       }
       console.log(`Cross-agent learning complete:`);
       console.log(`  Agents scanned: ${res.agentsScanned}`);

@@ -165,7 +165,7 @@ export class ToolEffectivenessStore {
            failure_calls  = failure_calls  + CASE ? WHEN 'failure' THEN 1 ELSE 0 END,
            unknown_calls  = unknown_calls  + CASE ? WHEN 'unknown' THEN 1 ELSE 0 END,
            avg_duration_ms = (avg_duration_ms * total_calls + ?) / (total_calls + 1),
-           composite_score = CAST(success_calls AS REAL) / MAX(total_calls, 1) * 0.5 + 0.5 * 0.3 + 0.2,
+           composite_score = CAST(success_calls + CASE ? WHEN 'success' THEN 1 ELSE 0 END AS REAL) / MAX(total_calls + 1, 1) * 0.5 + 0.5 * 0.3 + 0.2,
            last_updated   = ?`,
       )
       .run(
@@ -175,6 +175,7 @@ export class ToolEffectivenessStore {
         now,
         outcome, outcome, outcome,
         durationMs,
+        outcome,
         now,
       );
   }
