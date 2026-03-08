@@ -4010,7 +4010,7 @@ export async function runExtractImplicitFeedbackForCli(
   sessionsScanned: number;
   closedLoopReport?: string;
 }> {
-  const { factsDb, cfg, logger } = ctx;
+  const { factsDb, cfg, logger, openai } = ctx;
   const days = opts.days ?? 3;
   const sessionDir = cfg.procedures.sessionsDir;
   const filePaths = getSessionFilePathsSince(sessionDir, days);
@@ -4183,7 +4183,23 @@ export async function runExtractImplicitFeedbackForCli(
             if (implicitCfg.trajectoryLLMAnalysis) {
               try {
                 const prompt = loadPrompt("trajectory-analyze");
-                const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatCompleteWithRetry);
+                const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
+                const model = heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+                const fallbackModels = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+                const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
+                  const userMessage = opts.messages.find((m) => m.role === "user");
+                  if (!userMessage) throw new Error("No user message found");
+                  return await chatCompleteWithRetry({
+                    model: opts.model ?? model,
+                    content: userMessage.content,
+                    temperature: 0.2,
+                    maxTokens: 4000,
+                    openai,
+                    fallbackModels,
+                    label: "memory-hybrid: trajectory-analyze",
+                  });
+                };
+                const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
                 if (llmAnalysis) {
                   // Replace heuristic lessons with LLM-produced lesson and patterns
                   traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
