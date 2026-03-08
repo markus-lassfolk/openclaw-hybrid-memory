@@ -327,7 +327,6 @@ export class FactsDB {
     }
   }
 
-  /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
   /** Create implicit_signals table for behavioral feedback signals (#262). */
   private migrateImplicitSignalsTable(): void {
     this.liveDb.exec(`
@@ -434,6 +433,7 @@ export class FactsDB {
     }
   }
 
+  /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
   private migrateReinforcementColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
