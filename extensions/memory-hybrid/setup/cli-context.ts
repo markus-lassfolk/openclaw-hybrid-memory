@@ -318,6 +318,7 @@ function buildCliContextServices(
           consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
           eventLogArchivalDays: cfg.eventLog.archivalDays,
           eventLogArchivePath: cfg.eventLog.archivePath,
+          maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
         },
         logSink,
       );

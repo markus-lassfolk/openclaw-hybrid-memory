@@ -268,6 +268,16 @@ export class EventLog {
               severity: "info",
               subsystem: "event-log",
             });
+            const backupPath = `${filePath}.corrupted.${Date.now()}`;
+            try {
+              renameSync(filePath, backupPath);
+            } catch (renameErr) {
+              capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
+                operation: "backup-corrupted-archive",
+                severity: "info",
+                subsystem: "event-log",
+              });
+            }
           }
         }
 

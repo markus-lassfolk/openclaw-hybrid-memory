@@ -260,6 +260,7 @@ describe("runDreamCycle", () => {
     consolidateAfterDays: 7,
     eventLogArchivalDays: 90,
     eventLogArchivePath: join(tmpdir(), "event-log-archive"),
+    maxUnconsolidatedAgeDays: 90,
   };
 
   it("returns skipped=true when enabled=false", async () => {

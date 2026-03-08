@@ -42,6 +42,8 @@ export interface DreamCycleConfig {
   eventLogArchivalDays: number;
   /** Directory for compressed JSONL archives. */
   eventLogArchivePath: string;
+  /** Delete unconsolidated event log entries older than this many days. */
+  maxUnconsolidatedAgeDays: number;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -376,6 +378,24 @@ export async function runDreamCycle(
       logger.warn(`memory-hybrid: dream-cycle — archiveConsolidated failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-archive",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
+  if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
+    try {
+      const deleted = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
+      if (deleted > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${config.maxUnconsolidatedAgeDays} days`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — archiveOld failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-archive-old",
         subsystem: "event-log",
       });
     }
