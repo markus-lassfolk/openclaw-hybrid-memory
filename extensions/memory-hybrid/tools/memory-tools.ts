@@ -17,6 +17,8 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import { toFloat32Array } from "../services/embedding-registry.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
@@ -53,6 +55,7 @@ export interface PluginContext {
   cfg: HybridMemoryConfig;
   aliasDb?: AliasDB | null;
   embeddings: EmbeddingProvider;
+  embeddingRegistry?: EmbeddingRegistry | null;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
@@ -60,6 +63,89 @@ export interface PluginContext {
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
+}
+
+async function storeRegistryEmbeddings({
+  factsDb,
+  embeddingRegistry,
+  embeddings,
+  factId,
+  text,
+  vector,
+  logger,
+  operation,
+}: {
+  factsDb: FactsDB;
+  embeddingRegistry: EmbeddingRegistry | null | undefined;
+  embeddings: EmbeddingProvider;
+  factId: string;
+  text: string;
+  vector?: number[] | Float32Array;
+  logger: { warn: (msg: string) => void };
+  operation: string;
+}): Promise<void> {
+  if (!embeddingRegistry) return;
+
+  const vectors = new Map<string, Float32Array>();
+
+  if (vector && vector.length > 0) {
+    vectors.set(embeddings.modelName, toFloat32Array(vector));
+  }
+
+  if (embeddingRegistry.isMultiModel()) {
+    const models = embeddingRegistry.getModels();
+    const tasks = models.map(async (cfg) => ({
+      name: cfg.name,
+      vec: await embeddingRegistry.embed(text, cfg.name),
+    }));
+    const settled = await Promise.allSettled(tasks);
+    for (const s of settled) {
+      if (s.status === "fulfilled") {
+        vectors.set(s.value.name, s.value.vec);
+      } else {
+        capturePluginError(
+          s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
+          { subsystem: "embeddings", operation },
+        );
+      }
+    }
+    if (!vector) {
+      try {
+        const vec = await embeddingRegistry.embed(text);
+        const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
+        vectors.set(modelName, vec);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "embeddings",
+          operation,
+        });
+      }
+    }
+  } else if (!vector) {
+    try {
+      const vec = await embeddingRegistry.embed(text);
+      const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
+      vectors.set(modelName, vec);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "embeddings",
+        operation,
+      });
+    }
+  }
+
+  if (vectors.size === 0) return;
+  for (const [model, vec] of vectors) {
+    try {
+      factsDb.storeEmbedding(factId, model, "canonical", vec, vec.length);
+    } catch (err) {
+      logger.warn(`memory-hybrid: fact_embeddings store failed (${model}): ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "fact-embeddings",
+        operation,
+      });
+    }
+  }
 }
 
 /**
@@ -90,7 +176,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
 
   api.registerTool(
     {
@@ -405,8 +491,8 @@ export function registerMemoryTools(
             asOfSec ?? undefined,
             cfg.aliases?.enabled ? aliasDb : null,
             cfg.clusters,
-            null, // embeddingRegistry (multi-model, not wired here)
-            null, // factsDbForEmbeddings (multi-model, not wired here)
+            embeddingRegistry ?? null,
+            factsDb,
             null, // queryExpander (not wired here)
             null, // embedFn (not wired here)
             undefined, // queryExpansionContext
@@ -896,6 +982,16 @@ export function registerMemoryTools(
                   id: pointerEntry.id,
                 });
               }
+              await storeRegistryEmbeddings({
+                factsDb,
+                embeddingRegistry,
+                embeddings,
+                factId: pointerEntry.id,
+                text: pointerText,
+                vector,
+                logger: api.logger,
+                operation: "store-credential-pointer",
+              });
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "vector",
@@ -1013,6 +1109,16 @@ export function registerMemoryTools(
                       await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
                     }
                   }
+                  await storeRegistryEmbeddings({
+                    factsDb,
+                    embeddingRegistry,
+                    embeddings,
+                    factId: newEntry.id,
+                    text: textToStore,
+                    vector,
+                    logger: api.logger,
+                    operation: "store-update-supersede",
+                  });
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                     subsystem: "vector",
@@ -1155,6 +1261,16 @@ export function registerMemoryTools(
               });
             }
           }
+          await storeRegistryEmbeddings({
+            factsDb,
+            embeddingRegistry,
+            embeddings,
+            factId: entry.id,
+            text: textToStore,
+            vector,
+            logger: api.logger,
+            operation: "store-fact",
+          });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "vector",

@@ -161,6 +161,7 @@ import { registerTools } from "./setup/register-tools.js";
 import { registerLifecycleHooks, type HooksContext } from "./setup/register-hooks.js";
 import { capturePluginError } from "./services/error-reporter.js";
 import { PythonBridge } from "./services/python-bridge.js";
+import type { EmbeddingRegistry } from "./services/embedding-registry.js";
 
 // Backend Imports (extracted from god file for maintainability)
 
@@ -215,6 +216,7 @@ let resolvedSqlitePath: string;
 let factsDb: FactsDB;
 let vectorDb: VectorDB;
 let embeddings: EmbeddingProvider;
+let embeddingRegistry: EmbeddingRegistry;
 let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
@@ -320,6 +322,7 @@ const memoryHybridPlugin = {
       factsDb = dbContext.factsDb;
       vectorDb = dbContext.vectorDb;
       embeddings = dbContext.embeddings;
+      embeddingRegistry = dbContext.embeddingRegistry;
       openai = dbContext.openai;
       credentialsDb = dbContext.credentialsDb;
       wal = dbContext.wal;
@@ -358,6 +361,7 @@ const memoryHybridPlugin = {
       vectorDb,
       cfg,
       embeddings,
+      embeddingRegistry,
       openai,
       wal,
       credentialsDb,
@@ -415,6 +419,7 @@ const memoryHybridPlugin = {
         factsDb,
         vectorDb,
         embeddings,
+        embeddingRegistry,
         openai,
         cfg,
         credentialsDb,
@@ -447,6 +452,7 @@ const memoryHybridPlugin = {
         factsDb,
         vectorDb,
         embeddings,
+        embeddingRegistry,
         credentialsDb,
         proposalsDb,
         wal,

@@ -11,6 +11,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
@@ -23,6 +24,7 @@ export interface HooksContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  embeddingRegistry?: EmbeddingRegistry | null;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
@@ -59,6 +61,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
       embeddings: ctx.embeddings,
+      embeddingRegistry: ctx.embeddingRegistry ?? null,
       openai: ctx.openai,
       cfg: ctx.cfg,
       credentialsDb: ctx.credentialsDb,
