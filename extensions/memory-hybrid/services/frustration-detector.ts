@@ -253,7 +253,7 @@ export function detectFrustration(
   prevLevel = 0,
 ): FrustrationState {
   const windowSize = cfg?.windowSize ?? 8;
-  const decayRate = cfg?.decayRate ?? 0.9;
+  const decayRate = cfg?.decayRate ?? 0.85;
   const weights: Record<FrustrationSignalType, number> = {
     ...DEFAULT_WEIGHTS,
     ...(cfg?.signalWeights ?? {}),

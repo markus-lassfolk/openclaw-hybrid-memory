@@ -61,15 +61,13 @@ const CROSS_AGENT_TAG = "cross-agent";
 const GENERALISED_CATEGORIES = ["pattern", "rule"] as const;
 // Category whitelist for agent lessons we consider for generalisation
 const LEARNABLE_CATEGORIES = new Set(["pattern", "rule", "fact", "decision"]);
-// Minimum confidence for a source fact to be considered
-const MIN_SOURCE_CONFIDENCE = 0.4;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /** Pull all agent-scoped facts (pattern/rule/fact/decision) within a recency window. */
-function collectAgentLessons(factsDb: FactsDB, windowDays: number): AgentLesson[] {
+function collectAgentLessons(factsDb: FactsDB, windowDays: number, minSourceConfidence: number): AgentLesson[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
   if (!db) return [];
@@ -87,7 +85,7 @@ function collectAgentLessons(factsDb: FactsDB, windowDays: number): AgentLesson[
            AND created_at >= ?
          ORDER BY created_at DESC`,
       )
-      .all(MIN_SOURCE_CONFIDENCE, cutoff) as Array<{
+      .all(minSourceConfidence, cutoff) as Array<{
       id: string;
       scope_target: string;
       text: string;
@@ -271,7 +269,7 @@ export async function runCrossAgentLearning(
   };
 
   try {
-    const allLessons = collectAgentLessons(factsDb, cfg.windowDays);
+    const allLessons = collectAgentLessons(factsDb, cfg.windowDays, cfg.minSourceConfidence);
 
     // Gather unique agent IDs
     const agentIds = new Set(allLessons.map((l) => l.agentId));
