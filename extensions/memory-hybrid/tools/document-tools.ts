@@ -408,11 +408,11 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       };
     }
 
-    const mtimeMs = stat.mtimeMs ?? 0;
-    const fingerprint = createHash("sha256")
-      .update(`${realPath}:${mtimeMs}:${fileSize}`)
-      .digest("hex")
-      .slice(0, 16);
+    // Compute SHA-256 hash of file content for stable, content-based deduplication.
+    // This ensures re-ingesting an unchanged file is always skipped, regardless of
+    // mtime/path changes (e.g. file moved or touched without modification).
+    const fileContent = readFileSync(realPath);
+    const fingerprint = createHash("sha256").update(fileContent).digest("hex");
 
     const existingCount = factsDb.countBySource(`document:${fingerprint}`);
     if (existingCount > 0 && !opts.dryRun) {
@@ -568,7 +568,9 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           importance: 0.7,
           entity: title,
           key: chunk.sectionHeading ?? null,
-          value: null,
+          // Store content hash as source_document_hash metadata so callers can
+          // trace a fact back to the exact file version that produced it.
+          value: fingerprint,
           source: sourceName,
           tags: chunkTags,
           decayClass: "stable",
@@ -630,6 +632,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         title,
         path: filePath,
         fingerprint,
+        source_document_hash: fingerprint,
         chunkCount: chunks.length,
         storedCount,
         errorCount,
