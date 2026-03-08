@@ -11,8 +11,8 @@ import {
   measureRuleEffectiveness,
   runClosedLoopAnalysis,
   getEffectivenessReport,
-  type ClosedLoopConfig,
 } from "../services/feedback-effectiveness.js";
+import type { ClosedLoopConfig } from "../config/types/features.js";
 
 const { FactsDB } = _testing;
 

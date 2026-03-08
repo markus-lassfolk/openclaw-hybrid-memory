@@ -6,6 +6,7 @@
 
 import { capturePluginError } from "./error-reporter.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { ClosedLoopConfig } from "../config/types/features.js";
 
 export interface FeedbackEffectiveness {
   ruleId: string;
@@ -24,15 +25,6 @@ export interface FeedbackEffectiveness {
   effectScore: number; // -1 to +1
   confidence: number;
   sampleSize: number;
-}
-
-export interface ClosedLoopConfig {
-  enabled?: boolean; // default: true
-  measurementWindowDays?: number; // default: 7
-  minSampleSize?: number; // default: 5
-  autoDeprecateThreshold?: number; // default: -0.3
-  autoBoostThreshold?: number; // default: 0.5
-  runInNightlyCycle?: boolean; // default: true
 }
 
 export interface ClosedLoopReport {
@@ -120,7 +112,7 @@ function countFeedbackInWindow(
 export function measureRuleEffectiveness(
   ruleId: string,
   factsDb: FactsDB,
-  config: ClosedLoopConfig,
+  config: Partial<ClosedLoopConfig>,
 ): FeedbackEffectiveness | null {
   try {
     const windowDays = config.measurementWindowDays ?? 7;
@@ -188,7 +180,7 @@ export function measureRuleEffectiveness(
 /**
  * Run closed-loop analysis across all relevant rules/patterns created in last 30 days.
  */
-export function runClosedLoopAnalysis(factsDb: FactsDB, config: ClosedLoopConfig): ClosedLoopReport {
+export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLoopConfig>): ClosedLoopReport {
   const report: ClosedLoopReport = {
     measuredAt: Math.floor(Date.now() / 1000),
     rulesAnalyzed: 0,

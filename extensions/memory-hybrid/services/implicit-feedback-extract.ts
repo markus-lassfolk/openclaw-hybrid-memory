@@ -5,19 +5,7 @@
  */
 
 import { capturePluginError } from "./error-reporter.js";
-
-export type ImplicitSignalType =
-  | "rephrase"
-  | "immediate_action"
-  | "topic_change"
-  | "grateful_close"
-  | "self_service"
-  | "escalation"
-  | "terse_response"
-  | "extended_engagement"
-  | "copy_paste"
-  | "correction_cascade"
-  | "silence_after_action";
+import type { ImplicitSignalType, ImplicitFeedbackConfig } from "../config/types/features.js";
 
 export interface ImplicitSignal {
   type: ImplicitSignalType;
@@ -37,17 +25,6 @@ export interface ConversationTurn {
   content: string;
   timestamp?: number;
   toolCalls?: string[];
-}
-
-export interface ImplicitFeedbackConfig {
-  enabled?: boolean; // default: true
-  minConfidence?: number; // default: 0.5
-  signalTypes?: ImplicitSignalType[]; // default: all
-  rephraseThreshold?: number; // default: 0.8
-  topicChangeThreshold?: number; // default: 0.3
-  terseResponseRatio?: number; // default: 0.4
-  feedToReinforcement?: boolean; // default: true
-  feedToSelfCorrection?: boolean; // default: true
 }
 
 // Common English stop words to exclude from similarity computation
@@ -116,7 +93,7 @@ function trunc(s: string, maxLen = 500): string {
  */
 export function detectRephrase(
   turns: ConversationTurn[],
-  config: ImplicitFeedbackConfig,
+  config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const threshold = config.rephraseThreshold ?? 0.8;
@@ -171,7 +148,7 @@ export function detectRephrase(
  */
 export function detectImmediateAction(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
@@ -212,7 +189,7 @@ export function detectImmediateAction(
  */
 export function detectTopicChange(
   turns: ConversationTurn[],
-  config: ImplicitFeedbackConfig,
+  config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const threshold = config.topicChangeThreshold ?? 0.3;
@@ -258,7 +235,7 @@ export function detectTopicChange(
  */
 export function detectGratefulClose(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
@@ -296,7 +273,7 @@ export function detectGratefulClose(
  */
 export function detectTerseResponse(
   turns: ConversationTurn[],
-  config: ImplicitFeedbackConfig,
+  config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const ratio = config.terseResponseRatio ?? 0.4; // below this fraction of average = terse
@@ -341,7 +318,7 @@ export function detectTerseResponse(
  */
 export function detectExtendedEngagement(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
@@ -390,7 +367,7 @@ export function detectExtendedEngagement(
  */
 export function detectCorrectionCascade(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
@@ -432,7 +409,7 @@ export function detectCorrectionCascade(
  */
 export function detectCopyPaste(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
@@ -474,13 +451,13 @@ export function detectCopyPaste(
  */
 export function detectSelfService(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
   if (current.role !== "user") return null;
 
-  const SELF_SERVICE_RE = /\b(i'?ll (do|handle|take care of|fix|try) it (myself|myself)?|never mind|never mind|forget it|i got it|i will do it|don'?t (bother|worry)|i'?ll figure it out|i can do it)\b/i;
+  const SELF_SERVICE_RE = /\b(i'?ll (do|handle|take care of|fix|try) it myself|never mind|forget it|i got it|i will do it|don'?t (bother|worry)|i'?ll figure it out|i can do it)\b/i;
   if (!SELF_SERVICE_RE.test(current.content)) return null;
 
   let agentMsg = "";
@@ -511,7 +488,7 @@ export function detectSelfService(
  */
 export function detectEscalation(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
@@ -549,7 +526,7 @@ export function detectEscalation(
  */
 export function detectSilenceAfterAction(
   turns: ConversationTurn[],
-  _config: ImplicitFeedbackConfig,
+  _config: Partial<ImplicitFeedbackConfig>,
   turnIndex: number,
 ): ImplicitSignal | null {
   const current = turns[turnIndex];
@@ -611,7 +588,7 @@ const ALL_SIGNAL_TYPES: ImplicitSignalType[] = [
  */
 export function extractImplicitSignals(
   turns: ConversationTurn[],
-  config: ImplicitFeedbackConfig,
+  config: Partial<ImplicitFeedbackConfig>,
   sessionFile = "",
 ): ImplicitSignal[] {
   if (config.enabled === false) return [];

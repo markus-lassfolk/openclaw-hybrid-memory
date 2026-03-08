@@ -18,8 +18,8 @@ import {
   detectEscalation,
   detectSilenceAfterAction,
   type ConversationTurn,
-  type ImplicitFeedbackConfig,
 } from "../services/implicit-feedback-extract.js";
+import type { ImplicitFeedbackConfig } from "../config/types/features.js";
 
 const DEFAULT_CONFIG: ImplicitFeedbackConfig = {
   enabled: true,
