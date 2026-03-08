@@ -48,6 +48,7 @@ import { tmpdir } from "node:os";
 import {
   QueryExpander,
   parseExpansionsFromResponse,
+  generateRuleBasedAlias,
 } from "../services/query-expander.js";
 import { runRetrievalPipeline, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
 import { _testing } from "../index.js";
@@ -77,6 +78,8 @@ function makeMockOpenAI(response: string | Error): object {
 
 const ENABLED_CFG: QueryExpansionConfig = {
   enabled: true,
+  mode: "always",
+  threshold: 0.7,
   maxVariants: 4,
   cacheSize: 100,
   timeoutMs: 5000,
@@ -84,6 +87,8 @@ const ENABLED_CFG: QueryExpansionConfig = {
 
 const DISABLED_CFG: QueryExpansionConfig = {
   enabled: false,
+  mode: "off",
+  threshold: 0.7,
   maxVariants: 4,
   cacheSize: 100,
   timeoutMs: 5000,
@@ -344,6 +349,8 @@ describe("QueryExpansionConfig type", () => {
   it("has correct shape with all required fields", () => {
     const cfg: QueryExpansionConfig = {
       enabled: false,
+      mode: "off",
+      threshold: 0.7,
       maxVariants: 4,
       cacheSize: 100,
       timeoutMs: 5000,
@@ -358,12 +365,30 @@ describe("QueryExpansionConfig type", () => {
   it("optional model field can be set", () => {
     const cfg: QueryExpansionConfig = {
       enabled: true,
+      mode: "always",
+      threshold: 0.7,
       model: "openai/gpt-4.1-nano",
       maxVariants: 3,
       cacheSize: 50,
       timeoutMs: 3000,
     };
     expect(cfg.model).toBe("openai/gpt-4.1-nano");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rule-based alias generation
+// ---------------------------------------------------------------------------
+
+describe("generateRuleBasedAlias", () => {
+  it("expands common abbreviations and synonyms", () => {
+    const alias = generateRuleBasedAlias("HA VM config");
+    expect(alias).toBe("Home Assistant virtual machine configuration");
+  });
+
+  it("returns null when no changes are applied", () => {
+    const alias = generateRuleBasedAlias("plain query with no abbreviations");
+    expect(alias).toBeNull();
   });
 });
 
@@ -541,5 +566,173 @@ describe("retrieval orchestrator — query expansion integration", () => {
 
     expect(result).toBeDefined();
     expect(Array.isArray(result.fused)).toBe(true);
+  });
+
+  it("conditional mode skips LLM when score meets threshold", async () => {
+    const stored = factsDb.store({
+      text: "Home Assistant configuration details",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const vectorDb = {
+      search: vi.fn().mockResolvedValue([{ entry: { id: stored.id }, score: 0.9 }]),
+    } as unknown as import("../backends/vector-db.js").VectorDB;
+
+    const config = {
+      ...DEFAULT_RETRIEVAL_CONFIG,
+      strategies: ["semantic"] as Array<"semantic">,
+      semanticTopK: 5,
+    };
+
+    const expander = {
+      getMode: () => "conditional",
+      getThreshold: () => 0.001,
+      getRuleBasedAlias: () => "Home Assistant configuration",
+      expandQuery: vi.fn().mockResolvedValue(["ha config", "llm variant"]),
+    } as unknown as QueryExpander;
+
+    const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
+    const originalVec = new Array(384).fill(0.2);
+
+    await runRetrievalPipeline(
+      "HA config",
+      originalVec,
+      factsDb.getRawDb(),
+      vectorDb,
+      factsDb,
+      config,
+      2000,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      undefined,
+      null,
+      null,
+      expander,
+      embedFn,
+    );
+
+    expect(expander.expandQuery).not.toHaveBeenCalled();
+    expect(embedFn).toHaveBeenCalledTimes(1);
+    expect((vectorDb.search as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+  });
+
+  it("conditional mode triggers LLM when score below threshold", async () => {
+    const stored = factsDb.store({
+      text: "API credentials live in the config",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const vectorDb = {
+      search: vi.fn().mockResolvedValue([{ entry: { id: stored.id }, score: 0.9 }]),
+    } as unknown as import("../backends/vector-db.js").VectorDB;
+
+    const config = {
+      ...DEFAULT_RETRIEVAL_CONFIG,
+      strategies: ["semantic"] as Array<"semantic">,
+      semanticTopK: 5,
+    };
+
+    const expander = {
+      getMode: () => "conditional",
+      getThreshold: () => 0.7,
+      getRuleBasedAlias: () => "application programming interface credentials",
+      expandQuery: vi.fn().mockResolvedValue(["api creds", "retrieve api keys", "locate auth token"]),
+    } as unknown as QueryExpander;
+
+    const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
+    const originalVec = new Array(384).fill(0.2);
+
+    await runRetrievalPipeline(
+      "api creds",
+      originalVec,
+      factsDb.getRawDb(),
+      vectorDb,
+      factsDb,
+      config,
+      2000,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      undefined,
+      null,
+      null,
+      expander,
+      embedFn,
+    );
+
+    expect(expander.expandQuery).toHaveBeenCalledTimes(1);
+    expect(embedFn).toHaveBeenCalledTimes(3);
+  });
+
+  it("off mode skips expansion entirely", async () => {
+    const stored = factsDb.store({
+      text: "VM settings are in the documentation",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const vectorDb = {
+      search: vi.fn().mockResolvedValue([{ entry: { id: stored.id }, score: 0.9 }]),
+    } as unknown as import("../backends/vector-db.js").VectorDB;
+
+    const config = {
+      ...DEFAULT_RETRIEVAL_CONFIG,
+      strategies: ["semantic"] as Array<"semantic">,
+      semanticTopK: 5,
+    };
+
+    const expander = {
+      getMode: () => "off",
+      expandQuery: vi.fn().mockResolvedValue(["vm settings", "virtual machine settings"]),
+    } as unknown as QueryExpander;
+
+    const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
+    const originalVec = new Array(384).fill(0.2);
+
+    await runRetrievalPipeline(
+      "vm settings",
+      originalVec,
+      factsDb.getRawDb(),
+      vectorDb,
+      factsDb,
+      config,
+      2000,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      undefined,
+      null,
+      null,
+      expander,
+      embedFn,
+    );
+
+    expect(expander.expandQuery).not.toHaveBeenCalled();
+    expect(embedFn).not.toHaveBeenCalled();
+    expect((vectorDb.search as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
   });
 });

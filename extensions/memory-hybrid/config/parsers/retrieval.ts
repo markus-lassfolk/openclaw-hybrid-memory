@@ -259,6 +259,20 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   // queryExpansion.enabled wins when explicitly set; otherwise fall through to HyDE migration
   const enabled = qeExplicitlySet ? qeRaw.enabled === true : hydeEnabled;
 
+  const rawMode = typeof qeRaw?.mode === "string" ? qeRaw.mode.trim() : "";
+  const parsedMode =
+    rawMode === "always" || rawMode === "conditional" || rawMode === "off"
+      ? rawMode
+      : undefined;
+
+  const mode: "always" | "conditional" | "off" =
+    !enabled ? "off" : (parsedMode ?? "always");
+
+  const threshold =
+    typeof qeRaw?.threshold === "number" && qeRaw.threshold >= 0 && qeRaw.threshold <= 1
+      ? qeRaw.threshold
+      : 0.7;
+
   // queryExpansion.model wins when set; fall back to search.hydeModel when model is missing and expansion is enabled (migration compat)
   const hydeModel =
     typeof searchRaw?.hydeModel === "string" && searchRaw.hydeModel.trim().length > 0
@@ -274,6 +288,8 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
 
   return {
     enabled,
+    mode,
+    threshold,
     model,
     maxVariants:
       typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0

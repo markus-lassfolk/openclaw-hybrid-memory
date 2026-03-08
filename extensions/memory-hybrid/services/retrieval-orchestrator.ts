@@ -429,137 +429,145 @@ export async function runRetrievalPipeline(
   rerankingConfig?: RerankingConfig | null,
   rerankingOpenai?: import("openai").default | null,
 ): Promise<OrchestratorResult> {
-  const k = config.rrf_k;
-  const { strategies, semanticTopK, fts5TopK } = config;
+  const runOnce = async (expansion: { useLlm: boolean; variants: string[] | null }): Promise<OrchestratorResult> => {
+    const k = config.rrf_k;
+    const { strategies, semanticTopK, fts5TopK } = config;
 
-  // --- Run strategies in parallel ---
-  const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];
+    // --- Run strategies in parallel ---
+    const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];
 
-  // Helper: wrap each strategy in try/catch so a synchronous throw or rejection
-  // is captured by allSettled rather than aborting the pipeline.
-  const safeStrategy = (
-    name: string,
-    fn: () => RankedResult[] | Promise<RankedResult[]>,
-  ): Promise<[string, RankedResult[]]> =>
-    (async () => {
+    // Helper: wrap each strategy in try/catch so a synchronous throw or rejection
+    // is captured by allSettled rather than aborting the pipeline.
+    const safeStrategy = (
+      name: string,
+      fn: () => RankedResult[] | Promise<RankedResult[]>,
+    ): Promise<[string, RankedResult[]]> =>
+      (async () => {
+        try {
+          return [name, await fn()] as [string, RankedResult[]];
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "retrieval",
+            operation: `strategy:${name}`,
+          });
+          return [name, []] as [string, RankedResult[]];
+        }
+      })();
+
+    if (strategies.includes("fts5")) {
+      strategyPromises.push(
+        safeStrategy("fts5", () =>
+          runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf),
+        ),
+      );
+    }
+
+    if (strategies.includes("semantic") && queryVector) {
+      strategyPromises.push(
+        safeStrategy("semantic", () =>
+          runSemanticStrategy(vectorDb, queryVector, semanticTopK),
+        ),
+      );
+    }
+
+    // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
+    if (aliasDb && queryVector) {
+      strategyPromises.push(
+        safeStrategy("aliases", () =>
+          searchAliasStrategy(aliasDb, queryVector, semanticTopK),
+        ),
+      );
+    }
+
+    // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
+    // Only runs when semantic strategy is active, expander is provided, and embedFn is available.
+    if (strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
       try {
-        return [name, await fn()] as [string, RankedResult[]];
+        let additionalVariants: string[] = [];
+        if (expansion.useLlm) {
+          const variants = await queryExpander.expandQuery(query, queryExpansionContext);
+          // variants[0] is always the original query (already handled above); expand from index 1.
+          additionalVariants = variants.slice(1);
+        } else if (expansion.variants && expansion.variants.length > 0) {
+          additionalVariants = expansion.variants;
+        }
+
+        for (let i = 0; i < additionalVariants.length; i++) {
+          const variantQuery = additionalVariants[i];
+          const strategyName = `semantic:qe:${i}`;
+          strategyPromises.push(
+            safeStrategy(strategyName, async () => {
+              const variantVector = await embedFn(variantQuery);
+              return runSemanticStrategy(vectorDb, variantVector, semanticTopK);
+            }),
+          );
+        }
+      } catch (_err) {
+        // Graceful degradation — expansion failure never blocks retrieval
+      }
+    }
+
+    // Issue #158: start multi-model semantic strategies in parallel with other strategies.
+    let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
+    if (
+      strategies.includes("semantic") &&
+      embeddingRegistry &&
+      embeddingRegistry.isMultiModel() &&
+      factsDbForEmbeddings
+    ) {
+      multiModelPromise = runMultiModelSemanticStrategies(
+        factsDbForEmbeddings,
+        embeddingRegistry,
+        query,
+        semanticTopK,
+      );
+    }
+
+    const strategySettledResults = await Promise.allSettled(strategyPromises);
+
+    // Build strategy map — rejected/empty strategies are skipped so the rest can still contribute.
+    const strategyMap = new Map<string, RankedResult[]>();
+    for (const settled of strategySettledResults) {
+      if (settled.status === "rejected") continue;
+      const [name, results] = settled.value;
+      if (results.length > 0) {
+        strategyMap.set(name, results);
+      }
+    }
+
+    if (multiModelPromise) {
+      try {
+        const multiModelResults = await multiModelPromise;
+        for (const [strategyName, results] of multiModelResults) {
+          if (results.length > 0) {
+            strategyMap.set(strategyName, results);
+          }
+        }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "retrieval",
-          operation: `strategy:${name}`,
+          operation: "multi-model-semantic",
         });
-        return [name, []] as [string, RankedResult[]];
       }
-    })();
-
-  if (strategies.includes("fts5")) {
-    strategyPromises.push(
-      safeStrategy("fts5", () =>
-        runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf),
-      ),
-    );
-  }
-
-  if (strategies.includes("semantic") && queryVector) {
-    strategyPromises.push(
-      safeStrategy("semantic", () =>
-        runSemanticStrategy(vectorDb, queryVector, semanticTopK),
-      ),
-    );
-  }
-
-  // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
-  if (aliasDb && queryVector) {
-    strategyPromises.push(
-      safeStrategy("aliases", () =>
-        searchAliasStrategy(aliasDb, queryVector, semanticTopK),
-      ),
-    );
-  }
-
-  // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
-  // Only runs when semantic strategy is active, expander is provided, and embedFn is available.
-  if (strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
-    try {
-      const variants = await queryExpander.expandQuery(query, queryExpansionContext);
-      // variants[0] is always the original query (already handled above); expand from index 1.
-      const additionalVariants = variants.slice(1);
-      for (let i = 0; i < additionalVariants.length; i++) {
-        const variantQuery = additionalVariants[i];
-        const strategyName = `semantic:qe:${i}`;
-        strategyPromises.push(
-          safeStrategy(strategyName, async () => {
-            const variantVector = await embedFn(variantQuery);
-            return runSemanticStrategy(vectorDb, variantVector, semanticTopK);
-          }),
-        );
-      }
-    } catch (_err) {
-      // Graceful degradation — expansion failure never blocks retrieval
     }
-  }
 
-  // Issue #158: start multi-model semantic strategies in parallel with other strategies.
-  let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
-  if (
-    strategies.includes("semantic") &&
-    embeddingRegistry &&
-    embeddingRegistry.isMultiModel() &&
-    factsDbForEmbeddings
-  ) {
-    multiModelPromise = runMultiModelSemanticStrategies(
-      factsDbForEmbeddings,
-      embeddingRegistry,
-      query,
-      semanticTopK,
-    );
-  }
+    // Graph walk strategy (Issue #152) — expand from semantic/FTS5 seeds
+    if (strategies.includes("graph")) {
+      const seedScores = new Map<string, number>();
+      const seedEntries = new Map<string, MemoryEntry>();
+      const getByIdOpts = (scopeFilter || asOf != null)
+        ? { scopeFilter, asOf }
+        : undefined;
 
-  const strategySettledResults = await Promise.allSettled(strategyPromises);
-
-  // Build strategy map — rejected/empty strategies are skipped so the rest can still contribute.
-  const strategyMap = new Map<string, RankedResult[]>();
-  for (const settled of strategySettledResults) {
-    if (settled.status === "rejected") continue;
-    const [name, results] = settled.value;
-    if (results.length > 0) {
-      strategyMap.set(name, results);
-    }
-  }
-
-  if (multiModelPromise) {
-    try {
-      const multiModelResults = await multiModelPromise;
-      for (const [strategyName, results] of multiModelResults) {
-        if (results.length > 0) {
-          strategyMap.set(strategyName, results);
+      for (const results of strategyMap.values()) {
+        for (const r of results) {
+          const entry = factsDb.getById(r.factId, getByIdOpts);
+          if (!entry) continue;
+          const score = 1 / (k + r.rank);
+          const existing = seedScores.get(r.factId) ?? 0;
+          seedScores.set(r.factId, existing + score);
+          if (!seedEntries.has(r.factId)) seedEntries.set(r.factId, entry);
         }
-      }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "retrieval",
-        operation: "multi-model-semantic",
-      });
-    }
-  }
-
-  // Graph walk strategy (Issue #152) — expand from semantic/FTS5 seeds
-  if (strategies.includes("graph")) {
-    const seedScores = new Map<string, number>();
-    const seedEntries = new Map<string, MemoryEntry>();
-    const getByIdOpts = (scopeFilter || asOf != null)
-      ? { scopeFilter, asOf }
-      : undefined;
-
-    for (const results of strategyMap.values()) {
-      for (const r of results) {
-        const entry = factsDb.getById(r.factId, getByIdOpts);
-        if (!entry) continue;
-        const score = 1 / (k + r.rank);
-        const existing = seedScores.get(r.factId) ?? 0;
-        seedScores.set(r.factId, existing + score);
-        if (!seedEntries.has(r.factId)) seedEntries.set(r.factId, entry);
       }
     }
 
@@ -729,4 +737,33 @@ export async function runRetrievalPipeline(
   const resolvedEntries = orderedEntries.map((e) => e.entry);
 
   return { fused: scopedFused, packed, packedFactIds, tokensUsed, entries: resolvedEntries };
+  }
+
+  const expanderMode =
+    queryExpander && typeof (queryExpander as QueryExpander).getMode === "function"
+      ? queryExpander.getMode()
+      : (queryExpander ? "always" : "off");
+
+  if (expanderMode === "conditional") {
+    const alias =
+      queryExpander && typeof (queryExpander as QueryExpander).getRuleBasedAlias === "function"
+        ? queryExpander.getRuleBasedAlias(query)
+        : null;
+    const initial = await runOnce({ useLlm: false, variants: alias ? [alias] : [] });
+    const threshold =
+      queryExpander && typeof (queryExpander as QueryExpander).getThreshold === "function"
+        ? queryExpander.getThreshold()
+        : 0.7;
+    const topScore = initial.fused[0]?.finalScore ?? 0;
+    if (topScore < threshold) {
+      return runOnce({ useLlm: true, variants: null });
+    }
+    return initial;
+  }
+
+  if (expanderMode === "always") {
+    return runOnce({ useLlm: true, variants: null });
+  }
+
+  return runOnce({ useLlm: false, variants: [] });
 }
