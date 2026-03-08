@@ -656,17 +656,34 @@ export function registerMemoryTools(
           contradictionStatus.set(r.entry.id, factsDb.isContradicted(r.entry.id));
         }
 
+        // Check integrity for verified facts (Issue #162): flag tampered results.
+        const tamperStatus = new Map<string, boolean>();
+        if (verificationStore && cfg.verification.enabled) {
+          for (const r of results) {
+            try {
+              const report = verificationStore.checkIntegrity(r.entry.id);
+              if (report.checked > 0 && !report.valid) {
+                tamperStatus.set(r.entry.id, true);
+              }
+            } catch {
+              // Don't block retrieval on integrity check failure
+            }
+          }
+        }
+
         logRecall(true);
         const text = results
           .map((r, i) => {
             const contradicted = contradictionStatus.get(r.entry.id) ?? false;
             const contradictedPrefix = contradicted ? "[⚠️ CONTRADICTED] " : "";
+            const tampered = tamperStatus.get(r.entry.id) ?? false;
+            const tamperedPrefix = tampered ? "[⚠️ TAMPERED] " : "";
             const meta = expansionMeta.get(r.entry.id);
             const expansionSuffix =
               meta && meta.expansionSource === "graph"
                 ? ` [graph+${meta.hopCount}hop${meta.linkPath ? `: ${meta.linkPath}` : ""}]`
                 : "";
-            return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}`;
+            return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${tamperedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}`;
           })
           .join("\n");
 

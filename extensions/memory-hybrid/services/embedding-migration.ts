@@ -161,15 +161,16 @@ export async function migrateEmbeddings(
       }
 
       try {
-        // Remove stale entry so dimension-changed stores succeed
-        try {
-          await vectorDb.delete(fact.id);
-        } catch {
-          // Entry may not exist — expected on first migration
-        }
-
+        // Check for duplicate BEFORE deleting old vector: if a different fact already has
+        // a similar embedding, skip rather than removing the existing entry unnecessarily.
         const isDuplicate = await vectorDb.hasDuplicate(vec);
         if (!isDuplicate) {
+          // Remove stale entry so dimension-changed stores succeed
+          try {
+            await vectorDb.delete(fact.id);
+          } catch {
+            // Entry may not exist — expected on first migration
+          }
           await vectorDb.store({
             id: fact.id,
             text: fact.text,

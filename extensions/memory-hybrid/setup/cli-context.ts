@@ -237,6 +237,7 @@ export interface HybridMemCliRegistrationContext {
   wal: HandlerContext["wal"];
   proposalsDb: HandlerContext["proposalsDb"];
   verificationStore?: import("../services/verification-store.js").VerificationStore | null;
+  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;
@@ -249,7 +250,7 @@ function buildCliContextServices(
   ctx: HybridMemCliRegistrationContext,
   api: ClawdbotPluginApi,
 ): CliContextServices {
-  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb, verificationStore } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb, verificationStore, provenanceService } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
   return {
@@ -324,6 +325,7 @@ function buildCliContextServices(
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
         },
         logSink,
+        provenanceService,
       );
     },
     runContinuousVerification: async () => {

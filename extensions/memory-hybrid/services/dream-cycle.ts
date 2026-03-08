@@ -18,6 +18,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry } from "../backends/event-log.js";
 import type { MemoryCategory } from "../types/memory.js";
+import type { ProvenanceService } from "./provenance.js";
 import {
   runReflection,
   runReflectionRules,
@@ -296,6 +297,7 @@ export async function runDreamCycle(
   eventLog: EventLog | null,
   config: DreamCycleConfig,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  provenanceService?: ProvenanceService | null,
 ): Promise<DreamCycleResult> {
   if (!config.enabled) {
     return {
@@ -422,6 +424,7 @@ export async function runDreamCycle(
         fallbackModels: config.fallbackModels ?? [],
       },
       logger,
+      provenanceService,
     );
     patternsFound = reflectionResult.patternsStored;
     logger.info(`memory-hybrid: dream-cycle — reflection complete: ${patternsFound} patterns stored`);
@@ -444,6 +447,7 @@ export async function runDreamCycle(
         openai,
         { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [] },
         logger,
+        provenanceService,
       );
       rulesGenerated = rulesResult.rulesStored;
       logger.info(`memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored`);

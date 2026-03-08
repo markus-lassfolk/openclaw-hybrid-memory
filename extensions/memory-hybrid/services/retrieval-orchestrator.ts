@@ -762,21 +762,26 @@ export async function runRetrievalPipeline(
     if (rerankingConfig?.enabled && rerankingOpenai) {
       try {
         const rrfScoreMap = new Map(initial.fused.map((r) => [r.factId, r.finalScore]));
-        const scoredFacts: ScoredFact[] = initial.entries.map((entry, i) => {
-          const factId = initial.fused[i]?.factId ?? initial.packedFactIds[i];
+        // Build factId→entry map from fused results (same length/order as entries) to avoid
+        // fragile positional index alignment between initial.entries and initial.fused.
+        const fusedEntryMap = new Map<string, MemoryEntry>(
+          initial.fused.map((r, i) => [r.factId, initial.entries[i]] as [string, MemoryEntry]).filter(([, e]) => e != null),
+        );
+        const scoredFacts: ScoredFact[] = initial.fused.flatMap((r) => {
+          const entry = fusedEntryMap.get(r.factId);
+          if (!entry) return [];
           const storedSec = entry.sourceDate ?? entry.createdAt;
-          return {
-            factId,
+          return [{
+            factId: r.factId,
             text: entry.text,
             confidence: entry.confidence,
             storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
-            finalScore: rrfScoreMap.get(factId) ?? 0,
-          };
+            finalScore: rrfScoreMap.get(r.factId) ?? 0,
+          }];
         });
         const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
         const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
-        const factIdToEntry = new Map(initial.entries.map((e, i) => [initial.fused[i]?.factId ?? initial.packedFactIds[i], e]));
-        const orderedEntriesReranked = reranked.map((f) => ({ factId: f.factId, entry: factIdToEntry.get(f.factId)! })).filter((x) => x.entry);
+        const orderedEntriesReranked = reranked.map((f) => ({ factId: f.factId, entry: fusedEntryMap.get(f.factId)! })).filter((x) => x.entry);
         const fusedReranked = orderedEntriesReranked.map(({ factId }) => initial.fused.find((r) => r.factId === factId)!).filter(Boolean);
         const contradictedIds = new Set<string>();
         if (factsDb.getContradictedIds) {
@@ -789,7 +794,7 @@ export async function runRetrievalPipeline(
           }
         }
         const { packed, tokensUsed } = packIntoBudget(
-          orderedEntriesReranked.map((e) => e.entry),
+          orderedEntriesReranked,
           budgetTokens,
           { contradictedIds },
         );

@@ -527,7 +527,7 @@ export class FactsDB {
   private migrateVerifiedFactsAddFk(): void {
     const tableInfo = this.liveDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_facts'").get();
     if (!tableInfo) return;
-    const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)", { simple: true }) as Array<{ table: string }> | undefined;
+    const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)") as Array<{ table: string }> | undefined;
     if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // already has FK
     this.liveDb.exec(`
       CREATE TABLE verified_facts_new (

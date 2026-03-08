@@ -428,6 +428,7 @@ const memoryHybridPlugin = {
       proposalsDb,
       eventLog,
       verificationStore,
+      provenanceService,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,

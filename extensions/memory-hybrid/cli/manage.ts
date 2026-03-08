@@ -1301,7 +1301,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.log(`  Rules generated: ${res.rulesGenerated}`);
         }
 
-        if (runContinuousVerification && cfg.verification.enabled && cfg.verification.continuousVerification) {
+        if (!res.skipped && runContinuousVerification && cfg.verification.enabled && cfg.verification.continuousVerification) {
           let verificationRes;
           try {
             verificationRes = await runContinuousVerification();
