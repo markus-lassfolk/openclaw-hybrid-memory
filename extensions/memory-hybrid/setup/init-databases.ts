@@ -398,9 +398,12 @@ export function initializeDatabases(
       (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
         previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
-    // When autoMigrate is enabled, let runEmbeddingMaintenance handle the meta update
-    // to avoid pre-updating the meta before the migration service can detect the change.
+    // When autoMigrate is enabled, still record the initial baseline on first run so future
+    // changes can be detected. For subsequent runs with a config change, let runEmbeddingMaintenance
+    // handle the meta update to avoid pre-updating before the migration service can detect the change.
     if (!cfg.embedding.autoMigrate && (!previousEmbeddingMeta || embeddingConfigChanged)) {
+      factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
+    } else if (cfg.embedding.autoMigrate && !previousEmbeddingMeta && !embeddingConfigChanged) {
       factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
     }
   } catch (err) {
