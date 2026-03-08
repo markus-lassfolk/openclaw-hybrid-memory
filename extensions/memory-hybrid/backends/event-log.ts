@@ -284,13 +284,13 @@ export class EventLog {
 
         await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
         
+        renameSync(tempPath, filePath);
+        
         const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
         const deleteBatch = this.liveDb.transaction((batch: string[]) => {
           for (const id of batch) del.run(id);
         });
         deleteBatch(ids);
-        
-        renameSync(tempPath, filePath);
         files.push(filePath);
         archived += ids.length;
       } catch (err) {
