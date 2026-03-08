@@ -407,6 +407,7 @@ const memoryHybridPlugin = {
       wal,
       proposalsDb,
       eventLog,
+      verificationStore,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,

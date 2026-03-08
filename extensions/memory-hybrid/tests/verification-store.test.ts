@@ -296,6 +296,31 @@ describe("VerificationStore.listDueForReverification", () => {
     const due = store.listDueForReverification();
     expect(due.every((d) => d.factId !== "fact-future")).toBe(true);
   });
+
+  it("returns entries whose verified_at is older than reverificationDays", async () => {
+    const id = store.verify("fact-stale", "Stale fact", "agent");
+    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    db.prepare(
+      `UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`
+    ).run(id);
+
+    const due = store.listDueForReverification();
+    expect(due.map((d) => d.id)).toContain(id);
+  });
+
+  it("does not return superseded versions even if they are stale", async () => {
+    const id = store.verify("fact-latest", "Original", "agent");
+    const newId = store.update(id, "Updated", "system");
+    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    db.prepare(
+      `UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`
+    ).run(id);
+
+    const due = store.listDueForReverification();
+    const ids = due.map((d) => d.id);
+    expect(ids).toContain(newId);
+    expect(ids).not.toContain(id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -406,8 +431,8 @@ describe("VerificationStore backup file", () => {
     const lines = readFileSync(backupPath, "utf8").trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
     const parsed = lines.map((l) => JSON.parse(l));
-    expect(parsed.some((p) => p.factId === "fact-b1")).toBe(true);
-    expect(parsed.some((p) => p.factId === "fact-b2")).toBe(true);
+    expect(parsed.some((p) => p.fact_id === "fact-b1")).toBe(true);
+    expect(parsed.some((p) => p.fact_id === "fact-b2")).toBe(true);
   });
 
   it("appends a JSON line on update", async () => {
@@ -416,15 +441,19 @@ describe("VerificationStore backup file", () => {
     const lines = readFileSync(backupPath, "utf8").trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
     const parsed = lines.map((l) => JSON.parse(l));
-    expect(parsed.some((p) => p.action === "update")).toBe(true);
+    expect(parsed.some((p) => p.fact_id === "fact-upd" && p.version === 2)).toBe(true);
   });
 
-  it("each backup line has a ts timestamp field", async () => {
+  it("each backup line includes required fields", async () => {
     store.verify("fact-ts", "Timestamp test", "agent");
     const lines = readFileSync(backupPath, "utf8").trim().split("\n");
     const parsed = JSON.parse(lines[0]);
-    expect(parsed.ts).toBeDefined();
-    expect(typeof parsed.ts).toBe("string");
+    expect(parsed.fact_id).toBe("fact-ts");
+    expect(parsed.canonical_text).toBe("Timestamp test");
+    expect(typeof parsed.checksum).toBe("string");
+    expect(typeof parsed.verified_at).toBe("string");
+    expect(parsed.verified_by).toBe("agent");
+    expect(parsed.version).toBe(1);
   });
 });
 

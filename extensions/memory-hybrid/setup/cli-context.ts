@@ -18,6 +18,7 @@ import { runFindDuplicates } from "../services/find-duplicates.js";
 import { runConsolidate } from "../services/consolidation.js";
 import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
 import { runDreamCycle, type DreamCycleResult } from "../services/dream-cycle.js";
+import { runVerificationCycle, type VerificationCycleResult } from "../services/continuous-verifier.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runExport } from "../services/export-memory.js";
@@ -213,6 +214,7 @@ export interface CliContextServices {
     mode?: "replace" | "additive";
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
   runDreamCycle: () => Promise<DreamCycleResult>;
+  runContinuousVerification: () => Promise<VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -234,6 +236,7 @@ export interface HybridMemCliRegistrationContext {
   aliasDb: HandlerContext["aliasDb"];
   wal: HandlerContext["wal"];
   proposalsDb: HandlerContext["proposalsDb"];
+  verificationStore?: import("../services/verification-store.js").VerificationStore | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;
@@ -246,7 +249,7 @@ function buildCliContextServices(
   ctx: HybridMemCliRegistrationContext,
   api: ClawdbotPluginApi,
 ): CliContextServices {
-  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb, verificationStore } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
   return {
@@ -322,6 +325,15 @@ function buildCliContextServices(
         },
         logSink,
       );
+    },
+    runContinuousVerification: async () => {
+      if (!verificationStore || !cfg.verification.enabled || !cfg.verification.continuousVerification) {
+        return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
+      }
+      return runVerificationCycle(verificationStore, factsDb, openai, {
+        cycleDays: cfg.verification.cycleDays,
+        verificationModel: cfg.verification.verificationModel,
+      });
     },
     runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
     getMemoryCategories: () => [...getMemoryCategories()],
@@ -686,6 +698,7 @@ export function createHybridMemCliContext(
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
     runDreamCycle: services.runDreamCycle,
+    runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,

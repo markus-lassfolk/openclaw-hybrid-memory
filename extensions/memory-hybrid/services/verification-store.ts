@@ -265,7 +265,14 @@ export class VerificationStore {
       )
       .run(id, factId, text, checksum, now, verifiedBy, nextVerification, now);
 
-    this.writeBackup({ action: "verify", id, factId, text, checksum, verifiedBy, verifiedAt: now, nextVerification, version: 1 });
+    this.writeBackup({
+      fact_id: factId,
+      canonical_text: text,
+      checksum,
+      verified_at: now,
+      verified_by: verifiedBy,
+      version: 1,
+    });
 
     return id;
   }
@@ -329,18 +336,27 @@ export class VerificationStore {
   }
 
   // -------------------------------------------------------------------------
-  // listDueForReverification — facts whose next_verification <= now
+  // listDueForReverification — facts whose next_verification <= now or verified_at is stale
   // -------------------------------------------------------------------------
 
   listDueForReverification(): VerifiedFact[] {
     const now = toISODate(new Date());
+    const cutoff = toISODate(addDays(new Date(), -this.reverificationDays));
     const rows = this.db
       .prepare(
-        `SELECT * FROM verified_facts
-         WHERE next_verification IS NOT NULL AND next_verification <= ?
-         ORDER BY next_verification ASC`,
+        `SELECT vf.*
+         FROM verified_facts vf
+         JOIN (
+           SELECT fact_id, MAX(version) as max_version
+           FROM verified_facts
+           GROUP BY fact_id
+         ) latest
+         ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+         WHERE (vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
+            OR vf.verified_at <= ?
+         ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC`,
       )
-      .all(now) as VerifiedFactRow[];
+      .all(now, cutoff) as VerifiedFactRow[];
 
     return rows
       .filter((row) => this.validateRowChecksum(row))
@@ -430,16 +446,12 @@ export class VerificationStore {
     })();
 
     this.writeBackup({
-      action: "update",
-      id: newId,
-      factId: existing.fact_id,
-      text: newText,
+      fact_id: existing.fact_id,
+      canonical_text: newText,
       checksum,
-      verifiedBy,
-      verifiedAt: now,
-      nextVerification,
+      verified_at: now,
+      verified_by: verifiedBy,
       version: newVersion,
-      previousVersionId: id,
     });
 
     return newId;
@@ -480,9 +492,16 @@ export class VerificationStore {
 
   private hasLoggedBackupError = false;
 
-  private writeBackup(entry: Record<string, unknown>): void {
+  private writeBackup(entry: {
+    fact_id: string;
+    canonical_text: string;
+    checksum: string;
+    verified_at: string;
+    verified_by: string;
+    version: number;
+  }): void {
     try {
-      const line = JSON.stringify({ ...entry, ts: new Date().toISOString() }) + "\n";
+      const line = JSON.stringify(entry) + "\n";
       appendFileSync(this.backupPath, line, { encoding: "utf8", mode: 0o600 });
     } catch (err) {
       if (!this.hasLoggedBackupError) {

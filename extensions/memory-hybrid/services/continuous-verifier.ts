@@ -58,7 +58,7 @@ export function buildVerificationPrompt(
     `You are a fact-verification assistant. Determine whether the following verified fact is still accurate based on recent knowledge.\n\n` +
     `Verified fact: ${factText}\n\n` +
     `Recent knowledge about "${entity}":\n${recentSection}\n\n` +
-    `Is the verified fact still accurate?\n` +
+    `Is this still accurate based on recent knowledge?\n` +
     `Answer with exactly one of: CONFIRMED, STALE, or UNCERTAIN, followed by a brief reason.\n` +
     `Example: "CONFIRMED – the IP address is still in use"\n` +
     `Example: "STALE – the server was decommissioned last month"\n` +
