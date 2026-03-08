@@ -38,7 +38,7 @@ export type NightlyCycleConfig = {
   model?: string;
   /** Days before consolidating episodic events into facts (default: 7). */
   consolidateAfterDays: number;
-  /** Max age for unconsolidated event log entries before archiving (default: 90). */
+  /** Legacy: max age for unconsolidated event log entries before deletion (default: 90). */
   maxUnconsolidatedAgeDays: number;
 };
 

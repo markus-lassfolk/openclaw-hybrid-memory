@@ -20,6 +20,7 @@ import type {
 import type {
   StoreConfig,
   WALConfig,
+  EventLogConfig,
   PathConfig,
 } from "./core.js";
 
@@ -297,6 +298,8 @@ export type HybridMemoryConfig = {
   graph: GraphConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
+  /** Event log archival configuration. */
+  eventLog: EventLogConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
   /** Passive observer — background fact extraction from session transcripts (default: disabled) */

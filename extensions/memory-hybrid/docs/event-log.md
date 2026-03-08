@@ -61,8 +61,9 @@ CONSOLIDATE markConsolidated(eventIds, factId)
               → fact is written to Layer 2
               → event_log.consolidated_into = factId
             ↓
-ARCHIVE   archiveOld(days)
-            → rows older than N days are deleted
+ARCHIVE   archiveConsolidated(days, archiveDir)
+            → consolidated rows older than N days are written to
+              `~/.openclaw/event-archive/YYYY-MM.jsonl.gz` and deleted
 ```
 
 Events should be consolidated by the Dream Cycle process (issue #143) and archived after consolidation is confirmed. Unconsolidated events older than a configurable threshold are the primary input to the Dream Cycle.
@@ -121,8 +122,11 @@ Retrieve events whose `entities` array contains the exact entity name.
 ### `markConsolidated(eventIds, factId): void`
 Mark a batch of events as consolidated into the given fact id. Runs atomically.
 
+### `archiveConsolidated(olderThanDays, archiveDir): Promise<{ archived, files }>`
+Archive consolidated events older than N days into compressed JSONL files and delete them from SQLite.
+
 ### `archiveOld(olderThanDays): number`
-Delete events whose timestamp is older than N days. Returns the count deleted.
+Delete events whose timestamp is older than N days. Returns the count deleted. (Legacy helper; does not write archives.)
 
 ### `getStats(): { total, unconsolidated, byType, oldestUnconsolidated }`
 Return aggregate statistics without scanning the whole table.
