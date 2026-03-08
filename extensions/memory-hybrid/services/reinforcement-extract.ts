@@ -15,6 +15,8 @@ export type ReinforcementIncident = {
   userMessage: string;
   /** What the agent did that was praised. */
   agentBehavior: string;
+  /** The user message that preceded the praised agent response (context for LLM analysis). */
+  precedingUserMessage: string;
   /** Recalled memory IDs visible in tool calls (if any). */
   recalledMemoryIds: string[];
   /** Phase 2: Tool call sequence from agent's response (for procedure matching). */
@@ -30,8 +32,9 @@ export type ReinforcementExtractResult = {
   sessionsScanned: number;
 };
 
-const MAX_USER_MSG = 300;
-const MAX_AGENT_BEHAVIOR = 600;
+const MAX_USER_MSG = 800;
+const MAX_AGENT_BEHAVIOR = 1200;
+const MAX_PRECEDING_USER_MSG = 500;
 
 /** Patterns that indicate a user message should be skipped. */
 const SKIP_PATTERNS = [
@@ -227,10 +230,13 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
 
       // Look back for the most recent assistant message (expanded window to handle tool messages)
       let precedingAssistant = "";
+      let precedingUserMsg = "";
       let recalledMemoryIds: string[] = [];
       const toolCallSequence: string[] = [];
       for (let j = i - 1; j >= 0 && j >= Math.max(0, i - 20); j--) {
         if (messages[j].role === "user") {
+          // This is the user message that prompted the praised agent response
+          if (!precedingUserMsg) precedingUserMsg = messages[j].text;
           // Stop at previous user message to avoid crossing conversation turn boundaries
           break;
         }
@@ -252,6 +258,7 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
       incidents.push({
         userMessage: truncate(userText, MAX_USER_MSG),
         agentBehavior: truncate(precedingAssistant, MAX_AGENT_BEHAVIOR),
+        precedingUserMessage: truncate(precedingUserMsg, MAX_PRECEDING_USER_MSG),
         recalledMemoryIds,
         toolCallSequence,
         confidence,

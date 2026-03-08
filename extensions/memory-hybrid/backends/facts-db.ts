@@ -20,6 +20,26 @@ import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF", "DERIVED_FROM"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
 
+/** Optional context metadata captured alongside a reinforcement event (#259). */
+export interface ReinforcementContext {
+  querySnippet?: string;
+  topic?: string;
+  toolSequence?: string[];
+  sessionFile?: string;
+}
+
+/** A single entry in the reinforcement_log table (#259). */
+export interface ReinforcementEvent {
+  id: string;
+  factId: string;
+  signal: "positive" | "negative";
+  querySnippet: string | null;
+  topic: string | null;
+  toolSequence: string[] | null;
+  sessionFile: string | null;
+  occurredAt: number;
+}
+
 /** A single contradiction record (from the contradictions table). */
 export interface ContradictionRecord {
   id: string;
@@ -200,6 +220,27 @@ export class FactsDB {
 
     // ---- Verification store (Issue #162) ----
     this.migrateVerifiedFactsTable();
+
+    // ---- Rich reinforcement context log (#259) ----
+    this.migrateReinforcementLogTable();
+  }
+
+  /** Create reinforcement_log table for per-event context (#259). */
+  private migrateReinforcementLogTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS reinforcement_log (
+        id TEXT PRIMARY KEY,
+        fact_id TEXT NOT NULL,
+        signal TEXT NOT NULL DEFAULT 'positive',
+        query_snippet TEXT,
+        topic TEXT,
+        tool_sequence TEXT,
+        session_file TEXT,
+        occurred_at INTEGER NOT NULL
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_fact_id ON reinforcement_log(fact_id)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_occurred ON reinforcement_log(occurred_at)`);
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -2287,12 +2328,15 @@ export class FactsDB {
   /**
    * Annotate a fact with reinforcement from user praise.
    * Increments reinforced_count, updates last_reinforced_at, appends quote (max 10 quotes kept).
+   * Optionally records a rich context event in reinforcement_log (#259).
    * Wraps read-modify-write in a transaction to prevent race conditions.
    * Returns true if fact was updated.
    */
-  reinforceFact(id: string, quoteSnippet: string): boolean {
+  reinforceFact(id: string, quoteSnippet: string, context?: ReinforcementContext, opts?: { trackContext?: boolean; maxEventsPerFact?: number }): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    
+    const trackContext = opts?.trackContext !== false;
+    const maxEventsPerFact = opts?.maxEventsPerFact ?? 50;
+
     const tx = this.liveDb.transaction(() => {
       const row = this.liveDb
         .prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`)
@@ -2306,10 +2350,87 @@ export class FactsDB {
           `UPDATE facts SET reinforced_count = reinforced_count + 1, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
         )
         .run(nowSec, quotesJson, id);
+
+      // Insert rich context event into reinforcement_log (#259)
+      if (trackContext) {
+        const eventId = randomUUID();
+        this.liveDb
+          .prepare(
+            `INSERT INTO reinforcement_log (id, fact_id, signal, query_snippet, topic, tool_sequence, session_file, occurred_at)
+             VALUES (?, ?, 'positive', ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            eventId,
+            id,
+            context?.querySnippet ?? null,
+            context?.topic ?? null,
+            context?.toolSequence ? JSON.stringify(context.toolSequence) : null,
+            context?.sessionFile ?? null,
+            nowSec,
+          );
+
+        // FIFO eviction: keep only the most recent maxEventsPerFact events
+        const countRow = this.liveDb
+          .prepare(`SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ?`)
+          .get(id) as { cnt: number };
+        if (countRow.cnt > maxEventsPerFact) {
+          this.liveDb
+            .prepare(
+              `DELETE FROM reinforcement_log WHERE fact_id = ? AND id NOT IN (
+                SELECT id FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC, rowid DESC LIMIT ?
+              )`,
+            )
+            .run(id, id, maxEventsPerFact);
+        }
+      }
+
       return true;
     });
-    
+
     return tx();
+  }
+
+  /**
+   * Get all reinforcement events for a fact from reinforcement_log (#259).
+   */
+  getReinforcementEvents(factId: string): ReinforcementEvent[] {
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC`)
+      .all(factId) as Array<{
+        id: string;
+        fact_id: string;
+        signal: string;
+        query_snippet: string | null;
+        topic: string | null;
+        tool_sequence: string | null;
+        session_file: string | null;
+        occurred_at: number;
+      }>;
+    return rows.map((r) => ({
+      id: r.id,
+      factId: r.fact_id,
+      signal: (r.signal === "negative" ? "negative" : "positive") as "positive" | "negative",
+      querySnippet: r.query_snippet,
+      topic: r.topic,
+      toolSequence: r.tool_sequence ? (JSON.parse(r.tool_sequence) as string[]) : null,
+      sessionFile: r.session_file,
+      occurredAt: r.occurred_at,
+    }));
+  }
+
+  /**
+   * Calculate diversity score for a fact: unique query stems / total events.
+   * Score 1.0 = all events from different queries; 0.0 = all from same query (#259).
+   */
+  calculateDiversityScore(factId: string): number {
+    const events = this.getReinforcementEvents(factId);
+    if (events.length === 0) return 0;
+    const stems = events.map((e) => {
+      if (!e.querySnippet) return "";
+      return e.querySnippet.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50);
+    });
+    const uniqueStems = new Set(stems).size;
+    return uniqueStems / events.length;
   }
 
   /**

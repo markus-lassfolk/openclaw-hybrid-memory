@@ -103,6 +103,12 @@ export type ReinforcementConfig = {
   maxConfidence: number;
   /** Cosine similarity threshold above which a new fact is treated as a repeat of an existing one (default: 0.85). */
   similarityThreshold: number;
+  /** Max reinforcement events to store per fact before FIFO eviction (default: 50). */
+  maxEventsPerFact?: number;
+  /** Weight applied to diversity score when calculating effective boost (default: 1.0). */
+  diversityWeight?: number;
+  /** When false, skip storing context columns (query_snippet, topic, etc.) per event (default: true). */
+  trackContext?: boolean;
 };
 
 /** Future-date decay freeze protection (#144). */
