@@ -44,6 +44,7 @@ import {
 } from "../tools/utility-tools.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { ProvenanceService } from "../services/provenance.js";
+import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 
 export interface ToolsContext {
   factsDb: FactsDB;
@@ -66,6 +67,7 @@ export interface ToolsContext {
   crystallizationStore?: CrystallizationStore | null;
   toolProposalStore?: ToolProposalStore | null;
   verificationStore?: VerificationStore | null;
+  variantQueue?: VariantGenerationQueue | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -130,11 +132,12 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     runReflectionRules,
     runReflectionMeta,
     pythonBridge,
+    variantQueue,
   } = ctx;
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
+    { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, verificationStore, variantQueue, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),

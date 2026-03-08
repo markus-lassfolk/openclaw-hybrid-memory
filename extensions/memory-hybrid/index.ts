@@ -162,6 +162,7 @@ import { registerLifecycleHooks, type HooksContext } from "./setup/register-hook
 import { capturePluginError } from "./services/error-reporter.js";
 import { PythonBridge } from "./services/python-bridge.js";
 import type { EmbeddingRegistry } from "./services/embedding-registry.js";
+import { ContextualVariantGenerator, VariantGenerationQueue } from "./services/contextual-variants.js";
 
 // Backend Imports (extracted from god file for maintainability)
 
@@ -231,6 +232,7 @@ let toolProposalStore: import("./backends/tool-proposal-store.js").ToolProposalS
 let provenanceService: ProvenanceService | null = null;
 let verificationStore: VerificationStore | null = null;
 let pythonBridge: PythonBridge | null = null;
+let variantQueue: VariantGenerationQueue | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -310,6 +312,7 @@ const memoryHybridPlugin = {
       pythonBridge.shutdown().catch(() => {});
       pythonBridge = null;
     }
+    variantQueue = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -356,6 +359,21 @@ const memoryHybridPlugin = {
     pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
 
     // ========================================================================
+    // Contextual Variant Generator (Issue #159)
+    // ========================================================================
+
+    if (cfg.contextualVariants.enabled) {
+      const variantGenerator = new ContextualVariantGenerator(cfg.contextualVariants, openai);
+      variantQueue = new VariantGenerationQueue(variantGenerator, async (factId, variantType, variants) => {
+        for (const v of variants) {
+          factsDb.storeVariant(factId, variantType, v);
+        }
+      });
+    } else {
+      variantQueue = null;
+    }
+
+    // ========================================================================
     // Tools
 
     try {
@@ -376,6 +394,7 @@ const memoryHybridPlugin = {
       crystallizationStore,
       toolProposalStore,
       verificationStore,
+      variantQueue,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,

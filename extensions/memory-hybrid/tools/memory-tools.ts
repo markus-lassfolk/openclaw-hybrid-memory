@@ -52,6 +52,7 @@ import { parseSourceDate } from "../utils/dates.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
+import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -69,6 +70,7 @@ export interface PluginContext {
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
+  variantQueue?: VariantGenerationQueue | null;
 }
 
 async function storeRegistryEmbeddings({
@@ -182,7 +184,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, embeddingRegistry, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, embeddingRegistry, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, variantQueue } = ctx;
 
   api.registerTool(
     {
@@ -1209,6 +1211,11 @@ export function registerMemoryTools(
 
                 walRemove(walEntryId, api.logger);
 
+                // Issue #159: enqueue contextual variant generation (non-blocking)
+                if (variantQueue) {
+                  variantQueue.enqueue({ factId: newEntry.id, text: textToStore, category: category as string });
+                }
+
                 api.logger.info?.(
                   `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                 );
@@ -1385,6 +1392,11 @@ export function registerMemoryTools(
           } catch {
             // Non-fatal
           }
+        }
+
+        // Issue #159: enqueue contextual variant generation (non-blocking)
+        if (variantQueue) {
+          variantQueue.enqueue({ factId: entry.id, text: textToStore, category: category as string });
         }
 
         // Issue #149: generate and store retrieval aliases (non-blocking)
