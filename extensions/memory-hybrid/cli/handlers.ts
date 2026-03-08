@@ -83,7 +83,7 @@ import {
   getRestartPendingPath,
 } from "../utils/constants.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
-import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore } from "../services/tool-effectiveness.js";
+import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore, generateMonthlyReport } from "../services/tool-effectiveness.js";
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
@@ -4359,6 +4359,26 @@ export async function runToolEffectivenessForCli(
       teCfg ?? {},
       ctx.logger ?? {},
     );
+
+    // Gap 3 (#263): Generate monthly report, gated to once per calendar month
+    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const monthlyKey = `tool-effectiveness-monthly-${month}`;
+    try {
+      const rawDb = ctx.factsDb.getRawDb();
+      const existing = rawDb
+        .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+        .get(monthlyKey);
+      if (!existing) {
+        await generateMonthlyReport(effStore, ctx.factsDb);
+      }
+    } catch (mrErr) {
+      capturePluginError(mrErr instanceof Error ? mrErr : new Error(String(mrErr)), {
+        operation: "tool-effectiveness-monthly-report-check",
+        subsystem: "tool-effectiveness",
+        severity: "info",
+      });
+    }
+
     return formatToolEffectivenessReport(report);
   } finally {
     effStore.close();

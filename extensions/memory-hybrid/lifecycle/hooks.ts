@@ -59,7 +59,8 @@ import {
   SessionSeenFacts,
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
-import { detectFrustration, buildFrustrationHint, type FrustrationConversationTurn } from "../services/frustration-detector.js";
+import { detectFrustration, buildFrustrationHint, exportAsImplicitSignals, type FrustrationConversationTurn } from "../services/frustration-detector.js";
+import { generateToolHint, ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -1786,13 +1787,69 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         state.level = frustrationResult.level;
         frustrationStateMap.set(sessionKey, state);
 
+        // Gap 1 (#263): Feed frustration triggers into #262 implicit signals pipeline
+        const implicitSignals = exportAsImplicitSignals(frustrationResult);
+        if (implicitSignals.length > 0) {
+          try {
+            const rawDb = ctx.factsDb.getRawDb();
+            const insert = rawDb.prepare(`
+              INSERT OR IGNORE INTO implicit_signals
+                (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'frustration')
+            `);
+            for (const sig of implicitSignals) {
+              insert.run(
+                sessionKey,
+                sig.type,
+                sig.confidence,
+                sig.polarity,
+                userContent.slice(0, 500),
+                "",
+                state.turns.length,
+              );
+            }
+            api.logger.debug?.(`memory-hybrid: frustration exported ${implicitSignals.length} implicit signal(s) for session ${sessionKey}`);
+          } catch (fsErr) {
+            capturePluginError(fsErr instanceof Error ? fsErr : new Error(String(fsErr)), {
+              operation: "frustration-export-implicit-signals",
+              subsystem: "frustration",
+              severity: "info",
+            });
+          }
+        }
+
         // Build hint and inject if above threshold
         const hint = buildFrustrationHint(frustrationResult, fCfg);
-        if (hint) {
-          api.logger.debug?.(`memory-hybrid: ${hint}`);
-          return {
-            prependContext: `\n<frustration-signal>${hint}</frustration-signal>\n`,
-          };
+
+        // Gap 2 (#263): Inject tool effectiveness hints alongside frustration hint
+        let toolHintText = "";
+        if (ctx.cfg.toolEffectiveness?.enabled !== false && ctx.cfg.toolEffectiveness?.injectHints !== false) {
+          try {
+            const effectivenessDbPath = ctx.resolvedSqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
+            const toolStore = new ToolEffectivenessStore(effectivenessDbPath);
+            try {
+              const contextLabel = currentAgentIdRef.value ?? "general";
+              toolHintText = generateToolHint(toolStore, contextLabel);
+            } finally {
+              toolStore.close();
+            }
+          } catch (thErr) {
+            capturePluginError(thErr instanceof Error ? thErr : new Error(String(thErr)), {
+              operation: "generate-tool-hint",
+              subsystem: "tool-effectiveness",
+              severity: "info",
+            });
+          }
+        }
+
+        const combinedPrepend = [
+          hint ? `\n<frustration-signal>${hint}</frustration-signal>\n` : "",
+          toolHintText ? `\n<tool-hint>${toolHintText}</tool-hint>\n` : "",
+        ].join("");
+
+        if (combinedPrepend) {
+          if (hint) api.logger.debug?.(`memory-hybrid: ${hint}`);
+          return { prependContext: combinedPrepend };
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
