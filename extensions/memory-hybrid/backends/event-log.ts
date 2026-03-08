@@ -150,6 +150,14 @@ export class EventLog {
     return rows.map((r) => this.rowToEntry(r));
   }
 
+  /** Return a single event by id (or null if not found). */
+  getById(id: string): EventLogEntry | null {
+    const row = this.liveDb
+      .prepare(`SELECT * FROM event_log WHERE id = ?`)
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToEntry(row) : null;
+  }
+
   /** Return events whose timestamp falls within [from, to] (ISO strings), optionally filtered by eventType. */
   getByTimeRange(from: string, to: string, eventType?: string): EventLogEntry[] {
     const params: unknown[] = [from, to];
