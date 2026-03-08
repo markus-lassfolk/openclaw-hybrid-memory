@@ -109,6 +109,8 @@ export type ReinforcementConfig = {
   diversityWeight?: number;
   /** When false, skip storing context columns (query_snippet, topic, etc.) per event (default: true). */
   trackContext?: boolean;
+  /** Base boost amount before diversity weighting is applied (default: 1.0). */
+  boostAmount?: number;
 };
 
 /** Future-date decay freeze protection (#144). */

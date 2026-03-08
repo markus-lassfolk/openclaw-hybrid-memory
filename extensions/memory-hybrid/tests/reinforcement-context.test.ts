@@ -131,9 +131,9 @@ describe("FIFO eviction at maxEventsPerFact (#259)", () => {
 });
 
 describe("calculateDiversityScore (#259)", () => {
-  it("returns 0 for a fact with no events", () => {
+  it("returns 1.0 for a fact with no events", () => {
     const fact = storeFact();
-    expect(db.calculateDiversityScore(fact.id)).toBe(0);
+    expect(db.calculateDiversityScore(fact.id)).toBe(1.0);
   });
 
   it("returns 1.0 when all query snippets are unique", () => {

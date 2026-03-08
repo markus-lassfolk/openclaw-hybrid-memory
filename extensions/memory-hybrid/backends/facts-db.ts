@@ -223,6 +223,9 @@ export class FactsDB {
 
     // ---- Rich reinforcement context log (#259) ----
     this.migrateReinforcementLogTable();
+
+    // ---- Change reinforced_count to REAL for fractional boosts (#259, #260) ----
+    this.migrateReinforcedCountToReal();
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -241,6 +244,39 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_fact_id ON reinforcement_log(fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_occurred ON reinforcement_log(occurred_at)`);
+  }
+
+  /** Change reinforced_count from INTEGER to REAL to support fractional boost amounts (#259, #260). */
+  private migrateReinforcedCountToReal(): void {
+    const factsCols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string; type: string }>;
+    const factsReinforcedCol = factsCols.find((c) => c.name === "reinforced_count");
+    if (factsReinforcedCol && factsReinforcedCol.type !== "REAL") {
+      this.liveDb.exec(`DROP INDEX IF EXISTS idx_facts_reinforced`);
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
+      this.liveDb.exec(`UPDATE facts SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
+      this.liveDb.exec(`ALTER TABLE facts DROP COLUMN reinforced_count`);
+      this.liveDb.exec(`ALTER TABLE facts RENAME COLUMN reinforced_count_real TO reinforced_count`);
+      this.liveDb.exec(
+        `CREATE INDEX IF NOT EXISTS idx_facts_reinforced ON facts(reinforced_count) WHERE reinforced_count > 0`,
+      );
+    }
+
+    const proceduresCols = this.liveDb
+      .prepare(`PRAGMA table_info(procedures)`)
+      .all() as Array<{ name: string; type: string }>;
+    const proceduresReinforcedCol = proceduresCols.find((c) => c.name === "reinforced_count");
+    if (proceduresReinforcedCol && proceduresReinforcedCol.type !== "REAL") {
+      this.liveDb.exec(`DROP INDEX IF EXISTS idx_procedures_reinforced`);
+      this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
+      this.liveDb.exec(`UPDATE procedures SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
+      this.liveDb.exec(`ALTER TABLE procedures DROP COLUMN reinforced_count`);
+      this.liveDb.exec(`ALTER TABLE procedures RENAME COLUMN reinforced_count_real TO reinforced_count`);
+      this.liveDb.exec(
+        `CREATE INDEX IF NOT EXISTS idx_procedures_reinforced ON procedures(reinforced_count) WHERE reinforced_count > 0`,
+      );
+    }
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */

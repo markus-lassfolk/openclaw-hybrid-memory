@@ -184,6 +184,10 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
         ? reinforcementRaw.diversityWeight
         : 1.0,
     trackContext: reinforcementRaw?.trackContext !== false,
+    boostAmount:
+      typeof reinforcementRaw?.boostAmount === "number" && reinforcementRaw.boostAmount > 0
+        ? reinforcementRaw.boostAmount
+        : 1.0,
   };
 }
 
