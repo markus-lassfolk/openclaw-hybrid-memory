@@ -316,6 +316,8 @@ function buildCliContextServices(
           model: dreamModel,
           fallbackModels: fallbackModels ?? [],
           consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
+          eventLogArchivalDays: cfg.eventLog.archivalDays,
+          eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
         },
         logSink,

@@ -8,8 +8,12 @@
 
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, createWriteStream, existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGzip, gunzipSync } from "node:zlib";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
@@ -20,6 +24,16 @@ export type EventType =
   | "entity_mentioned"
   | "preference_expressed"
   | "correction";
+
+export function categoryToEventType(category: string): EventType {
+  switch (category) {
+    case "preference": return "preference_expressed";
+    case "decision": return "decision_made";
+    case "action": return "action_taken";
+    case "entity": return "entity_mentioned";
+    default: return "fact_learned";
+  }
+}
 
 export interface EventLogEntry {
   id: string;
@@ -193,6 +207,117 @@ export class EventLog {
   }
 
   /**
+   * Archive consolidated events older than N days to compressed JSONL files.
+   * Returns the number of rows archived and the files written.
+   */
+  async archiveConsolidated(
+    olderThanDays: number,
+    archiveDir: string,
+  ): Promise<{ archived: number; files: string[] }> {
+    if (olderThanDays <= 0) return { archived: 0, files: [] };
+    const cutoff = new Date(
+      Date.now() - olderThanDays * 24 * 3600 * 1000,
+    ).toISOString();
+    const resolvedDir = expandTilde(archiveDir);
+    mkdirSync(resolvedDir, { recursive: true });
+
+    const months = this.liveDb
+      .prepare(
+        `SELECT DISTINCT strftime('%Y-%m', timestamp) AS ym
+         FROM event_log
+         WHERE timestamp < ? AND consolidated_into IS NOT NULL
+         ORDER BY ym ASC`,
+      )
+      .all(cutoff) as { ym: string | null }[];
+
+    const files: string[] = [];
+    let archived = 0;
+    for (const row of months) {
+      const month = row.ym;
+      if (!month) continue;
+      const countRow = this.liveDb
+        .prepare(
+          `SELECT COUNT(*) AS count FROM event_log
+           WHERE timestamp < ?
+             AND consolidated_into IS NOT NULL
+             AND strftime('%Y-%m', timestamp) = ?`,
+        )
+        .get(cutoff, month) as { count: number };
+      if (!countRow?.count) continue;
+
+      const ids: string[] = [];
+      const stmt = this.liveDb.prepare(
+        `SELECT * FROM event_log
+         WHERE timestamp < ?
+           AND consolidated_into IS NOT NULL
+           AND strftime('%Y-%m', timestamp) = ?
+         ORDER BY timestamp ASC`,
+      );
+      const filePath = join(resolvedDir, `${month}.jsonl.gz`);
+      const tempPath = `${filePath}.tmp`;
+      
+      try {
+        let existingLines = "";
+        if (existsSync(filePath)) {
+          try {
+            const compressed = readFileSync(filePath);
+            existingLines = gunzipSync(compressed).toString("utf8");
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "read-existing-archive",
+              severity: "info",
+              subsystem: "event-log",
+            });
+            const backupPath = `${filePath}.corrupted.${Date.now()}`;
+            try {
+              renameSync(filePath, backupPath);
+            } catch (renameErr) {
+              capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
+                operation: "backup-corrupted-archive",
+                severity: "info",
+                subsystem: "event-log",
+              });
+            }
+          }
+        }
+
+        const lineStream = Readable.from((function* (self: EventLog) {
+          if (existingLines) {
+            yield existingLines;
+          }
+          for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
+            const entry = self.rowToEntry(r);
+            ids.push(entry.id);
+            yield JSON.stringify(entry) + "\n";
+          }
+        })(this));
+
+        await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
+        
+        renameSync(tempPath, filePath);
+        
+        const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
+        const deleteBatch = this.liveDb.transaction((batch: string[]) => {
+          for (const id of batch) del.run(id);
+        });
+        deleteBatch(ids);
+        files.push(filePath);
+        archived += ids.length;
+      } catch (err) {
+        if (existsSync(tempPath)) {
+          try {
+            unlinkSync(tempPath);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+        throw err;
+      }
+    }
+    return { archived, files };
+  }
+
+  /**
    * Delete events whose timestamp is older than N days.
    * By default, only deletes events that have already been consolidated
    * (consolidated_into IS NOT NULL) to prevent silent data loss of unprocessed
@@ -322,4 +447,11 @@ export class EventLog {
       });
     }
   }
+}
+
+function expandTilde(p: string): string {
+  if (p === "~" || p.startsWith("~/")) {
+    return join(homedir(), p.slice(1));
+  }
+  return p;
 }

@@ -8,6 +8,7 @@
  *  - runEpisodicConsolidation with real DB (5 tests: DERIVED_FROM, grouping, mark consolidated, empty, text fallback)
  *  - runDreamCycle with real DB (7 tests: disabled skip, prune, decay, reflect stub, config schedule, full pipeline)
  *  - NightlyCycleConfig parsing via hybridConfigSchema (3 tests: defaults, enabled, overrides)
+ *  - EventLogConfig parsing via hybridConfigSchema (2 tests: defaults, overrides)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -257,6 +258,8 @@ describe("runDreamCycle", () => {
     pruneMode: "both",
     model: "gpt-4o-mini",
     consolidateAfterDays: 7,
+    eventLogArchivalDays: 90,
+    eventLogArchivePath: join(tmpdir(), "event-log-archive"),
     maxUnconsolidatedAgeDays: 90,
   };
 
@@ -475,5 +478,35 @@ describe("NightlyCycleConfig parsing", () => {
       nightlyCycle: { pruneMode: "unknown-value" },
     });
     expect(cfg.nightlyCycle.pruneMode).toBe("both");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EventLogConfig — config parsing
+// ---------------------------------------------------------------------------
+
+describe("EventLogConfig parsing", () => {
+  const minimalConfig = {
+    embedding: { provider: "openai", model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+    sqlitePath: "/tmp/test-facts.db",
+    lanceDbPath: "/tmp/test-lance",
+  };
+
+  it("defaults to 90 days and ~/.openclaw/event-archive", () => {
+    const cfg = hybridConfigSchema.parse({ ...minimalConfig });
+    expect(cfg.eventLog.archivalDays).toBe(90);
+    expect(cfg.eventLog.archivePath).toBe("~/.openclaw/event-archive");
+  });
+
+  it("accepts custom archivalDays and archivePath", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...minimalConfig,
+      eventLog: {
+        archivalDays: 120,
+        archivePath: "/tmp/custom-archive",
+      },
+    });
+    expect(cfg.eventLog.archivalDays).toBe(120);
+    expect(cfg.eventLog.archivePath).toBe("/tmp/custom-archive");
   });
 });

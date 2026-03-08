@@ -15,6 +15,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
@@ -1165,6 +1166,28 @@ export function registerMemoryTools(
         }
 
         walRemove(walEntryId, api.logger);
+
+        // Issue #150: write event to episodic event log
+        if (eventLog) {
+          try {
+            const eventType = categoryToEventType(category);
+            eventLog.append({
+              sessionId: api.context?.sessionId ?? "unknown",
+              timestamp: new Date().toISOString(),
+              eventType,
+              content: {
+                text: textToStore.slice(0, 500),
+                factId: entry.id,
+                category,
+                importance,
+                source: "memory_store",
+              },
+              entities: entity ? [entity] : undefined,
+            });
+          } catch {
+            // Non-fatal
+          }
+        }
 
         // Issue #149: generate and store retrieval aliases (non-blocking)
         if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {

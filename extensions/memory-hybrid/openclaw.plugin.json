@@ -830,6 +830,21 @@
         },
         "description": "Write-Ahead Log for crash resilience (enabled by default)"
       },
+      "eventLog": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "archivalDays": {
+            "type": "number",
+            "description": "Days before consolidated event log entries are archived (default: 90)"
+          },
+          "archivePath": {
+            "type": "string",
+            "description": "Directory for compressed JSONL archives (default: ~/.openclaw/event-archive)"
+          }
+        },
+        "description": "Event log archival configuration"
+      },
       "personaProposals": {
         "type": "object",
         "additionalProperties": false,

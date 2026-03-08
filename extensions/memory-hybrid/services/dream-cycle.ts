@@ -38,7 +38,11 @@ export interface DreamCycleConfig {
   /** Fallback models for reflection steps, in preference order. */
   fallbackModels?: string[];
   consolidateAfterDays: number;
-  /** Maximum age for unconsolidated event log entries before archiving. */
+  /** Archive consolidated event log entries older than this many days. */
+  eventLogArchivalDays: number;
+  /** Directory for compressed JSONL archives. */
+  eventLogArchivePath: string;
+  /** Delete unconsolidated event log entries older than this many days. */
   maxUnconsolidatedAgeDays: number;
 }
 
@@ -359,18 +363,39 @@ export async function runDreamCycle(
   }
 
   // ── Step 2b: Archive stale event log entries ─────────────────────────────
+  if (eventLog && config.eventLogArchivalDays > 0) {
+    try {
+      const result = await eventLog.archiveConsolidated(
+        config.eventLogArchivalDays,
+        config.eventLogArchivePath,
+      );
+      if (result.archived > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — archived ${result.archived} consolidated event log entries older than ${config.eventLogArchivalDays} days`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — archiveConsolidated failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-archive",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
   if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
     try {
-      const archived = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
-      if (archived > 0) {
+      const deleted = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
+      if (deleted > 0) {
         logger.info(
-          `memory-hybrid: dream-cycle — archived ${archived} event log entries older than ${config.maxUnconsolidatedAgeDays} days`,
+          `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${config.maxUnconsolidatedAgeDays} days`,
         );
       }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — archiveOld failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-archive",
+        operation: "dream-cycle-archive-old",
         subsystem: "event-log",
       });
     }

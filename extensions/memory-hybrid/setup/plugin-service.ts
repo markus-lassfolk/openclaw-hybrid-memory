@@ -31,6 +31,7 @@ export interface PluginServiceContext {
   credentialsDb: CredentialsDB | null;
   proposalsDb: ProposalsDB | null;
   wal: WriteAheadLog | null;
+  eventLog?: import("../backends/event-log.js").EventLog | null;
   cfg: HybridMemoryConfig;
   openai: OpenAI;
   resolvedLancePath: string;
@@ -68,6 +69,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     credentialsDb,
     proposalsDb,
     wal,
+    eventLog,
     cfg,
     openai,
     resolvedLancePath,
@@ -345,7 +347,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               openai,
               cfg.passiveObserver,
               cfg.categories,
-              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement },
+              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement, eventLog: eventLog ?? null },
               api.logger,
             );
             if (result.factsStored > 0 || result.factsExtracted > 0 || result.factsReinforced > 0) {

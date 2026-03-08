@@ -35,6 +35,14 @@ export type WALConfig = {
   maxAge?: number;
 };
 
+/** Event log archival configuration. */
+export type EventLogConfig = {
+  /** Days before consolidated events are archived (default: 90). */
+  archivalDays: number;
+  /** Output directory for compressed JSONL archives (default: '~/.openclaw/event-archive'). */
+  archivePath: string;
+};
+
 /** Shortest-path traversal configuration (Issue #140). */
 export type PathConfig = {
   /** Enable memory_path tool (default: true). */

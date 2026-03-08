@@ -28,6 +28,7 @@ export interface HooksContext {
   credentialsDb: CredentialsDB | null;
   aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
+  eventLog: import("../backends/event-log.js").EventLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
@@ -63,6 +64,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       credentialsDb: ctx.credentialsDb,
       aliasDb: ctx.aliasDb,
       wal: ctx.wal,
+      eventLog: ctx.eventLog,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
