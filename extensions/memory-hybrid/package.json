@@ -42,6 +42,9 @@
     "js-yaml": "^4.1.1",
     "openai": "^6.16.0"
   },
+  "optionalDependencies": {
+    "onnxruntime-node": "^1.18.0"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"

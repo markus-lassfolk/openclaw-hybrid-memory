@@ -252,13 +252,4 @@ describe("buildEmbeddingRegistry()", () => {
     expect(registry.getModels()).toHaveLength(1);
     expect(registry.getModels()[0].name).toBe("mxbai-embed-large");
   });
-
-  it("throws for onnx provider (not implemented)", async () => {
-    const primary = makeMockProvider("text-embedding-3-small", 1536);
-    const multiModels: EmbeddingModelConfig[] = [
-      { name: "some-onnx-model", provider: "onnx", dimensions: 512, role: "custom" },
-    ];
-    const registry = buildEmbeddingRegistry(primary, "text-embedding-3-small", multiModels);
-    await expect(registry.embed("test", "some-onnx-model")).rejects.toThrow("ONNX provider is not yet implemented");
-  });
 });

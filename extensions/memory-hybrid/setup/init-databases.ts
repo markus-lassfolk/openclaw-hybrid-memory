@@ -15,6 +15,7 @@ import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
+import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
@@ -397,7 +398,12 @@ export function initializeDatabases(
       (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
         previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
-    if (!previousEmbeddingMeta || embeddingConfigChanged) {
+    // When autoMigrate is enabled, still record the initial baseline on first run so future
+    // changes can be detected. For subsequent runs with a config change, let runEmbeddingMaintenance
+    // handle the meta update to avoid pre-updating before the migration service can detect the change.
+    if (!cfg.embedding.autoMigrate && (!previousEmbeddingMeta || embeddingConfigChanged)) {
+      factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
+    } else if (cfg.embedding.autoMigrate && !previousEmbeddingMeta && !embeddingConfigChanged) {
       factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
     }
   } catch (err) {
@@ -524,10 +530,39 @@ export function initializeDatabases(
     api.logger.warn(`memory-hybrid: async initialization encountered an error: ${err}`);
   });
 
+  // autoMigrate path: use the embedding-migration service when autoMigrate=true (Issue #153).
+  // Runs asynchronously so it does not block plugin start.
+  if (cfg.embedding.autoMigrate && embeddingConfigChanged) {
+    void (async () => {
+      try {
+        await runEmbeddingMaintenance({
+          factsDb,
+          vectorDb,
+          embeddings,
+          currentProvider: cfg.embedding.provider,
+          currentModel: cfg.embedding.model,
+          autoMigrate: true,
+          batchSize: cfg.embedding.batchSize,
+          logger: {
+            info: (msg) => api.logger.info(msg),
+            warn: (msg) => api.logger.warn(msg),
+          },
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "autoMigrate-embedding",
+          subsystem: "embeddings",
+        });
+        api.logger.warn(`memory-hybrid: autoMigrate embedding run failed: ${err}`);
+      }
+    })();
+  }
+
   // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.
   // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
-  if (cfg.vector.autoRepair || embeddingConfigChanged) {
+  // Skip this block when autoMigrate is enabled and config changed — runEmbeddingMaintenance handles it.
+  if ((cfg.vector.autoRepair || embeddingConfigChanged) && !(cfg.embedding.autoMigrate && embeddingConfigChanged)) {
     void (async () => {
       const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
