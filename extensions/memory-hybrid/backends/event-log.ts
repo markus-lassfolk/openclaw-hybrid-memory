@@ -8,12 +8,12 @@
 
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, createWriteStream } from "node:fs";
+import { mkdirSync, createWriteStream, existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createGzip } from "node:zlib";
+import { createGzip, gunzipSync } from "node:zlib";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
@@ -254,23 +254,55 @@ export class EventLog {
          ORDER BY timestamp ASC`,
       );
       const filePath = join(resolvedDir, `${month}.jsonl.gz`);
-      const lineStream = Readable.from((function* (self: EventLog) {
-        for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
-          const entry = self.rowToEntry(r);
-          ids.push(entry.id);
-          yield JSON.stringify(entry) + "\n";
+      const tempPath = `${filePath}.tmp`;
+      
+      try {
+        let existingLines = "";
+        if (existsSync(filePath)) {
+          try {
+            const compressed = readFileSync(filePath);
+            existingLines = gunzipSync(compressed).toString("utf8");
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "read-existing-archive",
+              severity: "info",
+              subsystem: "event-log",
+            });
+          }
         }
-      })(this));
 
-      await pipeline(lineStream, createGzip(), createWriteStream(filePath, { flags: "a" }));
-      files.push(filePath);
-      archived += ids.length;
+        const lineStream = Readable.from((function* (self: EventLog) {
+          if (existingLines) {
+            yield existingLines;
+          }
+          for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
+            const entry = self.rowToEntry(r);
+            ids.push(entry.id);
+            yield JSON.stringify(entry) + "\n";
+          }
+        })(this));
 
-      const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
-      const deleteBatch = this.liveDb.transaction((batch: string[]) => {
-        for (const id of batch) del.run(id);
-      });
-      deleteBatch(ids);
+        await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
+        
+        const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
+        const deleteBatch = this.liveDb.transaction((batch: string[]) => {
+          for (const id of batch) del.run(id);
+        });
+        deleteBatch(ids);
+        
+        renameSync(tempPath, filePath);
+        files.push(filePath);
+        archived += ids.length;
+      } catch (err) {
+        if (existsSync(tempPath)) {
+          try {
+            unlinkSync(tempPath);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+        throw err;
+      }
     }
     return { archived, files };
   }
