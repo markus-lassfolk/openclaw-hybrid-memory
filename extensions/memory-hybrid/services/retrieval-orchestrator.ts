@@ -569,18 +569,17 @@ export async function runRetrievalPipeline(
           if (!seedEntries.has(r.factId)) seedEntries.set(r.factId, entry);
         }
       }
-    }
 
-    const seeds = Array.from(seedScores.entries()).map(([factId, score]) => ({
-      factId,
-      score,
-      entry: seedEntries.get(factId)!,
-    }));
-    const graphResults = runGraphStrategy(factsDb, seeds, config.graphWalkDepth, scopeFilter, asOf);
-    if (graphResults.length > 0) {
-      strategyMap.set("graph", graphResults);
+      const seeds = Array.from(seedScores.entries()).map(([factId, score]) => ({
+        factId,
+        score,
+        entry: seedEntries.get(factId)!,
+      }));
+      const graphResults = runGraphStrategy(factsDb, seeds, config.graphWalkDepth, scopeFilter, asOf);
+      if (graphResults.length > 0) {
+        strategyMap.set("graph", graphResults);
+      }
     }
-  }
 
   // --- RRF Fusion ---
   const fused = fuseResults(strategyMap, k);
@@ -736,8 +735,8 @@ export async function runRetrievalPipeline(
   // Extract resolved entries in final order for caller (avoids double lookup)
   const resolvedEntries = orderedEntries.map((e) => e.entry);
 
-  return { fused: scopedFused, packed, packedFactIds, tokensUsed, entries: resolvedEntries };
-  }
+    return { fused: scopedFused, packed, packedFactIds, tokensUsed, entries: resolvedEntries };
+  };
 
   const expanderMode =
     queryExpander && typeof (queryExpander as QueryExpander).getMode === "function"
