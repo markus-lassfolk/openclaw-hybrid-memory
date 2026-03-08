@@ -288,6 +288,8 @@ export type ToolEffectivenessConfig = {
   decayFactor: number;
   /** Run scoring in the nightly cycle (default: true when enabled). */
   runInNightlyCycle: boolean;
+  /** Inject tool-preference hints into agent context (default: true). */
+  injectHints?: boolean;
 };
 
 /** Closed-loop rule effectiveness measurement (Issue #262). */

@@ -17,9 +17,14 @@ import {
   aggregateTraceRows,
   generateRecommendations,
   formatToolEffectivenessReport,
+  generateToolHint,
+  generateMonthlyReport,
   ToolEffectivenessStore,
   type ToolMetrics,
 } from "../services/tool-effectiveness.js";
+import { _testing } from "../index.js";
+
+const { FactsDB } = _testing;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,6 +37,7 @@ function makeStore(dir: string): ToolEffectivenessStore {
 function makeMetrics(overrides: Partial<ToolMetrics> = {}): ToolMetrics {
   return {
     tool: "test_tool",
+    context: "general",
     totalCalls: 10,
     successCalls: 8,
     failureCalls: 2,
@@ -346,5 +352,193 @@ describe("formatToolEffectivenessReport", () => {
       recommendations: ["• Consider batching tool calls"],
     });
     expect(output).toContain("Recommendations");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ToolEffectivenessStore — context column and recordToolOutcome / getToolEffectiveness
+// ---------------------------------------------------------------------------
+
+describe("ToolEffectivenessStore — context-aware", () => {
+  let tmpDir: string;
+  let store: ToolEffectivenessStore;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "tool-eff-ctx-test-"));
+    store = makeStore(tmpDir);
+  });
+
+  afterEach(() => {
+    try { store.close(); } catch { /* ignore */ }
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("upsert stores context field", () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "home-assistant", compositeScore: 0.8 }));
+    const rows = store.getToolEffectiveness("exec", "home-assistant");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.context).toBe("home-assistant");
+  });
+
+  it("same tool can have different scores per context", () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "general", compositeScore: 0.6 }));
+    store.upsert(makeMetrics({ tool: "exec", context: "home-assistant", compositeScore: 0.9 }));
+    const general = store.getToolEffectiveness("exec", "general");
+    const ha = store.getToolEffectiveness("exec", "home-assistant");
+    expect(general[0]!.compositeScore).toBeCloseTo(0.6, 2);
+    expect(ha[0]!.compositeScore).toBeCloseTo(0.9, 2);
+  });
+
+  it("getToolEffectiveness without context returns all rows for tool", () => {
+    store.upsert(makeMetrics({ tool: "browser", context: "general", compositeScore: 0.5 }));
+    store.upsert(makeMetrics({ tool: "browser", context: "research", compositeScore: 0.7 }));
+    const all = store.getToolEffectiveness("browser");
+    expect(all).toHaveLength(2);
+  });
+
+  it("getToolEffectiveness returns empty array for unknown tool", () => {
+    const rows = store.getToolEffectiveness("nonexistent", "general");
+    expect(rows).toHaveLength(0);
+  });
+
+  it("recordToolOutcome increments counts correctly", () => {
+    store.recordToolOutcome("exec", "success", "general", 100);
+    store.recordToolOutcome("exec", "success", "general", 200);
+    store.recordToolOutcome("exec", "failure", "general", 50);
+    const rows = store.getToolEffectiveness("exec", "general");
+    expect(rows).toHaveLength(1);
+    const m = rows[0]!;
+    expect(m.totalCalls).toBe(3);
+    expect(m.successCalls).toBe(2);
+    expect(m.failureCalls).toBe(1);
+  });
+
+  it("recordToolOutcome creates separate row per context", () => {
+    store.recordToolOutcome("exec", "success", "general");
+    store.recordToolOutcome("exec", "success", "coding");
+    const all = store.getToolEffectiveness("exec");
+    expect(all).toHaveLength(2);
+    const contexts = all.map((r) => r.context).sort();
+    expect(contexts).toEqual(["coding", "general"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateToolHint
+// ---------------------------------------------------------------------------
+
+describe("generateToolHint", () => {
+  let tmpDir: string;
+  let store: ToolEffectivenessStore;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "tool-hint-test-"));
+    store = makeStore(tmpDir);
+  });
+
+  afterEach(() => {
+    try { store.close(); } catch { /* ignore */ }
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns empty string when no data", () => {
+    const hint = generateToolHint(store, "home-assistant");
+    expect(hint).toBe("");
+  });
+
+  it("returns empty string when only one tool qualifies", () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "home-assistant", totalCalls: 10, compositeScore: 0.8 }));
+    const hint = generateToolHint(store, "home-assistant", 5, 0.3);
+    expect(hint).toBe("");
+  });
+
+  it("returns empty string when score spread is below threshold", () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "home-assistant", totalCalls: 10, compositeScore: 0.7 }));
+    store.upsert(makeMetrics({ tool: "browser", context: "home-assistant", totalCalls: 8, compositeScore: 0.65 }));
+    // Spread = 0.05, threshold = 0.3
+    const hint = generateToolHint(store, "home-assistant", 5, 0.3);
+    expect(hint).toBe("");
+  });
+
+  it("returns hint when two tools have sufficient spread", () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "home-assistant", totalCalls: 23, compositeScore: 0.8 }));
+    store.upsert(makeMetrics({ tool: "browser", context: "home-assistant", totalCalls: 8, compositeScore: 0.3 }));
+    const hint = generateToolHint(store, "home-assistant", 5, 0.3);
+    expect(hint).not.toBe("");
+    expect(hint).toContain("home-assistant");
+    expect(hint).toContain("exec");
+    expect(hint).toContain("Prefer exec");
+    expect(hint).toContain("tool-hint");
+  });
+
+  it("respects minUses filter — excludes tools below threshold", () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "general", totalCalls: 20, compositeScore: 0.9 }));
+    store.upsert(makeMetrics({ tool: "browser", context: "general", totalCalls: 2, compositeScore: 0.1 }));
+    // browser has only 2 uses, minUses=5 → should be excluded → only 1 tool → empty
+    const hint = generateToolHint(store, "general", 5, 0.3);
+    expect(hint).toBe("");
+  });
+
+  it("ignores tools from other contexts", () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "coding", totalCalls: 20, compositeScore: 0.9 }));
+    store.upsert(makeMetrics({ tool: "browser", context: "coding", totalCalls: 10, compositeScore: 0.3 }));
+    // Query for "home-assistant" context — should see nothing
+    const hint = generateToolHint(store, "home-assistant", 5, 0.3);
+    expect(hint).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateMonthlyReport
+// ---------------------------------------------------------------------------
+
+describe("generateMonthlyReport", () => {
+  let tmpDir: string;
+  let store: ToolEffectivenessStore;
+  let factsDb: InstanceType<typeof FactsDB>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "monthly-report-test-"));
+    store = makeStore(tmpDir);
+    factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  });
+
+  afterEach(() => {
+    try { store.close(); } catch { /* ignore */ }
+    try { factsDb.close?.(); } catch { /* ignore */ }
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not store fact when no tool data", async () => {
+    await generateMonthlyReport(store, factsDb);
+    const facts = factsDb.getByCategory("pattern");
+    const reports = facts.filter((f) => f.tags?.includes("monthly-report"));
+    expect(reports).toHaveLength(0);
+  });
+
+  it("stores a pattern fact with correct tags when tools are scored", async () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "general", compositeScore: 0.85, totalCalls: 50 }));
+    store.upsert(makeMetrics({ tool: "browser", context: "general", compositeScore: 0.4, totalCalls: 20 }));
+
+    await generateMonthlyReport(store, factsDb);
+
+    const facts = factsDb.getByCategory("pattern");
+    const reports = facts.filter((f) => f.tags?.includes("monthly-report"));
+    expect(reports).toHaveLength(1);
+    expect(reports[0]!.tags).toContain("tool-effectiveness");
+    expect(reports[0]!.tags).toContain("monthly-report");
+    expect(reports[0]!.importance).toBeCloseTo(0.7, 2);
+  });
+
+  it("includes top tools in the stored fact text", async () => {
+    store.upsert(makeMetrics({ tool: "exec", context: "general", compositeScore: 0.9, totalCalls: 30 }));
+    store.upsert(makeMetrics({ tool: "read", context: "general", compositeScore: 0.7, totalCalls: 15 }));
+
+    await generateMonthlyReport(store, factsDb);
+
+    const facts = factsDb.getByCategory("pattern");
+    const report = facts.find((f) => f.tags?.includes("monthly-report"));
+    expect(report).toBeDefined();
+    expect(report!.text).toContain("exec");
   });
 });

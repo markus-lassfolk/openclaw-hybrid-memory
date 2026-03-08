@@ -18,6 +18,7 @@ import type { CrossAgentLearningConfig } from "../config/types/features.js";
 import { chatCompleteWithRetry } from "./chat.js";
 import { loadPrompt as loadPromptSync, fillPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
+import { parseTags, serializeTags } from "../utils/tags.js";
 import type OpenAI from "openai";
 
 // ---------------------------------------------------------------------------
@@ -398,5 +399,188 @@ export function getCrossAgentFacts(factsDb: FactsDB, limit = 100): MemoryEntry[]
     return rows.map((r) => (factsDb as any).rowToEntry(r) as MemoryEntry);
   } catch {
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gap 1: Cross-agent lesson retrieval by agent+context
+// ---------------------------------------------------------------------------
+
+/**
+ * Retrieve cross-agent lessons applicable to a target agent and context.
+ *
+ * Performs a FTS search scoped to cross-agent-learning facts, then filters by:
+ * - applicableAgents includes targetAgent or "*" (stored as tags)
+ * - confidence >= minConfidence
+ *
+ * @param factsDb       Facts database.
+ * @param targetAgent   Agent ID requesting lessons (matched against tags).
+ * @param context       Natural-language context query for relevance ranking.
+ * @param limit         Max results to return (default 5).
+ * @param minConfidence Minimum confidence threshold (default 0.6).
+ * @returns             Relevant MemoryEntry lessons, sorted by relevance.
+ */
+export async function getCrossAgentLessons(
+  factsDb: FactsDB,
+  targetAgent: string,
+  context: string,
+  limit: number = 5,
+  minConfidence: number = 0.6,
+): Promise<MemoryEntry[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  if (!db) return [];
+
+  try {
+    // Pull all candidate cross-agent facts above the confidence threshold.
+    // We load more than `limit` then filter/rank in JS.
+    const rows = db
+      .prepare(
+        `SELECT * FROM facts
+         WHERE source = ?
+           AND scope = 'global'
+           AND category IN ('pattern', 'rule')
+           AND confidence >= ?
+           AND superseded_at IS NULL
+         ORDER BY confidence DESC, importance DESC
+         LIMIT 200`,
+      )
+      .all(CROSS_AGENT_SOURCE, minConfidence) as Array<Record<string, unknown>>;
+
+    if (rows.length === 0) return [];
+
+    // Filter by applicableAgents: tag must include targetAgent or the wildcard "*"
+    const agentLower = targetAgent.toLowerCase();
+    const candidates = rows.filter((row) => {
+      const tags = parseTags(row.tags as string | null);
+      // A fact is applicable if it has the target agent's tag or the global wildcard "*"
+      // It must also carry the cross-agent tag (to distinguish from other global patterns)
+      if (!tags.includes(CROSS_AGENT_TAG)) return false;
+      return tags.includes(agentLower) || tags.includes("*");
+    });
+
+    if (candidates.length === 0) {
+      // Fallback: return facts that have no specific agent restriction (only cross-agent tag)
+      // These are general lessons applicable to all agents
+      const generalRows = rows.filter((row) => {
+        const tags = parseTags(row.tags as string | null);
+        return tags.includes(CROSS_AGENT_TAG);
+      });
+      const generalEntries = generalRows
+        .slice(0, limit)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((r) => (factsDb as any).rowToEntry(r) as MemoryEntry);
+      return generalEntries;
+    }
+
+    // Rank by text similarity to context (simple keyword overlap scoring)
+    const contextWords = new Set(
+      context
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((w) => w.length > 3),
+    );
+
+    const scored = candidates.map((row) => {
+      const text = (row.text as string ?? "").toLowerCase();
+      let overlap = 0;
+      for (const word of contextWords) {
+        if (text.includes(word)) overlap++;
+      }
+      const confidence = row.confidence as number ?? 0;
+      const importance = row.importance as number ?? 0;
+      const score = overlap * 0.5 + confidence * 0.3 + importance * 0.2;
+      return { row, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+
+    return scored
+      .slice(0, limit)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map(({ row }) => (factsDb as any).rowToEntry(row) as MemoryEntry);
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gap 2: Brief injection formatter
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a list of cross-agent lessons into a markdown brief suitable for
+ * injection into an agent's context window.
+ *
+ * @param lessons  Array of MemoryEntry lessons from getCrossAgentLessons.
+ * @returns        Markdown string, or empty string when lessons is empty.
+ */
+export function formatBriefInjection(lessons: MemoryEntry[]): string {
+  if (lessons.length === 0) return "";
+
+  const lines: string[] = ["## Lessons from previous tasks"];
+
+  for (const lesson of lessons) {
+    const tags = lesson.tags ?? [];
+    // sourceAgent is stored as a tag (the agent IDs contributing to this lesson)
+    const agentTags = tags.filter(
+      (t) => t !== CROSS_AGENT_TAG && t !== "*" && !t.startsWith("verified-by:"),
+    );
+    const sourceAgent = agentTags[0] ?? "unknown";
+    const confidence = lesson.confidence?.toFixed(2) ?? "?";
+    lines.push(`- ${lesson.text} (learned by ${sourceAgent}, confidence: ${confidence})`);
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Gap 3: Verification tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * Record that a verifying agent has confirmed a cross-agent lesson.
+ * Adds the agent to a "verified-by:<agent>" tag and boosts confidence (capped at 1.0).
+ *
+ * @param factsDb         Facts database.
+ * @param lessonId        ID of the cross-agent lesson fact.
+ * @param verifyingAgent  Agent ID confirming the lesson.
+ * @param boost           Confidence boost (default 0.1, capped at 1.0 total).
+ */
+export async function verifyLessonForAgent(
+  factsDb: FactsDB,
+  lessonId: string,
+  verifyingAgent: string,
+  boost: number = 0.1,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  if (!db) return;
+
+  try {
+    const row = db
+      .prepare(`SELECT id, confidence, tags FROM facts WHERE id = ? AND superseded_at IS NULL`)
+      .get(lessonId) as { id: string; confidence: number; tags: string | null } | undefined;
+
+    if (!row) return;
+
+    const verifiedByTag = `verified-by:${verifyingAgent.toLowerCase()}`;
+    const existingTags = parseTags(row.tags);
+
+    // Only add tag if not already present
+    const updatedTags = existingTags.includes(verifiedByTag)
+      ? existingTags
+      : [...existingTags, verifiedByTag];
+
+    // Boost confidence, cap at 1.0
+    const newConfidence = Math.min(1.0, (row.confidence ?? 0.6) + boost);
+
+    db.prepare(`UPDATE facts SET confidence = ?, tags = ? WHERE id = ?`).run(
+      newConfidence,
+      serializeTags(updatedTags),
+      lessonId,
+    );
+  } catch {
+    // Non-fatal: fact may have been deleted or superseded
   }
 }

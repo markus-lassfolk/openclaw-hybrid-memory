@@ -18,6 +18,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import type { FactsDB } from "../backends/facts-db.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -25,6 +26,8 @@ import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 
 export interface ToolMetrics {
   tool: string;
+  /** Context label for this score row (default "general"). */
+  context: string;
   totalCalls: number;
   successCalls: number;
   failureCalls: number;
@@ -59,6 +62,8 @@ export interface ToolEffectivenessConfig {
   decayFactor?: number;
   /** Workflow trace DB path (default: same as workflow store). */
   traceDbPath?: string;
+  /** Inject tool-preference hints into agent context (default: true). */
+  injectHints?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,7 +72,8 @@ export interface ToolEffectivenessConfig {
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tool_effectiveness (
-  tool           TEXT PRIMARY KEY,
+  tool           TEXT NOT NULL,
+  context        TEXT NOT NULL DEFAULT 'general',
   total_calls    INTEGER NOT NULL DEFAULT 0,
   success_calls  INTEGER NOT NULL DEFAULT 0,
   failure_calls  INTEGER NOT NULL DEFAULT 0,
@@ -75,7 +81,8 @@ CREATE TABLE IF NOT EXISTS tool_effectiveness (
   avg_duration_ms REAL NOT NULL DEFAULT 0,
   avg_calls_per_session REAL NOT NULL DEFAULT 0,
   composite_score REAL NOT NULL DEFAULT 0,
-  last_updated   INTEGER NOT NULL
+  last_updated   INTEGER NOT NULL,
+  PRIMARY KEY (tool, context)
 );
 `;
 
@@ -98,12 +105,13 @@ export class ToolEffectivenessStore {
 
   /** Upsert a tool score row. */
   upsert(metrics: ToolMetrics): void {
+    const context = metrics.context ?? "general";
     this.db
       .prepare(
         `INSERT INTO tool_effectiveness
-         (tool, total_calls, success_calls, failure_calls, unknown_calls, avg_duration_ms, avg_calls_per_session, composite_score, last_updated)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(tool) DO UPDATE SET
+         (tool, context, total_calls, success_calls, failure_calls, unknown_calls, avg_duration_ms, avg_calls_per_session, composite_score, last_updated)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tool, context) DO UPDATE SET
            total_calls = excluded.total_calls,
            success_calls = excluded.success_calls,
            failure_calls = excluded.failure_calls,
@@ -115,6 +123,7 @@ export class ToolEffectivenessStore {
       )
       .run(
         metrics.tool,
+        context,
         metrics.totalCalls,
         metrics.successCalls,
         metrics.failureCalls,
@@ -124,6 +133,98 @@ export class ToolEffectivenessStore {
         metrics.compositeScore,
         metrics.lastUpdated,
       );
+  }
+
+  /**
+   * Record a single tool outcome (incremental upsert for real-time tracking).
+   *
+   * @param tool      Tool name.
+   * @param outcome   "success" | "failure" | "unknown".
+   * @param context   Context label (default "general").
+   * @param durationMs Duration of the call in milliseconds (default 0).
+   */
+  recordToolOutcome(
+    tool: string,
+    outcome: "success" | "failure" | "unknown",
+    context: string = "general",
+    durationMs: number = 0,
+  ): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare(
+        `INSERT INTO tool_effectiveness
+         (tool, context, total_calls, success_calls, failure_calls, unknown_calls, avg_duration_ms, avg_calls_per_session, composite_score, last_updated)
+         VALUES (?, ?, 1,
+           CASE ? WHEN 'success' THEN 1 ELSE 0 END,
+           CASE ? WHEN 'failure' THEN 1 ELSE 0 END,
+           CASE ? WHEN 'unknown' THEN 1 ELSE 0 END,
+           ?, 1.0, 0.5, ?)
+         ON CONFLICT(tool, context) DO UPDATE SET
+           total_calls    = total_calls + 1,
+           success_calls  = success_calls  + CASE ? WHEN 'success' THEN 1 ELSE 0 END,
+           failure_calls  = failure_calls  + CASE ? WHEN 'failure' THEN 1 ELSE 0 END,
+           unknown_calls  = unknown_calls  + CASE ? WHEN 'unknown' THEN 1 ELSE 0 END,
+           avg_duration_ms = (avg_duration_ms * (total_calls - 1) + ?) / total_calls,
+           composite_score = CAST(success_calls AS REAL) / MAX(total_calls, 1) * 0.5 + 0.5 * 0.3 + 0.2,
+           last_updated   = ?`,
+      )
+      .run(
+        tool, context,
+        outcome, outcome, outcome,
+        durationMs,
+        now,
+        outcome, outcome, outcome,
+        durationMs,
+        now,
+      );
+  }
+
+  /**
+   * Get effectiveness for a specific tool, optionally filtered by context.
+   *
+   * @param tool     Tool name.
+   * @param context  Optional context filter. If omitted, returns all context rows for the tool.
+   * @returns        Array of ToolMetrics (one per context), or empty array if not found.
+   */
+  getToolEffectiveness(tool: string, context?: string): ToolMetrics[] {
+    type Row = {
+      tool: string;
+      context: string;
+      total_calls: number;
+      success_calls: number;
+      failure_calls: number;
+      unknown_calls: number;
+      avg_duration_ms: number;
+      avg_calls_per_session: number;
+      composite_score: number;
+      last_updated: number;
+    };
+
+    let rows: Row[];
+    if (context !== undefined) {
+      rows = this.db
+        .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? AND context = ?`)
+        .all(tool, context) as Row[];
+    } else {
+      rows = this.db
+        .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context`)
+        .all(tool) as Row[];
+    }
+
+    return rows.map((r) => ({
+      tool: r.tool,
+      context: r.context,
+      totalCalls: r.total_calls,
+      successCalls: r.success_calls,
+      failureCalls: r.failure_calls,
+      unknownCalls: r.unknown_calls,
+      successRate: r.total_calls > 0 ? r.success_calls / r.total_calls : 0,
+      avgDurationMs: r.avg_duration_ms,
+      avgCallsPerSession: r.avg_calls_per_session,
+      redundancyScore: Math.min(1, Math.max(0, (r.avg_calls_per_session - 1) / 4)),
+      compositeScore: r.composite_score,
+      lastUpdated: r.last_updated,
+    }));
   }
 
   /** Apply decay to all scores. */
@@ -141,6 +242,7 @@ export class ToolEffectivenessStore {
       )
       .all() as Array<{
       tool: string;
+      context: string;
       total_calls: number;
       success_calls: number;
       failure_calls: number;
@@ -153,6 +255,7 @@ export class ToolEffectivenessStore {
 
     return rows.map((r) => ({
       tool: r.tool,
+      context: r.context ?? "general",
       totalCalls: r.total_calls,
       successCalls: r.success_calls,
       failureCalls: r.failure_calls,
@@ -166,12 +269,13 @@ export class ToolEffectivenessStore {
     }));
   }
 
-  /** Get score for a specific tool. */
+  /** Get score for a specific tool (first context row, or "general"). */
   getByTool(tool: string): ToolMetrics | null {
     const row = this.db
-      .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ?`)
+      .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1`)
       .get(tool) as {
       tool: string;
+      context: string;
       total_calls: number;
       success_calls: number;
       failure_calls: number;
@@ -185,6 +289,7 @@ export class ToolEffectivenessStore {
     if (!row) return null;
     return {
       tool: row.tool,
+      context: row.context ?? "general",
       totalCalls: row.total_calls,
       successCalls: row.success_calls,
       failureCalls: row.failure_calls,
@@ -314,6 +419,7 @@ export function aggregateTraceRows(
 
     results.push({
       tool,
+      context: "general",
       totalCalls: s.total,
       successCalls: s.success,
       failureCalls: s.failure,
@@ -526,4 +632,118 @@ export function formatToolEffectivenessReport(report: ToolEffectivenessReport): 
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Gap 5: Tool preference hints
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a tool-preference hint string for the given context.
+ *
+ * Only includes tools that have >= minUses calls in the given context and where
+ * the score difference between the best and worst tool exceeds hintThreshold.
+ *
+ * @param store          ToolEffectivenessStore with scored data.
+ * @param context        Context label to filter scores by.
+ * @param minUses        Minimum total calls required (default 5).
+ * @param hintThreshold  Minimum score spread required to emit a hint (default 0.3).
+ * @returns              Hint string, or empty string if no meaningful data.
+ */
+export function generateToolHint(
+  store: ToolEffectivenessStore,
+  context: string,
+  minUses: number = 5,
+  hintThreshold: number = 0.3,
+): string {
+  // Get all rows for this context
+  const all = store.getAll().filter(
+    (m) => m.context === context && m.totalCalls >= minUses,
+  );
+
+  if (all.length < 2) return "";
+
+  // Sort by compositeScore DESC
+  const sorted = [...all].sort((a, b) => b.compositeScore - a.compositeScore);
+  const best = sorted[0]!;
+  const worst = sorted[sorted.length - 1]!;
+
+  if (best.compositeScore - worst.compositeScore < hintThreshold) return "";
+
+  // Build the hint
+  const toolList = sorted
+    .map((m) => `${m.tool} scores ${m.compositeScore.toFixed(1)} (${m.totalCalls} uses)`)
+    .join(", ");
+
+  return `[tool-hint: For "${context}" tasks, ${toolList}. Prefer ${best.tool}.]`;
+}
+
+// ---------------------------------------------------------------------------
+// Gap 6: Monthly PATTERN_FACT report
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a monthly tool effectiveness summary and store it as a pattern fact.
+ *
+ * @param store    ToolEffectivenessStore with scored data.
+ * @param factsDb  Facts database to store the pattern fact.
+ */
+export async function generateMonthlyReport(
+  store: ToolEffectivenessStore,
+  factsDb: FactsDB,
+): Promise<void> {
+  try {
+    const allScores = store.getAll();
+
+    if (allScores.length === 0) {
+      return;
+    }
+
+    const top5 = allScores
+      .slice(0, 5)
+      .map((m) => `${m.tool}(${m.compositeScore.toFixed(2)})`)
+      .join(", ");
+
+    const lowScorers = allScores
+      .filter((m) => m.compositeScore < 0.3 && m.totalCalls >= 5)
+      .slice(0, 3)
+      .map((m) => `${m.tool}(${m.compositeScore.toFixed(2)})`)
+      .join(", ");
+
+    const totalTools = allScores.length;
+    const avgScore =
+      allScores.reduce((sum, m) => sum + m.compositeScore, 0) / totalTools;
+
+    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+    const summaryLines = [
+      `Monthly tool effectiveness report (${month}):`,
+      `${totalTools} tools scored, avg composite score: ${avgScore.toFixed(3)}.`,
+      `Top tools: ${top5}.`,
+    ];
+    if (lowScorers) {
+      summaryLines.push(`Low-scoring tools (score < 0.3): ${lowScorers}.`);
+    }
+
+    const summary = summaryLines.join(" ");
+
+    factsDb.store({
+      text: summary,
+      category: "pattern",
+      entity: null,
+      key: `tool-effectiveness-monthly-${month}`,
+      value: null,
+      importance: 0.7,
+      confidence: 0.9,
+      scope: "global",
+      source: "tool-effectiveness",
+      tags: ["tool-effectiveness", "monthly-report"],
+      summary: `Tool effectiveness summary for ${month}`,
+    });
+  } catch (err) {
+    capturePluginError(
+      err instanceof Error ? err : new Error(String(err)),
+      { operation: "tool-effectiveness-monthly-report" },
+    );
+  }
 }
