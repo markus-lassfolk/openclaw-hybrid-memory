@@ -44,6 +44,7 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { detectFutureDate } from "../utils/date-detector.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -776,6 +777,12 @@ export function registerMemoryTools(
               "Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
           }),
         ),
+        decayFreezeUntil: Type.Optional(
+          Type.Number({
+            description:
+              "Epoch seconds: halt decay until this date (for deadlines/reminders). Auto-detected from text when futureDateProtection is enabled; use this to override.",
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
@@ -791,6 +798,7 @@ export function registerMemoryTools(
             supersedes,
             scope: paramScope,
             scopeTarget: paramScopeTarget,
+            decayFreezeUntil: paramDecayFreezeUntil,
           } = params as {
             text: string;
             importance?: number;
@@ -803,6 +811,7 @@ export function registerMemoryTools(
             supersedes?: string;
             scope?: "global" | "user" | "agent" | "session";
             scopeTarget?: string;
+            decayFreezeUntil?: number;
           };
 
           let textToStore = text;
@@ -1100,6 +1109,11 @@ export function registerMemoryTools(
             scopeTarget = null;
           }
         }
+        const decayFreezeUntil =
+          paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
+            ? paramDecayFreezeUntil
+            : detectFutureDate(textToStore, cfg.futureDateProtection);
+
         const nowSec = Math.floor(Date.now() / 1000);
         const storeSessionId = api.context?.sessionId ?? null;
         const entry = factsDb.store({
@@ -1116,6 +1130,7 @@ export function registerMemoryTools(
           scope,
           scopeTarget,
           sourceSessions: storeSessionId ?? undefined,
+          decayFreezeUntil: decayFreezeUntil ?? undefined,
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
@@ -1260,6 +1275,7 @@ export function registerMemoryTools(
             ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
             ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
             ...(contradictions.length > 0 ? { contradictions: contradictions.map((c) => ({ contradictionId: c.contradictionId, oldFactId: c.oldFactId })) } : {}),
+            ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
           },
         };
         } catch (err) {
