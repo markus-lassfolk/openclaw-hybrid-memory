@@ -9,6 +9,7 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { resolveReflectionModelAndFallbacks } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import type { ProvenanceService } from "../services/provenance.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
 import { analyzeKnowledgeGaps } from "../services/knowledge-gaps.js";
@@ -21,6 +22,7 @@ export interface PluginContext {
   cfg: HybridMemoryConfig;
   wal: WriteAheadLog | null;
   resolvedSqlitePath: string;
+  provenanceService?: ProvenanceService | null;
 }
 
 // Helper function types (exported for register-tools ToolsContext)
@@ -31,7 +33,8 @@ export type RunReflectionFn = (
   openai: OpenAI,
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
   opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[] },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void }
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  provenanceService?: ProvenanceService | null
 ) => Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }>;
 
 export type RunReflectionRulesFn = (
@@ -40,7 +43,8 @@ export type RunReflectionRulesFn = (
   embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void }
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  provenanceService?: ProvenanceService | null
 ) => Promise<{ rulesExtracted: number; rulesStored: number }>;
 
 export type RunReflectionMetaFn = (
@@ -49,7 +53,8 @@ export type RunReflectionMetaFn = (
   embeddings: EmbeddingProvider,
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void }
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  provenanceService?: ProvenanceService | null
 ) => Promise<{ metaExtracted: number; metaStored: number }>;
 
 export function registerUtilityTools(
@@ -61,7 +66,7 @@ export function registerUtilityTools(
   walWrite: (operation: "store" | "update", data: Record<string, unknown>) => string,
   walRemove: (id: string) => void,
 ): void {
-  const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, provenanceService } = ctx;
 
   // memory_checkpoint
   api.registerTool(
@@ -238,6 +243,7 @@ export function registerUtilityTools(
             { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
             { window, dryRun: false, model: defaultModel, fallbackModels },
             api.logger,
+            provenanceService,
           );
           return {
             content: [
@@ -290,6 +296,7 @@ export function registerUtilityTools(
             openai,
             { dryRun: false, model: defaultModel, fallbackModels },
             api.logger,
+            provenanceService,
           );
           return {
             content: [
@@ -337,6 +344,7 @@ export function registerUtilityTools(
             openai,
             { dryRun: false, model: defaultModel, fallbackModels },
             api.logger,
+            provenanceService,
           );
           return {
             content: [

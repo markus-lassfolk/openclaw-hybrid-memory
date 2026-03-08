@@ -370,6 +370,7 @@ const memoryHybridPlugin = {
       credentialsDb,
       proposalsDb,
       eventLog,
+      provenanceService,
       issueStore,
       workflowStore,
       crystallizationStore,
@@ -469,6 +470,7 @@ const memoryHybridPlugin = {
         api,
         timers,
         pythonBridge,
+        provenanceService,
       })
     );
     } catch (err) {

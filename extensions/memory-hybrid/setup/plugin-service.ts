@@ -9,6 +9,7 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getDefaultCronModel, getCronModelConfig } from "../config.js";
+import type { ProvenanceService } from "../services/provenance.js";
 import type OpenAI from "openai";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import {
@@ -40,6 +41,7 @@ export interface PluginServiceContext {
   resolvedSqlitePath: string;
   api: ClawdbotPluginApi;
   pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
+  provenanceService?: ProvenanceService | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -78,6 +80,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     resolvedSqlitePath,
     api,
     timers,
+    provenanceService,
   } = ctx;
 
   let observerRunning = false;
@@ -349,7 +352,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               openai,
               cfg.passiveObserver,
               cfg.categories,
-              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement, eventLog: eventLog ?? null },
+              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement, provenanceService },
               api.logger,
             );
             if (result.factsStored > 0 || result.factsExtracted > 0 || result.factsReinforced > 0) {

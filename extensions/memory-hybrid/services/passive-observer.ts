@@ -20,6 +20,7 @@ import type { VectorDB } from '../backends/vector-db.js'
 import type { EventLog } from '../backends/event-log.js'
 import { categoryToEventType } from '../backends/event-log.js'
 import type { EmbeddingProvider } from './embeddings.js'
+import type { ProvenanceService } from './provenance.js'
 import type OpenAI from 'openai'
 import type { MemoryCategory, ReinforcementConfig } from '../config.js'
 import { chunkTextByChars } from '../utils/text.js'
@@ -250,8 +251,8 @@ export async function runPassiveObserver(
     proceduresSessionsDir?: string
     /** Confidence reinforcement config (Issue #147). When set and enabled, similar facts get confidence boost instead of silent skip. */
     reinforcement?: ReinforcementConfig
-    /** Episodic event log (Issue #150). When set, write events for each fact stored. */
-    eventLog?: EventLog | null
+    /** Provenance tracking (Issue #163). */
+    provenanceService?: ProvenanceService | null
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -575,7 +576,26 @@ export async function runPassiveObserver(
           scope: 'session',
           scopeTarget: sessionId,
           tags: ['passive-observer'],
+          provenanceSession: sessionId,
+          extractionMethod: 'passive',
+          extractionConfidence: fact.importance,
         })
+        if (opts.provenanceService) {
+          try {
+            opts.provenanceService.addEdge(stored.id, {
+              edgeType: "DERIVED_FROM",
+              sourceType: "event_log",
+              sourceId: sessionId,
+              sourceText: fact.text,
+            })
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: 'passive-observer-provenance',
+              subsystem: 'provenance',
+              factId: stored.id,
+            })
+          }
+        }
 
         // Write episodic event (Issue #150): record what was learned to Layer 1
         if (opts.eventLog) {

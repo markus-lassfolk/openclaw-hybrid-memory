@@ -23,6 +23,7 @@ import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
+import type { ProvenanceService } from "../services/provenance.js";
 import {
   isCredentialLike,
   tryParseCredentialForVault,
@@ -61,7 +62,7 @@ export interface PluginContext {
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   eventLog: EventLog | null;
-  verificationStore?: VerificationStore | null;
+  provenanceService?: ProvenanceService | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
@@ -178,7 +179,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, provenanceService, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
 
   api.registerTool(
     {
@@ -903,7 +904,25 @@ export function registerMemoryTools(
           };
 
           let textToStore = text;
-        textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+          textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+          const provenanceSessionId = api.context?.sessionId ?? null;
+          const recordActiveStoreProvenance = (factId: string, sourceText?: string) => {
+            if (!provenanceService || !cfg.provenance.enabled) return;
+            try {
+              provenanceService.addEdge(factId, {
+                edgeType: "DERIVED_FROM",
+                sourceType: "active_store",
+                sourceId: provenanceSessionId ?? "unknown-session",
+                sourceText,
+              });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "provenance",
+                operation: "memory-store-provenance",
+                factId,
+              });
+            }
+          };
 
         if (factsDb.hasDuplicate(textToStore)) {
           return {
@@ -993,15 +1012,11 @@ export function registerMemoryTools(
               source: "conversation",
               decayClass: paramDecayClass ?? "permanent",
               tags: ["auth", ...extractTags(pointerText, "Credentials")],
+              provenanceSession: provenanceSessionId,
+              extractionMethod: "active",
+              extractionConfidence: importance,
             });
-            maybeAutoVerify(
-              pointerEntry.id,
-              pointerText,
-              pointerEntry.tags ?? ["auth"],
-              pointerEntry.entity,
-              pointerEntry.key,
-              pointerEntry.value,
-            );
+            recordActiveStoreProvenance(pointerEntry.id, pointerText);
             try {
               addOperationBreadcrumb("vector", "store-credential-pointer");
               const vector = await embeddings.embed(pointerText);
@@ -1130,7 +1145,11 @@ export function registerMemoryTools(
                   scope,
                   scopeTarget,
                   sourceSessions: api.context?.sessionId ?? undefined,
+                  provenanceSession: provenanceSessionId,
+                  extractionMethod: "active",
+                  extractionConfidence: Math.max(importance, oldFact.importance),
                 });
+                recordActiveStoreProvenance(newEntry.id, textToStore);
                 factsDb.supersede(classification.targetId, newEntry.id);
                 aliasDb?.deleteByFactId(classification.targetId);
                 maybeAutoVerify(
@@ -1278,19 +1297,14 @@ export function registerMemoryTools(
           scope,
           scopeTarget,
           sourceSessions: storeSessionId ?? undefined,
-          decayFreezeUntil: decayFreezeUntil ?? undefined,
+          provenanceSession: provenanceSessionId,
+          extractionMethod: "active",
+          extractionConfidence: importance,
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
         });
-        maybeAutoVerify(
-          entry.id,
-          textToStore,
-          entry.tags ?? tags,
-          entry.entity,
-          entry.key,
-          entry.value,
-        );
+        recordActiveStoreProvenance(entry.id, textToStore);
         if (supersedes?.trim()) {
           factsDb.supersede(supersedes.trim(), entry.id);
           aliasDb?.deleteByFactId(supersedes.trim());
