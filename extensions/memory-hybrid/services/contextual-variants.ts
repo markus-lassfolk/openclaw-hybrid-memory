@@ -37,7 +37,7 @@ const CONTEXTUAL_SEARCH_PROMPT_TEMPLATE = `Given this memory fact:
 "{text}"
 Category: {category}
 
-List 3-5 different ways someone might search for this information. Each should be a short query or phrase.
+List {count} different ways someone might search for this information. Each should be a short query or phrase.
 
 Return ONLY a JSON array of strings, no other text. Example: ["search phrase one", "search phrase two"]`;
 
@@ -116,7 +116,7 @@ export class ContextualVariantGenerator {
 
       const maxVariants =
         variantType === "contextual-search"
-          ? 5
+          ? Math.max(3, Math.min(5, this.config.maxVariantsPerFact))
           : this.config.maxVariantsPerFact;
       return parseVariantsFromResponse(response, maxVariants);
     } catch (err) {
