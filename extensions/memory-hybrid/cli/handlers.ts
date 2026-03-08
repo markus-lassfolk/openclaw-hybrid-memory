@@ -64,7 +64,7 @@ import { runDirectiveExtract, type DirectiveExtractResult } from "../services/di
 import { runReinforcementExtract, type ReinforcementExtractResult } from "../services/reinforcement-extract.js";
 import type { ReinforcementContext } from "../backends/facts-db.js";
 import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
-import { buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
+import { buildTrajectories, serializeTrajectory, analyzeTrajectoriesWithLLM } from "../services/trajectory-tracker.js";
 import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
@@ -4179,6 +4179,30 @@ export async function runExtractImplicitFeedbackForCli(
         `);
         for (const traj of trajectories) {
           try {
+            // If LLM analysis is enabled, use it to enhance lessons
+            if (implicitCfg.trajectoryLLMAnalysis) {
+              try {
+                const prompt = loadPrompt("trajectory-analyze");
+                const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatCompleteWithRetry);
+                if (llmAnalysis) {
+                  // Replace heuristic lessons with LLM-produced lesson and patterns
+                  traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
+                  if (llmAnalysis.pivotTurn !== null) {
+                    traj.keyPivot = llmAnalysis.pivotTurn;
+                  }
+                  if (llmAnalysis.outcome) {
+                    traj.outcome = llmAnalysis.outcome;
+                  }
+                }
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
+                  severity: "info",
+                  subsystem: "implicit-feedback",
+                });
+              }
+            }
+
             const row = serializeTrajectory(traj);
             insertTraj.run(
               row.id, row.session_file, row.turns_json, row.outcome,
@@ -4232,8 +4256,10 @@ export async function runExtractImplicitFeedbackForCli(
       const clCfg = cfg.closedLoop ?? { enabled: true };
       if (clCfg.enabled !== false) {
         const report = runClosedLoopAnalysis(factsDb, clCfg);
-        if (opts.verbose && report.rulesAnalyzed > 0) {
-          closedLoopReport = getEffectivenessReport(factsDb);
+        if (report.rulesAnalyzed > 0) {
+          if (opts.verbose) {
+            closedLoopReport = getEffectivenessReport(factsDb);
+          }
           logger?.info?.(`Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`);
         }
       }

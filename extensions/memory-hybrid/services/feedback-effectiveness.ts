@@ -130,7 +130,7 @@ export function measureRuleEffectiveness(
     const topic = topicTags.find((t) => !["reinforcement", "behavioral", "trajectory", "feedback"].includes(t));
 
     const before = countFeedbackInWindow(factsDb, windowStart, ruleCreatedAt, topic);
-    const after = countFeedbackInWindow(factsDb, ruleCreatedAt, windowEnd, topic);
+    const after = countFeedbackInWindow(factsDb, ruleCreatedAt + 1, windowEnd, topic);
 
     const beforeTotal = before.corrections + before.praise + before.implicitPositive + before.implicitNegative;
     const afterTotal = after.corrections + after.praise + after.implicitPositive + after.implicitNegative;
