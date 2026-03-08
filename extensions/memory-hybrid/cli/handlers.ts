@@ -1677,7 +1677,7 @@ export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean; workspace?: string },
 ): Promise<ReinforcementExtractResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb, logger } = ctx;
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
   const filePaths = getSessionFilePathsSince(sessionDir, days);
@@ -1739,7 +1739,29 @@ export async function runExtractReinforcementForCli(
       try {
         if (a.remediationType === "POSITIVE_RULE") {
           const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
-          if (line.trim() && existsSync(toolsPath)) {
+          if (!line.trim()) continue;
+
+          // Exact text dedup: skip if the rule already appears in TOOLS.md
+          if (existsSync(toolsPath)) {
+            const currentTools = readFileSync(toolsPath, "utf-8");
+            if (currentTools.includes(line.trim())) continue;
+          }
+
+          // Semantic dedup: skip if a similar rule exists in the vector store (#260)
+          if (semanticDedup) {
+            try {
+              const ruleVec = await embeddings.embed(line.trim());
+              if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
+                logger?.info?.(`memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`);
+                continue;
+              }
+            } catch (err) {
+              capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-dedup" });
+              // Fail open: still insert the rule if dedup check fails
+            }
+          }
+
+          if (existsSync(toolsPath)) {
             insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
           }
         } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
@@ -1816,9 +1838,13 @@ export async function runExtractReinforcementForCli(
           sessionFile: incident.sessionFile,
         };
 
-        // Reinforce recalled memories with rich context
+        // Reinforce recalled memories with rich context, boosted by diversity score (#259)
+        const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
+        const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
         for (const memId of incident.recalledMemoryIds) {
-          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact });
+          const diversityScore = factsDb.calculateDiversityScore(memId);
+          const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact, boostAmount: effectiveBoost });
         }
 
         // Reinforce procedures based on tool call sequence

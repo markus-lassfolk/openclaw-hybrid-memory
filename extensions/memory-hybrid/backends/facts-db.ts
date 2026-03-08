@@ -2350,10 +2350,11 @@ export class FactsDB {
    * Wraps read-modify-write in a transaction to prevent race conditions.
    * Returns true if fact was updated.
    */
-  reinforceFact(id: string, quoteSnippet: string, context?: ReinforcementContext, opts?: { trackContext?: boolean; maxEventsPerFact?: number }): boolean {
+  reinforceFact(id: string, quoteSnippet: string, context?: ReinforcementContext, opts?: { trackContext?: boolean; maxEventsPerFact?: number; boostAmount?: number }): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
     const trackContext = opts?.trackContext !== false;
     const maxEventsPerFact = opts?.maxEventsPerFact ?? 50;
+    const boostAmount = Math.max(0, opts?.boostAmount ?? 1);
 
     const tx = this.liveDb.transaction(() => {
       const row = this.liveDb
@@ -2365,9 +2366,9 @@ export class FactsDB {
 
       this.liveDb
         .prepare(
-          `UPDATE facts SET reinforced_count = reinforced_count + 1, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
+          `UPDATE facts SET reinforced_count = reinforced_count + ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
         )
-        .run(nowSec, quotesJson, id);
+        .run(boostAmount, nowSec, quotesJson, id);
 
       // Insert rich context event into reinforcement_log (#259)
       if (trackContext) {

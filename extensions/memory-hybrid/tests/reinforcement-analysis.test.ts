@@ -314,6 +314,180 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
 // Semantic dedup: skip duplicate PATTERN_FACT
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Semantic dedup: skip duplicate POSITIVE_RULE
+// ---------------------------------------------------------------------------
+
+describe("Semantic dedup prevents duplicate positive rules (#260)", () => {
+  it("skips POSITIVE_RULE when vectorDb.hasDuplicate returns true", async () => {
+    const toolsPath = join(tmpDir, "TOOLS.md");
+    writeFileSync(toolsPath, "# TOOLS\n\n", "utf-8");
+
+    const llmResponse = JSON.stringify([
+      {
+        category: "workflow",
+        severity: "strong",
+        remediationType: "POSITIVE_RULE",
+        remediationContent: "Always proactively fix lint errors without being asked.",
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I fixed the lint errors proactively." }] } }),
+        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Great! Love this approach." }] } }),
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const ctx = makeCtx(openai, {
+      cfg: {
+        procedures: { sessionsDir: tmpDir },
+        distill: {},
+        reinforcement: { enabled: true, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85, trackContext: true, maxEventsPerFact: 50 },
+        selfCorrection: {
+          semanticDedup: true,
+          semanticDedupThreshold: 0.92,
+          toolsSection: "Self-correction rules",
+          applyToolsByDefault: true,
+          autoRewriteTools: false,
+          analyzeViaSpawn: false,
+          spawnThreshold: 15,
+          spawnModel: "",
+          positiveRulesSection: "Positive Reinforcement Rules",
+          reinforcementLLMAnalysis: true,
+          reinforcementToProposals: true,
+          agentsRuleToProposals: true,
+        },
+        llm: { default: ["test-model"], heavy: ["test-model"] },
+        store: { classifyBeforeWrite: false },
+        autoRecall: { enabled: false },
+      } as any,
+      vectorDb: {
+        hasDuplicate: vi.fn().mockResolvedValue(true), // always a duplicate
+        store: vi.fn().mockResolvedValue(undefined),
+      } as any,
+    });
+
+    await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    // Rule should NOT have been inserted because vectorDb.hasDuplicate returned true
+    const toolsContent = readFileSync(toolsPath, "utf-8");
+    expect(toolsContent).not.toContain("lint errors");
+  });
+
+  it("skips POSITIVE_RULE when exact text already in TOOLS.md", async () => {
+    const rule = "Always proactively fix lint errors without being asked.";
+    const toolsPath = join(tmpDir, "TOOLS.md");
+    writeFileSync(toolsPath, `# TOOLS\n\n## Positive Reinforcement Rules\n\n- ${rule}\n`, "utf-8");
+
+    const llmResponse = JSON.stringify([
+      {
+        category: "workflow",
+        severity: "strong",
+        remediationType: "POSITIVE_RULE",
+        remediationContent: rule,
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I fixed the lint errors proactively." }] } }),
+        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Great! Love this approach." }] } }),
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const ctx = makeCtx(openai, {
+      vectorDb: {
+        hasDuplicate: vi.fn().mockResolvedValue(false),
+        store: vi.fn().mockResolvedValue(undefined),
+      } as any,
+    });
+
+    await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    // Rule text appears only once (the original), not duplicated
+    const toolsContent = readFileSync(toolsPath, "utf-8");
+    const occurrences = (toolsContent.match(/lint errors/g) ?? []).length;
+    expect(occurrences).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diversity score affects boost amount
+// ---------------------------------------------------------------------------
+
+describe("Diversity score affects boost amount (#259)", () => {
+  it("reinforceFact uses higher boost for diverse reinforcement history", () => {
+    // Seed the fact with diverse prior events so diversity score is 1.0
+    const fact = factsDb.store({
+      text: "Proactive fixes are praised",
+      category: "pattern",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    // Add two events with distinct queries → diversity = 2/2 = 1.0
+    factsDb.reinforceFact(fact.id, "praise A", { querySnippet: "query alpha" }, { boostAmount: 1 });
+    factsDb.reinforceFact(fact.id, "praise B", { querySnippet: "query beta" }, { boostAmount: 1 });
+
+    const score = factsDb.calculateDiversityScore(fact.id);
+    expect(score).toBeCloseTo(1.0, 2);
+
+    // With diversityWeight=1.0, baseBoost=2: effectiveBoost = 2 * (0 + 1 * 1.0) = 2
+    const diversityWeight = 1.0;
+    const baseBoost = 2;
+    const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * score);
+    expect(effectiveBoost).toBeCloseTo(2.0, 2);
+
+    // Apply the computed effective boost
+    factsDb.reinforceFact(fact.id, "diverse boost", { querySnippet: "new query" }, { boostAmount: effectiveBoost });
+
+    const all = factsDb.getAll({});
+    const updated = all.find((f) => f.id === fact.id);
+    // 2 initial boosts of 1 + effective boost ≈ 2 = total 4
+    expect(updated?.reinforcedCount).toBeCloseTo(4, 1);
+  });
+
+  it("reinforceFact uses lower boost for repeated same-query reinforcements", () => {
+    const fact = factsDb.store({
+      text: "Repeated same context",
+      category: "pattern",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    // Add 4 events all from same query → diversity = 1/4 = 0.25
+    for (let i = 0; i < 4; i++) {
+      factsDb.reinforceFact(fact.id, "same praise", { querySnippet: "same query" }, { boostAmount: 1 });
+    }
+
+    const score = factsDb.calculateDiversityScore(fact.id);
+    expect(score).toBeCloseTo(0.25, 2);
+
+    // With diversityWeight=1.0, baseBoost=1: effectiveBoost = 1 * (0 + 1 * 0.25) = 0.25
+    const diversityWeight = 1.0;
+    const baseBoost = 1;
+    const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * score);
+    expect(effectiveBoost).toBeLessThan(0.5);
+  });
+});
+
 describe("Semantic dedup prevents duplicate pattern facts (#260)", () => {
   it("skips PATTERN_FACT when vectorDb.hasDuplicate returns true", async () => {
     const llmResponse = JSON.stringify([

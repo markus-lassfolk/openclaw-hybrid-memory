@@ -182,11 +182,43 @@ describe("trackContext: false skips reinforcement_log entries (#259)", () => {
     const fact = storeFact();
     db.reinforceFact(fact.id, "praise", { querySnippet: "some query" }, { trackContext: false });
 
-    // The fact itself should still be reinforced (reinforced_count incremented)
     const all = db.getAll({});
     const updated = all.find((f) => f.id === fact.id);
-    // reinforced_count column exists after migration — can verify via re-store check
-    // Just check no events in log
+    expect(updated?.reinforcedCount).toBeGreaterThan(0);
     expect(db.getReinforcementEvents(fact.id).length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// boostAmount override (#259)
+// ---------------------------------------------------------------------------
+
+describe("reinforceFact boostAmount override (#259)", () => {
+  it("applies boostAmount to reinforced_count when provided", () => {
+    const fact = storeFact("TypeScript is preferred");
+    db.reinforceFact(fact.id, "great!", undefined, { boostAmount: 2 });
+
+    const all = db.getAll({});
+    const updated = all.find((f) => f.id === fact.id);
+    expect(updated?.reinforcedCount).toBe(2);
+  });
+
+  it("defaults to increment of 1 when boostAmount is not provided", () => {
+    const fact = storeFact("Default boost test");
+    db.reinforceFact(fact.id, "nice!");
+
+    const all = db.getAll({});
+    const updated = all.find((f) => f.id === fact.id);
+    expect(updated?.reinforcedCount).toBe(1);
+  });
+
+  it("accumulates boostAmount across multiple calls", () => {
+    const fact = storeFact("Multi-boost test");
+    db.reinforceFact(fact.id, "call 1", undefined, { boostAmount: 3 });
+    db.reinforceFact(fact.id, "call 2", undefined, { boostAmount: 2 });
+
+    const all = db.getAll({});
+    const updated = all.find((f) => f.id === fact.id);
+    expect(updated?.reinforcedCount).toBe(5);
   });
 });
