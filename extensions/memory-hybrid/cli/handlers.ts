@@ -1694,6 +1694,7 @@ export async function runExtractReinforcementForCli(
 
   const scCfg = cfg.selfCorrection;
   const runLLMAnalysis = scCfg?.reinforcementLLMAnalysis !== false && result.incidents.length > 0 && !opts.dryRun;
+  let analysisCategory: string | undefined;
 
   // LLM analysis step — mirrors self-correction pipeline (#260)
   if (runLLMAnalysis) {
@@ -1723,6 +1724,7 @@ export async function runExtractReinforcementForCli(
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         analysed = JSON.parse(jsonMatch[0]) as ReinforcementRemediation[];
+        analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:llm-analysis" });
@@ -1834,6 +1836,7 @@ export async function runExtractReinforcementForCli(
       try {
         const context: ReinforcementContext = {
           querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
+          topic: analysisCategory,
           toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
           sessionFile: incident.sessionFile,
         };

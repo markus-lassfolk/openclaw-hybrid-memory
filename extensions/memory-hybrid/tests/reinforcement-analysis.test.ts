@@ -218,6 +218,110 @@ describe("PATTERN_FACT stores with correct category and tags (#260)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// MEMORY_STORE → facts DB (technical category, semantic dedup)
+// ---------------------------------------------------------------------------
+
+describe("MEMORY_STORE stores fact with semantic dedup (#260)", () => {
+  it("stores fact with technical category when no duplicate exists", async () => {
+    const llmResponse = JSON.stringify([
+      {
+        category: "technical",
+        severity: "strong",
+        remediationType: "MEMORY_STORE",
+        remediationContent: {
+          text: "User prefers async/await over promise chains in TypeScript",
+          entity: null,
+          key: "ts-style",
+          tags: ["typescript", "style"],
+        },
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I rewrote the function using async/await for clarity." }] } }),
+        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Perfect, always prefer async/await in this codebase." }] } }),
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const ctx = makeCtx(openai);
+    await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    const allFacts = factsDb.getAll({});
+    const stored = allFacts.find((f) => f.category === "technical" && f.text.includes("async/await"));
+    expect(stored).toBeDefined();
+    expect(stored!.source).toBe("reinforcement-analysis");
+  });
+
+  it("skips MEMORY_STORE when vectorDb.hasDuplicate returns true", async () => {
+    const llmResponse = JSON.stringify([
+      {
+        category: "technical",
+        severity: "strong",
+        remediationType: "MEMORY_STORE",
+        remediationContent: {
+          text: "User prefers async/await over promise chains",
+          tags: [],
+        },
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Using async/await here." }] } }),
+        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Good, keep using async/await." }] } }),
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const ctx = makeCtx(openai, {
+      cfg: {
+        procedures: { sessionsDir: tmpDir },
+        distill: {},
+        reinforcement: { enabled: true, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85, trackContext: true, maxEventsPerFact: 50 },
+        selfCorrection: {
+          semanticDedup: true,
+          semanticDedupThreshold: 0.92,
+          toolsSection: "Self-correction rules",
+          applyToolsByDefault: true,
+          autoRewriteTools: false,
+          analyzeViaSpawn: false,
+          spawnThreshold: 15,
+          spawnModel: "",
+          positiveRulesSection: "Positive Reinforcement Rules",
+          reinforcementLLMAnalysis: true,
+          reinforcementToProposals: true,
+          agentsRuleToProposals: true,
+        },
+        llm: { default: ["test-model"], heavy: ["test-model"] },
+        store: { classifyBeforeWrite: false },
+        autoRecall: { enabled: false },
+      } as any,
+      vectorDb: {
+        hasDuplicate: vi.fn().mockResolvedValue(true), // always a duplicate
+        store: vi.fn().mockResolvedValue(undefined),
+      } as any,
+    });
+
+    await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    // No facts should be stored — semantic dedup blocked it
+    const allFacts = factsDb.getAll({});
+    const stored = allFacts.find((f) => f.category === "technical" && f.source === "reinforcement-analysis");
+    expect(stored).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // PROPOSAL → proposals DB
 // ---------------------------------------------------------------------------
 

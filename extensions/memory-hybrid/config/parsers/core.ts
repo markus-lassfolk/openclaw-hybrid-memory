@@ -251,6 +251,13 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
         ? Math.floor(scRaw.spawnThreshold)
         : 15,
     spawnModel: typeof scRaw.spawnModel === "string" ? scRaw.spawnModel : "",
+    positiveRulesSection:
+      typeof scRaw.positiveRulesSection === "string" && scRaw.positiveRulesSection.trim().length > 0
+        ? scRaw.positiveRulesSection.trim()
+        : "Positive Reinforcement Rules",
+    reinforcementLLMAnalysis: scRaw.reinforcementLLMAnalysis !== false,
+    reinforcementToProposals: scRaw.reinforcementToProposals !== false,
+    agentsRuleToProposals: scRaw.agentsRuleToProposals !== false,
   };
 }
 
