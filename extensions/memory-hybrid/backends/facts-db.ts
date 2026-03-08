@@ -226,6 +226,15 @@ export class FactsDB {
 
     // ---- Change reinforced_count to REAL for fractional boosts (#259, #260) ----
     this.migrateReinforcedCountToReal();
+
+    // ---- Implicit signals table (#262) ----
+    this.migrateImplicitSignalsTable();
+
+    // ---- Feedback trajectories table (#262) ----
+    this.migrateFeedbackTrajectoriesTable();
+
+    // ---- Feedback effectiveness table (#262) ----
+    this.migrateFeedbackEffectivenessTable();
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -280,6 +289,73 @@ export class FactsDB {
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
+  /** Create implicit_signals table for behavioral feedback signals (#262). */
+  private migrateImplicitSignalsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS implicit_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_file TEXT,
+        signal_type TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        polarity TEXT NOT NULL,
+        user_message TEXT,
+        agent_message TEXT,
+        preceding_turns INTEGER,
+        source TEXT DEFAULT 'implicit',
+        created_at INTEGER DEFAULT (unixepoch())
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_created ON implicit_signals(created_at)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_polarity ON implicit_signals(polarity)`);
+  }
+
+  /** Create feedback_trajectories table for multi-turn task sequence learning (#262). */
+  private migrateFeedbackTrajectoriesTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS feedback_trajectories (
+        id TEXT PRIMARY KEY,
+        session_file TEXT,
+        turns_json TEXT,
+        outcome TEXT,
+        outcome_signal TEXT,
+        key_pivot INTEGER,
+        lessons_json TEXT,
+        topic TEXT,
+        tools_used TEXT,
+        turn_count INTEGER,
+        created_at INTEGER DEFAULT (unixepoch())
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_session ON feedback_trajectories(session_file)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_outcome ON feedback_trajectories(outcome)`);
+  }
+
+  /** Create feedback_effectiveness table for closed-loop rule measurement (#262). */
+  private migrateFeedbackEffectivenessTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS feedback_effectiveness (
+        rule_id TEXT PRIMARY KEY,
+        rule_text TEXT,
+        created_at INTEGER,
+        window_start INTEGER,
+        window_end INTEGER,
+        corrections_before INTEGER DEFAULT 0,
+        corrections_after INTEGER DEFAULT 0,
+        praise_before INTEGER DEFAULT 0,
+        praise_after INTEGER DEFAULT 0,
+        implicit_positive_before INTEGER DEFAULT 0,
+        implicit_positive_after INTEGER DEFAULT 0,
+        implicit_negative_before INTEGER DEFAULT 0,
+        implicit_negative_after INTEGER DEFAULT 0,
+        effect_score REAL DEFAULT 0.0,
+        confidence REAL DEFAULT 0.0,
+        sample_size INTEGER DEFAULT 0,
+        measured_at INTEGER DEFAULT (unixepoch())
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fe_measured ON feedback_effectiveness(measured_at)`);
+  }
+
   private migrateReinforcementColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)

@@ -63,6 +63,9 @@ import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js
 import { runDirectiveExtract, type DirectiveExtractResult } from "../services/directive-extract.js";
 import { runReinforcementExtract, type ReinforcementExtractResult } from "../services/reinforcement-extract.js";
 import type { ReinforcementContext } from "../backends/facts-db.js";
+import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
+import { buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
+import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
@@ -3986,4 +3989,211 @@ export function runUninstallForCli(
   const base = { pluginId: PLUGIN_ID, cleaned };
   if (outcome === "config_error") return { ...base, outcome, error };
   return { ...base, outcome } as UninstallCliResult;
+}
+
+/**
+ * Extract implicit feedback signals from recent sessions and feed them into
+ * the reinforcement and self-correction pipelines as synthetic incidents.
+ * Issue #262 — Phase 1 integration.
+ */
+export async function runExtractImplicitFeedbackForCli(
+  ctx: HandlerContext,
+  opts: {
+    days?: number;
+    verbose?: boolean;
+    dryRun?: boolean;
+    includeTrajectories?: boolean;
+    includeClosedLoop?: boolean;
+  },
+): Promise<{
+  signalsExtracted: number;
+  positiveCount: number;
+  negativeCount: number;
+  trajectoriesBuilt: number;
+  sessionsScanned: number;
+  closedLoopReport?: string;
+}> {
+  const { factsDb, cfg, logger } = ctx;
+  const days = opts.days ?? 3;
+  const sessionDir = cfg.procedures.sessionsDir;
+  const filePaths = getSessionFilePathsSince(sessionDir, days);
+
+  const implicitCfg = cfg.implicitFeedback ?? {
+    enabled: true,
+    minConfidence: 0.5,
+    signalTypes: undefined,
+    rephraseThreshold: 0.8,
+    topicChangeThreshold: 0.3,
+    terseResponseRatio: 0.4,
+    feedToReinforcement: true,
+    feedToSelfCorrection: true,
+  };
+
+  if (implicitCfg.enabled === false) {
+    return { signalsExtracted: 0, positiveCount: 0, negativeCount: 0, trajectoriesBuilt: 0, sessionsScanned: 0 };
+  }
+
+  let totalSignals = 0;
+  let positiveCount = 0;
+  let negativeCount = 0;
+  let trajectoriesBuilt = 0;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawDb = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+
+  for (const filePath of filePaths) {
+    let lines: string[];
+    try {
+      lines = readFileSync(filePath, "utf-8").split("\n");
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:read-file",
+        severity: "info",
+        subsystem: "implicit-feedback",
+      });
+      continue;
+    }
+
+    const sessionFile = basename(filePath);
+    const turns = parseSessionTurns(lines);
+    if (turns.length < 3) continue;
+
+    // Phase 1: Extract implicit signals
+    const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
+
+    if (opts.verbose) {
+      for (const sig of signals) {
+        logger?.info?.(`[${sessionFile}] ${sig.type} (${sig.polarity}, conf ${sig.confidence.toFixed(2)}): ${sig.context.userMessage.slice(0, 60)}`);
+      }
+    }
+
+    totalSignals += signals.length;
+    for (const sig of signals) {
+      if (sig.polarity === "positive") positiveCount++;
+      else if (sig.polarity === "negative") negativeCount++;
+    }
+
+    if (!opts.dryRun && rawDb) {
+      // Store raw signals in implicit_signals table
+      try {
+        const insert = rawDb.prepare(`
+          INSERT INTO implicit_signals (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'implicit')
+        `);
+        for (const sig of signals) {
+          try {
+            insert.run(
+              sig.context.sessionFile,
+              sig.type,
+              sig.confidence,
+              sig.polarity,
+              sig.context.userMessage.slice(0, 500),
+              sig.context.agentMessage.slice(0, 500),
+              sig.context.precedingTurns,
+            );
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "runExtractImplicitFeedbackForCli:insert-signal",
+              severity: "info",
+              subsystem: "implicit-feedback",
+            });
+          }
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:store-signals",
+          severity: "warning",
+          subsystem: "implicit-feedback",
+        });
+      }
+    }
+
+    // Phase 2: Build trajectories
+    if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
+      try {
+        const trajectories = buildTrajectories(turns, sessionFile);
+        trajectoriesBuilt += trajectories.length;
+
+        const insertTraj = rawDb.prepare(`
+          INSERT OR REPLACE INTO feedback_trajectories
+            (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const traj of trajectories) {
+          try {
+            const row = serializeTrajectory(traj);
+            insertTraj.run(
+              row.id, row.session_file, row.turns_json, row.outcome,
+              row.outcome_signal, row.key_pivot, row.lessons_json,
+              row.topic, row.tools_used, row.turn_count,
+            );
+            // Store lessons as PATTERN_FACT entries in factsDb
+            for (const lesson of traj.lessonsExtracted) {
+              if (!lesson.trim() || factsDb.hasDuplicate(lesson)) continue;
+              try {
+                factsDb.store({
+                  text: lesson,
+                  category: "pattern",
+                  importance: 0.6,
+                  entity: null,
+                  key: null,
+                  value: lesson.slice(0, 200),
+                  source: "implicit-feedback",
+                  tags: ["trajectory", "feedback"],
+                });
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "runExtractImplicitFeedbackForCli:store-lesson",
+                  severity: "info",
+                  subsystem: "implicit-feedback",
+                });
+              }
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "runExtractImplicitFeedbackForCli:insert-trajectory",
+              severity: "info",
+              subsystem: "implicit-feedback",
+            });
+          }
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:build-trajectories",
+          severity: "warning",
+          subsystem: "implicit-feedback",
+        });
+      }
+    }
+  }
+
+  // Phase 3: Closed-loop analysis
+  let closedLoopReport: string | undefined;
+  if (opts.includeClosedLoop !== false && !opts.dryRun) {
+    try {
+      const clCfg = cfg.closedLoop ?? { enabled: true };
+      if (clCfg.enabled !== false) {
+        const report = runClosedLoopAnalysis(factsDb, clCfg);
+        if (opts.verbose && report.rulesAnalyzed > 0) {
+          closedLoopReport = getEffectivenessReport(factsDb);
+          logger?.info?.(`Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`);
+        }
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:closed-loop",
+        severity: "warning",
+        subsystem: "implicit-feedback",
+      });
+    }
+  }
+
+  return {
+    signalsExtracted: totalSignals,
+    positiveCount,
+    negativeCount,
+    trajectoriesBuilt,
+    sessionsScanned: filePaths.length,
+    closedLoopReport,
+  };
 }
