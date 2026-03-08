@@ -93,7 +93,7 @@ export class ContextualVariantGenerator {
 
     const count =
       variantType === "contextual-search"
-        ? Math.max(3, Math.min(5, this.config.maxVariantsPerFact))
+        ? Math.max(1, Math.min(5, this.config.maxVariantsPerFact))
         : Math.max(1, this.config.maxVariantsPerFact);
     const promptTemplate =
       variantType === "contextual-search"

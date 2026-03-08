@@ -313,21 +313,20 @@ export class EventLog {
           }
         })());
 
-        let pipelineCompleted = false;
         await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
-        pipelineCompleted = true;
 
+        // renameSync must succeed before we delete source rows.
+        // If rename throws, we fall into the catch block and tempPath is cleaned up.
         renameSync(tempPath, filePath);
 
-        // Only delete rows whose ids were fully written — pipelineCompleted guards
-        // against partial deletion if the pipeline threw after some ids were collected.
-        if (pipelineCompleted) {
-          const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
-          const deleteBatch = this.liveDb.transaction((batch: string[]) => {
-            for (const id of batch) del.run(id);
-          });
-          deleteBatch(ids);
-        }
+        // Only delete rows after both the write pipeline AND the atomic rename have
+        // succeeded — ensures rows are never deleted from SQLite unless their data
+        // is safely in the final archive file.
+        const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
+        const deleteBatch = this.liveDb.transaction((batch: string[]) => {
+          for (const id of batch) del.run(id);
+        });
+        deleteBatch(ids);
         files.push(filePath);
         archived += ids.length;
       } catch (err) {

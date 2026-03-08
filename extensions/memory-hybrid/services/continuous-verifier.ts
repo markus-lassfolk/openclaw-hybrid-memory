@@ -96,7 +96,11 @@ export function parseVerificationOutcome(response: string): VerificationOutcome 
 const DEFAULT_MODEL = "openai/gpt-4.1-nano";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const RECENT_FACTS_DAYS = 90;
-const STALE_CONFIDENCE = 0.5;
+// Confidence assigned to facts the LLM determines are stale. Kept below 0.3
+// so that natural decay cycles will eventually remove them, while still
+// preventing immediate deletion (threshold is < 0.1). Previously 0.5, which
+// was misleadingly high — stale facts should not appear reliable in recall.
+const STALE_CONFIDENCE = 0.2;
 
 export class ContinuousVerifier {
   private readonly store: VerificationStore;
