@@ -296,7 +296,8 @@ const DEFAULT_SELF_CORRECTION = {
  */
 export function inferTargetFile(content: string): string {
   const lower = content.toLowerCase();
-  if (/\b(identity|name|role|creature|persona)\b/.test(lower)) return "IDENTITY.md";
+  if (/\b(identity|creature|persona)\b/.test(lower)) return "IDENTITY.md";
+  if (/\b(my (name|role)|agent (name|role|identity)|who (i am|you are))\b/.test(lower)) return "IDENTITY.md";
   if (/\b(preference|style|workflow|working|setup|tooling)\b/.test(lower)) return "USER.md";
   return "SOUL.md";
 }
@@ -1750,9 +1751,10 @@ export async function runExtractReinforcementForCli(
           }
 
           // Semantic dedup: skip if a similar rule exists in the vector store (#260)
+          let ruleVec: number[] | null = null;
           if (semanticDedup) {
             try {
-              const ruleVec = await embeddings.embed(line.trim());
+              ruleVec = await embeddings.embed(line.trim());
               if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
                 logger?.info?.(`memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`);
                 continue;
@@ -1765,6 +1767,14 @@ export async function runExtractReinforcementForCli(
 
           if (existsSync(toolsPath)) {
             insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
+            // Store the rule embedding in vector DB for future dedup (#260)
+            if (ruleVec) {
+              try {
+                await vectorDb.store({ text: line.trim(), vector: ruleVec, importance: CLI_STORE_IMPORTANCE, category: "technical", id: `rule-${Date.now()}-${Math.random()}` });
+              } catch (err) {
+                capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-store" });
+              }
+            }
           }
         } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
           const c = a.remediationContent;
