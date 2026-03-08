@@ -581,6 +581,54 @@ describe("detectFutureDate — recurring events return null (no freeze)", () => 
   it("returns null for text with no date whatsoever", () => {
     expect(detectFutureDate("User prefers dark mode", ENABLED_CFG, NOW_MS)).toBeNull();
   });
+
+  it("returns null for 'daily' recurring events", () => {
+    expect(detectFutureDate("Daily standup at 9am", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'weekly' recurring events", () => {
+    expect(detectFutureDate("Weekly review on Fridays", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'monthly' recurring events", () => {
+    expect(detectFutureDate("Monthly all-hands meeting", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'yearly' recurring events", () => {
+    expect(detectFutureDate("Yearly performance review in March", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'each' recurring events", () => {
+    expect(detectFutureDate("Send report each Friday", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'recurring' keyword", () => {
+    expect(detectFutureDate("This is a recurring event on 2026-04-01", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for 'biweekly' recurring events", () => {
+    expect(detectFutureDate("Biweekly sync with the team", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("returns null for recurring even when a specific future date is also present", () => {
+    // "every Monday" overrides the specific date — no freeze for schedules
+    expect(detectFutureDate("Team sync every Monday starting 2026-03-20", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("is case-insensitive for recurring keywords", () => {
+    expect(detectFutureDate("DAILY backup at midnight", ENABLED_CFG, NOW_MS)).toBeNull();
+    expect(detectFutureDate("Every FRIDAY at noon", ENABLED_CFG, NOW_MS)).toBeNull();
+    expect(detectFutureDate("WEEKLY standup", ENABLED_CFG, NOW_MS)).toBeNull();
+  });
+
+  it("does NOT suppress a non-recurring date with similar substring ('everyday' is not 'every')", () => {
+    // "everyday" does not contain the word boundary-delimited token "every" + space
+    // So a plain future date in the same sentence should still be detected.
+    // Note: this test documents the boundary behaviour — "everyday" should NOT trigger the guard.
+    const result = detectFutureDate("Everyday reminder for 2026-03-20", ENABLED_CFG, NOW_MS);
+    // "everyday" is NOT in the recurring set, so date detection proceeds normally
+    expect(result).not.toBeNull();
+  });
 });
 
 describe("detectFutureDate — explicit paramDecayFreezeUntil override", () => {

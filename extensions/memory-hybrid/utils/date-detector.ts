@@ -191,6 +191,10 @@ export function detectFutureDate(
 ): number | null {
   if (!cfg.enabled) return null;
 
+  // Recurring events ("every Monday", "weekly", "daily at 9am") have no single
+  // future deadline, so they should not trigger a decay freeze.
+  if (/\b(every|daily|weekly|monthly|yearly|each|recurring|biweekly)\b/i.test(text)) return null;
+
   const candidates = extractCandidates(text, nowMs);
   if (candidates.length === 0) return null;
 
