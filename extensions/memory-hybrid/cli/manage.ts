@@ -144,6 +144,7 @@ export type ManageContext = {
   runGenerateAutoSkills?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runDreamCycle?: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runContinuousVerification?: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -196,6 +197,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runGenerateProposals,
     resolvePath,
     runDreamCycle,
+    runContinuousVerification,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
@@ -1290,14 +1292,30 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         }
         if (res.skipped) {
           console.log("Dream cycle skipped (nightlyCycle.enabled = false in config).");
-          return;
+        } else {
+          console.log(`Dream cycle complete: ${res.digestSummary}`);
+          console.log(`  Facts pruned: ${res.factsPruned}`);
+          console.log(`  Facts decayed: ${res.factsDecayed}`);
+          console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
+          console.log(`  Patterns found: ${res.patternsFound}`);
+          console.log(`  Rules generated: ${res.rulesGenerated}`);
         }
-        console.log(`Dream cycle complete: ${res.digestSummary}`);
-        console.log(`  Facts pruned: ${res.factsPruned}`);
-        console.log(`  Facts decayed: ${res.factsDecayed}`);
-        console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
-        console.log(`  Patterns found: ${res.patternsFound}`);
-        console.log(`  Rules generated: ${res.rulesGenerated}`);
+
+        if (runContinuousVerification && cfg.verification.enabled && cfg.verification.continuousVerification) {
+          let verificationRes;
+          try {
+            verificationRes = await runContinuousVerification();
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "continuous-verification" });
+            throw err;
+          }
+          console.log("Continuous verification complete:");
+          console.log(`  Checked: ${verificationRes.checked}`);
+          console.log(`  Confirmed: ${verificationRes.confirmed}`);
+          console.log(`  Stale: ${verificationRes.stale}`);
+          console.log(`  Uncertain: ${verificationRes.uncertain}`);
+          console.log(`  Errors: ${verificationRes.errors}`);
+        }
       }));
   }
 

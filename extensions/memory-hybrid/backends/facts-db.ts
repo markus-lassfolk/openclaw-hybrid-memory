@@ -197,6 +197,9 @@ export class FactsDB {
 
     // ---- Provenance tracing (Issue #163) ----
     this.migrateProvenanceColumns();
+
+    // ---- Verification store (Issue #162) ----
+    this.migrateVerifiedFactsTable();
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -496,6 +499,26 @@ export class FactsDB {
     if (!colNames.has("extraction_confidence")) {
       this.liveDb.exec(`ALTER TABLE facts ADD COLUMN extraction_confidence REAL`);
     }
+  }
+
+  /** Create verified_facts table for critical fact verification (Issue #162). */
+  private migrateVerifiedFactsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS verified_facts (
+        id TEXT PRIMARY KEY,
+        fact_id TEXT NOT NULL,
+        canonical_text TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        verified_at TEXT NOT NULL,
+        verified_by TEXT NOT NULL,
+        next_verification TEXT,
+        version INTEGER DEFAULT 1,
+        previous_version_id TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
+      CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
+    `);
   }
 
   /**
@@ -2029,13 +2052,15 @@ export class FactsDB {
          WHERE target_fact_id IN (
            SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
              AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+             AND id NOT IN (SELECT fact_id FROM verified_facts)
          )
          AND link_type != 'DERIVED_FROM'`
       )
       .run({ now: nowSec });
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
-                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+                AND id NOT IN (SELECT fact_id FROM verified_facts)`)
       .run({ now: nowSec });
     return result.changes;
   }
@@ -2048,12 +2073,14 @@ export class FactsDB {
         `DELETE FROM memory_links
          WHERE target_fact_id IN (
            SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+             AND id NOT IN (SELECT fact_id FROM verified_facts)
          )
          AND link_type != 'DERIVED_FROM'`
       )
       .run(sessionId);
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?`)
+      .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?
+                AND id NOT IN (SELECT fact_id FROM verified_facts)`)
       .run(sessionId);
     return result.changes;
   }
@@ -2079,7 +2106,8 @@ export class FactsDB {
            AND last_confirmed_at IS NOT NULL
            AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
            AND confidence > 0.1
-           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`,
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run({ now: nowSec });
 
@@ -2090,13 +2118,15 @@ export class FactsDB {
          WHERE target_fact_id IN (
            SELECT id FROM facts WHERE confidence < 0.1
              AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+             AND id NOT IN (SELECT fact_id FROM verified_facts)
          )
          AND link_type != 'DERIVED_FROM'`
       )
       .run({ now: nowSec });
     const result = this.liveDb
       .prepare(`DELETE FROM facts WHERE confidence < 0.1
-                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)`)
+                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+                AND id NOT IN (SELECT fact_id FROM verified_facts)`)
       .run({ now: nowSec });
     return result.changes;
   }

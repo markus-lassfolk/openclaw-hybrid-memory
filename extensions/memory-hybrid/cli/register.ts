@@ -130,6 +130,7 @@ export type HybridMemCliContext = {
   runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ metaExtracted: number; metaStored: number }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runDreamCycle: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runContinuousVerification: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
