@@ -68,8 +68,16 @@ function isHostname(value: string): boolean {
 }
 
 function containsHostname(text: string): boolean {
-  const hostnamePattern = /\b[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+\b/i;
-  return hostnamePattern.test(text);
+  const hostnamePattern = /\b[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+\b/gi;
+  const matches = text.match(hostnamePattern);
+  if (!matches) return false;
+  
+  for (const match of matches) {
+    if (/[a-z]/i.test(match)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function expandTilde(p: string): string {
