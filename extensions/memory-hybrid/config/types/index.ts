@@ -59,6 +59,7 @@ import type {
   FrustrationDetectionConfig,
   CrossAgentLearningConfig,
   ToolEffectivenessConfig,
+  CostTrackingConfig,
 } from "./features.js";
 
 import type {
@@ -421,6 +422,8 @@ export type HybridMemoryConfig = {
   verification: VerificationConfig;
   /** Provenance tracing for fact-to-source chains (Issue #163, default: disabled). */
   provenance: ProvenanceConfig;
+  /** LLM cost tracking — per-feature token usage and estimated cost (Issue #270, default: enabled). */
+  costTracking: CostTrackingConfig;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };

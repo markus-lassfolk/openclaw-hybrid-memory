@@ -20,6 +20,7 @@ import type {
   FrustrationSignalWeights,
   CrossAgentLearningConfig,
   ToolEffectivenessConfig,
+  CostTrackingConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -625,5 +626,17 @@ export function parseToolEffectivenessConfig(cfg: Record<string, unknown>): Tool
         : 0.95,
     runInNightlyCycle: raw?.runInNightlyCycle !== false,
     injectHints: raw?.injectHints !== false,
+  };
+}
+
+export function parseCostTrackingConfig(cfg: Record<string, unknown>): CostTrackingConfig {
+  const raw = cfg.costTracking as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    retainDays:
+      typeof raw?.retainDays === "number" && raw.retainDays >= 1
+        ? Math.floor(raw.retainDays)
+        : 90,
+    pruneInNightlyCycle: raw?.pruneInNightlyCycle !== false,
   };
 }

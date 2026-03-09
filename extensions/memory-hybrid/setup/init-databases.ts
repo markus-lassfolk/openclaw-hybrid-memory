@@ -1,3 +1,4 @@
+/** @module init-databases — Provider routing, cost instrumentation, and database bootstrap. */
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
@@ -18,6 +19,7 @@ import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 import { IssueStore } from "../backends/issue-store.js";
@@ -26,9 +28,94 @@ import { ProvenanceService } from "../services/provenance.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
+import { CostTracker } from "../backends/cost-tracker.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+
+/**
+ * Infer a human-readable feature label for a chat completion call.
+ * Checks AsyncLocalStorage first (precise, opt-in via withCostFeature),
+ * then falls back to heuristic scanning of message content.
+ */
+function inferFeatureLabel(body: Record<string, unknown>, _model: string): string {
+  // Precise label: caller wrapped in withCostFeature("label", () => ...)
+  const explicit = getCurrentCostFeature();
+  if (explicit) return explicit;
+
+  // Heuristic: scan message content for known feature fingerprints.
+  // Patterns are derived from the ACTUAL prompt templates in prompts/*.txt to ensure matches.
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const content = messages
+    .map((m: unknown) => String((m as Record<string, unknown>)?.content ?? ""))
+    .join(" ")
+    .toLowerCase();
+
+  // ── Matches derived from actual prompt templates (prompts/*.txt first lines) ──
+
+  // category-classify.txt / memory-classify.txt: "You are a memory classifier"
+  if (content.includes("memory classifier") || content.includes("categorize each fact")) return "auto-classify";
+  // category-discovery.txt: "assign a short category label"
+  if (content.includes("assign a short category label")) return "auto-classify";
+
+  // query-expansion / HyDE: "hypothetical document"
+  if (content.includes("hypothetical document") || content.includes("hypothetical answer")) return "query-expansion";
+
+  // reranking
+  if (/\brerank/i.test(content)) return "reranking";
+
+  // reflection.txt: "analyzing a user's interaction history to identify behavioral patterns"
+  // reflection-meta.txt: "synthesizing behavioral patterns into higher-level meta-patterns"
+  // reflection-rules.txt: "synthesizing behavioral patterns into actionable one-line rules"
+  if (content.includes("identify behavioral patterns") || content.includes("synthesizing behavioral patterns") || content.includes("interaction history to identify")) return "reflection";
+
+  // self-correction-analyze.txt: "You are a self-improvement analyst"
+  // self-correction-rewrite-tools.txt: "You are an editor for a behavioral instructions file"
+  if (content.includes("self-improvement analyst") || content.includes("self-correction") || content.includes("behavioral instructions file")) return "self-correction";
+
+  // reinforcement-analyze.txt: "You are a positive-reinforcement analyst"
+  if (content.includes("positive-reinforcement analyst") || content.includes("positive reinforcement analyst")) return "reinforcement-extract";
+
+  // analyze-feedback-phrases.txt: "analyzing chat logs to discover how this specific user expresses"
+  if (content.includes("implicit") && content.includes("feedback")) return "implicit-feedback";
+  if (content.includes("discover how this specific user expresses")) return "implicit-feedback";
+
+  // trajectory-analyze.txt: "You are a trajectory analyst"
+  if (content.includes("trajectory analyst")) return "trajectory-analysis";
+
+  // frustration detection: looks for frustration keywords in analysis context
+  if (content.includes("frustration") && (content.includes("detect") || content.includes("analys"))) return "frustration-detection";
+
+  // cross-agent-generalize.txt: "identify which of these lessons are general enough"
+  if (content.includes("cross-agent") || content.includes("lessons are general enough")) return "cross-agent-learning";
+
+  // tool effectiveness
+  if (content.includes("tool effectiveness") || content.includes("tool scoring")) return "tool-effectiveness";
+
+  // distill-sessions.txt: "You are a fact extraction agent"
+  // ingest-files.txt: also "You are a fact extraction agent"
+  if (content.includes("fact extraction agent")) return "distill";
+
+  // passive-observer.txt: "extracting facts, preferences, decisions"
+  if (content.includes("extracting facts, preferences, decisions")) return "distill";
+
+  // language keywords
+  if (content.includes("language") && content.includes("keyword")) return "language-keywords";
+
+  // consolidate.txt: "You are a memory consolidator"
+  if (content.includes("memory consolidator") || content.includes("merge the following facts")) return "consolidation";
+
+  // memory-to-skills-synthesize.txt: "synthesizing a reusable skill"
+  if (content.includes("synthesizing a reusable skill") || content.includes("memory.to.skills")) return "memory-to-skills";
+
+  // generate-proposals.txt: "generating persona file update proposals"
+  if (content.includes("persona file update proposals") || (content.includes("persona") && content.includes("proposal"))) return "persona-proposals";
+
+  // continuous verification
+  if (content.includes("continuous") && content.includes("verification")) return "continuous-verification";
+
+  return "unknown";
+}
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 
@@ -43,7 +130,7 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
  *  - Other `provider/*` with explicit llm.providers config → custom endpoint
  *  - Unknown provider, no config → throws UnconfiguredProviderError
  */
-function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): OpenAI {
+function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
@@ -176,7 +263,42 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
               const adjustedBody = isOpenAI
                 ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
                 : { ...(body as object), model: bareModel };
-              return client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
+              const start = Date.now();
+              const promise = client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
+              // Fire-and-forget cost tracking — never blocks or modifies the returned promise
+              if (costTracker) {
+                const feature = inferFeatureLabel(body as unknown as Record<string, unknown>, model);
+                // Normalize bare model names (no '/') to 'openai/model' for pricing table lookup
+                const normalizedModel = model.includes("/") ? model : `openai/${model.trim()}`;
+                void (Promise.resolve(promise) as Promise<unknown>).then(
+                  (resp: unknown) => {
+                    try {
+                      const durationMs = Date.now() - start;
+                      const r = resp as { usage?: { prompt_tokens?: number; completion_tokens?: number } } | null;
+                      costTracker.record({
+                        feature,
+                        model: normalizedModel,
+                        inputTokens: r?.usage?.prompt_tokens ?? 0,
+                        outputTokens: r?.usage?.completion_tokens ?? 0,
+                        durationMs,
+                        success: true,
+                      });
+                    } catch { /* never let tracking break LLM calls */ }
+                  },
+                  () => {
+                    try {
+                      const durationMs = Date.now() - start;
+                      // Estimate input tokens from request messages (actual count unavailable on failure)
+                      const reqMessages = Array.isArray((body as unknown as Record<string, unknown>).messages)
+                        ? (body as unknown as Record<string, unknown>).messages as unknown[]
+                        : [];
+                      const estimatedInputTokens = Math.ceil(JSON.stringify(reqMessages).length / 4);
+                      costTracker.record({ feature, model: normalizedModel, inputTokens: estimatedInputTokens, outputTokens: 0, durationMs, success: false });
+                    } catch { /* never let tracking break LLM calls */ }
+                  },
+                );
+              }
+              return promise;
             },
           },
         };
@@ -209,6 +331,7 @@ export interface DatabaseContext {
   toolProposalStore: ToolProposalStore;
   verificationStore: VerificationStore | null;
   provenanceService: ProvenanceService | null;
+  costTracker: CostTracker | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
@@ -299,11 +422,21 @@ export function initializeDatabases(
       api.logger.info?.(`memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.join(", ")}${nano.length > 0 ? `; nano: ${nano.join(", ")}` : ""})`);
     }
   }
+  // CostTracker — created early so proxy can instrument every chat.completions.create call (Issue #270).
+  // Shares FactsDB's SQLite connection (same memory.db, avoids a second DB handle).
+  // Gated on cfg.costTracking.enabled (default: true).
+  const costTracker: CostTracker | null = cfg.costTracking?.enabled !== false
+    ? new CostTracker(factsDb.getRawDb())
+    : null;
+  if (costTracker) {
+    api.logger.info("memory-hybrid: LLM cost tracker initialized");
+  }
+
   // Chat/LLM client: multi-provider proxy that routes each model to the correct API.
   // google/* → Google Gemini OpenAI-compat API (uses distill.apiKey or llm.providers.google.apiKey)
   // openai/* or bare names → OpenAI API (uses embedding.apiKey or llm.providers.openai.apiKey)
   // Other providers → require llm.providers.<provider>.apiKey + optionally baseURL
-  const openai = buildMultiProviderOpenAI(cfg, api);
+  const openai = buildMultiProviderOpenAI(cfg, api, costTracker);
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {
@@ -384,6 +517,7 @@ export function initializeDatabases(
     });
     api.logger.info("memory-hybrid: verification store enabled");
   }
+
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -703,6 +837,7 @@ export function initializeDatabases(
     toolProposalStore,
     verificationStore,
     provenanceService,
+    costTracker,
     resolvedLancePath,
     resolvedSqlitePath,
     health,
