@@ -183,23 +183,21 @@ export function registerUtilityTools(
           softPruned = factsDb.decayConfidence();
         }
 
-        const verbosity = cfg.verbosity ?? "normal";
-        if (verbosity === "quiet") {
-          return {
-            content: [{ type: "text", text: `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).` }],
-            details: { hardPruned, softPruned },
-          };
-        }
-
         const breakdown = factsDb.statsBreakdown();
         const expired = factsDb.countExpired();
-        const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;
-        const verboseExtra = verbosity === "verbose"
-          ? `\nMode: ${mode}`
-          : "";
+
+        const verbosity = cfg.verbosity ?? "normal";
+        let text: string;
+        if (verbosity === "quiet") {
+          text = `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).`;
+        } else {
+          const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;
+          const verboseExtra = verbosity === "verbose" ? `\nMode: ${mode}` : "";
+          text = baseText + verboseExtra;
+        }
 
         return {
-          content: [{ type: "text", text: baseText + verboseExtra }],
+          content: [{ type: "text", text }],
           details: { hardPruned, softPruned, breakdown, pendingExpired: expired },
         };
       },
