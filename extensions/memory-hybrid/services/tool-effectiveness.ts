@@ -19,6 +19,7 @@ import { dirname } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { ToolEffectivenessConfig } from "../config/types/features.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -49,22 +50,9 @@ export interface ToolEffectivenessReport {
   recommendations: string[];
 }
 
-export interface ToolEffectivenessConfig {
-  /** Enable the feature (default: true). */
-  enabled?: boolean;
-  /** Minimum total call count before a tool is scored (default: 3). */
-  minCalls?: number;
-  /** Top-N tools to return in report (default: 10). */
-  topN?: number;
-  /** Score threshold below which a tool is flagged as low-scorer (default: 0.3). */
-  lowScoreThreshold?: number;
-  /** Score decay factor applied to existing scores each run (default: 0.95). */
-  decayFactor?: number;
-  /** Workflow trace DB path (default: same as workflow store). */
-  traceDbPath?: string;
-  /** Inject tool-preference hints into agent context (default: true). */
-  injectHints?: boolean;
-}
+// ToolEffectivenessConfig is imported from ../config/types/features.js
+// Re-export for consumers that import it from this module.
+export type { ToolEffectivenessConfig };
 
 // ---------------------------------------------------------------------------
 // Database schema
@@ -142,6 +130,11 @@ export class ToolEffectivenessStore {
    * @param outcome   "success" | "failure" | "unknown".
    * @param context   Context label (default "general").
    * @param durationMs Duration of the call in milliseconds (default 0).
+   *
+   * Note: `avg_calls_per_session` is intentionally not updated here because individual
+   * tool outcome events lack session boundary information. It is computed during the
+   * nightly batch analysis via `computeToolEffectiveness` / `upsert`, which has access
+   * to per-session call counts from workflow traces.
    */
   recordToolOutcome(
     tool: string,
@@ -497,7 +490,7 @@ export function generateRecommendations(
 export async function computeToolEffectiveness(
   workflowDbPath: string,
   effectivenessDb: ToolEffectivenessStore | null,
-  cfg: ToolEffectivenessConfig = {},
+  cfg: Partial<ToolEffectivenessConfig> = {},
   logger: { warn?: (msg: string) => void } = {},
 ): Promise<ToolEffectivenessReport> {
   const minCalls = cfg.minCalls ?? 3;
@@ -552,7 +545,7 @@ export async function computeToolEffectiveness(
 
     // Apply decay and upsert into effectivenessDb
     if (!effStore) {
-      const effPath = workflowDbPath.replace(/(\.[^.]+)?$/, "-effectiveness.db");
+      const effPath = workflowDbPath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
       effStore = new ToolEffectivenessStore(effPath);
       ownedEffStore = true;
     }

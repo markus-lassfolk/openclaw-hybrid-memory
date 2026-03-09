@@ -117,6 +117,7 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
 
 export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem",
+  "hybrid-mem dashboard",
   "hybrid-mem run-all",
   "hybrid-mem install",
   "hybrid-mem stats",

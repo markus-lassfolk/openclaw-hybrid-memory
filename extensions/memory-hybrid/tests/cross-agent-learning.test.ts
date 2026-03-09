@@ -37,7 +37,7 @@ function makeDb(dir: string) {
 
 /** Access raw SQLite DB from FactsDB for test assertions. */
 function rawDb(db: InstanceType<typeof FactsDB>) {
-  return (db as unknown as { liveDb: import("better-sqlite3").Database }).liveDb;
+  return db.getRawDb();
 }
 
 /** Insert an agent-scoped fact directly (bypassing store to control all fields). */
