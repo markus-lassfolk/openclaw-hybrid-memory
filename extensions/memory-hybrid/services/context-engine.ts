@@ -21,6 +21,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { replayWalEntries } from "../utils/wal-replay.js";
 
 // ---------------------------------------------------------------------------
 // Types (local stubs if SDK types are unavailable)
@@ -125,63 +126,9 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
           const walEntries = wal.readAll();
           if (walEntries.length > 0) {
             logger.debug?.(`memory-hybrid: context-engine compact — replaying ${walEntries.length} WAL entries for session ${params.sessionId}`);
-            for (const entry of walEntries) {
-              try {
-                if ((entry.operation === "store" || entry.operation === "update") && entry.data?.text) {
-                  // Skip if already persisted (idempotent replay)
-                  if (!factsDb.hasDuplicate(entry.data.text as string)) {
-                    const stored = factsDb.store({
-                      text: entry.data.text as string,
-                      category: (entry.data.category as import("../config.js").MemoryCategory) ?? "other",
-                      importance: (entry.data.importance as number) ?? 0.7,
-                      entity: (entry.data.entity as string | null | undefined) ?? null,
-                      key: (entry.data.key as string | null | undefined) ?? null,
-                      value: (entry.data.value as string | null | undefined) ?? null,
-                      source: (entry.data.source as string) ?? "wal-replay",
-                      decayClass: entry.data.decayClass as import("../config.js").DecayClass | undefined,
-                      summary: (entry.data.summary as string | null | undefined) ?? null,
-                      tags: (entry.data.tags as string[] | undefined) ?? undefined,
-                    });
-                    // Optionally persist vector if already computed in WAL entry
-                    const precomputedVector = entry.data.vector as number[] | undefined;
-                    if (precomputedVector && precomputedVector.length > 0) {
-                      try {
-                        await vectorDb.store({
-                          id: stored.id,
-                          text: stored.text,
-                          vector: precomputedVector,
-                          importance: stored.importance,
-                          category: stored.category,
-                        });
-                      } catch {
-                        // Vector store failure is non-fatal — SQLite entry is durable
-                      }
-                    } else if (embeddings) {
-                      // Re-embed on WAL replay if no vector was stored
-                      try {
-                        const vector = await embeddings.embed(stored.text);
-                        await vectorDb.store({
-                          id: stored.id,
-                          text: stored.text,
-                          vector: Array.from(vector),
-                          importance: stored.importance,
-                          category: stored.category,
-                        });
-                      } catch {
-                        // Non-fatal
-                      }
-                    }
-                    walCommitted++;
-                  } else {
-                    walSkipped++;
-                  }
-                }
-                // Remove entry after successful processing (or if it was a no-op duplicate)
-                wal.remove(entry.id);
-              } catch {
-                // Non-fatal: log individual entry failure and continue with remaining entries
-              }
-            }
+            const result = await replayWalEntries(wal, factsDb, vectorDb, embeddings);
+            walCommitted = result.committed;
+            walSkipped = result.skipped;
             if (walCommitted > 0) {
               logger.info?.(`memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`);
             }

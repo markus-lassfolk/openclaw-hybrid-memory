@@ -20,6 +20,7 @@ import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
+import { replayWalEntries } from "../utils/wal-replay.js";
 
 export interface HooksContext {
   factsDb: FactsDB;
@@ -204,32 +205,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
             api.logger.debug?.(
               `memory-hybrid: before_compaction — replaying ${walEntries.length} pending WAL entries`,
             );
-            for (const entry of walEntries) {
-              try {
-                if ((entry.operation === "store" || entry.operation === "update") && entry.data?.text) {
-                  if (!ctx.factsDb.hasDuplicate(entry.data.text as string)) {
-                    ctx.factsDb.store({
-                      text: entry.data.text as string,
-                      category: (entry.data.category as import("../config.js").MemoryCategory) ?? "other",
-                      importance: (entry.data.importance as number) ?? 0.7,
-                      entity: (entry.data.entity as string | null | undefined) ?? null,
-                      key: (entry.data.key as string | null | undefined) ?? null,
-                      value: (entry.data.value as string | null | undefined) ?? null,
-                      source: (entry.data.source as string) ?? "wal-replay",
-                      decayClass: entry.data.decayClass as import("../config.js").DecayClass | undefined,
-                      summary: (entry.data.summary as string | null | undefined) ?? null,
-                      tags: (entry.data.tags as string[] | undefined) ?? undefined,
-                    });
-                    walCommitted++;
-                  } else {
-                    walSkipped++;
-                  }
-                }
-                ctx.wal.remove(entry.id);
-              } catch {
-                // Non-fatal: log individual entry failure and continue
-              }
-            }
+            const result = await replayWalEntries(ctx.wal, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
+            walCommitted = result.committed;
+            walSkipped = result.skipped;
             if (walCommitted > 0) {
               api.logger.info?.(
                 `memory-hybrid: before_compaction — WAL replay: ${walCommitted} committed, ${walSkipped} skipped`,

@@ -356,7 +356,8 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
 
         // Quiet mode: surface only actionable pending proposals that are at least 24h old
         // (suppresses spam from freshly-created proposals auto-surfaced in heartbeats)
-        if (verbosity === "quiet") {
+        // Only apply quiet filter when no explicit status was provided by the user
+        if (verbosity === "quiet" && !status) {
           const oneDayAgo = Math.floor(Date.now() / 1000) - SECONDS_PER_DAY;
           proposals = proposals.filter(
             (p) => p.status === "pending" && p.createdAt < oneDayAgo,
