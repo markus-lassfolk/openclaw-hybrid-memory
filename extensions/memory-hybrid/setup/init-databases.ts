@@ -49,23 +49,25 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
     .join(" ")
     .toLowerCase();
 
-  if (content.includes("classify") || content.includes("category")) return "auto-classify";
-  if (content.includes("hyde") || content.includes("hypothetical")) return "query-expansion";
+  // Use more specific patterns to avoid false positives
+  // Order matters: more specific checks first, generic fallbacks last
+  if (content.includes("extract facts") || content.includes("distill")) return "distill";
+  if (content.includes("hyde") || content.includes("hypothetical document")) return "query-expansion";
+  if (content.includes("classify") && content.includes("memory")) return "auto-classify";
   if (content.includes("rerank")) return "reranking";
-  if (content.includes("reflect")) return "reflection";
   if (content.includes("self-correction") || content.includes("self correction")) return "self-correction";
-  if (content.includes("reinforce")) return "reinforcement-extract";
-  if (content.includes("implicit") || content.includes("feedback signal")) return "implicit-feedback";
-  if (content.includes("trajectory")) return "trajectory-analysis";
-  if (content.includes("frustrat")) return "frustration-detection";
-  if (content.includes("cross-agent") || content.includes("generaliz")) return "cross-agent-learning";
+  if (content.includes("reinforcement") && content.includes("extract")) return "reinforcement-extract";
+  if (content.includes("implicit feedback") || content.includes("feedback signal")) return "implicit-feedback";
+  if (content.includes("trajectory analysis")) return "trajectory-analysis";
+  if (content.includes("frustration detect")) return "frustration-detection";
+  if (content.includes("cross-agent learning")) return "cross-agent-learning";
   if (content.includes("tool effectiveness") || content.includes("tool scoring")) return "tool-effectiveness";
-  if (content.includes("distill") || content.includes("extract facts")) return "distill";
-  if (content.includes("keyword")) return "language-keywords";
-  if (content.includes("consolidat")) return "consolidation";
-  if (content.includes("skill")) return "memory-to-skills";
-  if (content.includes("persona") || content.includes("proposal")) return "persona-proposals";
-  if (content.includes("verify") || content.includes("verification")) return "continuous-verification";
+  if (content.includes("language keyword") || content.includes("programming language keyword")) return "language-keywords";
+  if (content.includes("consolidat") && content.includes("memory")) return "consolidation";
+  if (content.includes("memory-to-skills") || (content.includes("extract") && content.includes("skill") && content.includes("memory"))) return "memory-to-skills";
+  if (content.includes("persona proposal") || (content.includes("persona") && content.includes("suggest"))) return "persona-proposals";
+  if (content.includes("continuous verification") || (content.includes("verif") && content.includes("fact"))) return "continuous-verification";
+  if (content.includes("reflection") && (content.includes("memory") || content.includes("conversation"))) return "reflection";
 
   return "unknown";
 }
