@@ -37,7 +37,7 @@ export async function replayWalEntries(
 
   for (const entry of walEntries) {
     try {
-      if ((entry.operation === "store" || entry.operation === "update") && entry.data?.text) {
+      if (entry.operation === "store" && entry.data?.text) {
         // Skip if already persisted (idempotent replay)
         if (!factsDb.hasDuplicate(entry.data.text as string)) {
           const stored = factsDb.store({
@@ -86,6 +86,10 @@ export async function replayWalEntries(
         } else {
           skipped++;
         }
+      } else if (entry.operation === "update") {
+        // Skip update operations during replay: WAL entries lack the targetId needed
+        // to properly supersede the old fact, so replaying would create duplicates.
+        skipped++;
       } else if (entry.operation === "delete" && entry.data?.text) {
         const factId = entry.data.text as string;
         const deleted = factsDb.delete(factId);

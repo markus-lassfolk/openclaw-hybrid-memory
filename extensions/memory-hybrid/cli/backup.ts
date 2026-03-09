@@ -141,7 +141,7 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
 
   // -- SQLite backup --
   let sqliteSize = 0;
-  let integrityOk = false;
+  let integrityOk = true;
 
   if (existsSync(ctx.resolvedSqlitePath)) {
     const destSqlite = join(dest, basename(ctx.resolvedSqlitePath));
