@@ -93,15 +93,15 @@ import { getModeCostEstimates } from "../services/model-pricing.js";
 // modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
-const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
+const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy" }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
   // Daily 02:30 | self-correction-analysis | self-correction-run
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true },
-  // Sunday 04:00 | weekly-extract-procedures | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "default", enabled: true },
+  // Sunday 04:00 | weekly-extract-procedures (nano = background model, avoids locking main AI)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "nano", enabled: true },
   // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
   // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
@@ -116,7 +116,7 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
 ];
 
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier). */
-function resolveCronJob(def: Record<string, unknown> & { modelTier?: "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
+function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
   const { modelTier, ...rest } = def;
   const tier = modelTier ?? "default";
   const model = getDefaultCronModel(pluginConfig, tier);
@@ -1077,6 +1077,9 @@ export async function runVerifyForCli(
   if (cfg.distill) {
     log(`  distill.extractDirectives: ${bool(cfg.distill.extractDirectives !== false)}`);
     log(`  distill.extractReinforcement: ${bool(cfg.distill.extractReinforcement !== false)}`);
+    if (cfg.distill.extractionModelTier) {
+      log(`  distill.extractionModelTier: ${cfg.distill.extractionModelTier}`);
+    }
   } else {
     log(`  distill: ${bool(false)}`);
   }
@@ -1807,9 +1810,11 @@ export async function runExtractReinforcementForCli(
       const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
         incidents_json: JSON.stringify(result.incidents),
       });
-      const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
-      const model = heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
-      const fallbackModels = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+      const extractionTier = cfg.distill?.extractionModelTier ?? "heavy";
+      const cronCfg = getCronModelConfig(cfg);
+      const tierPref = getLLMModelPreference(cronCfg, extractionTier);
+      const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
+      const fallbackModels = tierPref.length > 1 ? tierPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
       const content = await chatCompleteWithRetry({
         model,
         content: prompt,

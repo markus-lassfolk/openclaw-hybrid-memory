@@ -823,6 +823,11 @@
           "reinforcementPromotionThreshold": {
             "type": "number",
             "description": "Reinforcements to trigger auto-promotion of procedures (default: 2)"
+          },
+          "extractionModelTier": {
+            "type": "string",
+            "enum": ["nano", "default", "heavy"],
+            "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' or 'default' saves cost and avoids locking the main model; unset = heavy. Expert/Full presets use 'default'."
           }
         }
       },

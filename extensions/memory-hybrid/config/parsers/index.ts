@@ -413,6 +413,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
           reinforcementPromotionThreshold: typeof distillRaw.reinforcementPromotionThreshold === "number" && distillRaw.reinforcementPromotionThreshold >= 1
             ? Math.floor(distillRaw.reinforcementPromotionThreshold)
             : 2,
+          extractionModelTier: (distillRaw.extractionModelTier === "nano" || distillRaw.extractionModelTier === "default" || distillRaw.extractionModelTier === "heavy")
+            ? (distillRaw.extractionModelTier as "nano" | "default" | "heavy")
+            : undefined,
         }
       : undefined;
 

@@ -772,6 +772,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill).toBeDefined();
     expect(result.distill?.extractDirectives).toBe(true);
     expect(result.distill?.extractReinforcement).toBe(true);
+    expect(result.distill?.extractionModelTier).toBe("default");
+  });
+
+  it("parses distill.extractionModelTier (nano | default | heavy)", () => {
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "nano" } }).distill?.extractionModelTier).toBe("nano");
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "default" } }).distill?.extractionModelTier).toBe("default");
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "heavy" } }).distill?.extractionModelTier).toBe("heavy");
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "other" } }).distill?.extractionModelTier).toBeUndefined();
   });
 
   it("parses llm config when default and heavy arrays are non-empty", () => {

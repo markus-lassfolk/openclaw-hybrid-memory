@@ -25,8 +25,8 @@ Valid values: **`essential`** | **`normal`** | **`expert`** | **`full`**. Defaul
 
 | Mode | Best for | Description |
 |------|----------|--------------|
-| **Full** | **Default — best experience** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
-| **Expert** | Like Full with slightly less | Same as Full but no query expansion, no ingest paths, no nightly dream-cycle / passive observer / crystallization / self-extension. Good if you want most features but want to trim a few. |
+| **Full** | **Default — best experience** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals, verification, provenance, documents, aliases, memory-to-skills, cross-agent learning, reranking, contextual variants. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
+| **Expert** | Like Full with slightly less | Same as Full but no query expansion, no ingest paths, and no documents (no MarkItDown-based doc ingestion). Includes verification, provenance, aliases, memory-to-skills, cross-agent learning, reranking, contextual variants, dream-cycle, passive observer, workflow tracking, tool/skill proposals. Good if you want most features but want to trim a few. |
 | **Normal** | Lower cost or simpler setup | Balanced: capture, recall, auto-classify, graph, procedures; no reflection, no persona proposals, no credential capture from tool I/O. Credentials vault off unless you set an encryption key. |
 | **Essential** | Raspberry Pi, minimal API cost | Only core memory: auto-capture and auto-recall. No classification, graph, procedures, or reflection. Keeps CPU, memory, and LLM calls to a minimum. |
 | **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one toggle). Your explicit settings are used. |
@@ -109,13 +109,22 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | extraction (multi-pass) | — | — | ✓ | ✓ |
 | selfExtension (tool proposals) | — | — | ✓ | ✓ |
 | crystallization (skill proposals) | — | — | ✓ | ✓ |
+| **Verification / provenance / retrieval** |
+| verification | — | — | ✓ | ✓ |
+| provenance | — | — | ✓ | ✓ |
+| documents | — | — | — | ✓ |
+| aliases | — | — | ✓ | ✓ |
+| memoryToSkills | — | — | ✓ | ✓ |
+| crossAgentLearning | — | — | ✓ | ✓ |
+| reranking | — | — | ✓ | ✓ |
+| contextualVariants | — | — | ✓ | ✓ |
 
 **Notes:**
 
 - **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Expert/Full, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
 - **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default; enabling it bypasses the usual safety guarantee that identity files are never modified by the agent automatically.
 - **Normal** keeps current product defaults (e.g. graph on, procedures on, reflection off). Essential strips down for low-resource; Expert/Full add reflection, self-correction, and credential capture.
-- **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization) are **off** for Essential and Normal; **Expert** and **Full** enable them by preset. Users on Essential/Normal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
+- **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization, verification, provenance, aliases, memoryToSkills, crossAgentLearning, reranking, contextualVariants) are **off** for Essential and Normal; **Expert** and **Full** enable them by preset. **documents** is Full-only (requires Python/MarkItDown). Users on Essential/Normal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
 - **personaProposals.autoApply** is `false` in **all** presets including Expert and Full — it is never set automatically. Enable it only if you want the agent to modify identity files (SOUL.md, IDENTITY.md, USER.md) without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
 
 ---

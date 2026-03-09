@@ -116,6 +116,14 @@ Runs at 3 AM Sundays. The `model` value is resolved from your config (see [CONFI
 
 So the two suggested jobs (nightly sweep + weekly reflection) cover **distillation** and **reflection**. Everything else that must run regularly (prune, auto-classify, compaction) runs inside the gateway. Only **extract-procedures** and **self-correction** are additional optional schedules if you want them.
 
+### Weekly extraction pipeline (procedures, directives, reinforcement)
+
+The **weekly-extract-procedures** job (Sunday 04:00 by default) runs: `extract-procedures` → `extract-directives` → `extract-reinforcement` → `generate-auto-skills`. To avoid locking your main AI and reduce token cost:
+
+- **Job model:** The job is scheduled with the **nano** tier, so the agent that runs these steps uses a cheap model (e.g. gpt-4.1-nano). Your primary model stays free for interactive use.
+- **Extraction LLM:** The only step that calls an LLM is **extract-reinforcement** (analysis of praise/reinforcement signals). Expert/Full presets set **`distill.extractionModelTier`** to **`"default"** so that step uses the default tier instead of heavy. Set **`distill.extractionModelTier: "nano"`** in plugin config for even lower cost.
+- **When it runs:** The job is already at night (Sunday 04:00). Ensure your OpenClaw cron/scheduler runs at that time so the pipeline doesn’t run during active use. After upgrading, if you run **`openclaw hybrid-mem verify --fix`**, the job is re-created with the nano model; existing jobs keep their current model until you re-run install or verify --fix.
+
 ---
 
 ## Scripts reference
