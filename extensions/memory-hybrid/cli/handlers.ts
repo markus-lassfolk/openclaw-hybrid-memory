@@ -891,7 +891,7 @@ export async function runVerifyForCli(
   log(`  closedLoop: ${bool(cfg.closedLoop.enabled)}`);
   if (cfg.closedLoop.enabled) {
     log(`    runInNightlyCycle: ${bool(cfg.closedLoop.runInNightlyCycle)}`);
-    log(`    windowDays: ${cfg.closedLoop.measurementWindowDays}`);
+    log(`    measurementWindowDays: ${cfg.closedLoop.measurementWindowDays}`);
     log(`    minSampleSize: ${cfg.closedLoop.minSampleSize}`);
   }
 
