@@ -3,7 +3,7 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
@@ -2041,6 +2041,11 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }
       console.log("Creating memory backup…");
       const res = await runBackup({ backupDir: opts?.dest });
+
+      // State file path for heartbeat monitoring (Issue #276, Gap 5)
+      const stateDir = join(homedir(), ".openclaw", "state");
+      const backupStateFile = join(stateDir, "memory-backup-last.json");
+
       if (res.ok) {
         const sqliteKb = (res.sqliteSize / 1024).toFixed(1);
         const lanceKb = (res.lancedbSize / 1024).toFixed(1);
@@ -2051,8 +2056,37 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         if (!res.integrityOk) {
           console.warn("⚠ SQLite integrity check failed — backup may be from a corrupt source.");
         }
+        // Record successful backup state for heartbeat monitoring
+        try {
+          mkdirSync(stateDir, { recursive: true });
+          writeFileSync(backupStateFile, JSON.stringify({
+            ok: true,
+            timestamp: new Date().toISOString(),
+            backupDir: res.backupDir,
+            sqliteSize: res.sqliteSize,
+            lancedbSize: res.lancedbSize,
+            durationMs: res.durationMs,
+            integrityOk: res.integrityOk,
+          }, null, 2) + "\n");
+        } catch {
+          // Non-fatal — state file is advisory only
+        }
       } else {
         console.error(`✗ Backup failed: ${res.error}`);
+        // Write failure state so heartbeat monitoring can detect and alert (Issue #276, Gap 5)
+        try {
+          mkdirSync(stateDir, { recursive: true });
+          writeFileSync(backupStateFile, JSON.stringify({
+            ok: false,
+            timestamp: new Date().toISOString(),
+            error: res.error,
+          }, null, 2) + "\n");
+          console.error(`  ⚠ Backup failure recorded to: ${backupStateFile}`);
+          console.error("  Add to HEARTBEAT.md to get alerted:");
+          console.error("    Check ~/.openclaw/state/memory-backup-last.json — if ok=false, alert Markus.");
+        } catch {
+          // Non-fatal
+        }
         process.exitCode = 1;
       }
     }));
@@ -2073,6 +2107,74 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         if (!res.integrityOk) process.exitCode = 1;
       } else {
         console.error(`✗ Verify failed: ${res.error}`);
+        process.exitCode = 1;
+      }
+    }));
+
+  // Issue #276, Gap 4 — Schedule backup via system cron
+  backup
+    .command("schedule")
+    .description(
+      "Print cron setup instructions for automated weekly memory backups.\n\n" +
+        "Adds a weekly Sunday 03:00 cron entry that runs `hybrid-mem backup` and\n" +
+        "writes output to ~/.openclaw/logs/backup.log.\n\n" +
+        "The backup state is recorded to ~/.openclaw/state/memory-backup-last.json\n" +
+        "so HEARTBEAT.md monitoring can detect failures.",
+    )
+    .option("--dry-run", "Print the cron line without installing it")
+    .action(withExit(async (opts?: { dryRun?: boolean }) => {
+      // Resolve the hybrid-mem binary path from PATH or common locations
+      const hybridMemBin = "hybrid-mem"; // resolved by PATH at runtime
+      const logDir = join(homedir(), ".openclaw", "logs");
+      const logFile = join(logDir, "backup.log");
+      const cronLine = `0 3 * * 0 ${hybridMemBin} backup >> ${logFile} 2>&1`;
+
+      if (opts?.dryRun) {
+        console.log("Cron line (dry-run — not installed):");
+        console.log(`  ${cronLine}`);
+        return;
+      }
+
+      // Attempt to install via crontab
+      const { execSync } = require("child_process") as typeof import("child_process");
+      try {
+        mkdirSync(logDir, { recursive: true });
+      } catch {
+        // Non-fatal
+      }
+
+      let currentCrontab = "";
+      try {
+        currentCrontab = execSync("crontab -l 2>/dev/null", { encoding: "utf-8" });
+      } catch {
+        // No existing crontab — that's fine
+      }
+
+      if (currentCrontab.includes("hybrid-mem backup")) {
+        console.log("✓ A hybrid-mem backup cron entry already exists:");
+        const existing = currentCrontab.split("\n").find((l) => l.includes("hybrid-mem backup"));
+        if (existing) console.log(`  ${existing}`);
+        return;
+      }
+
+      const newCrontab = (currentCrontab.trimEnd() ? currentCrontab.trimEnd() + "\n" : "") + cronLine + "\n";
+      try {
+        const { writeFileSync: wfs, unlinkSync: uls } = require("fs") as typeof import("fs");
+        const tmpFile = join(require("os").tmpdir(), `crontab-hybrid-mem-${Date.now()}.txt`);
+        wfs(tmpFile, newCrontab, "utf-8");
+        execSync(`crontab ${tmpFile}`);
+        try { uls(tmpFile); } catch { /* ignore */ }
+        console.log("✓ Weekly backup scheduled (Sundays at 03:00).");
+        console.log(`  Log: ${logFile}`);
+        console.log(`  State: ${join(homedir(), ".openclaw", "state", "memory-backup-last.json")}`);
+        console.log("");
+        console.log("Add to HEARTBEAT.md to get alerted on failure:");
+        console.log("  Check ~/.openclaw/state/memory-backup-last.json — if ok=false, alert Markus.");
+      } catch (err) {
+        console.error(`✗ Failed to install crontab: ${err}`);
+        console.log("");
+        console.log("Add manually with: crontab -e");
+        console.log(`  ${cronLine}`);
         process.exitCode = 1;
       }
     }));

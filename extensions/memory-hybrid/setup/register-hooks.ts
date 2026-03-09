@@ -193,17 +193,51 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         sessionFile?: string;
       };
 
-      // Flush WAL — commit any pending writes before the compaction LLM call
+      // Flush WAL — replay any pending writes before the compaction LLM call
+      // so the compaction summary can reference the most up-to-date memory state.
       if (ctx.wal) {
+        let walCommitted = 0;
+        let walSkipped = 0;
         try {
           const walEntries = ctx.wal.readAll();
           if (walEntries.length > 0) {
             api.logger.debug?.(
-              `memory-hybrid: before_compaction — WAL has ${walEntries.length} pending entries (will commit on next write)`,
+              `memory-hybrid: before_compaction — replaying ${walEntries.length} pending WAL entries`,
             );
+            for (const entry of walEntries) {
+              try {
+                if ((entry.operation === "store" || entry.operation === "update") && entry.data?.text) {
+                  if (!ctx.factsDb.hasDuplicate(entry.data.text as string)) {
+                    ctx.factsDb.store({
+                      text: entry.data.text as string,
+                      category: (entry.data.category as import("../config.js").MemoryCategory) ?? "other",
+                      importance: (entry.data.importance as number) ?? 0.7,
+                      entity: (entry.data.entity as string | null | undefined) ?? null,
+                      key: (entry.data.key as string | null | undefined) ?? null,
+                      value: (entry.data.value as string | null | undefined) ?? null,
+                      source: (entry.data.source as string) ?? "wal-replay",
+                      decayClass: entry.data.decayClass as import("../config.js").DecayClass | undefined,
+                      summary: (entry.data.summary as string | null | undefined) ?? null,
+                      tags: (entry.data.tags as string[] | undefined) ?? undefined,
+                    });
+                    walCommitted++;
+                  } else {
+                    walSkipped++;
+                  }
+                }
+                ctx.wal.remove(entry.id);
+              } catch {
+                // Non-fatal: log individual entry failure and continue
+              }
+            }
+            if (walCommitted > 0) {
+              api.logger.info?.(
+                `memory-hybrid: before_compaction — WAL replay: ${walCommitted} committed, ${walSkipped} skipped`,
+              );
+            }
           }
         } catch {
-          // Non-fatal
+          // Non-fatal — WAL replay failure should not block compaction
         }
       }
 
@@ -224,7 +258,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   }
 
   try {
-    api.on("after_compaction", async (event: unknown) => {
+    api.on("after_compaction", async (event: unknown): Promise<void | { prependContext: string }> => {
       const ev = event as {
         messageCount?: number;
         tokenCount?: number;
@@ -241,13 +275,66 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       );
 
       // Verify SQLite is still accessible after compaction
+      let factCount = 0;
       try {
-        const count = ctx.factsDb.getCount();
-        api.logger.debug?.(`memory-hybrid: after_compaction — SQLite health OK, ${count} facts in store`);
+        factCount = ctx.factsDb.getCount();
+        api.logger.debug?.(`memory-hybrid: after_compaction — SQLite health OK, ${factCount} facts in store`);
       } catch (dbErr) {
         api.logger.warn?.(
           `memory-hybrid: after_compaction — SQLite health check failed: ${dbErr}. Memory may be unavailable until restart.`,
         );
+        // No summary injection if DB is unavailable
+        return;
+      }
+
+      // Build post-compaction memory summary to help the agent resume with full context.
+      // Inject the top-N most recent/important facts so the agent's first post-compaction
+      // response references the right state.
+      //
+      // NOTE: `after_compaction` may not support prependContext in all OpenClaw versions.
+      // The return value is a best-effort injection — older runtimes will silently ignore it.
+      try {
+        const summaryFacts = ctx.factsDb.list(8);
+        const summaryLines: string[] = [];
+
+        if (summaryFacts.length > 0) {
+          summaryLines.push("<!-- memory-hybrid: post-compaction memory summary -->");
+          summaryLines.push("Key memories retained across compaction:");
+          for (const f of summaryFacts) {
+            const entityPrefix = f.entity ? `[${f.entity}] ` : "";
+            const preview = f.text.length > 150 ? f.text.slice(0, 150) + "…" : f.text;
+            summaryLines.push(`- ${entityPrefix}${preview}`);
+          }
+        }
+
+        // Append open issues summary if IssueStore is available
+        if (ctx.issueStore) {
+          try {
+            const openIssues = ctx.issueStore.list({
+              status: ["open", "diagnosed", "fix-attempted"],
+              limit: 5,
+            });
+            if (openIssues.length > 0) {
+              summaryLines.push("");
+              summaryLines.push("Open issues:");
+              for (const issue of openIssues) {
+                summaryLines.push(`- [${issue.severity}] ${issue.title} (${issue.status})`);
+              }
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+
+        if (summaryLines.length > 0) {
+          summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
+          api.logger.debug?.(
+            `memory-hybrid: after_compaction — injecting memory summary (${summaryFacts.length} facts)`,
+          );
+          return { prependContext: summaryLines.join("\n") };
+        }
+      } catch {
+        // Non-fatal — summary injection failure should not disrupt normal operation
       }
     });
   } catch (err) {

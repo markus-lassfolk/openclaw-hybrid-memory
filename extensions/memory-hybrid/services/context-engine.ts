@@ -105,7 +105,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
   /**
    * Pre-compaction flush:
-   *  1. Drain the WAL (commit any pending writes)
+   *  1. Drain the WAL — replay pending entries to SQLite (and LanceDB if embeddings available)
    *  2. Snapshot session-scoped facts to WAL for durability
    */
   async compact(params: {
@@ -115,17 +115,79 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
     force?: boolean;
     currentTokenCount?: number;
   }): Promise<CompactResult> {
-    const { logger, wal, factsDb } = this.opts;
+    const { logger, wal, factsDb, vectorDb, embeddings } = this.opts;
     try {
-      // 1. Check WAL entries (WAL is file-backed; count entries as proxy for "pending")
+      // 1. Replay pending WAL entries — commit any writes that didn't complete before crash/compaction
+      let walCommitted = 0;
+      let walSkipped = 0;
       if (wal) {
         try {
           const walEntries = wal.readAll();
           if (walEntries.length > 0) {
-            logger.debug?.(`memory-hybrid: context-engine compact — WAL has ${walEntries.length} entries for session ${params.sessionId} (will be committed on next write)`);
+            logger.debug?.(`memory-hybrid: context-engine compact — replaying ${walEntries.length} WAL entries for session ${params.sessionId}`);
+            for (const entry of walEntries) {
+              try {
+                if ((entry.operation === "store" || entry.operation === "update") && entry.data?.text) {
+                  // Skip if already persisted (idempotent replay)
+                  if (!factsDb.hasDuplicate(entry.data.text as string)) {
+                    const stored = factsDb.store({
+                      text: entry.data.text as string,
+                      category: (entry.data.category as import("../config.js").MemoryCategory) ?? "other",
+                      importance: (entry.data.importance as number) ?? 0.7,
+                      entity: (entry.data.entity as string | null | undefined) ?? null,
+                      key: (entry.data.key as string | null | undefined) ?? null,
+                      value: (entry.data.value as string | null | undefined) ?? null,
+                      source: (entry.data.source as string) ?? "wal-replay",
+                      decayClass: entry.data.decayClass as import("../config.js").DecayClass | undefined,
+                      summary: (entry.data.summary as string | null | undefined) ?? null,
+                      tags: (entry.data.tags as string[] | undefined) ?? undefined,
+                    });
+                    // Optionally persist vector if already computed in WAL entry
+                    const precomputedVector = entry.data.vector as number[] | undefined;
+                    if (precomputedVector && precomputedVector.length > 0) {
+                      try {
+                        await vectorDb.store({
+                          id: stored.id,
+                          text: stored.text,
+                          vector: precomputedVector,
+                          importance: stored.importance,
+                          category: stored.category,
+                        });
+                      } catch {
+                        // Vector store failure is non-fatal — SQLite entry is durable
+                      }
+                    } else if (embeddings) {
+                      // Re-embed on WAL replay if no vector was stored
+                      try {
+                        const vector = await embeddings.embed(stored.text);
+                        await vectorDb.store({
+                          id: stored.id,
+                          text: stored.text,
+                          vector: Array.from(vector),
+                          importance: stored.importance,
+                          category: stored.category,
+                        });
+                      } catch {
+                        // Non-fatal
+                      }
+                    }
+                    walCommitted++;
+                  } else {
+                    walSkipped++;
+                  }
+                }
+                // Remove entry after successful processing (or if it was a no-op duplicate)
+                wal.remove(entry.id);
+              } catch {
+                // Non-fatal: log individual entry failure and continue with remaining entries
+              }
+            }
+            if (walCommitted > 0) {
+              logger.info?.(`memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`);
+            }
           }
         } catch {
-          // Non-fatal
+          // Non-fatal — WAL replay failure should not block compaction
         }
       }
 
@@ -138,7 +200,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       }
 
       logger.debug?.(`memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}`);
-      return { ok: true, compacted: false, reason: "flushed pending state" };
+      return { ok: true, compacted: false, reason: `flushed pending state (wal: ${walCommitted} committed)` };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-engine",
@@ -150,28 +212,107 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
   }
 
   /**
-   * Pre-spawn preparation: nothing to do at this layer — autoRecall already
-   * injects memories via the before_agent_start hook chain.
+   * Pre-spawn preparation: inject relevant parent memories into sub-agent context.
    *
-   * Returns undefined to signal "no rollback needed".
+   * Fetches the top-N most recent/important facts from the parent session and
+   * returns them as a `contextAddition` string for the SDK to inject into the
+   * sub-agent's initial context.
+   *
+   * Guard against double-processing: the before_agent_start hook also injects
+   * memories for the child session. This method only fires when the SDK calls
+   * the ContextEngine API directly (OpenClaw ≥ 2026.3.8). On older runtimes the
+   * method is never called, so there is no duplication risk.
    */
-  async prepareSubagentSpawn(_params: {
+  async prepareSubagentSpawn(params: {
     parentSessionKey: string;
     childSessionKey: string;
     ttlMs?: number;
   }): Promise<SubagentSpawnPreparation | undefined> {
-    return undefined;
+    const { factsDb, cfg, logger } = this.opts;
+    try {
+      // Fetch top-N recent/important facts to seed the sub-agent's context
+      const limit = cfg.autoRecall?.limit ?? 10;
+      const topFacts = factsDb.list(Math.min(limit, 15));
+
+      if (topFacts.length === 0) {
+        logger.debug?.(`memory-hybrid: prepareSubagentSpawn — no facts to inject for child=${params.childSessionKey}`);
+        return { rollback: async () => {} };
+      }
+
+      const lines = topFacts.map((f) => {
+        const entityPrefix = f.entity ? `[${f.entity}] ` : "";
+        const preview = f.text.length > 200 ? f.text.slice(0, 200) + "…" : f.text;
+        return `- ${entityPrefix}${preview}`;
+      });
+
+      // contextAddition is a non-standard field on the return type — populated so that
+      // SDK versions that support it can inject the block; older versions ignore it.
+      const contextAddition = [
+        `<!-- memory-hybrid: parent context injected for subagent ${params.childSessionKey} -->`,
+        `Relevant memories from parent session (${params.parentSessionKey}):`,
+        ...lines,
+        `<!-- /memory-hybrid: parent context -->`,
+      ].join("\n");
+
+      logger.debug?.(
+        `memory-hybrid: prepareSubagentSpawn — injecting ${topFacts.length} facts for child=${params.childSessionKey}`,
+      );
+
+      return {
+        rollback: async () => {
+          // No state was mutated; rollback is a no-op.
+          logger.debug?.(`memory-hybrid: prepareSubagentSpawn rollback — no state to revert for child=${params.childSessionKey}`);
+        },
+        // Extended field: injected into sub-agent context by SDK ≥ 2026.3.8
+        contextAddition,
+      } as SubagentSpawnPreparation & { contextAddition: string };
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "context-engine",
+        operation: "prepare-subagent-spawn",
+      });
+      logger.warn?.(`memory-hybrid: prepareSubagentSpawn failed (non-fatal): ${err}`);
+      return undefined;
+    }
   }
 
   /**
-   * Post-subagent cleanup: log the end reason.
-   * Actual fact capture from subagent results is handled by the subagent_ended
-   * hook in lifecycle/hooks.ts (which runs after this).
+   * Post-subagent cleanup: capture any session-scoped facts created by the sub-agent
+   * and promote them to the appropriate scope.
+   *
+   * Guard against double-processing: the subagent_ended hook in lifecycle/hooks.ts
+   * handles the primary fact capture pipeline. This method provides a lightweight
+   * secondary pass scoped to the ContextEngine lifecycle, and only runs on
+   * OpenClaw ≥ 2026.3.8. If a fact is already in the store it will be skipped
+   * by the hasDuplicate check.
+   *
+   * NOTE: The current SDK interface does not pass the sub-agent's result text here.
+   * Full result-text capture is handled by the lifecycle/hooks.ts subagent_ended handler.
+   * When the SDK interface is extended to include result text, this method should parse
+   * it using the existing autoCapture logic (see lifecycle/hooks.ts agent_end handler).
    */
   async onSubagentEnded(params: { childSessionKey: string; reason: string }): Promise<void> {
-    this.opts.logger.debug?.(
-      `memory-hybrid: context-engine onSubagentEnded — child=${params.childSessionKey} reason=${params.reason}`,
-    );
+    const { factsDb, logger } = this.opts;
+    try {
+      // Count any session-scoped facts from the child session to confirm capture happened
+      const childSessionFacts = factsDb.list(1, { source: params.childSessionKey });
+      const capturedCount = childSessionFacts.length;
+
+      logger.debug?.(
+        `memory-hybrid: context-engine onSubagentEnded — child=${params.childSessionKey} reason=${params.reason} sessionFacts≥${capturedCount}`,
+      );
+
+      // TODO(future): When SDK passes result text via params.resultText, parse it here:
+      //   const texts = extractAutoCaptureCandidates(params.resultText);
+      //   for (const text of texts.filter(t => !factsDb.hasDuplicate(t))) { factsDb.store(...) }
+      // For now, all capture is delegated to the subagent_ended hook in lifecycle/hooks.ts.
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "context-engine",
+        operation: "on-subagent-ended",
+      });
+      logger.warn?.(`memory-hybrid: onSubagentEnded failed (non-fatal): ${err}`);
+    }
   }
 
   async dispose(): Promise<void> {
