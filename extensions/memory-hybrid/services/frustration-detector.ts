@@ -264,8 +264,9 @@ export function detectFrustration(
   const window = turns.slice(-windowSize);
 
   // Extract user turns only (for analysis)
+  const allUserTurns = turns.filter((t) => t.role === "user");
   const userTurns = window.filter((t) => t.role === "user");
-  const allUserContents = turns.filter((t) => t.role === "user").map((t) => t.content);
+  const allUserContents = allUserTurns.map((t) => t.content);
 
   if (userTurns.length === 0) {
     return buildState(0, [], prevLevel, 0, cfg);
@@ -285,9 +286,11 @@ export function detectFrustration(
     const turnsAgo = userTurns.length - 1 - i; // 0 = most recent
     const recency = Math.pow(decayRate, turnsAgo);
 
+    // Find the actual index of this turn in allUserTurns
+    const turnIndexInAll = allUserTurns.indexOf(turn);
     // Previous user messages relative to this turn
     const prevUserMsgsForTurn = allUserContents
-      .slice(0, allUserContents.indexOf(turn.content))
+      .slice(0, turnIndexInAll)
       .reverse()
       .map((content, idx) => ({ content, turnsAgo: idx + 1 }));
 
