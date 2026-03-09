@@ -20,6 +20,26 @@ import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF", "DERIVED_FROM"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
 
+/** Optional context metadata captured alongside a reinforcement event (#259). */
+export interface ReinforcementContext {
+  querySnippet?: string;
+  topic?: string;
+  toolSequence?: string[];
+  sessionFile?: string;
+}
+
+/** A single entry in the reinforcement_log table (#259). */
+export interface ReinforcementEvent {
+  id: string;
+  factId: string;
+  signal: "positive" | "negative";
+  querySnippet: string | null;
+  topic: string | null;
+  toolSequence: string[] | null;
+  sessionFile: string | null;
+  occurredAt: number;
+}
+
 /** A single contradiction record (from the contradictions table). */
 export interface ContradictionRecord {
   id: string;
@@ -200,6 +220,63 @@ export class FactsDB {
 
     // ---- Verification store (Issue #162) ----
     this.migrateVerifiedFactsTable();
+
+    // ---- Rich reinforcement context log (#259) ----
+    this.migrateReinforcementLogTable();
+
+    // ---- Change reinforced_count to REAL for fractional boosts (#259, #260) ----
+    this.migrateReinforcedCountToReal();
+  }
+
+  /** Create reinforcement_log table for per-event context (#259). */
+  private migrateReinforcementLogTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS reinforcement_log (
+        id TEXT PRIMARY KEY,
+        fact_id TEXT NOT NULL,
+        signal TEXT NOT NULL DEFAULT 'positive',
+        query_snippet TEXT,
+        topic TEXT,
+        tool_sequence TEXT,
+        session_file TEXT,
+        occurred_at INTEGER NOT NULL
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_fact_id ON reinforcement_log(fact_id)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_occurred ON reinforcement_log(occurred_at)`);
+  }
+
+  /** Change reinforced_count from INTEGER to REAL to support fractional boost amounts (#259, #260). */
+  private migrateReinforcedCountToReal(): void {
+    const factsCols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string; type: string }>;
+    const factsReinforcedCol = factsCols.find((c) => c.name === "reinforced_count");
+    if (factsReinforcedCol && factsReinforcedCol.type !== "REAL") {
+      this.liveDb.exec(`DROP INDEX IF EXISTS idx_facts_reinforced`);
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
+      this.liveDb.exec(`UPDATE facts SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
+      this.liveDb.exec(`ALTER TABLE facts DROP COLUMN reinforced_count`);
+      this.liveDb.exec(`ALTER TABLE facts RENAME COLUMN reinforced_count_real TO reinforced_count`);
+      this.liveDb.exec(
+        `CREATE INDEX IF NOT EXISTS idx_facts_reinforced ON facts(reinforced_count) WHERE reinforced_count > 0`,
+      );
+    }
+
+    const proceduresCols = this.liveDb
+      .prepare(`PRAGMA table_info(procedures)`)
+      .all() as Array<{ name: string; type: string }>;
+    const proceduresReinforcedCol = proceduresCols.find((c) => c.name === "reinforced_count");
+    if (proceduresReinforcedCol && proceduresReinforcedCol.type !== "REAL") {
+      this.liveDb.exec(`DROP INDEX IF EXISTS idx_procedures_reinforced`);
+      this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
+      this.liveDb.exec(`UPDATE procedures SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
+      this.liveDb.exec(`ALTER TABLE procedures DROP COLUMN reinforced_count`);
+      this.liveDb.exec(`ALTER TABLE procedures RENAME COLUMN reinforced_count_real TO reinforced_count`);
+      this.liveDb.exec(
+        `CREATE INDEX IF NOT EXISTS idx_procedures_reinforced ON procedures(reinforced_count) WHERE reinforced_count > 0`,
+      );
+    }
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -1418,9 +1495,11 @@ export class FactsDB {
       scopeFilter?: ScopeFilter | null;
       /** Reinforcement boost — added to score when reinforced_count > 0 (default: 0.1). */
       reinforcementBoost?: number;
+      /** Weight applied to diversity score when calculating effective boost (default: 1.0). */
+      diversityWeight?: number;
     } = {},
   ): SearchResult[] {
-    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter, reinforcementBoost = 0.1 } = options;
+    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter, reinforcementBoost = 0.1, diversityWeight = 1.0 } = options;
 
     const sanitized = this.sanitizeFTS5Query(query);
     const safeQuery = sanitized
@@ -1487,14 +1566,31 @@ export class FactsDB {
     const maxScore = Math.max(...rows.map((r) => r.fts_score as number));
     const range = maxScore - minScore || 1;
 
+    // Batch-fetch reinforcement events for all reinforced facts to avoid N+1 queries
+    const reinforcedFactIds = rows
+      .filter((row) => ((row.reinforced_count as number) || 0) > 0)
+      .map((row) => row.id as string);
+    const eventsByFactId = this.batchGetReinforcementEvents(reinforcedFactIds);
+
     const results = rows.map((row) => {
       const rawScore = 1 - ((row.fts_score as number) - minScore) / range;
       const bm25Score = Number.isNaN(rawScore) ? 0.8 : rawScore;
       const freshness = (row.freshness as number) || 1.0;
       const confidence = (row.confidence as number) || 1.0;
       const reinforcedCount = (row.reinforced_count as number) || 0;
-      // Add reinforcement boost when fact has been praised
-      const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
+      // Add reinforcement boost when fact has been praised, weighted by diversity
+      let reinforcement = 0;
+      if (reinforcedCount > 0) {
+        const events = eventsByFactId.get(row.id as string) || [];
+        if (events.length === 0) {
+          // No events tracked (trackContext was false or events evicted): use full boost
+          reinforcement = reinforcementBoost;
+        } else {
+          // Calculate diversity score and weight boost: high diversity = higher boost
+          const diversityScore = FactsDB.computeDiversityFromEvents(events);
+          reinforcement = reinforcementBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+        }
+      }
       const composite = Math.min(1.0, bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15 + reinforcement);
       const entry = this.rowToEntry(row);
       // Apply dynamic salience (access boost + time decay)
@@ -2287,12 +2383,16 @@ export class FactsDB {
   /**
    * Annotate a fact with reinforcement from user praise.
    * Increments reinforced_count, updates last_reinforced_at, appends quote (max 10 quotes kept).
+   * Optionally records a rich context event in reinforcement_log (#259).
    * Wraps read-modify-write in a transaction to prevent race conditions.
    * Returns true if fact was updated.
    */
-  reinforceFact(id: string, quoteSnippet: string): boolean {
+  reinforceFact(id: string, quoteSnippet: string, context?: ReinforcementContext, opts?: { trackContext?: boolean; maxEventsPerFact?: number; boostAmount?: number }): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    
+    const trackContext = opts?.trackContext !== false;
+    const maxEventsPerFact = opts?.maxEventsPerFact ?? 50;
+    const boostAmount = Math.max(0, opts?.boostAmount ?? 1);
+
     const tx = this.liveDb.transaction(() => {
       const row = this.liveDb
         .prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`)
@@ -2303,13 +2403,139 @@ export class FactsDB {
 
       this.liveDb
         .prepare(
-          `UPDATE facts SET reinforced_count = reinforced_count + 1, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
+          `UPDATE facts SET reinforced_count = reinforced_count + ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
         )
-        .run(nowSec, quotesJson, id);
+        .run(boostAmount, nowSec, quotesJson, id);
+
+      // Insert rich context event into reinforcement_log (#259)
+      if (trackContext) {
+        const eventId = randomUUID();
+        this.liveDb
+          .prepare(
+            `INSERT INTO reinforcement_log (id, fact_id, signal, query_snippet, topic, tool_sequence, session_file, occurred_at)
+             VALUES (?, ?, 'positive', ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            eventId,
+            id,
+            context?.querySnippet ?? null,
+            context?.topic ?? null,
+            context?.toolSequence ? JSON.stringify(context.toolSequence) : null,
+            context?.sessionFile ?? null,
+            nowSec,
+          );
+
+        // FIFO eviction: keep only the most recent maxEventsPerFact events
+        const countRow = this.liveDb
+          .prepare(`SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ?`)
+          .get(id) as { cnt: number };
+        if (countRow.cnt > maxEventsPerFact) {
+          this.liveDb
+            .prepare(
+              `DELETE FROM reinforcement_log WHERE fact_id = ? AND id NOT IN (
+                SELECT id FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC, rowid DESC LIMIT ?
+              )`,
+            )
+            .run(id, id, maxEventsPerFact);
+        }
+      }
+
       return true;
     });
-    
+
     return tx();
+  }
+
+  /**
+   * Get all reinforcement events for a fact from reinforcement_log (#259).
+   */
+  getReinforcementEvents(factId: string): ReinforcementEvent[] {
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC`)
+      .all(factId) as Array<{
+        id: string;
+        fact_id: string;
+        signal: string;
+        query_snippet: string | null;
+        topic: string | null;
+        tool_sequence: string | null;
+        session_file: string | null;
+        occurred_at: number;
+      }>;
+    return rows.map((r) => ({
+      id: r.id,
+      factId: r.fact_id,
+      signal: (r.signal === "negative" ? "negative" : "positive") as "positive" | "negative",
+      querySnippet: r.query_snippet,
+      topic: r.topic,
+      toolSequence: r.tool_sequence ? (JSON.parse(r.tool_sequence) as string[]) : null,
+      sessionFile: r.session_file,
+      occurredAt: r.occurred_at,
+    }));
+  }
+
+  /**
+   * Compute diversity score from reinforcement events.
+   * Filters out null/empty query snippets (treats them as fully diverse).
+   * Returns 1.0 if no valid snippets exist, otherwise unique stems / valid snippet count.
+   */
+  private static computeDiversityFromEvents(events: ReinforcementEvent[]): number {
+    if (events.length === 0) return 1.0;
+    const stems = events
+      .map((e) => e.querySnippet?.trim())
+      .filter((s): s is string => !!s)
+      .map((s) => s.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50));
+    if (stems.length === 0) return 1.0;
+    const uniqueStems = new Set(stems).size;
+    return uniqueStems / stems.length;
+  }
+
+  /**
+   * Batch-fetch reinforcement events for multiple facts in a single query.
+   * Returns a Map<factId, ReinforcementEvent[]> for efficient lookup.
+   */
+  private batchGetReinforcementEvents(factIds: string[]): Map<string, ReinforcementEvent[]> {
+    if (factIds.length === 0) return new Map();
+    const placeholders = factIds.map(() => "?").join(",");
+    const rows = this.liveDb
+      .prepare(`SELECT * FROM reinforcement_log WHERE fact_id IN (${placeholders}) ORDER BY fact_id, occurred_at DESC`)
+      .all(...factIds) as Array<{
+        id: string;
+        fact_id: string;
+        signal: string;
+        query_snippet: string | null;
+        topic: string | null;
+        tool_sequence: string | null;
+        session_file: string | null;
+        occurred_at: number;
+      }>;
+    const eventsByFactId = new Map<string, ReinforcementEvent[]>();
+    for (const r of rows) {
+      const event: ReinforcementEvent = {
+        id: r.id,
+        factId: r.fact_id,
+        signal: (r.signal === "negative" ? "negative" : "positive") as "positive" | "negative",
+        querySnippet: r.query_snippet,
+        topic: r.topic,
+        toolSequence: r.tool_sequence ? (JSON.parse(r.tool_sequence) as string[]) : null,
+        sessionFile: r.session_file,
+        occurredAt: r.occurred_at,
+      };
+      if (!eventsByFactId.has(r.fact_id)) {
+        eventsByFactId.set(r.fact_id, []);
+      }
+      eventsByFactId.get(r.fact_id)!.push(event);
+    }
+    return eventsByFactId;
+  }
+
+  /**
+   * Calculate diversity score for a fact: unique query stems / total events.
+   * Score 1.0 = all events from different queries; 0.0 = all from same query (#259).
+   */
+  calculateDiversityScore(factId: string): number {
+    const events = this.getReinforcementEvents(factId);
+    return FactsDB.computeDiversityFromEvents(events);
   }
 
   /**

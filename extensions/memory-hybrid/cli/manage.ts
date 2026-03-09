@@ -617,6 +617,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const sqlResults = factsDb.search(query, 50, {
           scopeFilter,
           tierFilter: opts?.tier === 'cold' ? 'all' : 'warm',
+          reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+          diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
         });
 
         // Filter vector results by scope

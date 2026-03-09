@@ -62,6 +62,7 @@ import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
 import { runDirectiveExtract, type DirectiveExtractResult } from "../services/directive-extract.js";
 import { runReinforcementExtract, type ReinforcementExtractResult } from "../services/reinforcement-extract.js";
+import type { ReinforcementContext } from "../backends/facts-db.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
@@ -289,6 +290,17 @@ const DEFAULT_SELF_CORRECTION = {
   spawnThreshold: 15,
   spawnModel: "",
 } as const;
+
+/**
+ * Infer which identity file a rule or suggestion should target (#260).
+ */
+export function inferTargetFile(content: string): string {
+  const lower = content.toLowerCase();
+  if (/\b(identity|creature|persona)\b/.test(lower)) return "IDENTITY.md";
+  if (/\b(my (name|role)|agent (name|role|identity)|who (i am|you are))\b/.test(lower)) return "IDENTITY.md";
+  if (/\b(preference|style|workflow|working|setup|tooling)\b/.test(lower)) return "USER.md";
+  return "SOUL.md";
+}
 
 /**
  * Store a memory via CLI
@@ -1664,12 +1676,13 @@ export async function runExtractDirectivesForCli(
  */
 export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
-  opts: { days?: number; verbose?: boolean; dryRun?: boolean },
+  opts: { days?: number; verbose?: boolean; dryRun?: boolean; workspace?: string },
 ): Promise<ReinforcementExtractResult> {
-  const { factsDb, cfg } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb, logger } = ctx;
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
   const filePaths = getSessionFilePathsSince(sessionDir, days);
+  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
 
   const reinforcementRegex = getReinforcementSignalRegex();
   const result = runReinforcementExtract({ filePaths, reinforcementRegex });
@@ -1680,13 +1693,171 @@ export async function runExtractReinforcementForCli(
     }
   }
 
+  const scCfg = cfg.selfCorrection;
+  const runLLMAnalysis = scCfg?.reinforcementLLMAnalysis !== false && result.incidents.length > 0 && !opts.dryRun;
+  let analysisCategory: string | undefined;
+
+  // LLM analysis step — mirrors self-correction pipeline (#260)
+  if (runLLMAnalysis) {
+    type ReinforcementRemediation = {
+      category: string;
+      severity: string;
+      remediationType: string;
+      remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[]; taskPattern?: string; targetFile?: string; suggestedChange?: string };
+    };
+    let analysed: ReinforcementRemediation[] = [];
+    try {
+      const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
+        incidents_json: JSON.stringify(result.incidents),
+      });
+      const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
+      const model = heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+      const fallbackModels = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+      const content = await chatCompleteWithRetry({
+        model,
+        content: prompt,
+        temperature: 0.2,
+        maxTokens: distillMaxOutputTokens(model),
+        openai,
+        fallbackModels,
+        label: "memory-hybrid: reinforcement analyze",
+      });
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        analysed = JSON.parse(jsonMatch[0]) as ReinforcementRemediation[];
+        analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
+      }
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:llm-analysis" });
+    }
+
+    const toolsPath = join(workspaceRoot, "TOOLS.md");
+    const positiveRulesSection = scCfg?.positiveRulesSection ?? "Positive Reinforcement Rules";
+    const semanticThreshold = scCfg?.semanticDedupThreshold ?? 0.92;
+    const semanticDedup = scCfg?.semanticDedup !== false;
+    const toProposals = scCfg?.reinforcementToProposals !== false;
+
+    for (const a of analysed) {
+      if (a.remediationType === "NO_ACTION") continue;
+      try {
+        if (a.remediationType === "POSITIVE_RULE") {
+          const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
+          if (!line.trim()) continue;
+
+          // Exact text dedup: skip if the rule already appears in TOOLS.md
+          if (existsSync(toolsPath)) {
+            const currentTools = readFileSync(toolsPath, "utf-8");
+            if (currentTools.includes(line.trim())) continue;
+          }
+
+          // Semantic dedup: skip if a similar rule exists in the vector store (#260)
+          let ruleVec: number[] | null = null;
+          if (semanticDedup) {
+            try {
+              ruleVec = await embeddings.embed(line.trim());
+              if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
+                logger?.info?.(`memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`);
+                continue;
+              }
+            } catch (err) {
+              capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-dedup" });
+              // Fail open: still insert the rule if dedup check fails
+            }
+          }
+
+          if (existsSync(toolsPath)) {
+            insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
+            // Store the rule embedding in vector DB for future dedup (#260)
+            if (ruleVec) {
+              try {
+                await vectorDb.store({ text: line.trim(), vector: ruleVec, importance: CLI_STORE_IMPORTANCE, category: "technical", id: `rule-${Date.now()}-${Math.random()}` });
+              } catch (err) {
+                capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-store" });
+              }
+            }
+          }
+        } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
+          const c = a.remediationContent;
+          const isPattern = a.remediationType === "PATTERN_FACT";
+          const obj = typeof c === "object" && c && "text" in c ? c as { text?: string; entity?: string; key?: string; tags?: string[] } : { text: String(c) };
+          const text = (obj.text ?? "").trim();
+          if (!text || factsDb.hasDuplicate(text)) continue;
+          let vector: number[] | null = null;
+          try {
+            vector = await embeddings.embed(text);
+            if (semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
+          } catch (err) {
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:embed-dedup" });
+            continue;
+          }
+          const tags: string[] = Array.isArray(obj.tags) ? obj.tags : [];
+          if (isPattern && !tags.includes("reinforcement")) tags.push("reinforcement");
+          if (isPattern && !tags.includes("behavioral")) tags.push("behavioral");
+          const entry = factsDb.store({
+            text,
+            category: isPattern ? "pattern" : "technical",
+            importance: CLI_STORE_IMPORTANCE,
+            entity: obj.entity ?? null,
+            key: typeof obj.key === "string" ? obj.key : null,
+            value: text.slice(0, 200),
+            source: "reinforcement-analysis",
+            tags,
+          });
+          if (vector) {
+            await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: isPattern ? "pattern" : "technical", id: entry.id });
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+          }
+        } else if (a.remediationType === "PROCEDURE_BOOST") {
+          const c = a.remediationContent;
+          const taskPattern = typeof c === "object" && c && "taskPattern" in c ? String((c as { taskPattern?: string }).taskPattern ?? "") : String(c);
+          if (taskPattern.trim()) {
+            const procs = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
+            for (const proc of procs) {
+              factsDb.reinforceProcedure(proc.id, taskPattern, cfg.distill?.reinforcementPromotionThreshold ?? 2);
+            }
+          }
+        } else if (a.remediationType === "PROPOSAL" && toProposals && proposalsDb) {
+          const c = a.remediationContent;
+          const obj = typeof c === "object" && c ? c as { targetFile?: string; suggestedChange?: string } : {};
+          const suggestedChange = obj.suggestedChange ?? (typeof c === "string" ? c : "");
+          const targetFile = obj.targetFile ?? inferTargetFile(suggestedChange);
+          if (suggestedChange.trim()) {
+            proposalsDb.create({
+              targetFile,
+              title: `Reinforcement: ${a.category}`,
+              observation: `Positive signal from reinforcement analysis`,
+              suggestedChange: suggestedChange.trim(),
+              confidence: 0.7,
+              evidenceSessions: result.incidents.map((i) => i.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx),
+            });
+          }
+        }
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:apply-remediation" });
+      }
+    }
+  }
+
   // Annotate facts/procedures with reinforcement if not dry-run
   if (!opts.dryRun) {
+    const trackContext = cfg.reinforcement?.trackContext !== false;
+    const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
     for (const incident of result.incidents) {
       try {
-        // Reinforce recalled memories
+        const context: ReinforcementContext = {
+          querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
+          topic: analysisCategory,
+          toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
+          sessionFile: incident.sessionFile,
+        };
+
+        // Reinforce recalled memories with rich context, boosted by diversity score (#259)
+        const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
+        const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
         for (const memId of incident.recalledMemoryIds) {
-          factsDb.reinforceFact(memId, incident.userMessage);
+          const diversityScore = factsDb.calculateDiversityScore(memId);
+          const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact, boostAmount: effectiveBoost });
         }
 
         // Reinforce procedures based on tool call sequence
@@ -3095,7 +3266,7 @@ export async function runSelfCorrectionRunForCli(
     applyTools?: boolean;
   },
 ): Promise<SelfCorrectionRunResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, logger } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, logger, proposalsDb } = ctx;
   const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
   const reportDir = join(workspaceRoot, "memory", "reports");
@@ -3238,7 +3409,26 @@ export async function runSelfCorrectionRunForCli(
       if (line.trim()) toolsSuggestions.push(line.trim());
     } else if (a.remediationType === "AGENTS_RULE" || a.remediationType === "SKILL_UPDATE") {
       const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
-      if (line.trim()) proposals.push(`[${a.remediationType}] ${line.trim()}`);
+      if (line.trim()) {
+        proposals.push(`[${a.remediationType}] ${line.trim()}`);
+        // Wire AGENTS_RULE into proposals DB (#260) — closes the dead end
+        if (a.remediationType === "AGENTS_RULE" && proposalsDb && (scCfg as { agentsRuleToProposals?: boolean }).agentsRuleToProposals !== false && !opts.dryRun) {
+          try {
+            const targetFile = inferTargetFile(line);
+            const incidentContext = incidents.length > 0 ? `Correction incident: "${incidents[0].userMessage.slice(0, 200)}"` : "Self-correction analysis";
+            proposalsDb.create({
+              targetFile,
+              title: `Self-correction: ${a.category ?? "behavior"}`,
+              observation: incidentContext,
+              suggestedChange: line.trim(),
+              confidence: 0.7,
+              evidenceSessions: incidents.map((inc) => inc.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx),
+            });
+          } catch (err) {
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:agents-rule-proposal" });
+          }
+        }
+      }
     }
   }
 
