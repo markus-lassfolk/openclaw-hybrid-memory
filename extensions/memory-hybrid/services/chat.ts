@@ -5,6 +5,7 @@
 
 import OpenAI from "openai";
 import { capturePluginError } from "./error-reporter.js";
+import type { CostTracker } from "../backends/cost-tracker.js";
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -67,6 +68,10 @@ export async function chatComplete(opts: {
   timeoutMs?: number;
   /** When aborted (e.g. parent timeout), the request is cancelled and no retry is needed. */
   signal?: AbortSignal;
+  /** Feature label for cost tracking (e.g. 'auto-classify', 'query-expansion'). */
+  feature?: string;
+  /** When provided along with feature, records token usage after successful completion. */
+  costTracker?: CostTracker | null;
 }): Promise<string> {
   const { model, content, temperature = 0.2, maxTokens, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, signal } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
@@ -93,6 +98,19 @@ export async function chatComplete(opts: {
     );
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
+    if (opts.costTracker && opts.feature && resp.usage) {
+      try {
+        opts.costTracker.record({
+          feature: opts.feature,
+          model,
+          inputTokens: resp.usage.prompt_tokens ?? 0,
+          outputTokens: resp.usage.completion_tokens ?? 0,
+          success: true,
+        });
+      } catch {
+        // Cost tracking is best-effort; never let it break the caller
+      }
+    }
     return resp.choices[0]?.message?.content?.trim() ?? "";
   } catch (err) {
     clearTimeout(timeoutId);
@@ -223,8 +241,12 @@ export async function chatCompleteWithRetry(opts: {
   signal?: AbortSignal;
   /** Optional per-instance warning queue for missing provider keys. */
   pendingWarnings?: PendingLLMWarnings;
+  /** Feature label for cost tracking (e.g. 'distill', 'reflection'). */
+  feature?: string;
+  /** When provided along with feature, records token usage after successful completion. */
+  costTracker?: CostTracker | null;
 }): Promise<string> {
-  const { fallbackModels = [], label: rawLabel, maxTokens, timeoutMs, signal, pendingWarnings, ...chatOpts } = opts;
+  const { fallbackModels = [], label: rawLabel, maxTokens, timeoutMs, signal, pendingWarnings, feature, costTracker, ...chatOpts } = opts;
   const label = rawLabel ?? "LLM call";
   const modelsToTry = [opts.model, ...fallbackModels];
 
@@ -255,6 +277,8 @@ export async function chatCompleteWithRetry(opts: {
             maxTokens: effectiveMaxTokens,
             ...(timeoutMs != null && { timeoutMs }),
             signal,
+            ...(feature != null && { feature }),
+            ...(costTracker != null && { costTracker }),
           }),
         { maxRetries: 3, signal },
       );

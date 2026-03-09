@@ -149,6 +149,8 @@ export type ManageContext = {
   runContinuousVerification?: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
   runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
+  runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
+  pruneCostLog?: (retainDays?: number) => number;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -205,6 +207,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runContinuousVerification,
     runCrossAgentLearning,
     runToolEffectiveness,
+    runCostReport,
+    pruneCostLog,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
@@ -1380,6 +1384,15 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:tool-effectiveness" });
           }
         }
+        // Cost log pruning (Issue #270)
+        if (!res.skipped && pruneCostLog && cfg.costTracking?.enabled !== false && cfg.costTracking?.pruneInNightlyCycle !== false) {
+          try {
+            const pruned = pruneCostLog(cfg.costTracking?.retainDays);
+            if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:cost-log-prune" });
+          }
+        }
       }));
   }
 
@@ -1588,6 +1601,27 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       console.log(`  Links created: ${res.linksCreated}`);
       console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
       if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
+    }));
+
+  // ----- cost-report (Issue #270) -----
+  mem
+    .command("cost-report")
+    .description("Show LLM token usage and estimated cost breakdown by feature (Issue #270)")
+    .option("--days <n>", "Days of history to include (default: 7)", "7")
+    .option("--model", "Show breakdown by model instead of feature")
+    .option("--feature <name>", "Filter to a specific feature (e.g. auto-classify)")
+    .option("--csv", "Output as CSV")
+    .action(withExit(async (opts?: { days?: string; model?: boolean; feature?: string; csv?: boolean }) => {
+      if (!runCostReport) {
+        console.error("cost-report is not available in this context.");
+        process.exitCode = 1;
+        return;
+      }
+      const days = opts?.days ? parseInt(opts.days, 10) : 7;
+      runCostReport(
+        { days, model: !!opts?.model, feature: opts?.feature, csv: !!opts?.csv },
+        { log: (msg) => console.log(msg) },
+      );
     }));
 
   // ----- tool-effectiveness (Issue #263 — Phase 3) -----

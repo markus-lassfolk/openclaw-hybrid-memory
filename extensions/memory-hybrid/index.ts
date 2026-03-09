@@ -225,6 +225,7 @@ let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
 
+let costTracker: import("./backends/cost-tracker.js").CostTracker | null = null;
 let issueStore: IssueStore | null = null;
 let workflowStore: WorkflowStore | null = null;
 let crystallizationStore: import("./backends/crystallization-store.js").CrystallizationStore | null = null;
@@ -340,6 +341,7 @@ const memoryHybridPlugin = {
       toolProposalStore = dbContext.toolProposalStore;
       provenanceService = dbContext.provenanceService;
       verificationStore = dbContext.verificationStore;
+      costTracker = dbContext.costTracker;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -429,6 +431,7 @@ const memoryHybridPlugin = {
       eventLog,
       verificationStore,
       provenanceService,
+      costTracker,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,

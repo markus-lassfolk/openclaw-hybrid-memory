@@ -1,0 +1,212 @@
+/**
+ * LLM Cost Tracker — persists per-call token usage into llm_cost_log table
+ * in the existing memory.db SQLite database (shared with FactsDB).
+ *
+ * ⚠️ Costs are estimates based on published model pricing, not billing-accurate.
+ */
+
+import type Database from "better-sqlite3";
+import { estimateCost } from "../services/model-pricing.js";
+
+export interface CostEntry {
+  feature: string;         // e.g. 'auto-classify', 'query-expansion'
+  model: string;           // e.g. 'openai/gpt-4.1-nano'
+  inputTokens: number;
+  outputTokens: number;
+  durationMs?: number;
+  success?: boolean;       // default true
+}
+
+export interface FeatureCostRow {
+  feature: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+}
+
+export interface ModelBreakdown {
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+}
+
+export interface CostReport {
+  features: FeatureCostRow[];
+  total: {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCostUsd: number;
+  };
+  days: number;
+}
+
+export class CostTracker {
+  private readonly db: Database.Database;
+
+  constructor(db: Database.Database) {
+    this.db = db;
+    this.initSchema();
+  }
+
+  private initSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS llm_cost_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL DEFAULT (unixepoch()),
+        feature TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        estimated_cost_usd REAL,
+        duration_ms INTEGER,
+        success INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_cost_log_feature ON llm_cost_log(feature);
+      CREATE INDEX IF NOT EXISTS idx_cost_log_timestamp ON llm_cost_log(timestamp);
+    `);
+  }
+
+  record(entry: CostEntry): void {
+    const cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
+    this.db
+      .prepare(
+        `INSERT INTO llm_cost_log (feature, model, input_tokens, output_tokens, estimated_cost_usd, duration_ms, success)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        entry.feature,
+        entry.model,
+        entry.inputTokens,
+        entry.outputTokens,
+        cost,
+        entry.durationMs ?? null,
+        (entry.success ?? true) ? 1 : 0,
+      );
+  }
+
+  getReport(options: { days?: number; feature?: string } = {}): CostReport {
+    const days = options.days ?? 7;
+    const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+
+    let query =
+      `SELECT feature,
+              COUNT(*) AS calls,
+              SUM(input_tokens) AS inputTokens,
+              SUM(output_tokens) AS outputTokens,
+              COALESCE(SUM(estimated_cost_usd), 0) AS estimatedCostUsd
+       FROM llm_cost_log
+       WHERE timestamp >= ?`;
+    const params: (number | string)[] = [cutoff];
+
+    if (options.feature) {
+      query += ` AND feature = ?`;
+      params.push(options.feature);
+    }
+    query += ` GROUP BY feature ORDER BY estimatedCostUsd DESC`;
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
+      feature: string;
+      calls: number | bigint;
+      inputTokens: number | bigint;
+      outputTokens: number | bigint;
+      estimatedCostUsd: number;
+    }>;
+
+    const features: FeatureCostRow[] = rows.map((r) => ({
+      feature: r.feature,
+      calls: Number(r.calls),
+      inputTokens: Number(r.inputTokens),
+      outputTokens: Number(r.outputTokens),
+      estimatedCostUsd: r.estimatedCostUsd ?? 0,
+    }));
+
+    const total = features.reduce(
+      (acc, r) => ({
+        calls: acc.calls + r.calls,
+        inputTokens: acc.inputTokens + r.inputTokens,
+        outputTokens: acc.outputTokens + r.outputTokens,
+        estimatedCostUsd: acc.estimatedCostUsd + r.estimatedCostUsd,
+      }),
+      { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
+    );
+
+    return { features, total, days };
+  }
+
+  getModelBreakdown(days = 7): ModelBreakdown[] {
+    const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+    const rows = this.db
+      .prepare(
+        `SELECT model,
+                COUNT(*) AS calls,
+                SUM(input_tokens) AS inputTokens,
+                SUM(output_tokens) AS outputTokens,
+                COALESCE(SUM(estimated_cost_usd), 0) AS estimatedCostUsd
+         FROM llm_cost_log
+         WHERE timestamp >= ?
+         GROUP BY model
+         ORDER BY estimatedCostUsd DESC`,
+      )
+      .all(cutoff) as Array<{
+      model: string;
+      calls: number | bigint;
+      inputTokens: number | bigint;
+      outputTokens: number | bigint;
+      estimatedCostUsd: number;
+    }>;
+
+    return rows.map((r) => ({
+      model: r.model,
+      calls: Number(r.calls),
+      inputTokens: Number(r.inputTokens),
+      outputTokens: Number(r.outputTokens),
+      estimatedCostUsd: r.estimatedCostUsd ?? 0,
+    }));
+  }
+
+  getTotalCost(days = 7): {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCostUsd: number;
+  } {
+    const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS calls,
+                COALESCE(SUM(input_tokens), 0) AS inputTokens,
+                COALESCE(SUM(output_tokens), 0) AS outputTokens,
+                COALESCE(SUM(estimated_cost_usd), 0) AS estimatedCostUsd
+         FROM llm_cost_log
+         WHERE timestamp >= ?`,
+      )
+      .get(cutoff) as {
+      calls: number | bigint;
+      inputTokens: number | bigint;
+      outputTokens: number | bigint;
+      estimatedCostUsd: number;
+    };
+
+    return {
+      calls: Number(row.calls),
+      inputTokens: Number(row.inputTokens),
+      outputTokens: Number(row.outputTokens),
+      estimatedCostUsd: row.estimatedCostUsd ?? 0,
+    };
+  }
+
+  /**
+   * Delete entries older than retainDays (default 90). Returns number deleted.
+   */
+  pruneOldEntries(retainDays = 90): number {
+    const cutoff = Math.floor(Date.now() / 1000) - retainDays * 86400;
+    const result = this.db
+      .prepare(`DELETE FROM llm_cost_log WHERE timestamp < ?`)
+      .run(cutoff);
+    return result.changes;
+  }
+}

@@ -26,6 +26,7 @@ import { ProvenanceService } from "../services/provenance.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
+import { CostTracker } from "../backends/cost-tracker.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -209,6 +210,7 @@ export interface DatabaseContext {
   toolProposalStore: ToolProposalStore;
   verificationStore: VerificationStore | null;
   provenanceService: ProvenanceService | null;
+  costTracker: CostTracker;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
@@ -384,6 +386,11 @@ export function initializeDatabases(
     });
     api.logger.info("memory-hybrid: verification store enabled");
   }
+
+  // Initialize CostTracker — always enabled; recording gated by cfg.costTracking.enabled (Issue #270)
+  // Shares FactsDB's SQLite connection (same memory.db file, avoids a second DB handle).
+  const costTracker = new CostTracker(factsDb.getRawDb());
+  api.logger.info("memory-hybrid: LLM cost tracker initialized");
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -703,6 +710,7 @@ export function initializeDatabases(
     toolProposalStore,
     verificationStore,
     provenanceService,
+    costTracker,
     resolvedLancePath,
     resolvedSqlitePath,
     health,

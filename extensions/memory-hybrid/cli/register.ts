@@ -191,6 +191,8 @@ export type HybridMemCliContext = {
   activeTask?: ActiveTaskContext;
   runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
+  runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
+  pruneCostLog?: (retainDays?: number) => number;
 };
 
 /** Chainable command type (Commander-style). */

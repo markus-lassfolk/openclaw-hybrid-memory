@@ -292,6 +292,16 @@ export type ToolEffectivenessConfig = {
   injectHints?: boolean;
 };
 
+/** LLM cost tracking configuration (Issue #270). */
+export type CostTrackingConfig = {
+  /** Enable LLM cost tracking (default: true). */
+  enabled: boolean;
+  /** Days to retain cost log entries (default: 90). */
+  retainDays: number;
+  /** Run prune during nightly cycle (default: true). */
+  pruneInNightlyCycle: boolean;
+};
+
 /** Closed-loop rule effectiveness measurement (Issue #262). */
 export type ClosedLoopConfig = {
   /** Enable closed-loop measurement (default: true). */

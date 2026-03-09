@@ -172,6 +172,9 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem active-tasks complete",
   "hybrid-mem active-tasks stale",
   "hybrid-mem active-tasks add",
+  "hybrid-mem cost-report",
+  "hybrid-mem tool-effectiveness",
+  "hybrid-mem cross-agent-learning",
 ] as const;
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
@@ -244,6 +247,8 @@ export interface HybridMemCliRegistrationContext {
   detectCategory: HandlerContext["detectCategory"];
   /** Optional event log for episodic consolidation in dream cycle. */
   eventLog?: import("../backends/event-log.js").EventLog | null;
+  /** LLM cost tracker (Issue #270). */
+  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
 }
 
 function buildCliContextServices(
@@ -721,6 +726,8 @@ export function createHybridMemCliContext(
     runExtractImplicitFeedback: (opts) => handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
     runCrossAgentLearning: () => handlers.runCrossAgentLearningForCli(handlerCtx),
     runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
+    runCostReport: (opts, sink) => handlers.runCostReportForCli(handlerCtx, opts, sink),
+    pruneCostLog: (retainDays) => (handlerCtx.costTracker ? handlerCtx.costTracker.pruneOldEntries(retainDays) : 0),
     runExport: services.runExport,
     richStatsExtras: buildRichStatsExtras(handlerCtx),
     listCommands: buildListCommands(handlerCtx, api),
