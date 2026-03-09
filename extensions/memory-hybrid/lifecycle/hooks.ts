@@ -1947,6 +1947,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
+    if (ctx.cfg.frustrationDetection?.enabled !== false) {
+      api.on("agent_end", async (event: unknown) => {
+        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+        frustrationStateMap.delete(sessionKey);
+      });
+    }
+
     // Clear auth failure dedup map on session end
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       api.on("agent_end", async (event: unknown) => {
