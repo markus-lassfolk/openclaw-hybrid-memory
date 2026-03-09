@@ -76,6 +76,7 @@ import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { capProposalConfidence } from "./proposals.js";
+import { relativeTime } from "./shared.js";
 import {
   CLI_STORE_IMPORTANCE,
   BATCH_STORE_IMPORTANCE,
@@ -234,24 +235,7 @@ function createProgressReporter(
   };
 }
 
-// Helper function for relative time display
-function relativeTime(ms: number): string {
-  const diff = ms - Date.now();
-  const abs = Math.abs(diff);
-  const future = diff > 0;
-
-  if (abs < 60000) return future ? "in <1m" : "just now";
-  if (abs < 3600000) {
-    const m = Math.floor(abs / 60000);
-    return future ? `in ${m}m` : `${m}m ago`;
-  }
-  if (abs < 86400000) {
-    const h = Math.floor(abs / 3600000);
-    return future ? `in ${h}h` : `${h}h ago`;
-  }
-  const d = Math.floor(abs / 86400000);
-  return future ? `in ${d}d` : `${d}d ago`;
-}
+// relativeTime is exported from ./shared.ts and imported at the top of this file.
 
 /**
  * Handler Context
@@ -673,7 +657,7 @@ export async function runVerifyForCli(
 ): Promise<void> {
   const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai } = ctx;
   const verbosity = cfg.verbosity ?? "normal";
-  // In quiet mode: suppress ✅ / [OK] lines; only pass through failures, headers, and summaries.
+  // In quiet mode: suppress ✅ / [OK] lines and section headers (─────); only pass through failures and summaries.
   const rawLog = sink.log;
   const log: typeof rawLog = verbosity === "quiet"
     ? (msg: string) => {
@@ -4565,7 +4549,7 @@ export function runCostReportForCli(
   const { log } = sink;
   const days = opts.days ?? 7;
   const verbosity = ctx.cfg.verbosity ?? "normal";
-  // quiet: only totals; verbose: full per-feature+savings; normal: current default
+  // quiet: only totals (compact layout); normal/verbose: full per-feature breakdown with savings
   const compact = opts.format === "compact" || verbosity === "quiet";
 
   // --modes: show config-mode cost estimate table (no live data needed)

@@ -14,7 +14,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
 import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
 
@@ -527,5 +526,71 @@ describe("memory_store — verbosity output", () => {
     const result = await testStoreVerbosity("normal", longText) as { content: { text: string }[] };
     expect(result.content[0].text).toContain("...");
     expect(result.content[0].text).not.toContain("a".repeat(150));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCostReportForCli — quiet mode (compact) output
+// ---------------------------------------------------------------------------
+
+describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
+  it("uses compact layout when verbosity=quiet", async () => {
+    const { runCostReportForCli } = await import("../cli/handlers.js");
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, verbosity: "quiet" });
+
+    const lines: string[] = [];
+    const sink = { log: (msg: string) => lines.push(msg) };
+
+    // Build a minimal HandlerContext — costTracker is null so we test the "disabled" branch
+    const ctx = {
+      cfg,
+      factsDb: {},
+      vectorDb: {},
+      embeddings: {},
+      credentialsDb: null,
+      resolvedSqlitePath: ":memory:",
+      resolvedLancePath: "/tmp/test-lance",
+      openai: null,
+      pluginApi: null,
+      costTracker: null,
+    } as unknown as Parameters<typeof runCostReportForCli>[0];
+
+    runCostReportForCli(ctx, { days: 7, format: undefined }, sink);
+
+    // With quiet verbosity and no cost tracker, should emit a short message
+    // (not an elaborate banner). Just verify no empty-line banners were emitted.
+    const emptyLines = lines.filter((l) => l.trim() === "");
+    expect(emptyLines).toHaveLength(0);
+    // Should report that cost tracking is disabled (costTracker is null)
+    expect(lines.some((l) => /disabled|not available/i.test(l))).toBe(true);
+  });
+
+  it("uses compact layout for --modes in quiet mode (no blank-line banners)", async () => {
+    const { runCostReportForCli } = await import("../cli/handlers.js");
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, verbosity: "quiet" });
+
+    const lines: string[] = [];
+    const sink = { log: (msg: string) => lines.push(msg) };
+
+    const ctx = {
+      cfg,
+      factsDb: {},
+      vectorDb: {},
+      embeddings: {},
+      credentialsDb: null,
+      resolvedSqlitePath: ":memory:",
+      resolvedLancePath: "/tmp/test-lance",
+      openai: null,
+      pluginApi: null,
+      costTracker: null,
+    } as unknown as Parameters<typeof runCostReportForCli>[0];
+
+    runCostReportForCli(ctx, { days: 7, modes: true, format: undefined }, sink);
+
+    // In compact (quiet) mode: no empty banner lines, no verbose description rows
+    const emptyLines = lines.filter((l) => l.trim() === "");
+    expect(emptyLines).toHaveLength(0);
+    // Should still output mode names in the table
+    expect(lines.some((l) => /essential|normal|full/i.test(l))).toBe(true);
   });
 });

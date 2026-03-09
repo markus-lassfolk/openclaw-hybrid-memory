@@ -189,6 +189,9 @@ export function registerUtilityTools(
         const verbosity = cfg.verbosity ?? "normal";
         let text: string;
         if (verbosity === "quiet") {
+          // Quiet: compact one-liner — statsBreakdown and countExpired are still computed above
+          // and included in the `details` field for programmatic consumers; they're intentionally
+          // omitted from the human-readable text to reduce noise in quiet sessions.
           text = `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).`;
         } else {
           const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;

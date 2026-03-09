@@ -4,6 +4,21 @@
 
 import { capturePluginError } from "../services/error-reporter.js";
 
+/**
+ * Format a timestamp in milliseconds as a human-readable relative time string.
+ * e.g. "in 3h", "5m ago", "just now"
+ */
+export function relativeTime(ms: number): string {
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const future = diff > 0;
+  if (abs < 60000) return future ? "in <1m" : "just now";
+  if (abs < 3600000) { const m = Math.floor(abs / 60000); return future ? `in ${m}m` : `${m}m ago`; }
+  if (abs < 86400000) { const h = Math.floor(abs / 3600000); return future ? `in ${h}h` : `${h}h ago`; }
+  const d = Math.floor(abs / 86400000);
+  return future ? `in ${d}d` : `${d}d ago`;
+}
+
 export type Chainable = {
   command(name: string): Chainable;
   description(desc: string): Chainable;

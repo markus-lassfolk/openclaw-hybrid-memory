@@ -7,18 +7,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { generateTraceId, buildCouncilSessionKey, getProvenanceHeaders, buildProvenanceMetadata } from "../utils/provenance.js";
-
-/** Format a timestamp in ms as a human-readable relative time string. */
-function relativeTime(ms: number): string {
-  const diff = ms - Date.now();
-  const abs = Math.abs(diff);
-  const future = diff > 0;
-  if (abs < 60000) return future ? "in <1m" : "just now";
-  if (abs < 3600000) { const m = Math.floor(abs / 60000); return future ? `in ${m}m` : `${m}m ago`; }
-  if (abs < 86400000) { const h = Math.floor(abs / 3600000); return future ? `in ${h}h` : `${h}h ago`; }
-  const d = Math.floor(abs / 86400000);
-  return future ? `in ${d}d` : `${d}d ago`;
-}
+import { relativeTime } from "./shared.js";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
 import type {
   FindDuplicatesResult,
