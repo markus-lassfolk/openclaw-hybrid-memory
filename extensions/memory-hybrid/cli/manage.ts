@@ -6,6 +6,19 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { generateTraceId, buildCouncilSessionKey, getProvenanceHeaders, buildProvenanceMetadata } from "../utils/provenance.js";
+
+/** Format a timestamp in ms as a human-readable relative time string. */
+function relativeTime(ms: number): string {
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const future = diff > 0;
+  if (abs < 60000) return future ? "in <1m" : "just now";
+  if (abs < 3600000) { const m = Math.floor(abs / 60000); return future ? `in ${m}m` : `${m}m ago`; }
+  if (abs < 86400000) { const h = Math.floor(abs / 3600000); return future ? `in ${h}h` : `${h}h ago`; }
+  const d = Math.floor(abs / 86400000);
+  return future ? `in ${d}d` : `${d}d ago`;
+}
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
 import type {
   FindDuplicatesResult,
@@ -2177,5 +2190,272 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  ${cronLine}`);
         process.exitCode = 1;
       }
+    }));
+
+  // Issue #281 — Maintenance status command
+  const maintenance = mem
+    .command("maintenance")
+    .description("Memory maintenance management and health checks (Issue #281).");
+
+  maintenance
+    .command("status")
+    .description(
+      "Show maintenance cron job health: nightly cycle, weekly backup, and any reliability issues.",
+    )
+    .option("--json", "Output as JSON")
+    .action(withExit(async (opts?: { json?: boolean }) => {
+      const cronStorePath = join(homedir(), ".openclaw", "cron", "jobs.json");
+      const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
+      const nightlyCronExpr = cfg.maintenance?.cronReliability?.nightlyCron ?? "0 3 * * *";
+      const weeklyBackupCronExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
+
+      /** Job health record */
+      type JobStatus = {
+        name: string;
+        pluginJobId: string;
+        enabled: boolean;
+        lastRunAt: string | null;
+        nextRunAt: string | null;
+        lastStatus: string | null;
+        isStale: boolean;
+        isMissing: boolean;
+        configuredSchedule: string;
+        issue?: string;
+      };
+
+      const jobsOfInterest: Array<{ id: string; label: string; scheduleExpr: string; staleMs: number }> = [
+        {
+          id: "hybrid-mem:nightly-distill",
+          label: "nightly-memory-sweep",
+          scheduleExpr: nightlyCronExpr,
+          staleMs: staleThresholdMs,
+        },
+        {
+          id: "hybrid-mem:nightly-dream-cycle",
+          label: "nightly-dream-cycle",
+          scheduleExpr: cfg.nightlyCycle?.schedule ?? "45 2 * * *",
+          staleMs: staleThresholdMs,
+        },
+        {
+          id: "hybrid-mem:weekly-reflection",
+          label: "weekly-reflection",
+          scheduleExpr: "0 3 * * 0",
+          staleMs: 7 * 24 * 60 * 60 * 1000,
+        },
+        {
+          id: "hybrid-mem:weekly-extract-procedures",
+          label: "weekly-extract-procedures",
+          scheduleExpr: "0 4 * * 0",
+          staleMs: 7 * 24 * 60 * 60 * 1000,
+        },
+        {
+          id: "hybrid-mem:weekly-deep-maintenance",
+          label: "weekly-deep-maintenance",
+          scheduleExpr: weeklyBackupCronExpr,
+          staleMs: 7 * 24 * 60 * 60 * 1000,
+        },
+        {
+          id: "hybrid-mem:monthly-consolidation",
+          label: "monthly-consolidation",
+          scheduleExpr: "0 5 1 * *",
+          staleMs: 32 * 24 * 60 * 60 * 1000,
+        },
+      ];
+
+      const results: JobStatus[] = [];
+
+      let cronStore: { jobs?: unknown[] } = { jobs: [] };
+      if (existsSync(cronStorePath)) {
+        try {
+          cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+        } catch {
+          // corrupt store — treat all as missing
+        }
+      }
+
+      const jobs = Array.isArray(cronStore.jobs) ? (cronStore.jobs as Array<Record<string, unknown>>) : [];
+
+      for (const wanted of jobsOfInterest) {
+        const found = jobs.find(
+          (j) => j && (j.pluginJobId === wanted.id || String(j.name ?? "") === wanted.label),
+        );
+
+        if (!found) {
+          results.push({
+            name: wanted.label,
+            pluginJobId: wanted.id,
+            enabled: false,
+            lastRunAt: null,
+            nextRunAt: null,
+            lastStatus: null,
+            isStale: false,
+            isMissing: true,
+            configuredSchedule: wanted.scheduleExpr,
+            issue: "Job not found in cron store — run `hybrid-mem verify --fix` to install.",
+          });
+          continue;
+        }
+
+        const enabled = found.enabled !== false;
+        const state = found.state as { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string } | undefined;
+        const lastRunAtMs = state?.lastRunAtMs;
+        const nextRunAtMs = state?.nextRunAtMs;
+        const lastStatus = state?.lastStatus ?? null;
+
+        const isStale = enabled && lastRunAtMs != null && Date.now() - lastRunAtMs > wanted.staleMs;
+        const neverRan = enabled && lastRunAtMs == null;
+
+        let issue: string | undefined;
+        if (!enabled) {
+          issue = "Job is disabled.";
+        } else if (neverRan) {
+          issue = "Job has never run — check cron daemon is running.";
+        } else if (isStale) {
+          const hoursSince = Math.floor((Date.now() - (lastRunAtMs ?? 0)) / 3600000);
+          issue = `Job is stale — last run was ${hoursSince}h ago (threshold: ${Math.floor(wanted.staleMs / 3600000)}h).`;
+        } else if (lastStatus === "error") {
+          issue = `Last run failed: ${state?.lastError ?? "unknown error"}`;
+        }
+
+        results.push({
+          name: wanted.label,
+          pluginJobId: wanted.id,
+          enabled,
+          lastRunAt: lastRunAtMs != null ? new Date(lastRunAtMs).toISOString() : null,
+          nextRunAt: nextRunAtMs != null ? new Date(nextRunAtMs).toISOString() : null,
+          lastStatus,
+          isStale,
+          isMissing: false,
+          configuredSchedule: wanted.scheduleExpr,
+          issue,
+        });
+      }
+
+      const issues = results.filter((r) => r.issue);
+
+      if (opts?.json) {
+        console.log(JSON.stringify({ ok: issues.length === 0, jobs: results, issueCount: issues.length }, null, 2));
+        return;
+      }
+
+      // Human-readable output
+      console.log("Memory Maintenance Status (Issue #281)");
+      console.log("========================================");
+      console.log(`Cron store: ${cronStorePath}`);
+      console.log(`Stale threshold (daily): ${cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28}h`);
+      console.log("");
+
+      for (const r of results) {
+        const icon = r.isMissing ? "❌" : !r.enabled ? "⏸ " : r.issue ? "⚠️ " : "✅";
+        const lastRun = r.lastRunAt ? `last: ${relativeTime(new Date(r.lastRunAt).getTime())} (${r.lastStatus ?? "unknown"})` : "last: never";
+        const nextRun = r.nextRunAt ? `next: ${relativeTime(new Date(r.nextRunAt).getTime())}` : "";
+        const timing = [lastRun, nextRun].filter(Boolean).join("  ");
+        console.log(`${icon} ${r.name.padEnd(32)} ${r.isMissing ? "MISSING" : r.enabled ? "enabled " : "disabled"} ${timing}`);
+        if (r.issue) {
+          console.log(`   └─ ${r.issue}`);
+        }
+      }
+
+      console.log("");
+      if (issues.length === 0) {
+        console.log("✅ All maintenance jobs healthy.");
+      } else {
+        console.log(`⚠️  ${issues.length} issue(s) detected. Run \`hybrid-mem verify --fix\` to repair.`);
+        if (issues.some((r) => r.isMissing)) {
+          console.log("   Missing jobs can be registered with: hybrid-mem install");
+        }
+      }
+    }));
+
+  maintenance
+    .command("cron-health")
+    .description(
+      "Check if expected cron jobs exist and have fired recently. " +
+        "Logs warnings for missing or stale jobs. Useful in heartbeat checks.",
+    )
+    .action(withExit(async () => {
+      const cronStorePath = join(homedir(), ".openclaw", "cron", "jobs.json");
+      const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
+      const criticalJobs = [
+        "hybrid-mem:nightly-distill",
+        "hybrid-mem:weekly-reflection",
+        "hybrid-mem:weekly-deep-maintenance",
+      ];
+
+      let cronStore: { jobs?: unknown[] } = { jobs: [] };
+      if (existsSync(cronStorePath)) {
+        try {
+          cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+        } catch {
+          console.warn("⚠ Could not read cron store — skipping health check.");
+          return;
+        }
+      } else {
+        console.warn("⚠ Cron store not found — maintenance jobs not installed. Run: hybrid-mem install");
+        return;
+      }
+
+      const jobs = Array.isArray(cronStore.jobs) ? (cronStore.jobs as Array<Record<string, unknown>>) : [];
+      let healthy = true;
+
+      for (const id of criticalJobs) {
+        const job = jobs.find((j) => j && j.pluginJobId === id);
+        if (!job) {
+          console.warn(`⚠ Maintenance job missing: ${id}. Run: hybrid-mem install`);
+          healthy = false;
+          continue;
+        }
+        if (job.enabled === false) {
+          continue; // Disabled by user intent — not an error
+        }
+        const state = job.state as { lastRunAtMs?: number; lastStatus?: string } | undefined;
+        if (state?.lastRunAtMs != null && Date.now() - state.lastRunAtMs > staleThresholdMs) {
+          const h = Math.floor((Date.now() - state.lastRunAtMs) / 3600000);
+          console.warn(`⚠ Stale maintenance job: ${id} (last run ${h}h ago). Check cron daemon.`);
+          healthy = false;
+        }
+      }
+
+      if (healthy) {
+        console.log("✓ Maintenance cron jobs healthy.");
+      }
+    }));
+
+  // Issue #280 — Council provenance utility command
+  const council = mem
+    .command("council")
+    .description("Council review provenance utilities (Issue #280).");
+
+  council
+    .command("provenance-headers")
+    .description(
+      "Generate ACP provenance headers for a council review session. " +
+        "Output is JSON — pass to sessions_spawn or embed in review comments.",
+    )
+    .option("--session-key <key>", "Session key for this council member (e.g. council-review-pr-283)")
+    .option("--member <name>", "Council member name/label (e.g. 'Gemini Architect')")
+    .option("--trace-id <id>", "Shared trace ID for this council run (auto-generated if omitted)")
+    .option("--parent-session <session>", "Orchestrator session key (e.g. 'main')")
+    .option("--mode <mode>", "Provenance mode: meta+receipt | meta | receipt | none (from config if omitted)")
+    .action(withExit(async (opts?: { sessionKey?: string; member?: string; traceId?: string; parentSession?: string; mode?: string }) => {
+      const configMode = cfg.maintenance?.council?.provenance ?? "meta+receipt";
+      const mode = (opts?.mode as import("../config/types/maintenance.js").CouncilProvenanceMode | undefined) ?? configMode;
+      const sessionKeyPrefix = cfg.maintenance?.council?.sessionKeyPrefix ?? "council-review";
+      const sessionKey = opts?.sessionKey?.trim() || buildCouncilSessionKey(sessionKeyPrefix);
+
+      const { headers, receipt } = buildProvenanceMetadata(mode, sessionKey, {
+        councilMember: opts?.member,
+        traceId: opts?.traceId,
+        parentSession: opts?.parentSession,
+      });
+
+      console.log(JSON.stringify({ sessionKey, mode, headers, receipt }, null, 2));
+    }));
+
+  council
+    .command("trace-id")
+    .description("Generate a unique trace ID for a council review run.")
+    .action(withExit(async () => {
+      console.log(generateTraceId());
     }));
 }
