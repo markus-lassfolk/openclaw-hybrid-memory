@@ -4487,11 +4487,13 @@ export function runCostReportForCli(
       }
       return;
     }
-    const totalCost = breakdown.reduce((s, r) => s + r.estimatedCostUsd, 0);
-    const totalCalls = breakdown.reduce((s, r) => s + r.calls, 0);
+    const total = breakdown.reduce(
+      (acc, r) => ({ calls: acc.calls + r.calls, inputTokens: acc.inputTokens + r.inputTokens, outputTokens: acc.outputTokens + r.outputTokens, estimatedCostUsd: acc.estimatedCostUsd + r.estimatedCostUsd }),
+      { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
+    );
     if (!compact) {
       log(`\n📊 LLM Cost Report — by Model (last ${days} days)`);
-      log(`💰 Total: ${fmtCost(totalCost)} across ${totalCalls} calls`);
+      log(`💰 Total: ${fmtCost(total.estimatedCostUsd)} across ${total.calls} calls`);
       log("");
     } else {
       log(`\n───── LLM Cost by Model (last ${days} days) ─────`);
@@ -4517,13 +4519,9 @@ export function runCostReportForCli(
         fmtNum(r.inputTokens).padStart(colW[2]!),
         fmtNum(r.outputTokens).padStart(colW[3]!),
         fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
-        ...(compact ? [] : [pct(r.estimatedCostUsd, totalCost).padStart(colW[5]!)]),
+        ...(compact ? [] : [pct(r.estimatedCostUsd, total.estimatedCostUsd).padStart(colW[5]!)]),
       ].join("  "));
     }
-    const total = breakdown.reduce(
-      (acc, r) => ({ calls: acc.calls + r.calls, inputTokens: acc.inputTokens + r.inputTokens, outputTokens: acc.outputTokens + r.outputTokens, estimatedCostUsd: acc.estimatedCostUsd + r.estimatedCostUsd }),
-      { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
-    );
     log("─".repeat(header.length));
     log([
       "Total".padEnd(colW[0]!),
