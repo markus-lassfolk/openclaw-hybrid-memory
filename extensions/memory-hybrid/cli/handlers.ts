@@ -1884,12 +1884,9 @@ export async function runExtractReinforcementForCli(
         };
 
         // Reinforce recalled memories with rich context, boosted by diversity score (#259)
-        const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
         const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
         for (const memId of incident.recalledMemoryIds) {
-          const diversityScore = factsDb.calculateDiversityScore(memId);
-          const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
-          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact, boostAmount: effectiveBoost });
+          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact, boostAmount: baseBoost });
         }
 
         // Reinforce procedures based on tool call sequence
