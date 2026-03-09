@@ -191,6 +191,8 @@ export type HybridMemCliContext = {
   activeTask?: ActiveTaskContext;
   runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
+  runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
+  pruneCostLog?: (retainDays?: number) => number;
 };
 
 /** Chainable command type (Commander-style). */
@@ -242,6 +244,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:manage" });
     throw err;
   }
+
 
   if (ctx.activeTask) {
     try {

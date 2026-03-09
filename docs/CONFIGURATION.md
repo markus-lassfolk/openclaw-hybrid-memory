@@ -1325,7 +1325,11 @@ Boosts confidence on facts that are recalled or re-stored frequently. Enabled by
             "passiveBoost": 0.1,
             "activeBoost": 0.05,
             "maxConfidence": 1.0,
-            "similarityThreshold": 0.85
+            "similarityThreshold": 0.85,
+            "maxEventsPerFact": 50,
+            "diversityWeight": 1.0,
+            "trackContext": true,
+            "boostAmount": 1.0
           }
         }
       }
@@ -1341,6 +1345,144 @@ Boosts confidence on facts that are recalled or re-stored frequently. Enabled by
 | `activeBoost` | `0.05` | Confidence delta when a fact is retrieved via `memory_recall` |
 | `maxConfidence` | `1.0` | Upper cap for confidence after reinforcement |
 | `similarityThreshold` | `0.85` | Cosine similarity above which a new fact counts as a repeat of an existing one |
+| `maxEventsPerFact` | `50` | Max reinforcement events stored per fact (FIFO eviction) |
+| `diversityWeight` | `1.0` | Weight applied to diversity score when calculating effective boost |
+| `trackContext` | `true` | When false, skip storing per-event context columns (topic/query snippets) |
+| `boostAmount` | `1.0` | Base boost amount before diversity weighting is applied |
+
+---
+
+## Implicit feedback signals (implicitFeedback)
+
+Detects **behavioral** signals from the conversation (rephrasing, corrections, abrupt topic changes, terse replies, etc.) and turns them into structured feedback events.
+
+Defaults are **enabled** (opt-out). You can also control whether these signals feed into reinforcement and self-correction.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "implicitFeedback": {
+            "enabled": true,
+            "minConfidence": 0.5,
+            "signalTypes": [
+              "rephrase",
+              "immediate_action",
+              "topic_change",
+              "grateful_close",
+              "self_service",
+              "escalation",
+              "terse_response",
+              "extended_engagement",
+              "copy_paste",
+              "correction_cascade",
+              "silence_after_action"
+            ],
+            "rephraseThreshold": 0.8,
+            "topicChangeThreshold": 0.3,
+            "terseResponseRatio": 0.4,
+            "feedToReinforcement": true,
+            "feedToSelfCorrection": true,
+            "trajectoryLLMAnalysis": false
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Enable implicit feedback detection |
+| `minConfidence` | `0.5` | Minimum confidence to include a signal |
+| `signalTypes` | *(all)* | Which signal types to detect (defaults to all supported types) |
+| `rephraseThreshold` | `0.8` | Similarity threshold for rephrase detection |
+| `topicChangeThreshold` | `0.3` | Similarity threshold for topic-change detection |
+| `terseResponseRatio` | `0.4` | Fraction of avg message length below which `terse_response` fires |
+| `feedToReinforcement` | `true` | Feed positive implicit signals into reinforcement |
+| `feedToSelfCorrection` | `true` | Feed negative implicit signals into self-correction |
+| `trajectoryLLMAnalysis` | `false` | Use LLM-based trajectory analysis instead of heuristic lesson extraction |
+
+---
+
+## Closed-loop measurement (closedLoop)
+
+Computes effectiveness scores for rules/lessons by comparing outcome signals over a sliding window, and can automatically **deprecate** or **boost** rules based on measured impact.
+
+Defaults are **enabled** (opt-out).
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "closedLoop": {
+            "enabled": true,
+            "measurementWindowDays": 7,
+            "minSampleSize": 5,
+            "autoDeprecateThreshold": -0.3,
+            "autoBoostThreshold": 0.5,
+            "runInNightlyCycle": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Enable closed-loop measurement |
+| `measurementWindowDays` | `7` | Days before/after rule creation to compare |
+| `minSampleSize` | `5` | Minimum feedback sample size before scoring |
+| `autoDeprecateThreshold` | `-0.3` | Effect score threshold below which a rule is auto-deprecated |
+| `autoBoostThreshold` | `0.5` | Effect score threshold above which a rule is boosted |
+| `runInNightlyCycle` | `true` | Also run measurement during the nightly dream cycle |
+
+---
+
+## Error reporting (errorReporting)
+
+Anonymous error reporting to GlitchTip/Sentry. **Enabled by default (opt-out)** in `community` mode.
+
+See [ERROR-REPORTING.md](ERROR-REPORTING.md) for full privacy and audit details.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "errorReporting": {
+            "enabled": true,
+            "consent": true,
+            "mode": "community",
+            "sampleRate": 1.0,
+            "environment": "production",
+            "botName": "Maeve"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Enable error reporting (set `false` to opt out) |
+| `consent` | `true` | Consent gate (if `false`, reporter is disabled even when enabled) |
+| `mode` | `"community"` | `community` uses the built-in DSN; `self-hosted` requires your own DSN |
+| `dsn` | *(community DSN)* | Optional override DSN (community) or required DSN (self-hosted) |
+| `environment` | `"production"` | Environment tag |
+| `sampleRate` | `1.0` | Sampling rate (0.0–1.0) |
+| `botId` | *(unset)* | Optional UUID tag for grouping errors by bot |
+| `botName` | *(unset)* | Optional friendly name tag for grouping errors by bot |
 
 ---
 

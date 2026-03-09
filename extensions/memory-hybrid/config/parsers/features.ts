@@ -20,6 +20,7 @@ import type {
   FrustrationSignalWeights,
   CrossAgentLearningConfig,
   ToolEffectivenessConfig,
+  CostTrackingConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -552,7 +553,7 @@ export function parseFrustrationDetectionConfig(cfg: Record<string, unknown>): F
     decayRate:
       typeof raw?.decayRate === "number" && raw.decayRate > 0 && raw.decayRate <= 1
         ? raw.decayRate
-        : 0.9,
+        : 0.85,
     signalWeights,
     injectionThreshold:
       typeof raw?.injectionThreshold === "number" && raw.injectionThreshold >= 0 && raw.injectionThreshold <= 1
@@ -624,5 +625,18 @@ export function parseToolEffectivenessConfig(cfg: Record<string, unknown>): Tool
         ? raw.decayFactor
         : 0.95,
     runInNightlyCycle: raw?.runInNightlyCycle !== false,
+    injectHints: raw?.injectHints !== false,
+  };
+}
+
+export function parseCostTrackingConfig(cfg: Record<string, unknown>): CostTrackingConfig {
+  const raw = cfg.costTracking as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    retainDays:
+      typeof raw?.retainDays === "number" && raw.retainDays >= 1
+        ? Math.floor(raw.retainDays)
+        : 90,
+    pruneInNightlyCycle: raw?.pruneInNightlyCycle !== false,
   };
 }

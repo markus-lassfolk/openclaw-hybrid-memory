@@ -117,6 +117,7 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
 
 export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem",
+  "hybrid-mem dashboard",
   "hybrid-mem run-all",
   "hybrid-mem install",
   "hybrid-mem stats",
@@ -172,6 +173,9 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem active-tasks complete",
   "hybrid-mem active-tasks stale",
   "hybrid-mem active-tasks add",
+  "hybrid-mem cost-report",
+  "hybrid-mem tool-effectiveness",
+  "hybrid-mem cross-agent-learning",
 ] as const;
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
@@ -244,6 +248,8 @@ export interface HybridMemCliRegistrationContext {
   detectCategory: HandlerContext["detectCategory"];
   /** Optional event log for episodic consolidation in dream cycle. */
   eventLog?: import("../backends/event-log.js").EventLog | null;
+  /** LLM cost tracker (Issue #270). */
+  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
 }
 
 function buildCliContextServices(
@@ -263,13 +269,24 @@ function buildCliContextServices(
       }
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
-    runReflection: (opts) => {
+    runReflection: async (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      return runReflection(factsDb, vectorDb, embeddings, openai, {
+      const result = await runReflection(factsDb, vectorDb, embeddings, openai, {
         defaultWindow: cfg.reflection.defaultWindow,
         minObservations: cfg.reflection.minObservations,
         enabled: cfg.reflection.enabled,
       }, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
+      // Record savings: each pattern stored encodes knowledge that saves future manual analysis
+      if (result.patternsStored > 0 && !opts.dryRun && ctx.costTracker) {
+        ctx.costTracker.recordSavings({
+          feature: "reflection",
+          action: "pattern extracted and stored",
+          countAvoided: result.patternsStored,
+          estimatedSavingUsd: result.patternsStored * 0.0005,
+          note: `${result.factsAnalyzed} facts analyzed → ${result.patternsStored} patterns stored`,
+        });
+      }
+      return result;
     },
     runReflectionRules: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
@@ -279,8 +296,25 @@ function buildCliContextServices(
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
     },
-    runClassify: (opts) =>
-      runClassifyForCli(factsDb, openai, cfg.autoClassify, { ...opts, model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel }, discoveredPath, logSink, undefined),
+    runClassify: async (opts) => {
+      const result = await runClassifyForCli(factsDb, openai, cfg.autoClassify, { ...opts, model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel }, discoveredPath, logSink, undefined);
+      // Record savings: batching avoids N individual LLM calls
+      if (result.reclassified > 0 && !opts.dryRun && ctx.costTracker) {
+        const batchSize = cfg.autoClassify.batchSize ?? 20;
+        const batchesUsed = Math.ceil(result.reclassified / batchSize);
+        const callsAvoided = Math.max(0, result.reclassified - batchesUsed);
+        if (callsAvoided > 0) {
+          ctx.costTracker.recordSavings({
+            feature: "auto-classify",
+            action: "batch-classified facts",
+            countAvoided: callsAvoided,
+            estimatedSavingUsd: callsAvoided * 0.0001,
+            note: `${result.reclassified} facts in ${batchesUsed} batch(es) vs ${result.reclassified} individual calls`,
+          });
+        }
+      }
+      return result;
+    },
     runCompaction: () =>
       Promise.resolve(
         factsDb.runCompaction({
@@ -721,6 +755,8 @@ export function createHybridMemCliContext(
     runExtractImplicitFeedback: (opts) => handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
     runCrossAgentLearning: () => handlers.runCrossAgentLearningForCli(handlerCtx),
     runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
+    runCostReport: (opts, sink) => handlers.runCostReportForCli(handlerCtx, opts, sink),
+    pruneCostLog: (retainDays) => (handlerCtx.costTracker ? handlerCtx.costTracker.pruneOldEntries(retainDays) : 0),
     runExport: services.runExport,
     richStatsExtras: buildRichStatsExtras(handlerCtx),
     listCommands: buildListCommands(handlerCtx, api),

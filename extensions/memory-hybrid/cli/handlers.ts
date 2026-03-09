@@ -84,6 +84,8 @@ import {
 } from "../utils/constants.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore, generateMonthlyReport } from "../services/tool-effectiveness.js";
+import type { CostTracker } from "../backends/cost-tracker.js";
+import { getModeCostEstimates } from "../services/model-pricing.js";
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
@@ -275,6 +277,8 @@ export interface HandlerContext {
   detectCategory: (text: string) => MemoryCategory;
   /** OpenClaw plugin API — used for verify to read gateway config (e.g. models.providers for MiniMax etc.) */
   api?: import("openclaw/plugin-sdk").ClawdbotPluginApi;
+  /** LLM cost tracker — records per-call token usage (Issue #270). */
+  costTracker?: CostTracker | null;
 }
 
 // Constants
@@ -839,6 +843,11 @@ export async function runVerifyForCli(
   log(`  personaProposals: ${bool(cfg.personaProposals.enabled)}`);
   log(`  memoryTiering: ${bool(cfg.memoryTiering.enabled)}`);
   log(`  memoryTiering.compactionOnSessionEnd: ${bool(cfg.memoryTiering.compactionOnSessionEnd)}`);
+  if (cfg.memoryTiering.enabled) {
+    log(`    hotMaxTokens: ${cfg.memoryTiering.hotMaxTokens}`);
+    log(`    inactivePreferenceDays: ${cfg.memoryTiering.inactivePreferenceDays}`);
+    log(`    hotMaxFacts: ${cfg.memoryTiering.hotMaxFacts}`);
+  }
 
   if (cfg.selfCorrection) {
     log(`  selfCorrection: true`);
@@ -869,6 +878,53 @@ export async function runVerifyForCli(
   log(`  extraction (multi-pass): ${bool(cfg.extraction?.extractionPasses)}`);
   log(`  selfExtension (tool proposals): ${bool(cfg.selfExtension?.enabled)}`);
   log(`  crystallization (skill proposals): ${bool(cfg.crystallization?.enabled)}`);
+
+  log(`  reinforcement (confidence boost): ${bool(cfg.reinforcement.enabled)}`);
+  if (cfg.reinforcement.enabled) {
+    log(`    passiveBoost: ${cfg.reinforcement.passiveBoost}`);
+    log(`    activeBoost: ${cfg.reinforcement.activeBoost}`);
+  }
+
+  log(`  implicitFeedback: ${bool(cfg.implicitFeedback.enabled)}`);
+  if (cfg.implicitFeedback.enabled) {
+    log(`    feedToReinforcement: ${bool(cfg.implicitFeedback.feedToReinforcement)}`);
+    log(`    feedToSelfCorrection: ${bool(cfg.implicitFeedback.feedToSelfCorrection)}`);
+    log(`    trajectoryLLMAnalysis: ${bool(cfg.implicitFeedback.trajectoryLLMAnalysis)}`);
+  }
+
+  log(`  closedLoop: ${bool(cfg.closedLoop.enabled)}`);
+  if (cfg.closedLoop.enabled) {
+    log(`    runInNightlyCycle: ${bool(cfg.closedLoop.runInNightlyCycle)}`);
+    log(`    measurementWindowDays: ${cfg.closedLoop.measurementWindowDays}`);
+    log(`    minSampleSize: ${cfg.closedLoop.minSampleSize}`);
+  }
+
+  log(`  frustrationDetection: ${bool(cfg.frustrationDetection.enabled)}`);
+  if (cfg.frustrationDetection.enabled) {
+    log(`    windowSize: ${cfg.frustrationDetection.windowSize}`);
+    log(`    injectionThreshold: ${cfg.frustrationDetection.injectionThreshold}`);
+    log(`    decayRate: ${cfg.frustrationDetection.decayRate}`);
+  }
+
+  log(`  crossAgentLearning: ${bool(cfg.crossAgentLearning.enabled)}`);
+  if (cfg.crossAgentLearning.enabled) {
+    log(`    runInNightlyCycle: ${bool(cfg.crossAgentLearning.runInNightlyCycle)}`);
+    log(`    windowDays: ${cfg.crossAgentLearning.windowDays}`);
+    log(`    minSourceConfidence: ${cfg.crossAgentLearning.minSourceConfidence}`);
+  }
+
+  log(`  toolEffectiveness: ${bool(cfg.toolEffectiveness.enabled)}`);
+  if (cfg.toolEffectiveness.enabled) {
+    log(`    runInNightlyCycle: ${bool(cfg.toolEffectiveness.runInNightlyCycle)}`);
+  }
+
+  log(`  documents (MarkItDown): ${bool(cfg.documents.enabled)}`);
+  if (cfg.documents.enabled) {
+    log(`    visionEnabled: ${bool(cfg.documents.visionEnabled)}`);
+    log(`    model: ${cfg.documents.visionModel ?? "(from llm.default)"}`);
+  }
+
+  log(`  provenance (DERIVED_FROM): ${bool(cfg.provenance.enabled)}`);
 
   log("\n───── Advanced Features ─────");
   if (cfg.search?.hydeEnabled) {
@@ -975,6 +1031,44 @@ export async function runVerifyForCli(
       log(`    Example: llm.providers.anthropic.apiKey = "sk-ant-..." (and optionally .baseURL for the endpoint).`);
     }
   }
+
+  // ───── Cost Tracking ─────
+  log("\n───── Cost Tracking ─────");
+  if (!ctx.cfg.costTracking.enabled) {
+    log(`  Cost tracking: ⏸ Disabled`);
+    log(`  Enable: openclaw hybrid-mem config-set costTracking.enabled true`);
+  } else if (ctx.costTracker) {
+    const totalCost = ctx.costTracker.getTotalCost(7);
+    if (totalCost.calls === 0) {
+      log(`  Cost tracking: ✅ Active — collecting data (first report available after ~1 hour of use)`);
+    } else {
+      const topFeatures = ctx.costTracker.getReport({ days: 7 });
+      const totalUsd = totalCost.estimatedCostUsd;
+      const topSpenders = topFeatures.features.slice(0, 3).map((f) => {
+        const p = totalUsd > 0 ? Math.round((f.estimatedCostUsd / totalUsd) * 100) : 0;
+        return `${f.feature}: ${p}%`;
+      });
+      log(`  Cost tracking: ✅ Active — $${totalUsd.toFixed(3)} last 7 days (${totalCost.calls} LLM calls)`);
+      if (topSpenders.length > 0) {
+        log(`  Top features: ${topSpenders.join(", ")}`);
+      }
+      log(`  Run 'openclaw hybrid-mem cost-report' for full breakdown.`);
+    }
+  } else {
+    log(`  Cost tracking: ⚠️  Enabled in config but tracker failed to initialize`);
+    log(`  Check logs or run 'openclaw hybrid-mem verify --fix' to diagnose.`);
+  }
+
+  // ───── Estimated Monthly Cost by Mode ─────
+  log("\n───── Estimated Monthly Cost by Mode ─────");
+  const modeEstimates = getModeCostEstimates();
+  for (const est of modeEstimates) {
+    const low = est.monthlyLow.toFixed(2);
+    const high = est.monthlyHigh.toFixed(2);
+    log(`  ${est.mode.padEnd(10)}: ~$${low}-${high}/mo  (${est.description})`);
+  }
+  log(`  ℹ️  Estimates assume ~100 conversations/month with nano-tier models.`);
+  log(`     Heavy models (Opus, GPT-5.2) for distill/self-correction increase costs 5-10×.`);
 
   log("\n───── Ingestion & Distillation ─────");
   if (cfg.ingest) {
@@ -3502,6 +3596,17 @@ export async function runSelfCorrectionRunForCli(
     logger.warn?.(`memory-hybrid: could not write report: ${e}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
   }
+  // Record savings: each auto-fixed incident avoided ~2 manual LLM round-trips
+  if (autoFixed > 0 && ctx.costTracker && !opts?.dryRun) {
+    ctx.costTracker.recordSavings({
+      feature: "self-correction",
+      action: "auto-fixed incident",
+      countAvoided: autoFixed,
+      estimatedSavingUsd: autoFixed * 0.002,
+      note: `${autoFixed} incident(s) auto-remediated`,
+    });
+  }
+
   return {
     incidentsFound: incidents.length,
     analysed: analysed.length,
@@ -3859,6 +3964,11 @@ export function runConfigSetForCli(
     { key: "health", prop: "enabled" },
     { key: "memoryTiering", prop: "enabled" },
     { key: "reinforcement", prop: "enabled" },
+    { key: "implicitFeedback", prop: "enabled" },
+    { key: "closedLoop", prop: "enabled" },
+    { key: "frustrationDetection", prop: "enabled" },
+    { key: "crossAgentLearning", prop: "enabled" },
+    { key: "toolEffectiveness", prop: "enabled" },
     { key: "futureDateProtection", prop: "enabled" },
     { key: "path", prop: "enabled" },
     { key: "activeTask", prop: "enabled" },
@@ -4328,6 +4438,18 @@ export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<
   const openai = ctx.openai;
 
   const result = await runCrossAgentLearning(factsDb, openai, caCfg, ctx.logger ?? {});
+
+  // Record savings: each generalised pattern avoids re-learning by other agents
+  if (result.generalisedStored > 0 && ctx.costTracker) {
+    ctx.costTracker.recordSavings({
+      feature: "cross-agent-learning",
+      action: "generalised pattern stored",
+      countAvoided: result.generalisedStored,
+      estimatedSavingUsd: result.generalisedStored * 0.001,
+      note: `${result.agentsScanned} agent(s) scanned, ${result.skippedDuplicates} duplicates skipped`,
+    });
+  }
+
   return result;
 }
 
@@ -4383,4 +4505,286 @@ export async function runToolEffectivenessForCli(
   } finally {
     effStore.close();
   }
+}
+
+export interface CostReportCliOpts {
+  days?: number;
+  model?: boolean;
+  feature?: string;
+  csv?: boolean;
+  /** Output format: "pretty" (default, emoji + percentages) or "compact" (terse, no emoji). */
+  format?: "pretty" | "compact";
+  /** Show config-mode cost estimate table instead of live data. */
+  modes?: boolean;
+}
+
+/**
+ * Show LLM cost breakdown by feature (or model with --model flag).
+ * Issue #270.
+ */
+export function runCostReportForCli(
+  ctx: HandlerContext,
+  opts: CostReportCliOpts,
+  sink: { log: (msg: string) => void },
+): void {
+  const { costTracker } = ctx;
+  const { log } = sink;
+  const days = opts.days ?? 7;
+  const compact = opts.format === "compact";
+
+  // --modes: show config-mode cost estimate table (no live data needed)
+  if (opts.modes) {
+    const estimates = getModeCostEstimates();
+    if (!compact) {
+      log("");
+      log("📊 Config-Mode Cost Estimates ($/month, estimated)");
+      log("   Based on typical usage with the default cheapest model (gpt-4.1-nano).");
+      log("   Actual costs depend on your volume, model choices, and feature config.");
+      log("");
+    } else {
+      log("───── Config-Mode Cost Estimates ─────");
+    }
+    const modeW = 12;
+    const descW = 58;
+    const costW = 20;
+    const header = [
+      "Mode".padEnd(modeW),
+      "Description".padEnd(descW),
+      "Est. $/month".padStart(costW),
+    ].join("  ");
+    log(header);
+    log("─".repeat(header.length));
+    for (const e of estimates) {
+      const costRange = `$${e.monthlyLow.toFixed(2)} – $${e.monthlyHigh.toFixed(2)}`;
+      log([
+        e.mode.padEnd(modeW),
+        e.description.padEnd(descW),
+        costRange.padStart(costW),
+      ].join("  "));
+      if (!compact) {
+        log(`${"".padEnd(modeW)}  Features: ${e.features.join(", ")}`);
+        log("");
+      }
+    }
+    if (!compact) {
+      log(`Set mode: openclaw hybrid-mem config-mode <mode>`);
+    }
+    return;
+  }
+
+  if (!costTracker) {
+    if (!ctx.cfg.costTracking.enabled) {
+      log("Cost tracking is disabled.");
+      log("Enable it: openclaw hybrid-mem config-set costTracking.enabled true");
+    } else {
+      log("Cost tracking is not available (costTracker not initialized).");
+    }
+    return;
+  }
+
+  function fmtNum(n: number): string {
+    return n.toLocaleString("en-US");
+  }
+  function fmtCost(n: number): string {
+    return `$${n.toFixed(4)}`;
+  }
+  function pct(part: number, total: number): string {
+    if (total === 0) return "  0%";
+    return `${Math.round((part / total) * 100)}%`.padStart(4);
+  }
+
+  if (opts.model) {
+    // Model breakdown
+    const breakdown = costTracker.getModelBreakdown(days);
+    if (breakdown.length === 0) {
+      if (compact) {
+        log(`No LLM cost data in the last ${days} days.`);
+      } else {
+        log(`\n✅ Cost tracking is active — no data yet for the last ${days} days.`);
+        log(`   Data appears after your first LLM calls (~1 hour of typical use).`);
+      }
+      return;
+    }
+    if (opts.csv) {
+      log("model,calls,input_tokens,output_tokens,est_cost_usd");
+      for (const r of breakdown) {
+        log(`${r.model},${r.calls},${r.inputTokens},${r.outputTokens},${r.estimatedCostUsd.toFixed(6)}`);
+      }
+      return;
+    }
+    const total = breakdown.reduce(
+      (acc, r) => ({ calls: acc.calls + r.calls, inputTokens: acc.inputTokens + r.inputTokens, outputTokens: acc.outputTokens + r.outputTokens, estimatedCostUsd: acc.estimatedCostUsd + r.estimatedCostUsd }),
+      { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
+    );
+    if (!compact) {
+      log(`\n📊 LLM Cost Report — by Model (last ${days} days)`);
+      log(`💰 Total: ${fmtCost(total.estimatedCostUsd)} across ${total.calls} calls`);
+      log("");
+    } else {
+      log(`\n───── LLM Cost by Model (last ${days} days) ─────`);
+    }
+    const colW = [
+      Math.max(20, ...breakdown.map((r) => r.model.length)) + 2,
+      8, 12, 12, 12, 5,
+    ];
+    const header = [
+      "Model".padEnd(colW[0]!),
+      "Calls".padStart(colW[1]!),
+      "In-Tokens".padStart(colW[2]!),
+      "Out-Tokens".padStart(colW[3]!),
+      "Est. Cost".padStart(colW[4]!),
+      ...(compact ? [] : ["  %".padStart(colW[5]!)]),
+    ].join("  ");
+    log(header);
+    log("─".repeat(header.length));
+    for (const r of breakdown) {
+      log([
+        r.model.padEnd(colW[0]!),
+        String(r.calls).padStart(colW[1]!),
+        fmtNum(r.inputTokens).padStart(colW[2]!),
+        fmtNum(r.outputTokens).padStart(colW[3]!),
+        fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
+        ...(compact ? [] : [pct(r.estimatedCostUsd, total.estimatedCostUsd).padStart(colW[5]!)]),
+      ].join("  "));
+    }
+    log("─".repeat(header.length));
+    log([
+      "Total".padEnd(colW[0]!),
+      String(total.calls).padStart(colW[1]!),
+      fmtNum(total.inputTokens).padStart(colW[2]!),
+      fmtNum(total.outputTokens).padStart(colW[3]!),
+      fmtCost(total.estimatedCostUsd).padStart(colW[4]!),
+      ...(compact ? [] : ["100%".padStart(colW[5]!)]),
+    ].join("  "));
+  } else {
+    // Feature breakdown
+    const report = costTracker.getReport({ days, feature: opts.feature });
+    const savingsReport = costTracker.getSavingsReport(days);
+
+    // Build a savings lookup by feature for fast join
+    const savingsByFeature = new Map<string, number>();
+    for (const s of savingsReport.features) {
+      savingsByFeature.set(s.feature, s.estimatedSavingUsd);
+    }
+
+    if (report.features.length === 0) {
+      if (compact) {
+        log(`No LLM cost data in the last ${days} days.`);
+      } else {
+        log(`\n✅ Cost tracking is active — no data yet for the last ${days} days.`);
+        log(`   Costs will appear here after your first LLM calls (~1 hour of typical use).`);
+      }
+      // Still show savings if any exist (value delivered without cost)
+      if (savingsReport.total.estimatedSavingUsd > 0 && !compact) {
+        log(`\n💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`);
+      }
+      return;
+    }
+    if (opts.csv) {
+      log("feature,calls,input_tokens,output_tokens,est_cost_usd,est_savings_usd,net_cost_usd");
+      for (const r of report.features) {
+        const savings = savingsByFeature.get(r.feature) ?? 0;
+        log(`${r.feature},${r.calls},${r.inputTokens},${r.outputTokens},${r.estimatedCostUsd.toFixed(6)},${savings.toFixed(6)},${(r.estimatedCostUsd - savings).toFixed(6)}`);
+      }
+      return;
+    }
+
+    const totalSavings = savingsReport.total.estimatedSavingUsd;
+    const netCost = report.total.estimatedCostUsd - totalSavings;
+
+    if (!compact) {
+      const featureCount = report.features.length;
+      log(`\n📊 LLM Cost Report — last ${days} days`);
+      log(`💰 Gross cost: ${fmtCost(report.total.estimatedCostUsd)} across ${featureCount} feature${featureCount === 1 ? "" : "s"} (${report.total.calls} LLM calls)`);
+      if (totalSavings > 0) {
+        log(`💚 Automation savings: ${fmtCost(totalSavings)} (${savingsReport.total.countAvoided} ops avoided)`);
+        log(`📉 Net cost: ${fmtCost(Math.max(0, netCost))}`);
+      }
+      log("");
+    } else {
+      log(`\n───── LLM Cost Report (last ${days} days) ─────`);
+    }
+
+    const hasSavings = totalSavings > 0;
+    // Column widths: Feature | Calls | In-Tokens | Out-Tokens | Est.Cost | [Savings] | [Net] | [%]
+    const colW = [
+      Math.max(20, ...report.features.map((r) => r.feature.length)) + 2,
+      8, 12, 12, 12,
+      ...(hasSavings ? [12, 12] : []),
+      ...(compact ? [] : [5]),
+    ];
+    const headerParts = [
+      "Feature".padEnd(colW[0]!),
+      "Calls".padStart(colW[1]!),
+      "In-Tokens".padStart(colW[2]!),
+      "Out-Tokens".padStart(colW[3]!),
+      "Est. Cost".padStart(colW[4]!),
+    ];
+    if (hasSavings) {
+      headerParts.push("Savings".padStart(colW[5]!));
+      headerParts.push("Net Cost".padStart(colW[6]!));
+    }
+    if (!compact) {
+      headerParts.push("  %".padStart(colW[hasSavings ? 7 : 5]!));
+    }
+    const header = headerParts.join("  ");
+    log(header);
+    log("─".repeat(header.length));
+    for (const r of report.features) {
+      const savings = savingsByFeature.get(r.feature) ?? 0;
+      const net = Math.max(0, r.estimatedCostUsd - savings);
+      const parts = [
+        r.feature.padEnd(colW[0]!),
+        String(r.calls).padStart(colW[1]!),
+        fmtNum(r.inputTokens).padStart(colW[2]!),
+        fmtNum(r.outputTokens).padStart(colW[3]!),
+        fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
+      ];
+      if (hasSavings) {
+        parts.push((savings > 0 ? `-$${savings.toFixed(4)}` : "").padStart(colW[5]!));
+        parts.push(fmtCost(net).padStart(colW[6]!));
+      }
+      if (!compact) {
+        parts.push(pct(r.estimatedCostUsd, report.total.estimatedCostUsd).padStart(colW[hasSavings ? 7 : 5]!));
+      }
+      log(parts.join("  "));
+    }
+    log("─".repeat(header.length));
+    const totalParts = [
+      "Total".padEnd(colW[0]!),
+      String(report.total.calls).padStart(colW[1]!),
+      fmtNum(report.total.inputTokens).padStart(colW[2]!),
+      fmtNum(report.total.outputTokens).padStart(colW[3]!),
+      fmtCost(report.total.estimatedCostUsd).padStart(colW[4]!),
+    ];
+    if (hasSavings) {
+      totalParts.push((`-$${totalSavings.toFixed(4)}`).padStart(colW[5]!));
+      totalParts.push(fmtCost(Math.max(0, netCost)).padStart(colW[6]!));
+    }
+    if (!compact) {
+      totalParts.push("100%".padStart(colW[hasSavings ? 7 : 5]!));
+    }
+    log(totalParts.join("  "));
+    log("");
+    // Unknown-model warning
+    if (report.unknownModelCalls > 0) {
+      log(`⚠️  ${report.unknownModelCalls} call(s) used unrecognized models (cost unknown): ${report.unknownModels.join(", ")}`);
+    }
+    // Model summary line
+    const modelBreakdown = costTracker.getModelBreakdown(days);
+    if (modelBreakdown.length > 0) {
+      const modelSummary = modelBreakdown
+        .map((m) => `${m.model} (${m.calls} calls)`)
+        .join(", ");
+      log(`Models used: ${modelSummary}`);
+    }
+    // Savings breakdown if any (and we have savings not already shown inline)
+    if (!hasSavings && savingsReport.features.length > 0) {
+      log("");
+      log(`💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`);
+    }
+  }
+  log("");
+  log("ℹ️  Costs are estimates based on published model pricing. Actual costs may vary.");
+  log("   Embedding calls are not included in this report.");
 }
