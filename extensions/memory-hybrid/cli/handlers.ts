@@ -981,7 +981,7 @@ export async function runVerifyForCli(
 
   // ───── Cost Tracking ─────
   log("\n───── Cost Tracking ─────");
-  if (ctx.costTracker) {
+  if (ctx.costTracker && ctx.cfg.costTracking.enabled !== false) {
     const totalCost = ctx.costTracker.getTotalCost(7);
     if (totalCost.calls === 0) {
       log(`  costTracking: ${ON} (no data yet — costs will be tracked after first LLM calls)`);
@@ -998,7 +998,7 @@ export async function runVerifyForCli(
       log(`  Run 'openclaw hybrid-mem cost-report' for full breakdown.`);
     }
   } else {
-    log(`  costTracking: ${OFF} (costTracker not initialized)`);
+    log(`  costTracking: ${OFF}`);
   }
 
   // ───── Estimated Monthly Cost by Mode ─────
