@@ -103,6 +103,14 @@ export type ReinforcementConfig = {
   maxConfidence: number;
   /** Cosine similarity threshold above which a new fact is treated as a repeat of an existing one (default: 0.85). */
   similarityThreshold: number;
+  /** Max reinforcement events to store per fact before FIFO eviction (default: 50). */
+  maxEventsPerFact?: number;
+  /** Weight applied to diversity score when calculating effective boost (default: 1.0). */
+  diversityWeight?: number;
+  /** When false, skip storing context columns (query_snippet, topic, etc.) per event (default: true). */
+  trackContext?: boolean;
+  /** Base boost amount before diversity weighting is applied (default: 1.0). */
+  boostAmount?: number;
 };
 
 /** Future-date decay freeze protection (#144). */
@@ -175,4 +183,56 @@ export type SelfExtensionConfig = {
   minToolSavings: number;
   /** Maximum number of pending proposals allowed at any time (default: 20). */
   maxProposals: number;
+};
+
+/** Signal types for implicit feedback detection (Issue #262). */
+export type ImplicitSignalType =
+  | "rephrase"
+  | "immediate_action"
+  | "topic_change"
+  | "grateful_close"
+  | "self_service"
+  | "escalation"
+  | "terse_response"
+  | "extended_engagement"
+  | "copy_paste"
+  | "correction_cascade"
+  | "silence_after_action";
+
+/** Implicit feedback detection from behavioral conversation signals (Issue #262). */
+export type ImplicitFeedbackConfig = {
+  /** Enable implicit feedback detection (default: true). */
+  enabled: boolean;
+  /** Minimum confidence to include a signal (default: 0.5). */
+  minConfidence: number;
+  /** Signal types to detect; defaults to all types. */
+  signalTypes: ImplicitSignalType[];
+  /** Similarity threshold for rephrase detection (default: 0.8). */
+  rephraseThreshold: number;
+  /** Similarity threshold for topic-change detection (default: 0.3). */
+  topicChangeThreshold: number;
+  /** Fraction of avg message length below which terse_response fires (default: 0.4). */
+  terseResponseRatio: number;
+  /** Feed positive implicit signals into the reinforcement pipeline (default: true). */
+  feedToReinforcement: boolean;
+  /** Feed negative implicit signals into the self-correction pipeline (default: true). */
+  feedToSelfCorrection: boolean;
+  /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
+  trajectoryLLMAnalysis: boolean;
+};
+
+/** Closed-loop rule effectiveness measurement (Issue #262). */
+export type ClosedLoopConfig = {
+  /** Enable closed-loop measurement (default: true). */
+  enabled: boolean;
+  /** Days before and after rule creation to compare (default: 7). */
+  measurementWindowDays: number;
+  /** Minimum total feedback events required before scoring (default: 5). */
+  minSampleSize: number;
+  /** Effect score threshold below which a rule is auto-deprecated (default: -0.3). */
+  autoDeprecateThreshold: number;
+  /** Effect score threshold above which a rule's confidence is boosted (default: 0.5). */
+  autoBoostThreshold: number;
+  /** Run measurement in the nightly cycle (default: true). */
+  runInNightlyCycle: boolean;
 };

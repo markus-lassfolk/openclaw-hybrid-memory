@@ -54,6 +54,8 @@ import type {
   WorkflowTrackingConfig,
   CrystallizationConfig,
   SelfExtensionConfig,
+  ImplicitFeedbackConfig,
+  ClosedLoopConfig,
 } from "./features.js";
 
 import type {
@@ -246,6 +248,14 @@ export type SelfCorrectionConfig = {
   spawnThreshold: number;
   /** Model for spawn when analyzeViaSpawn is true. Empty = use provider default from config (see getDefaultCronModel). */
   spawnModel: string;
+  /** TOOLS.md section heading for positive reinforcement rules (default: "Positive Reinforcement Rules"). */
+  positiveRulesSection?: string;
+  /** When true, run LLM analysis on reinforcement incidents (default: true). */
+  reinforcementLLMAnalysis?: boolean;
+  /** When true, reinforcement analysis may create proposals in the proposals DB (default: true). */
+  reinforcementToProposals?: boolean;
+  /** When true, self-correction AGENTS_RULE remediations are written to proposals DB (default: true). */
+  agentsRuleToProposals?: boolean;
 };
 
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
@@ -388,6 +398,10 @@ export type HybridMemoryConfig = {
   crystallization: CrystallizationConfig;
   /** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210, default: disabled). */
   selfExtension: SelfExtensionConfig;
+  /** Implicit feedback detection from behavioral conversation signals (Issue #262, default: enabled). */
+  implicitFeedback: ImplicitFeedbackConfig;
+  /** Closed-loop rule effectiveness measurement (Issue #262, default: enabled). */
+  closedLoop: ClosedLoopConfig;
   /** Contextual variant generation at index time (Issue #159, default: disabled). */
   contextualVariants: ContextualVariantsConfig;
   /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */
