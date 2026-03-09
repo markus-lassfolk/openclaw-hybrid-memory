@@ -275,6 +275,10 @@ export interface HandlerContext {
   detectCategory: (text: string) => MemoryCategory;
   /** OpenClaw plugin API — used for verify to read gateway config (e.g. models.providers for MiniMax etc.) */
   api?: import("openclaw/plugin-sdk").ClawdbotPluginApi;
+  /** Optional issue store for dashboard issue tracker. */
+  issueStore?: import("../backends/issue-store.js").IssueStore | null;
+  /** Optional workflow store for dashboard workflow patterns. */
+  workflowStore?: import("../backends/workflow-store.js").WorkflowStore | null;
 }
 
 // Constants

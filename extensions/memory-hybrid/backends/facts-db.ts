@@ -16,6 +16,7 @@ import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { searchFts } from "../services/fts-search.js";
 
 export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF", "DERIVED_FROM"] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
@@ -2851,6 +2852,103 @@ export class FactsDB {
     return stats;
   }
 
+  /** Decay class breakdown for non-superseded facts (for dashboard stats). */
+  statsBreakdownByDecayClass(): Record<string, number> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT COALESCE(decay_class, 'stable') as decay_class, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY decay_class`,
+      )
+      .all() as Array<{ decay_class: string; cnt: number }>;
+    const stats: Record<string, number> = {};
+    for (const row of rows) {
+      stats[row.decay_class || "stable"] = row.cnt;
+    }
+    return stats;
+  }
+
+  /**
+   * List facts for dashboard/API: paginated, filterable by category/tier, optional FTS search.
+   * Returns entries in dashboard shape (snake_case for JSON) and total count.
+   */
+  listForDashboard(opts: {
+    limit: number;
+    offset: number;
+    category?: string;
+    tier?: string;
+    decayClass?: string;
+    search?: string;
+  }): { facts: Array<Record<string, unknown>>; total: number } {
+    const nowSec = Math.floor(Date.now() / 1000);
+    let where = "superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
+    const params: unknown[] = [nowSec];
+
+    if (opts.category) {
+      where += " AND category = ?";
+      params.push(opts.category);
+    }
+    if (opts.tier) {
+      where += " AND COALESCE(tier, 'warm') = ?";
+      params.push(opts.tier);
+    }
+    if (opts.decayClass) {
+      where += " AND COALESCE(decay_class, 'stable') = ?";
+      params.push(opts.decayClass);
+    }
+
+    const countRow = this.liveDb
+      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`)
+      .get(...params) as { cnt: number };
+    const total = countRow?.cnt ?? 0;
+
+    const rows = this.liveDb
+      .prepare(
+        `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
+         COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
+         created_at, recall_count FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...params, opts.limit, opts.offset) as Array<Record<string, unknown>>;
+
+    const toDashboardRow = (row: Record<string, unknown>) => ({
+      id: row.id,
+      text: row.text,
+      category: row.category,
+      importance: row.importance,
+      entity: row.entity ?? null,
+      key: row.key ?? null,
+      value: row.value ?? null,
+      tags: typeof row.tags === "string" ? (row.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean).join(",") : "",
+      tier: (row.tier as string) || "warm",
+      decay_class: (row.decay_class as string) || "stable",
+      scope: (row.scope as string) || "global",
+      confidence: row.confidence ?? 1,
+      created_at: row.created_at,
+      recall_count: row.recall_count ?? 0,
+    });
+
+    if (opts.search && opts.search.trim()) {
+      const ftsResults = searchFts(this.liveDb, opts.search.trim(), { limit: 2000 });
+      const factIds = ftsResults.map((r) => r.factId);
+      const searchTotal = factIds.length;
+      const pageIds = factIds.slice(opts.offset, opts.offset + opts.limit);
+      if (pageIds.length === 0) return { facts: [], total: searchTotal };
+      const placeholders = pageIds.map(() => "?").join(",");
+      const pageRows = this.liveDb
+        .prepare(
+          `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
+           COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
+           created_at, recall_count FROM facts WHERE id IN (${placeholders})`,
+        )
+        .all(...pageIds) as Array<Record<string, unknown>>;
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const r of pageRows) byId.set(r.id as string, r);
+      const facts = pageIds.map((id) => byId.get(id)).filter(Boolean).map((r) => toDashboardRow(r!));
+      return { facts, total: searchTotal };
+    }
+
+    const facts = rows.map((r) => toDashboardRow(r));
+    return { facts, total };
+  }
+
   /** Distinct memory categories present in non-superseded facts (for CLI stats/categories). */
   uniqueMemoryCategories(): string[] {
     const rows = this.liveDb
@@ -4475,6 +4573,21 @@ export class FactsDB {
     return rows.map((r) => ({
       sourceFactId: r.source_fact_id,
       targetFactId: r.target_fact_id,
+    }));
+  }
+
+  /**
+   * Get edges with link_type and strength for dashboard graph (optionally limited).
+   */
+  getAllEdges(limit = 5000): Array<{ source: string; target: string; link_type: string; strength: number }> {
+    const rows = this.liveDb
+      .prepare(`SELECT source_fact_id, target_fact_id, link_type, strength FROM memory_links LIMIT ?`)
+      .all(limit) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string; strength: number }>;
+    return rows.map((r) => ({
+      source: r.source_fact_id,
+      target: r.target_fact_id,
+      link_type: r.link_type || "RELATED_TO",
+      strength: r.strength ?? 0.8,
     }));
   }
 

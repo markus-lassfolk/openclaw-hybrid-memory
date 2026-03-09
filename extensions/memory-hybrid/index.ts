@@ -433,6 +433,8 @@ const memoryHybridPlugin = {
       resolvedLancePath,
       pluginId: PLUGIN_ID,
       detectCategory,
+      issueStore: issueStore ?? null,
+      workflowStore: workflowStore ?? null,
     });
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:cli" });

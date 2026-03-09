@@ -117,6 +117,7 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
 
 export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem",
+  "hybrid-mem dashboard",
   "hybrid-mem run-all",
   "hybrid-mem install",
   "hybrid-mem stats",
@@ -244,6 +245,10 @@ export interface HybridMemCliRegistrationContext {
   detectCategory: HandlerContext["detectCategory"];
   /** Optional event log for episodic consolidation in dream cycle. */
   eventLog?: import("../backends/event-log.js").EventLog | null;
+  /** Optional issue store for dashboard issue tracker. */
+  issueStore?: import("../backends/issue-store.js").IssueStore | null;
+  /** Optional workflow store for dashboard workflow patterns. */
+  workflowStore?: import("../backends/workflow-store.js").WorkflowStore | null;
 }
 
 function buildCliContextServices(
@@ -666,6 +671,8 @@ export function createHybridMemCliContext(
     factsDb: handlerCtx.factsDb,
     vectorDb: handlerCtx.vectorDb,
     aliasDb: handlerCtx.aliasDb,
+    issueStore: handlerCtx.issueStore ?? null,
+    workflowStore: handlerCtx.workflowStore ?? null,
     versionInfo: services.versionInfo,
     embeddings: handlerCtx.embeddings,
     mergeResults: services.mergeResults,

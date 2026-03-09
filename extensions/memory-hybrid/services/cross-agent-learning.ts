@@ -67,8 +67,7 @@ const LEARNABLE_CATEGORIES = new Set(["pattern", "rule", "fact", "decision"]);
 
 /** Pull all agent-scoped facts (pattern/rule/fact/decision) within a recency window. */
 function collectAgentLessons(factsDb: FactsDB, windowDays: number, minSourceConfidence: number): AgentLesson[] {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const db = factsDb.getRawDb();
   if (!db) return [];
 
   const cutoff = Math.floor(Date.now() / 1000) - windowDays * 86400;
@@ -112,8 +111,7 @@ function collectAgentLessons(factsDb: FactsDB, windowDays: number, minSourceConf
 
 /** Check if a semantically equivalent global fact already exists (text hash dedup). */
 function globalFactAlreadyExists(factsDb: FactsDB, text: string): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const db = factsDb.getRawDb();
   if (!db) return false;
 
   const normalised = text.toLowerCase().replace(/\s+/g, " ").trim();
@@ -136,8 +134,7 @@ function globalFactAlreadyExists(factsDb: FactsDB, text: string): boolean {
 
 /** Check if source agent-fact has already been linked to a global generalised fact. */
 function agentFactAlreadyGeneralised(factsDb: FactsDB, agentFactId: string): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const db = factsDb.getRawDb();
   if (!db) return false;
 
   try {
@@ -267,6 +264,10 @@ export async function runCrossAgentLearning(
     newFacts: [],
   };
 
+  if (cfg.enabled === false) {
+    return result;
+  }
+
   try {
     const allLessons = collectAgentLessons(factsDb, cfg.windowDays, cfg.minSourceConfidence);
 
@@ -375,8 +376,7 @@ export async function runCrossAgentLearning(
  * Get all cross-agent generalised facts.
  */
 export function getCrossAgentFacts(factsDb: FactsDB, limit = 100): MemoryEntry[] {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const db = factsDb.getRawDb();
   if (!db) return [];
 
   try {
@@ -391,9 +391,10 @@ export function getCrossAgentFacts(factsDb: FactsDB, limit = 100): MemoryEntry[]
       )
       .all(CROSS_AGENT_SOURCE, limit) as Array<Record<string, unknown>>;
 
-    // Use rowToEntry via FactsDB — cast to access private method
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return rows.map((r) => (factsDb as any).rowToEntry(r) as MemoryEntry);
+    // Use public getByIds API to convert rows to MemoryEntry
+    const ids = rows.map((r) => r.id as string);
+    const entryMap = factsDb.getByIds(ids);
+    return ids.map((id) => entryMap.get(id)).filter((e): e is MemoryEntry => e !== undefined);
   } catch {
     return [];
   }
@@ -424,8 +425,7 @@ export async function getCrossAgentLessons(
   limit: number = 5,
   minConfidence: number = 0.6,
 ): Promise<MemoryEntry[]> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const db = factsDb.getRawDb();
   if (!db) return [];
 
   try {
@@ -458,16 +458,19 @@ export async function getCrossAgentLessons(
 
     if (candidates.length === 0) {
       // Fallback: return facts that have no specific agent restriction (only cross-agent tag)
-      // These are general lessons applicable to all agents
+      // These are general lessons applicable to all agents — exclude facts tagged for other agents.
       const generalRows = rows.filter((row) => {
         const tags = parseTags(row.tags as string | null);
-        return tags.includes(CROSS_AGENT_TAG);
+        if (!tags.includes(CROSS_AGENT_TAG)) return false;
+        // Only include facts with no agent-specific tags (i.e., wildcard or truly general)
+        const agentSpecificTags = tags.filter(
+          (t) => t !== CROSS_AGENT_TAG && t !== "*" && !t.startsWith("verified-by:"),
+        );
+        return agentSpecificTags.length === 0 || tags.includes("*");
       });
-      const generalEntries = generalRows
-        .slice(0, limit)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .map((r) => (factsDb as any).rowToEntry(r) as MemoryEntry);
-      return generalEntries;
+      const generalIds = generalRows.slice(0, limit).map((r) => r.id as string);
+      const generalEntryMap = factsDb.getByIds(generalIds);
+      return generalIds.map((id) => generalEntryMap.get(id)).filter((e): e is MemoryEntry => e !== undefined);
     }
 
     // Rank by text similarity to context (simple keyword overlap scoring)
@@ -492,10 +495,9 @@ export async function getCrossAgentLessons(
 
     scored.sort((a, b) => b.score - a.score);
 
-    return scored
-      .slice(0, limit)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map(({ row }) => (factsDb as any).rowToEntry(row) as MemoryEntry);
+    const topIds = scored.slice(0, limit).map(({ row }) => row.id as string);
+    const topEntryMap = factsDb.getByIds(topIds);
+    return topIds.map((id) => topEntryMap.get(id)).filter((e): e is MemoryEntry => e !== undefined);
   } catch {
     return [];
   }
@@ -550,14 +552,13 @@ export async function verifyLessonForAgent(
   verifyingAgent: string,
   boost: number = 0.1,
 ): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const db = factsDb.getRawDb();
   if (!db) return;
 
   try {
     const row = db
-      .prepare(`SELECT id, confidence, tags FROM facts WHERE id = ? AND superseded_at IS NULL`)
-      .get(lessonId) as { id: string; confidence: number; tags: string | null } | undefined;
+      .prepare(`SELECT id, confidence, tags FROM facts WHERE id = ? AND source = ? AND superseded_at IS NULL`)
+      .get(lessonId, CROSS_AGENT_SOURCE) as { id: string; confidence: number; tags: string | null } | undefined;
 
     if (!row) return;
 
