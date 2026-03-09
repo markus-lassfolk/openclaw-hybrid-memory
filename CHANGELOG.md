@@ -14,6 +14,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.91] - 2026-03-09
+
+Memory Dashboard: Lovable web UI, shared REST API, and multi-dashboard layout (placeholders for GPT/Gemini/Claude).
+
+### Added
+
+- **Memory Dashboard (Lovable):** Web UI in `dashboard/lovable/` for hybrid-memory inspection: overview stats (total facts, categories, links, issues, cost), facts-by-category/tier/decay and recent facts; interactive memory graph (force-directed, filters, node detail); facts explorer (paginated table with category/tier/search filters); issue tracker; knowledge clusters; cost & usage (daily/model/feature charts); feature configuration (read-only toggles from plugin config); workflow patterns. Built with React 18, TypeScript, Vite, Tailwind, shadcn/ui, Recharts, react-force-graph-2d. Uses mock data when no API is configured; set `VITE_API_BASE` to use the dashboard API for live data. Base path `/plugins/memory-dashboard/lovable/` for production hosting.
+
+- **Dashboard REST API:** Standalone HTTP server in `extensions/memory-hybrid/scripts/dashboard-api.ts`. Run with `npm run dashboard-api` from the extension directory (listens on port 18790; `PORT` env to override). Reads OpenClaw config from `OPENCLAW_HOME` or `~/.openclaw` and serves live data from FactsDB, IssueStore, CostTracker, and WorkflowStore. Endpoints: `GET /api/stats`, `/api/facts`, `/api/facts/:id`, `/api/graph`, `/api/issues`, `/api/clusters`, `/api/cost`, `/api/config`, `/api/workflows`. CORS enabled for local dashboard use. No new runtime dependencies; uses `tsx` (devDependency) to run the TypeScript script.
+
+- **Multi-dashboard layout:** `dashboard/` contains `lovable/` (full app), plus placeholders `gpt/`, `gemini/`, `claude/` with READMEs so you can add dashboards generated from the same brief by different tools and compare results. All dashboards use the same API contract; see `dashboard/README.md` for shared API instructions and how to add new dashboards.
+
+### Documentation
+
+- **dashboard/README.md:** Describes layout (lovable vs gpt/gemini/claude), shared API (run from `extensions/memory-hybrid`), how to run each dashboard (mock vs real data), and how to add GPT/Gemini/Claude dashboards.
+- **dashboard/lovable/README.md:** Lovable-specific quick start (dev with mock, dev with API, production build), API endpoints table, tech stack, project structure.
+- **README.md (root):** Memory Dashboard section updated: one shared API, multiple dashboards (lovable, gpt, gemini, claude) for comparing briefs; link to `dashboard/README.md`.
+
+---
+
 ## [2026.3.90] - 2026-03-09
 
 Milestone A+B: future-date decay, episodic event log, local embeddings (Ollama/ONNX), multi-model RRF, contextual variants, query expansion, re-ranking, verification store, provenance tracing, document ingestion; real-time frustration detection and cross-agent learning (#263/#265); dependency bumps.
@@ -573,7 +593,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.90...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.91...HEAD
+[2026.3.91]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.91
 [2026.3.90]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.90
 [2026.02.271]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.271
 [2026.02.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.270

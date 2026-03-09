@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.3.90",
+  "version": "2026.3.91",
   "uiHints": {
     "embedding.provider": {
       "label": "Embedding Provider",
