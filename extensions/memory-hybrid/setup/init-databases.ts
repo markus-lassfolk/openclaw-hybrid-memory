@@ -51,20 +51,20 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
     .toLowerCase();
 
   // More specific patterns to reduce false positives
-  if (/\b(memory\s+categ|classify\s+(this\s+)?(memory|fact|entry)|auto.?classif|categorize\s+(this|the)\s+(memory|fact))\b/.test(content)) return "auto-classify";
+  if (/\b(memory\s+classifier|memory\s+categor(y|ies|ize)|classify\s+(this\s+)?(memory|fact|entry)|auto.?classif(y|ication|ier)|categorize\s+(this|the|each)\s+(memory|fact))\b/.test(content)) return "auto-classify";
   if (/\bhyde\b/.test(content) || content.includes("hypothetical document")) return "query-expansion";
   if (/\brerank(ing)?\b/.test(content)) return "reranking";
-  if (/\b(memory\s+reflection|reflect\s+on\s+(recent|your|past)|weekly\s+reflection|synthesize\s+(patterns|insights))\b/.test(content)) return "reflection";
+  if (/\b(analyzing\s+(a\s+)?user'?s?\s+interaction|memory\s+reflection|reflect\s+on\s+(recent|your|past)|weekly\s+reflection|synthesize\s+(patterns|insights)|behavioral\s+patterns?)\b/.test(content)) return "reflection";
   if (content.includes("self-correction") || content.includes("self correction")) return "self-correction";
-  if (/\b(reinforcement.extract|reinforce(ment)?\s+(signal|pattern|memory|learning))\b/.test(content)) return "reinforcement-extract";
+  if (/\b(positive.?reinforcement\s+analyst|reinforcement.?extract(ion)?|reinforce(ment)?\s+(signal|pattern|memory|learning))\b/.test(content)) return "reinforcement-extract";
   if (content.includes("implicit") && content.includes("feedback")) return "implicit-feedback";
   if (/\b(trajectory\s+(analysis|tracking|pattern))\b/.test(content)) return "trajectory-analysis";
   if (/\bfrustrat(ion|ed|ing)\b/.test(content)) return "frustration-detection";
   if (content.includes("cross-agent")) return "cross-agent-learning";
   if (content.includes("tool effectiveness") || content.includes("tool scoring")) return "tool-effectiveness";
-  if (/\b(extract\s+(key\s+)?facts?\s+from|distill\s+(memories|facts|session|knowledge|this\s+session))\b/.test(content)) return "distill";
+  if (/\b(fact\s+extraction\s+agent|extract\s+(key\s+)?facts?\s+from|distill\s+(memories|facts|session|knowledge|this\s+session))\b/.test(content)) return "distill";
   if (/\b(language.?keyword|keyword.?extract)\b/.test(content)) return "language-keywords";
-  if (/\b(consolidat(e|ing|ion)\s+(memories|facts|episodic|events))\b/.test(content)) return "consolidation";
+  if (/\b(memory\s+consolidator|consolidat(e|ing|ion)(\s+(memories|facts|episodic|events))?)\b/.test(content)) return "consolidation";
   if (/\b(memory.to.skills|skill\s+(suggestion|draft|cluster)|draft\s+(new\s+)?skill)\b/.test(content)) return "memory-to-skills";
   if (content.includes("persona") && (content.includes("proposal") || content.includes("trait"))) return "persona-proposals";
   if (/\b(continuous.?verification|verify\s+(memory|hybrid|plugin)\s+config)\b/.test(content)) return "continuous-verification";
