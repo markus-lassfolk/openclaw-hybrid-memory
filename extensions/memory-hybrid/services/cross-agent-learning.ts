@@ -331,7 +331,7 @@ export async function runCrossAgentLearning(
             confidence: 0.75,
             scope: "global",
             source: CROSS_AGENT_SOURCE,
-            tags: [CROSS_AGENT_TAG, ...sourceAgentIds.slice(0, 3)],
+            tags: [CROSS_AGENT_TAG, "*", ...sourceAgentIds.slice(0, 3)],
             summary: lesson.rationale?.slice(0, 200) ?? null,
           });
 
