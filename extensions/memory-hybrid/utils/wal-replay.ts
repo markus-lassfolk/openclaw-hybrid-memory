@@ -92,8 +92,9 @@ export async function replayWalEntries(
       } else if (entry.operation === "update") {
         // Skip update operations during replay: WAL entries lack the targetId needed
         // to properly supersede the old fact, so replaying would create duplicates.
-        // Do not remove these entries — preserve them for future replay with improved logic.
+        // Remove these entries to prevent unbounded WAL growth.
         skipped++;
+        wal.remove(entry.id);
       } else if (entry.operation === "delete" && entry.data?.text) {
         const factId = entry.data.text as string;
         const deleted = factsDb.delete(factId);

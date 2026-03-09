@@ -661,11 +661,13 @@ export async function runVerifyForCli(
   const rawLog = sink.log;
   const log: typeof rawLog = verbosity === "quiet"
     ? (msg: string) => {
-        // Suppress lines that are purely informational OK messages and section headers
+        // Suppress lines that are purely informational OK messages, section headers, and indented feature status lines
         const trimmed = msg.trimStart();
         const isOkLine = /^✅|^\[OK\]/.test(trimmed);
         const isHeader = /^─{3,}/.test(trimmed);
-        if (!isOkLine && !isHeader) rawLog(msg);
+        // Suppress indented status lines (feature flags, config display) unless they contain failure indicators
+        const isIndentedStatus = /^\s{2,}/.test(msg) && !/❌|\[FAIL\]|FAIL —|Error|error/.test(msg);
+        if (!isOkLine && !isHeader && !isIndentedStatus) rawLog(msg);
       }
     : rawLog;
   const err = sink.error ?? rawLog;
