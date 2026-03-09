@@ -223,6 +223,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
               // Fire-and-forget cost tracking — never blocks or modifies the returned promise
               if (costTracker) {
                 const feature = inferFeatureLabel(body as Record<string, unknown>, model);
+                // Normalize bare model names (no '/') to 'openai/model' for pricing table lookup
+                const normalizedModel = model.includes("/") ? model : `openai/${model.trim()}`;
                 void (Promise.resolve(promise) as Promise<unknown>).then(
                   (resp: unknown) => {
                     try {
@@ -230,7 +232,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
                       const r = resp as { usage?: { prompt_tokens?: number; completion_tokens?: number } } | null;
                       costTracker.record({
                         feature,
-                        model,
+                        model: normalizedModel,
                         inputTokens: r?.usage?.prompt_tokens ?? 0,
                         outputTokens: r?.usage?.completion_tokens ?? 0,
                         durationMs,
@@ -246,7 +248,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
                         ? (body as Record<string, unknown>).messages as unknown[]
                         : [];
                       const estimatedInputTokens = Math.ceil(JSON.stringify(reqMessages).length / 4);
-                      costTracker.record({ feature, model, inputTokens: estimatedInputTokens, outputTokens: 0, durationMs, success: false });
+                      costTracker.record({ feature, model: normalizedModel, inputTokens: estimatedInputTokens, outputTokens: 0, durationMs, success: false });
                     } catch { /* never let tracking break LLM calls */ }
                   },
                 );

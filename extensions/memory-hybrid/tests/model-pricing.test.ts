@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateCost, getModelPricing, getAllPricing, MODEL_PRICING } from "../services/model-pricing.js";
+import { estimateCost, getModelPricing, MODEL_PRICING } from "../services/model-pricing.js";
 
 describe("getModelPricing", () => {
   it("returns pricing for known OpenAI models", () => {
@@ -66,19 +66,14 @@ describe("estimateCost", () => {
   });
 });
 
-describe("getAllPricing", () => {
-  it("returns a copy of the pricing table", () => {
-    const all = getAllPricing();
-    expect(typeof all).toBe("object");
-    expect(Object.keys(all).length).toBeGreaterThan(0);
-    // Ensure it's a copy, not the original
-    const originalKeys = Object.keys(MODEL_PRICING);
-    expect(Object.keys(all)).toEqual(originalKeys);
+describe("MODEL_PRICING", () => {
+  it("contains pricing entries", () => {
+    expect(typeof MODEL_PRICING).toBe("object");
+    expect(Object.keys(MODEL_PRICING).length).toBeGreaterThan(0);
   });
 
   it("includes all expected providers", () => {
-    const all = getAllPricing();
-    const keys = Object.keys(all);
+    const keys = Object.keys(MODEL_PRICING);
     expect(keys.some((k) => k.startsWith("openai/"))).toBe(true);
     expect(keys.some((k) => k.startsWith("google/"))).toBe(true);
     expect(keys.some((k) => k.startsWith("anthropic/"))).toBe(true);

@@ -65,8 +65,3 @@ export function estimateCost(
   return (inputTokens / 1_000_000) * pricing.inputPer1M +
     (outputTokens / 1_000_000) * pricing.outputPer1M;
 }
-
-/** Return the full pricing table (copy). */
-export function getAllPricing(): Record<string, ModelPricing> {
-  return { ...MODEL_PRICING };
-}
