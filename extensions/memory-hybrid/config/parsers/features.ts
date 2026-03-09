@@ -624,5 +624,6 @@ export function parseToolEffectivenessConfig(cfg: Record<string, unknown>): Tool
         ? raw.decayFactor
         : 0.95,
     runInNightlyCycle: raw?.runInNightlyCycle !== false,
+    injectHints: raw?.injectHints !== false,
   };
 }

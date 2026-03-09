@@ -238,16 +238,15 @@ describe("Gap 2 — generateToolHint wiring into agent context preparation", () 
     expect(hint).toContain("Prefer read");
   });
 
-  it("spy: generateToolHint is called with the store and context label", () => {
-    const spy = vi.spyOn({ generateToolHint }, "generateToolHint");
-    // Simulate the hooks.ts call pattern: pass store + context label
+  it("generateToolHint returns a string for the given store and context label", () => {
+    // Verify the wiring contract: generateToolHint(store, context) produces a string.
+    // A direct spy on a named ESM import is not reliable; we verify observable output instead.
     store.upsert(makeMetrics({ tool: "exec", context: "agent-123", totalCalls: 10, compositeScore: 0.8 }));
     store.upsert(makeMetrics({ tool: "browser", context: "agent-123", totalCalls: 8, compositeScore: 0.3 }));
 
     const result = generateToolHint(store, "agent-123");
     // Verify the call produces a valid result (wiring contract)
     expect(typeof result).toBe("string");
-    spy.mockRestore();
   });
 });
 

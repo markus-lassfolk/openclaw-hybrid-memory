@@ -275,6 +275,8 @@ export interface HandlerContext {
   detectCategory: (text: string) => MemoryCategory;
   /** OpenClaw plugin API — used for verify to read gateway config (e.g. models.providers for MiniMax etc.) */
   api?: import("openclaw/plugin-sdk").ClawdbotPluginApi;
+  /** Optional issue store for dashboard issue tracker. */
+  /** Optional workflow store for dashboard workflow patterns. */
 }
 
 // Constants
@@ -839,6 +841,11 @@ export async function runVerifyForCli(
   log(`  personaProposals: ${bool(cfg.personaProposals.enabled)}`);
   log(`  memoryTiering: ${bool(cfg.memoryTiering.enabled)}`);
   log(`  memoryTiering.compactionOnSessionEnd: ${bool(cfg.memoryTiering.compactionOnSessionEnd)}`);
+  if (cfg.memoryTiering.enabled) {
+    log(`    hotMaxTokens: ${cfg.memoryTiering.hotMaxTokens}`);
+    log(`    inactivePreferenceDays: ${cfg.memoryTiering.inactivePreferenceDays}`);
+    log(`    hotMaxFacts: ${cfg.memoryTiering.hotMaxFacts}`);
+  }
 
   if (cfg.selfCorrection) {
     log(`  selfCorrection: true`);
@@ -869,6 +876,53 @@ export async function runVerifyForCli(
   log(`  extraction (multi-pass): ${bool(cfg.extraction?.extractionPasses)}`);
   log(`  selfExtension (tool proposals): ${bool(cfg.selfExtension?.enabled)}`);
   log(`  crystallization (skill proposals): ${bool(cfg.crystallization?.enabled)}`);
+
+  log(`  reinforcement (confidence boost): ${bool(cfg.reinforcement.enabled)}`);
+  if (cfg.reinforcement.enabled) {
+    log(`    passiveBoost: ${cfg.reinforcement.passiveBoost}`);
+    log(`    activeBoost: ${cfg.reinforcement.activeBoost}`);
+  }
+
+  log(`  implicitFeedback: ${bool(cfg.implicitFeedback.enabled)}`);
+  if (cfg.implicitFeedback.enabled) {
+    log(`    feedToReinforcement: ${bool(cfg.implicitFeedback.feedToReinforcement)}`);
+    log(`    feedToSelfCorrection: ${bool(cfg.implicitFeedback.feedToSelfCorrection)}`);
+    log(`    trajectoryLLMAnalysis: ${bool(cfg.implicitFeedback.trajectoryLLMAnalysis)}`);
+  }
+
+  log(`  closedLoop: ${bool(cfg.closedLoop.enabled)}`);
+  if (cfg.closedLoop.enabled) {
+    log(`    runInNightlyCycle: ${bool(cfg.closedLoop.runInNightlyCycle)}`);
+    log(`    measurementWindowDays: ${cfg.closedLoop.measurementWindowDays}`);
+    log(`    minSampleSize: ${cfg.closedLoop.minSampleSize}`);
+  }
+
+  log(`  frustrationDetection: ${bool(cfg.frustrationDetection.enabled)}`);
+  if (cfg.frustrationDetection.enabled) {
+    log(`    windowSize: ${cfg.frustrationDetection.windowSize}`);
+    log(`    injectionThreshold: ${cfg.frustrationDetection.injectionThreshold}`);
+    log(`    decayRate: ${cfg.frustrationDetection.decayRate}`);
+  }
+
+  log(`  crossAgentLearning: ${bool(cfg.crossAgentLearning.enabled)}`);
+  if (cfg.crossAgentLearning.enabled) {
+    log(`    runInNightlyCycle: ${bool(cfg.crossAgentLearning.runInNightlyCycle)}`);
+    log(`    windowDays: ${cfg.crossAgentLearning.windowDays}`);
+    log(`    minSourceConfidence: ${cfg.crossAgentLearning.minSourceConfidence}`);
+  }
+
+  log(`  toolEffectiveness: ${bool(cfg.toolEffectiveness.enabled)}`);
+  if (cfg.toolEffectiveness.enabled) {
+    log(`    runInNightlyCycle: ${bool(cfg.toolEffectiveness.runInNightlyCycle)}`);
+  }
+
+  log(`  documents (MarkItDown): ${bool(cfg.documents.enabled)}`);
+  if (cfg.documents.enabled) {
+    log(`    visionEnabled: ${bool(cfg.documents.visionEnabled)}`);
+    log(`    model: ${cfg.documents.visionModel ?? "(from llm.default)"}`);
+  }
+
+  log(`  provenance (DERIVED_FROM): ${bool(cfg.provenance.enabled)}`);
 
   log("\n───── Advanced Features ─────");
   if (cfg.search?.hydeEnabled) {
@@ -3859,6 +3913,11 @@ export function runConfigSetForCli(
     { key: "health", prop: "enabled" },
     { key: "memoryTiering", prop: "enabled" },
     { key: "reinforcement", prop: "enabled" },
+    { key: "implicitFeedback", prop: "enabled" },
+    { key: "closedLoop", prop: "enabled" },
+    { key: "frustrationDetection", prop: "enabled" },
+    { key: "crossAgentLearning", prop: "enabled" },
+    { key: "toolEffectiveness", prop: "enabled" },
     { key: "futureDateProtection", prop: "enabled" },
     { key: "path", prop: "enabled" },
     { key: "activeTask", prop: "enabled" },

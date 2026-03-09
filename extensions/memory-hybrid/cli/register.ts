@@ -243,6 +243,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     throw err;
   }
 
+
   if (ctx.activeTask) {
     try {
       registerActiveTaskCommands(mem, ctx.activeTask);
