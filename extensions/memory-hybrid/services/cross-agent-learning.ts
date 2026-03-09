@@ -8,7 +8,7 @@
  *  3. Send a batch to the LLM with the cross-agent-generalize prompt.
  *  4. For each generalised lesson, store a new global fact (category="pattern",
  *     scope="global", source="cross-agent-learning", importance boosted +0.1).
- *  5. Link source agent facts → new global fact via DERIVED_FROM.
+ *  5. Link new global fact → source agent facts via DERIVED_FROM.
  *  6. Return a report.
  */
 
@@ -146,8 +146,8 @@ function agentFactAlreadyGeneralised(factsDb: FactsDB, agentFactId: string): boo
       .prepare(
         `SELECT ml.id
          FROM memory_links ml
-         JOIN facts f ON f.id = ml.target_fact_id
-         WHERE ml.source_fact_id = ?
+         JOIN facts f ON f.id = ml.source_fact_id
+         WHERE ml.target_fact_id = ?
            AND ml.link_type = 'DERIVED_FROM'
            AND f.source = ?
            AND f.scope = 'global'
@@ -342,12 +342,12 @@ export async function runCrossAgentLearning(
             agentSources: sourceAgentIds,
           });
 
-          // Link each source agent fact → new global fact via DERIVED_FROM
+          // Link new global fact → source agent facts via DERIVED_FROM
           for (const sourceFact of sourceFacts) {
             try {
               factsDb.createLink(
-                sourceFact.factId,
                 newFact.id,
+                sourceFact.factId,
                 "DERIVED_FROM",
                 0.8,
               );
