@@ -159,6 +159,7 @@ export type HybridMemCliContext = {
   runAnalyzeFeedbackPhrases: (opts: { days?: number; model?: string; outputPath?: string; learn?: boolean }) => Promise<AnalyzeFeedbackPhrasesResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runExtractImplicitFeedback?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; includeTrajectories?: boolean; includeClosedLoop?: boolean }) => Promise<{ signalsExtracted: number; positiveCount: number; negativeCount: number; trajectoriesBuilt: number; sessionsScanned: number; closedLoopReport?: string }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runExport: (opts: {
     outputPath: string;

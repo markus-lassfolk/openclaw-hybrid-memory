@@ -54,6 +54,8 @@ import type {
   WorkflowTrackingConfig,
   CrystallizationConfig,
   SelfExtensionConfig,
+  ImplicitFeedbackConfig,
+  ClosedLoopConfig,
 } from "./features.js";
 
 import type {
@@ -396,6 +398,10 @@ export type HybridMemoryConfig = {
   crystallization: CrystallizationConfig;
   /** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210, default: disabled). */
   selfExtension: SelfExtensionConfig;
+  /** Implicit feedback detection from behavioral conversation signals (Issue #262, default: enabled). */
+  implicitFeedback: ImplicitFeedbackConfig;
+  /** Closed-loop rule effectiveness measurement (Issue #262, default: enabled). */
+  closedLoop: ClosedLoopConfig;
   /** Contextual variant generation at index time (Issue #159, default: disabled). */
   contextualVariants: ContextualVariantsConfig;
   /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */
