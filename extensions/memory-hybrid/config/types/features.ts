@@ -240,7 +240,7 @@ export type FrustrationDetectionConfig = {
   enabled: boolean;
   /** Sliding window: number of conversation turns to analyse (default: 8). */
   windowSize: number;
-  /** Recency decay applied per turn (default: 0.9). */
+  /** Recency decay applied per turn (default: 0.85). */
   decayRate: number;
   /** Custom per-signal weights overriding defaults (0-1). */
   signalWeights?: FrustrationSignalWeights;

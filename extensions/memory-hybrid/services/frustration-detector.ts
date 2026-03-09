@@ -4,7 +4,7 @@
  *
  * Algorithm:
  *   frustrationLevel = Σ(signal.weight × recency_factor) / normalizer
- *   recency_factor = 1.0 for current turn, decays decayRate^turnsAgo (default 0.9)
+ *   recency_factor = 1.0 for current turn, decays decayRate^turnsAgo (default 0.85)
  *   normalizer = number of turns in window
  *
  * Supports 9 signal types: short_reply, imperative_tone, repeated_instruction,
