@@ -442,6 +442,24 @@ const memoryHybridPlugin = {
       throw err;
     }
 
+    // ContextEngine Plugin Slot (Issue #273) — feature-detected, non-fatal if unavailable
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    import("./services/context-engine.js")
+      .then(({ registerHybridContextEngine }) =>
+        registerHybridContextEngine({
+          factsDb,
+          vectorDb,
+          wal,
+          embeddings,
+          cfg,
+          logger: api.logger,
+          pluginVersion: versionInfo.pluginVersion,
+        }),
+      )
+      .catch((err: unknown) => {
+        api.logger.warn?.(`memory-hybrid: ContextEngine registration skipped: ${err}`);
+      });
+
     // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
     try {
       registerLifecycleHooks({

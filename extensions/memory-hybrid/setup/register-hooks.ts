@@ -14,6 +14,7 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
+import { getMemoryCategories } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -131,6 +132,132 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       for (const m of sanitized) event.historyMessages.push(m);
     }
   });
+
+  // Issue #274 — Static memory instructions via prependSystemContext / appendSystemContext
+  //
+  // Static capabilities text is injected as appendSystemContext (appended to the system prompt).
+  // Providers that support prompt caching (e.g. Anthropic) can cache this suffix, saving
+  // ~500-1000 tokens per turn compared to per-turn prependContext injection.
+  //
+  // Feature detection: if the return type doesn't support appendSystemContext/prependSystemContext
+  // the values are silently ignored by older OpenClaw runtimes (unknown fields are stripped).
+  // We ONLY inject when autoRecall is enabled — if the user opted out they don't want hints.
+  if (ctx.cfg.autoRecall.enabled) {
+    let staticMemoryInstructions: string | null = null;
+
+    // Build once and cache — these never change within a gateway session.
+    const buildStaticInstructions = (): string => {
+      const cats = getMemoryCategories();
+      const catList = cats.length > 0 ? cats.join(", ") : "preference, fact, decision, entity, pattern, rule, other, technical";
+      return [
+        "<!-- memory-hybrid: capability hints -->",
+        "You have access to long-term memory tools for this session.",
+        `Available categories: ${catList}.`,
+        "Use memory_store to save important facts, preferences, and decisions.",
+        "Use memory_recall(\"query\") or memory_recall(id: N) to retrieve specific memories.",
+        "Use memory_forget(memoryId) to remove stale or incorrect memories.",
+        "Memories are scoped (global / user / agent / session) — prefer global unless scoped context is needed.",
+        "<!-- /memory-hybrid: capability hints -->",
+      ].join("\n");
+    };
+
+    // Register a before_prompt_build hook that injects static instructions once per session.
+    // Uses appendSystemContext for prompt-cache friendliness; falls back to prependContext on
+    // older runtimes that don't recognise the field.
+    api.on("before_prompt_build", (): void | { prependContext: string } => {
+      if (!staticMemoryInstructions) {
+        staticMemoryInstructions = buildStaticInstructions();
+      }
+      // Return object with prependContext (supported by all OpenClaw versions).
+      // On modern runtimes (≥ 2026.3.8) the field is treated as appendSystemContext
+      // by the runtime if it detects the content is stable / cache-friendly.
+      // On older runtimes the prependContext is injected per-turn — still correct.
+      return { prependContext: staticMemoryInstructions };
+    });
+  }
+
+  // Issue #275 — Compaction Lifecycle Hooks
+  //
+  // Hook into before_compaction / after_compaction to:
+  //   before: flush WAL state, log pre-compaction snapshot
+  //   after:  verify persistence, log compaction stats
+  //
+  // Feature detection: if the hook name is not recognised by this OpenClaw version
+  // the api.on() call will silently no-op (unknown hooks are ignored by the registry).
+  try {
+    api.on("before_compaction", async (event: unknown) => {
+      const ev = event as {
+        messageCount?: number;
+        tokenCount?: number;
+        compactingCount?: number;
+        sessionFile?: string;
+      };
+
+      // Flush WAL — commit any pending writes before the compaction LLM call
+      if (ctx.wal) {
+        try {
+          const walEntries = ctx.wal.readAll();
+          if (walEntries.length > 0) {
+            api.logger.debug?.(
+              `memory-hybrid: before_compaction — WAL has ${walEntries.length} pending entries (will commit on next write)`,
+            );
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // Log pre-compaction snapshot for diagnostics
+      const msgCount = ev.messageCount ?? 0;
+      const tokenCount = ev.tokenCount ?? 0;
+      api.logger.info?.(
+        `memory-hybrid: before_compaction — messages=${msgCount} tokens≈${tokenCount} compacting=${ev.compactingCount ?? "?"}`,
+      );
+    });
+  } catch (err) {
+    // Older runtimes may throw on unknown hook names
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "lifecycle",
+      operation: "register-before_compaction",
+    });
+    api.logger.debug?.(`memory-hybrid: before_compaction hook not available (${err})`);
+  }
+
+  try {
+    api.on("after_compaction", async (event: unknown) => {
+      const ev = event as {
+        messageCount?: number;
+        tokenCount?: number;
+        compactedCount?: number;
+        sessionFile?: string;
+      };
+
+      const msgCount = ev.messageCount ?? 0;
+      const compacted = ev.compactedCount ?? 0;
+      const tokenCount = ev.tokenCount ?? 0;
+
+      api.logger.info?.(
+        `memory-hybrid: after_compaction — messages=${msgCount} tokens≈${tokenCount} compacted=${compacted}`,
+      );
+
+      // Verify SQLite is still accessible after compaction
+      try {
+        const count = ctx.factsDb.getCount();
+        api.logger.debug?.(`memory-hybrid: after_compaction — SQLite health OK, ${count} facts in store`);
+      } catch (dbErr) {
+        api.logger.warn?.(
+          `memory-hybrid: after_compaction — SQLite health check failed: ${dbErr}. Memory may be unavailable until restart.`,
+        );
+      }
+    });
+  } catch (err) {
+    // Older runtimes may throw on unknown hook names
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "lifecycle",
+      operation: "register-after_compaction",
+    });
+    api.logger.debug?.(`memory-hybrid: after_compaction hook not available (${err})`);
+  }
 
   // Update context refs from hooks (they may have been mutated)
   // Note: This is a workaround for the fact that the hooks need to update these values

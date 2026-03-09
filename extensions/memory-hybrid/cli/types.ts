@@ -161,3 +161,22 @@ export type ActiveTaskStaleResult = {
 export type ActiveTaskAddResult =
   | { ok: true; label: string; upserted: boolean }
   | { ok: false; error: string };
+
+// ---------------------------------------------------------------------------
+// Backup types (Issue #276)
+// ---------------------------------------------------------------------------
+
+export type BackupCliResult =
+  | {
+      ok: true;
+      backupDir: string;
+      sqliteSize: number;
+      lancedbSize: number;
+      durationMs: number;
+      integrityOk: boolean;
+    }
+  | { ok: false; error: string };
+
+export type BackupVerifyResult =
+  | { ok: true; integrityOk: boolean; sqlitePath: string; factCount: number; message: string }
+  | { ok: false; error: string };

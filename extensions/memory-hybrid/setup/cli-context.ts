@@ -29,6 +29,7 @@ import { versionInfo } from "../versionInfo.js";
 import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
+import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
 
 /** Help text shown after hybrid-mem commands list */
 export const HYBRID_MEM_HELP_GROUPED = `
@@ -105,6 +106,8 @@ Commands by category:
   Plugin lifecycle
     upgrade [version]    Upgrade to version or latest
     uninstall            Remove plugin (--clean-all, --leave-config)
+    backup               Create a point-in-time snapshot (SQLite + LanceDB)
+    backup verify        Check SQLite integrity without creating a backup
 `;
 
 const HYBRID_MEM_HELP_ACTIVE_TASKS = `
@@ -762,7 +765,17 @@ export function createHybridMemCliContext(
     listCommands: buildListCommands(handlerCtx, api),
     tieringEnabled: handlerCtx.cfg.memoryTiering.enabled,
     resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
+    resolvedLancePath: handlerCtx.resolvedLancePath,
     resolvePath: (file: string) => api.resolvePath(file),
+    // Issue #276 — Backup CLI
+    runBackup: (opts) =>
+      runBackupFn({
+        resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
+        resolvedLancePath: handlerCtx.resolvedLancePath,
+        backupDir: opts?.backupDir,
+      }),
+    runBackupVerify: () =>
+      runBackupVerifyFn({ resolvedSqlitePath: handlerCtx.resolvedSqlitePath }),
     runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
     activeTask: handlerCtx.cfg.activeTask.enabled
       ? buildActiveTaskCliContext(handlerCtx)

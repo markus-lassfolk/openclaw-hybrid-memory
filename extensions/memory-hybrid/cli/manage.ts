@@ -138,6 +138,9 @@ export type ManageContext = {
   };
   tieringEnabled: boolean;
   resolvedSqlitePath?: string;
+  resolvedLancePath?: string;
+  runBackup?: (opts?: { backupDir?: string }) => Promise<import("../cli/backup.js").BackupCliResult>;
+  runBackupVerify?: () => import("../cli/backup.js").BackupVerifyResult;
   resolvePath?: (file: string) => string;
   runExtractDaily?: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
   runExtractDirectives?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
@@ -209,6 +212,9 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runToolEffectiveness,
     runCostReport,
     pruneCostLog,
+    resolvedLancePath,
+    runBackup,
+    runBackupVerify,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
@@ -2011,6 +2017,63 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.error(`Uninstalled ${res.pluginId}: config error (${res.error}), cleaned ${res.cleaned.length} files.`);
       } else if (res.outcome === "leave_config") {
         console.log(`Uninstalled ${res.pluginId}: config left intact, cleaned ${res.cleaned.length} files.`);
+      }
+    }));
+
+  // Issue #276 — Backup commands
+  const backup = mem
+    .command("backup")
+    .description(
+      "Create a snapshot backup of memory state (SQLite + LanceDB). " +
+        "Default destination: ~/.openclaw/backups/memory/TIMESTAMP/\n" +
+        "\n" +
+        "NOTE: To include memory in scheduled openclaw backups, add these paths to " +
+        "your openclaw.yaml backup config:\n" +
+        `  - ${resolvedSqlitePath ?? "<memoryDir>/memory.db"}\n` +
+        `  - ${resolvedLancePath ?? "<memoryDir>/lance/"}`,
+    )
+    .option("--dest <dir>", "Override backup destination directory")
+    .action(withExit(async (opts?: { dest?: string }) => {
+      if (!runBackup) {
+        console.error("Backup is not available in this configuration.");
+        process.exitCode = 1;
+        return;
+      }
+      console.log("Creating memory backup…");
+      const res = await runBackup({ backupDir: opts?.dest });
+      if (res.ok) {
+        const sqliteKb = (res.sqliteSize / 1024).toFixed(1);
+        const lanceKb = (res.lancedbSize / 1024).toFixed(1);
+        console.log(`✓ Backup complete in ${res.durationMs}ms`);
+        console.log(`  Location: ${res.backupDir}`);
+        console.log(`  SQLite:   ${sqliteKb} KB${res.integrityOk ? " (integrity OK)" : " ⚠ integrity check failed"}`);
+        console.log(`  LanceDB:  ${lanceKb} KB`);
+        if (!res.integrityOk) {
+          console.warn("⚠ SQLite integrity check failed — backup may be from a corrupt source.");
+        }
+      } else {
+        console.error(`✗ Backup failed: ${res.error}`);
+        process.exitCode = 1;
+      }
+    }));
+
+  backup
+    .command("verify")
+    .description("Verify SQLite DB integrity without creating a new backup.")
+    .action(withExit(async () => {
+      if (!runBackupVerify) {
+        console.error("Backup verify is not available in this configuration.");
+        process.exitCode = 1;
+        return;
+      }
+      const res = runBackupVerify();
+      if (res.ok) {
+        const status = res.integrityOk ? "✓" : "✗";
+        console.log(`${status} ${res.message}`);
+        if (!res.integrityOk) process.exitCode = 1;
+      } else {
+        console.error(`✗ Verify failed: ${res.error}`);
+        process.exitCode = 1;
       }
     }));
 }
