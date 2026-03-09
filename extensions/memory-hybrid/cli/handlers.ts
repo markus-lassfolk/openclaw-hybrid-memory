@@ -850,6 +850,21 @@ export async function runVerifyForCli(
     log(`  selfCorrection: false`);
   }
 
+  // Feedback loop / measurement (Milestone B)
+  log(`  reinforcement (unified feedback loop): ${bool(cfg.reinforcement.enabled)}`);
+  log(`  implicitFeedback (behavioral signals): ${bool(cfg.implicitFeedback.enabled)}`);
+  if (cfg.implicitFeedback.enabled) {
+    log(`    feedToReinforcement: ${bool(cfg.implicitFeedback.feedToReinforcement)}`);
+    log(`    feedToSelfCorrection: ${bool(cfg.implicitFeedback.feedToSelfCorrection)}`);
+    log(`    trajectoryLLMAnalysis: ${bool(cfg.implicitFeedback.trajectoryLLMAnalysis)}`);
+  }
+  log(`  closedLoop (effectiveness measurement): ${bool(cfg.closedLoop.enabled)}`);
+  if (cfg.closedLoop.enabled) {
+    log(`    runInNightlyCycle: ${bool(cfg.closedLoop.runInNightlyCycle)}`);
+    log(`    measurementWindowDays: ${cfg.closedLoop.measurementWindowDays}`);
+    log(`    minSampleSize: ${cfg.closedLoop.minSampleSize}`);
+  }
+
   log(`  autoRecall.entityLookup: ${bool(cfg.autoRecall.entityLookup.enabled)}`);
   log(`  autoRecall.authFailure (reactive recall): ${bool(cfg.autoRecall.authFailure.enabled)}`);
   log(`  autoRecall.retrievalDirectives: ${bool(cfg.autoRecall.retrievalDirectives?.enabled)}`);
@@ -982,6 +997,18 @@ export async function runVerifyForCli(
   } else {
     log(`  ingest: ${bool(false)}`);
   }
+
+  log(`  documents (MarkItDown): ${bool(cfg.documents.enabled)}`);
+  if (cfg.documents.enabled) {
+    log(`    pythonPath: ${cfg.documents.pythonPath}`);
+    log(`    visionEnabled: ${bool(cfg.documents.visionEnabled)}`);
+    if (cfg.documents.visionEnabled) {
+      log(`    visionModel: ${cfg.documents.visionModel ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`}`);
+    }
+  }
+
+  log(`  provenance (DERIVED_FROM edges): ${bool(cfg.provenance.enabled)}`);
+
   if (cfg.distill) {
     log(`  distill.extractDirectives: ${bool(cfg.distill.extractDirectives !== false)}`);
     log(`  distill.extractReinforcement: ${bool(cfg.distill.extractReinforcement !== false)}`);
@@ -3859,6 +3886,8 @@ export function runConfigSetForCli(
     { key: "health", prop: "enabled" },
     { key: "memoryTiering", prop: "enabled" },
     { key: "reinforcement", prop: "enabled" },
+    { key: "implicitFeedback", prop: "enabled" },
+    { key: "closedLoop", prop: "enabled" },
     { key: "futureDateProtection", prop: "enabled" },
     { key: "path", prop: "enabled" },
     { key: "activeTask", prop: "enabled" },
