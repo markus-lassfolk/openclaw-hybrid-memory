@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { rmSync } from "node:fs";
 import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
 
@@ -302,7 +303,6 @@ describe("memory_prune — verbosity output", () => {
 
   afterEach(() => {
     if (factsDb) factsDb.close();
-    const { rmSync } = require("fs");
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -379,7 +379,6 @@ describe("memory_reflect — verbosity output", () => {
   afterEach(async () => {
     if (factsDb) factsDb.close();
     if (vectorDb) await vectorDb.close();
-    const { rmSync } = require("fs");
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -448,7 +447,6 @@ describe("memory_store — verbosity output", () => {
   afterEach(async () => {
     if (factsDb) factsDb.close();
     if (vectorDb) await vectorDb.close();
-    const { rmSync } = require("fs");
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

@@ -9,6 +9,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export interface WalReplayResult {
   committed: number;
@@ -103,8 +104,13 @@ export async function replayWalEntries(
         }
         wal.remove(entry.id);
       }
-    } catch {
-      // Non-fatal: log individual entry failure and continue with remaining entries
+    } catch (err) {
+      // Non-fatal: log the failure (with entry id + operation for diagnostics) and continue
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "wal-replay",
+        operation: `replay-${entry.operation ?? "unknown"}`,
+        entryId: entry.id,
+      });
     }
   }
 

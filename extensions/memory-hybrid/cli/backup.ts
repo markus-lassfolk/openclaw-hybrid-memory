@@ -7,7 +7,9 @@
  * The backup captures:
  *  - SQLite memory.db (via better-sqlite3 .backup() — hot copy, no lock required)
  *  - LanceDB vector store directory (recursive copy)
- *  - Plugin config state (from resolvedSqlitePath directory)
+ *
+ * Note: plugin config (openclaw.yaml) is NOT currently captured by this command.
+ * Users who want a full config backup should copy their openclaw.yaml separately.
  *
  * Output directory: ~/.openclaw/backups/memory/YYYY-MM-DDTHH-mm-ss/ (configurable)
  *
@@ -16,7 +18,7 @@
  *     - <memoryDir>/memory.db
  *     - <lanceDir>/
  *
- * Cron automation for scheduled backups should be managed via opencclaw.yaml.
+ * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
 import Database from "better-sqlite3";

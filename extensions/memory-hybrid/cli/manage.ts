@@ -3,9 +3,10 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { execSync } from "node:child_process";
 import { generateTraceId, buildCouncilSessionKey, buildProvenanceMetadata } from "../utils/provenance.js";
 import { relativeTime } from "./shared.js";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
@@ -2118,18 +2119,19 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("schedule")
     .description(
       "Print cron setup instructions for automated weekly memory backups.\n\n" +
-        "Adds a weekly Sunday 03:00 cron entry that runs `hybrid-mem backup` and\n" +
-        "writes output to ~/.openclaw/logs/backup.log.\n\n" +
+        "Installs a cron entry (schedule from config, default: weekly Sunday at 04:00) that runs\n" +
+        "`hybrid-mem backup` and writes output to ~/.openclaw/logs/backup.log.\n\n" +
         "The backup state is recorded to ~/.openclaw/state/memory-backup-last.json\n" +
         "so HEARTBEAT.md monitoring can detect failures.",
     )
     .option("--dry-run", "Print the cron line without installing it")
     .action(withExit(async (opts?: { dryRun?: boolean }) => {
-      // Resolve the hybrid-mem binary path from PATH or common locations
+      // Use config-provided cron expression (falls back to the same default as parseCronReliabilityConfig)
+      const cronExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
       const hybridMemBin = "hybrid-mem"; // resolved by PATH at runtime
       const logDir = join(homedir(), ".openclaw", "logs");
       const logFile = join(logDir, "backup.log");
-      const cronLine = `0 3 * * 0 ${hybridMemBin} backup >> ${logFile} 2>&1`;
+      const cronLine = `${cronExpr} ${hybridMemBin} backup >> ${logFile} 2>&1`;
 
       if (opts?.dryRun) {
         console.log("Cron line (dry-run — not installed):");
@@ -2138,7 +2140,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }
 
       // Attempt to install via crontab
-      const { execSync } = require("child_process") as typeof import("child_process");
       try {
         mkdirSync(logDir, { recursive: true });
       } catch {
@@ -2161,12 +2162,11 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
       const newCrontab = (currentCrontab.trimEnd() ? currentCrontab.trimEnd() + "\n" : "") + cronLine + "\n";
       try {
-        const { writeFileSync: wfs, unlinkSync: uls } = require("fs") as typeof import("fs");
-        const tmpFile = join(require("os").tmpdir(), `crontab-hybrid-mem-${Date.now()}.txt`);
-        wfs(tmpFile, newCrontab, "utf-8");
+        const tmpFile = join(tmpdir(), `crontab-hybrid-mem-${Date.now()}.txt`);
+        writeFileSync(tmpFile, newCrontab, "utf-8");
         execSync(`crontab ${tmpFile}`);
-        try { uls(tmpFile); } catch { /* ignore */ }
-        console.log("✓ Weekly backup scheduled (Sundays at 03:00).");
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        console.log(`✓ Weekly backup scheduled (${cronExpr}).`);
         console.log(`  Log: ${logFile}`);
         console.log(`  State: ${join(homedir(), ".openclaw", "state", "memory-backup-last.json")}`);
         console.log("");

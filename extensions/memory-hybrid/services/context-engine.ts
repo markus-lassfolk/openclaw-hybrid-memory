@@ -147,6 +147,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       //    injection surface.
       let sessionFacts = 0;
       let memorySummary: string | undefined;
+      // Declare topFacts in outer scope so it's accessible in the return statement below.
       let topFacts: ReturnType<typeof factsDb.list> = [];
       try {
         sessionFacts = factsDb.getCount();
