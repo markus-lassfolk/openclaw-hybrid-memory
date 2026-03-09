@@ -16,6 +16,10 @@ import type {
   ImplicitFeedbackConfig,
   ImplicitSignalType,
   ClosedLoopConfig,
+  FrustrationDetectionConfig,
+  FrustrationSignalWeights,
+  CrossAgentLearningConfig,
+  ToolEffectivenessConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -512,6 +516,113 @@ export function parseClosedLoopConfig(cfg: Record<string, unknown>): ClosedLoopC
       typeof raw?.autoBoostThreshold === "number"
         ? Math.max(0, Math.min(1, raw.autoBoostThreshold))
         : 0.5,
+    runInNightlyCycle: raw?.runInNightlyCycle !== false,
+  };
+}
+
+export function parseFrustrationDetectionConfig(cfg: Record<string, unknown>): FrustrationDetectionConfig {
+  const raw = cfg.frustrationDetection as Record<string, unknown> | undefined;
+
+  // Parse optional signal weights
+  const weightsRaw = raw?.signalWeights as Record<string, unknown> | undefined;
+  let signalWeights: FrustrationSignalWeights | undefined;
+  if (weightsRaw && typeof weightsRaw === "object") {
+    const validSignals = [
+      "short_reply", "imperative_tone", "repeated_instruction", "caps_or_emphasis",
+      "explicit_frustration", "correction_frequency", "question_to_command",
+      "reduced_context", "emoji_shift",
+    ];
+    const parsed: FrustrationSignalWeights = {};
+    for (const sig of validSignals) {
+      if (typeof weightsRaw[sig] === "number") {
+        (parsed as Record<string, number>)[sig] = Math.max(0, Math.min(1, weightsRaw[sig] as number));
+      }
+    }
+    if (Object.keys(parsed).length > 0) signalWeights = parsed;
+  }
+
+  const thresholdsRaw = raw?.adaptationThresholds as Record<string, unknown> | undefined;
+
+  return {
+    enabled: raw?.enabled !== false,
+    windowSize:
+      typeof raw?.windowSize === "number" && raw.windowSize >= 2 && raw.windowSize <= 50
+        ? Math.floor(raw.windowSize)
+        : 8,
+    decayRate:
+      typeof raw?.decayRate === "number" && raw.decayRate > 0 && raw.decayRate <= 1
+        ? raw.decayRate
+        : 0.9,
+    signalWeights,
+    injectionThreshold:
+      typeof raw?.injectionThreshold === "number" && raw.injectionThreshold >= 0 && raw.injectionThreshold <= 1
+        ? raw.injectionThreshold
+        : 0.3,
+    adaptationThresholds: {
+      medium:
+        typeof thresholdsRaw?.medium === "number" && thresholdsRaw.medium >= 0 && thresholdsRaw.medium <= 1
+          ? thresholdsRaw.medium
+          : 0.3,
+      high:
+        typeof thresholdsRaw?.high === "number" && thresholdsRaw.high >= 0 && thresholdsRaw.high <= 1
+          ? thresholdsRaw.high
+          : 0.5,
+      critical:
+        typeof thresholdsRaw?.critical === "number" && thresholdsRaw.critical >= 0 && thresholdsRaw.critical <= 1
+          ? thresholdsRaw.critical
+          : 0.7,
+    },
+    feedToImplicitPipeline: raw?.feedToImplicitPipeline !== false,
+  };
+}
+
+export function parseCrossAgentLearningConfig(cfg: Record<string, unknown>): CrossAgentLearningConfig {
+  const raw = cfg.crossAgentLearning as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    windowDays:
+      typeof raw?.windowDays === "number" && raw.windowDays >= 1
+        ? Math.min(90, Math.floor(raw.windowDays))
+        : 14,
+    model:
+      typeof raw?.model === "string" && raw.model.trim().length > 0
+        ? raw.model.trim()
+        : undefined,
+    fallbackModels: Array.isArray(raw?.fallbackModels)
+      ? (raw.fallbackModels as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : undefined,
+    batchSize:
+      typeof raw?.batchSize === "number" && raw.batchSize >= 5
+        ? Math.min(100, Math.floor(raw.batchSize))
+        : 20,
+    minSourceConfidence:
+      typeof raw?.minSourceConfidence === "number" && raw.minSourceConfidence >= 0 && raw.minSourceConfidence <= 1
+        ? raw.minSourceConfidence
+        : 0.4,
+    runInNightlyCycle: raw?.runInNightlyCycle !== false,
+  };
+}
+
+export function parseToolEffectivenessConfig(cfg: Record<string, unknown>): ToolEffectivenessConfig {
+  const raw = cfg.toolEffectiveness as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    minCalls:
+      typeof raw?.minCalls === "number" && raw.minCalls >= 1
+        ? Math.floor(raw.minCalls)
+        : 3,
+    topN:
+      typeof raw?.topN === "number" && raw.topN >= 1
+        ? Math.min(50, Math.floor(raw.topN))
+        : 10,
+    lowScoreThreshold:
+      typeof raw?.lowScoreThreshold === "number" && raw.lowScoreThreshold >= 0 && raw.lowScoreThreshold <= 1
+        ? raw.lowScoreThreshold
+        : 0.3,
+    decayFactor:
+      typeof raw?.decayFactor === "number" && raw.decayFactor > 0 && raw.decayFactor <= 1
+        ? raw.decayFactor
+        : 0.95,
     runInNightlyCycle: raw?.runInNightlyCycle !== false,
   };
 }

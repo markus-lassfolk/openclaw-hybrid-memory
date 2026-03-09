@@ -82,6 +82,8 @@ import {
   PLUGIN_ID,
   getRestartPendingPath,
 } from "../utils/constants.js";
+import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
+import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore, generateMonthlyReport } from "../services/tool-effectiveness.js";
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
@@ -4299,4 +4301,86 @@ export async function runExtractImplicitFeedbackForCli(
     sessionsScanned: filePaths.length,
     closedLoopReport,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Cross-agent learning CLI handler (Issue #263 — Phase 2)
+// ---------------------------------------------------------------------------
+
+export interface CrossAgentLearningCliResult {
+  agentsScanned: number;
+  lessonsConsidered: number;
+  generalisedStored: number;
+  linksCreated: number;
+  skippedDuplicates: number;
+  errors: number;
+}
+
+export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<CrossAgentLearningCliResult> {
+  const { factsDb, cfg } = ctx;
+  const caCfg = cfg.crossAgentLearning;
+
+  if (!caCfg?.enabled) {
+    return { agentsScanned: 0, lessonsConsidered: 0, generalisedStored: 0, linksCreated: 0, skippedDuplicates: 0, errors: 0 };
+  }
+
+  // Build OpenAI proxy
+  const openai = ctx.openai;
+
+  const result = await runCrossAgentLearning(factsDb, openai, caCfg, ctx.logger ?? {});
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Tool effectiveness CLI handler (Issue #263 — Phase 3)
+// ---------------------------------------------------------------------------
+
+export async function runToolEffectivenessForCli(
+  ctx: HandlerContext,
+  opts: { verbose?: boolean } = {},
+): Promise<string> {
+  const { cfg } = ctx;
+  const teCfg = cfg.toolEffectiveness;
+
+  if (teCfg?.enabled === false) {
+    return "Tool effectiveness scoring is disabled (toolEffectiveness.enabled = false).";
+  }
+
+  // Derive the workflow store DB path from the sqlite path
+  const sqlitePath = cfg.sqlitePath ?? join(homedir(), ".openclaw", "memory", "memory.db");
+  const workflowDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-workflows.db");
+  const effectivenessDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
+
+  const effStore = new ToolEffectivenessStore(effectivenessDbPath);
+  try {
+    const report = await computeToolEffectiveness(
+      workflowDbPath,
+      effStore,
+      teCfg ?? {},
+      ctx.logger ?? {},
+    );
+
+    // Gap 3 (#263): Generate monthly report, gated to once per calendar month
+    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const monthlyKey = `tool-effectiveness-monthly-${month}`;
+    try {
+      const rawDb = ctx.factsDb.getRawDb();
+      const existing = rawDb
+        .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+        .get(monthlyKey);
+      if (!existing) {
+        await generateMonthlyReport(effStore, ctx.factsDb);
+      }
+    } catch (mrErr) {
+      capturePluginError(mrErr instanceof Error ? mrErr : new Error(String(mrErr)), {
+        operation: "tool-effectiveness-monthly-report-check",
+        subsystem: "tool-effectiveness",
+        severity: "info",
+      });
+    }
+
+    return formatToolEffectivenessReport(report);
+  } finally {
+    effStore.close();
+  }
 }

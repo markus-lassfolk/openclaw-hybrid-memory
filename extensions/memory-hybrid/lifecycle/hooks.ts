@@ -59,6 +59,8 @@ import {
   SessionSeenFacts,
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
+import { detectFrustration, buildFrustrationHint, exportAsImplicitSignals, type FrustrationConversationTurn } from "../services/frustration-detector.js";
+import { generateToolHint, ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -1746,6 +1748,120 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
   };
 
+  // ---- Phase 1: Frustration detection (Issue #263) ----
+  // Per-session frustration state: maps sessionKey → { level, turns[] }
+  const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
+
+  const onFrustrationDetect = (api: ClawdbotPluginApi) => {
+    if (ctx.cfg.frustrationDetection?.enabled === false) return;
+    const fCfg = ctx.cfg.frustrationDetection;
+
+    // Capture each incoming user turn
+    api.on("before_agent_start", async (event: unknown) => {
+      const e = event as { prompt?: string; messages?: Array<{ role?: string; content?: unknown }>; agentId?: string; session?: { agentId?: string } };
+      const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+
+      try {
+        // Extract user prompt from event
+        let userContent: string | undefined;
+        if (typeof e.prompt === "string" && e.prompt.trim().length > 0) {
+          userContent = e.prompt;
+        } else if (Array.isArray(e.messages)) {
+          // Find the last user message
+          const userMsgs = e.messages.filter((m) => m && typeof m === "object" && m.role === "user");
+          const lastUser = userMsgs[userMsgs.length - 1];
+          if (lastUser && typeof lastUser.content === "string") {
+            userContent = lastUser.content;
+          }
+        }
+
+        if (!userContent || userContent.trim().length < 5) return;
+
+        // Append to session turn history (keep last 20 user turns)
+        const state = frustrationStateMap.get(sessionKey) ?? { level: 0, turns: [] };
+        state.turns.push({ role: "user", content: userContent });
+        if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
+
+        // Run frustration detection
+        const frustrationResult = detectFrustration(state.turns, fCfg, state.level);
+        state.level = frustrationResult.level;
+        frustrationStateMap.set(sessionKey, state);
+
+        // Gap 1 (#263): Feed frustration triggers into #262 implicit signals pipeline
+        const implicitSignals = exportAsImplicitSignals(frustrationResult);
+        if (implicitSignals.length > 0) {
+          try {
+            const rawDb = ctx.factsDb.getRawDb();
+            const insert = rawDb.prepare(`
+              INSERT OR IGNORE INTO implicit_signals
+                (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'frustration')
+            `);
+            for (const sig of implicitSignals) {
+              insert.run(
+                sessionKey,
+                sig.type,
+                sig.confidence,
+                sig.polarity,
+                userContent.slice(0, 500),
+                "",
+                state.turns.length,
+              );
+            }
+            api.logger.debug?.(`memory-hybrid: frustration exported ${implicitSignals.length} implicit signal(s) for session ${sessionKey}`);
+          } catch (fsErr) {
+            capturePluginError(fsErr instanceof Error ? fsErr : new Error(String(fsErr)), {
+              operation: "frustration-export-implicit-signals",
+              subsystem: "frustration",
+              severity: "info",
+            });
+          }
+        }
+
+        // Build hint and inject if above threshold
+        const hint = buildFrustrationHint(frustrationResult, fCfg);
+
+        // Gap 2 (#263): Inject tool effectiveness hints alongside frustration hint
+        let toolHintText = "";
+        if (ctx.cfg.toolEffectiveness?.enabled !== false && ctx.cfg.toolEffectiveness?.injectHints !== false) {
+          try {
+            const effectivenessDbPath = ctx.resolvedSqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
+            const toolStore = new ToolEffectivenessStore(effectivenessDbPath);
+            try {
+              const contextLabel = currentAgentIdRef.value ?? "general";
+              toolHintText = generateToolHint(toolStore, contextLabel);
+            } finally {
+              toolStore.close();
+            }
+          } catch (thErr) {
+            capturePluginError(thErr instanceof Error ? thErr : new Error(String(thErr)), {
+              operation: "generate-tool-hint",
+              subsystem: "tool-effectiveness",
+              severity: "info",
+            });
+          }
+        }
+
+        const combinedPrepend = [
+          hint ? `\n<frustration-signal>${hint}</frustration-signal>\n` : "",
+          toolHintText ? `\n<tool-hint>${toolHintText}</tool-hint>\n` : "",
+        ].join("");
+
+        if (combinedPrepend) {
+          if (hint) api.logger.debug?.(`memory-hybrid: ${hint}`);
+          return { prependContext: combinedPrepend };
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "frustration-detection",
+          subsystem: "frustration",
+          severity: "info",
+        });
+      }
+      return undefined;
+    });
+  };
+
   const onAgentEnd = (api: ClawdbotPluginApi) => {
     // Issue #150: write session_end event to episodic event log
     if (ctx.eventLog) {
@@ -2191,5 +2307,5 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     });
   };
 
-  return { onAgentStart, onAgentEnd };
+  return { onAgentStart, onAgentEnd, onFrustrationDetect };
 }

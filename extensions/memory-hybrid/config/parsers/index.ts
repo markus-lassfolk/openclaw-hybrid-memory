@@ -60,6 +60,9 @@ import {
   parseSelfExtensionConfig,
   parseImplicitFeedbackConfig,
   parseClosedLoopConfig,
+  parseFrustrationDetectionConfig,
+  parseCrossAgentLearningConfig,
+  parseToolEffectivenessConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -475,6 +478,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     selfExtension: parseSelfExtensionConfig(cfg),
     implicitFeedback: parseImplicitFeedbackConfig(cfg),
     closedLoop: parseClosedLoopConfig(cfg),
+    frustrationDetection: parseFrustrationDetectionConfig(cfg),
+    crossAgentLearning: parseCrossAgentLearningConfig(cfg),
+    toolEffectiveness: parseToolEffectivenessConfig(cfg),
     contextualVariants: parseContextualVariantsConfig(cfg),
     queryExpansion: parseQueryExpansionConfig(cfg),
     reranking: parseRerankingConfig(cfg),

@@ -147,6 +147,8 @@ export type ManageContext = {
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runDreamCycle?: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
   runContinuousVerification?: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
+  runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
+  runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -201,6 +203,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     resolvePath,
     runDreamCycle,
     runContinuousVerification,
+    runCrossAgentLearning,
+    runToolEffectiveness,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
@@ -1354,6 +1358,28 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:closed-loop" });
           }
         }
+
+        // Cross-agent learning (Issue #263 — Phase 2)
+        if (!res.skipped && runCrossAgentLearning && cfg.crossAgentLearning?.enabled && cfg.crossAgentLearning?.runInNightlyCycle !== false) {
+          try {
+            const caRes = await runCrossAgentLearning();
+            console.log(`Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`);
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:cross-agent-learning" });
+          }
+        }
+
+        // Tool effectiveness scoring (Issue #263 — Phase 3)
+        if (!res.skipped && runToolEffectiveness && cfg.toolEffectiveness?.enabled !== false && cfg.toolEffectiveness?.runInNightlyCycle !== false) {
+          try {
+            const teOutput = await runToolEffectiveness({});
+            if (teOutput && !teOutput.startsWith("No tool")) {
+              console.log(`Tool effectiveness: ${teOutput.split("\n")[0]}`);
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:tool-effectiveness" });
+          }
+        }
       }));
   }
 
@@ -1533,6 +1559,57 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         }
       }));
   }
+
+  // ----- cross-agent-learning (Issue #263 — Phase 2) -----
+  mem
+    .command("cross-agent-learning")
+    .description("Generalise agent-scoped lessons into global patterns (Issue #263 — Phase 2)")
+    .action(withExit(async () => {
+      if (!runCrossAgentLearning) {
+        console.error("cross-agent-learning is not available in this context.");
+        process.exitCode = 1;
+        return;
+      }
+      if (!cfg.crossAgentLearning?.enabled) {
+        console.log("Cross-agent learning is disabled (crossAgentLearning.enabled = false).");
+        return;
+      }
+      let res;
+      try {
+        res = await runCrossAgentLearning();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "cross-agent-learning" });
+        throw err;
+      }
+      console.log(`Cross-agent learning complete:`);
+      console.log(`  Agents scanned: ${res.agentsScanned}`);
+      console.log(`  Lessons considered: ${res.lessonsConsidered}`);
+      console.log(`  Generalised stored: ${res.generalisedStored}`);
+      console.log(`  Links created: ${res.linksCreated}`);
+      console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
+      if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
+    }));
+
+  // ----- tool-effectiveness (Issue #263 — Phase 3) -----
+  mem
+    .command("tool-effectiveness")
+    .description("Compute and display tool effectiveness scores from workflow traces (Issue #263 — Phase 3)")
+    .option("--verbose", "Show detailed per-tool breakdown")
+    .action(withExit(async (opts?: { verbose?: boolean }) => {
+      if (!runToolEffectiveness) {
+        console.error("tool-effectiveness is not available in this context.");
+        process.exitCode = 1;
+        return;
+      }
+      let output: string;
+      try {
+        output = await runToolEffectiveness({ verbose: !!opts?.verbose });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "tool-effectiveness" });
+        throw err;
+      }
+      console.log(output);
+    }));
 
   mem
     .command("analyze-feedback-phrases")

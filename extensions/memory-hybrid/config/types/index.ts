@@ -56,6 +56,9 @@ import type {
   SelfExtensionConfig,
   ImplicitFeedbackConfig,
   ClosedLoopConfig,
+  FrustrationDetectionConfig,
+  CrossAgentLearningConfig,
+  ToolEffectivenessConfig,
 } from "./features.js";
 
 import type {
@@ -402,6 +405,12 @@ export type HybridMemoryConfig = {
   implicitFeedback: ImplicitFeedbackConfig;
   /** Closed-loop rule effectiveness measurement (Issue #262, default: enabled). */
   closedLoop: ClosedLoopConfig;
+  /** Real-time frustration detection from conversation signals (Issue #263, default: enabled). */
+  frustrationDetection: FrustrationDetectionConfig;
+  /** Cross-agent lesson generalisation — promote agent-scoped lessons to global (Issue #263, default: disabled). */
+  crossAgentLearning: CrossAgentLearningConfig;
+  /** Tool effectiveness scoring from workflow traces (Issue #263, default: enabled). */
+  toolEffectiveness: ToolEffectivenessConfig;
   /** Contextual variant generation at index time (Issue #159, default: disabled). */
   contextualVariants: ContextualVariantsConfig;
   /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */
