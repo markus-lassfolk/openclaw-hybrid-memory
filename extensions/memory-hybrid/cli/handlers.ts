@@ -947,13 +947,37 @@ export async function runVerifyForCli(
   }
 
   const cronCfgForVerify = getCronModelConfig(cfg);
-  const defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
-  const heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
+  let defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
+  let heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
   const providersWithKeys = getProvidersWithKeys(cronCfgForVerify);
   const llmSource = cfg.llm?._source === "gateway" ? " (auto from agents.defaults.model)" : cfg.llm ? " (from plugin config)" : "";
   const nanoOrder = getLLMModelPreference(cronCfgForVerify, "nano");
   const hasExplicitNano = Array.isArray(cfg.llm?.nano) && (cfg.llm.nano as string[]).length > 0;
   const nanoSameAsDefault = nanoOrder[0] === defaultOrder[0];
+
+  // Build effective tier lists: append one model per provider that has a key but no model in config tiers
+  // (so verify shows and tests Anthropic, Minimax, etc. when keys come from gateway merge)
+  const hasModelFrom = (list: string[], prefix: string) =>
+    list.some((m) => m.startsWith(`${prefix}/`) || (prefix === "anthropic" && m.startsWith("claude-")) || (prefix === "google" && m.startsWith("gemini-")));
+  const apiConfigForVerify = ctx.api?.config as Record<string, unknown> | undefined;
+  const gwProv = (apiConfigForVerify?.models as Record<string, unknown> | undefined)?.providers
+    ?? (apiConfigForVerify?.llm as Record<string, unknown> | undefined)?.providers;
+  const gwProvRecord = (gwProv && typeof gwProv === "object" && !Array.isArray(gwProv)) ? gwProv as Record<string, Record<string, unknown>> : undefined;
+  const knownDefault: Record<string, string> = { anthropic: "anthropic/claude-sonnet-4-6", openai: "openai/gpt-4.1-mini", google: "google/gemini-2.5-flash" };
+  for (const p of providersWithKeys) {
+    if (hasModelFrom(defaultOrder, p) && hasModelFrom(heavyOrder, p)) continue;
+    let model: string | null = knownDefault[p] ?? null;
+    if (!model && gwProvRecord && gwProvRecord[p] && typeof gwProvRecord[p] === "object") {
+      const g = gwProvRecord[p];
+      const gm = typeof g.defaultModel === "string" ? g.defaultModel : typeof g.model === "string" ? g.model : null;
+      if (gm?.trim()) model = `${p}/${gm.trim()}`;
+    }
+    if (!model) continue;
+    if (!hasModelFrom(defaultOrder, p)) defaultOrder = [...defaultOrder, model];
+    const heavyModel = p === "anthropic" ? "anthropic/claude-opus-4-6" : model;
+    if (!hasModelFrom(heavyOrder, p)) heavyOrder = [...heavyOrder, heavyModel];
+  }
+
   // Include providers that appear in failover lists (e.g. anthropic when keys are in gateway)
   const providersInFailover = new Set<string>();
   for (const model of [...nanoOrder, ...defaultOrder, ...heavyOrder]) {
@@ -969,6 +993,40 @@ export async function runVerifyForCli(
   log(`  default tier (reflection, general): ${defaultOrder.join(" → ")}${llmSource}`);
   log(`  heavy tier (distill, self-correction): ${heavyOrder.join(" → ")}${llmSource}`);
   log(`  providers with keys: ${allProviders.length ? allProviders.join(", ") : "none"}`);
+  // Hint when a provider has a key but no models in the tier lists (e.g. Anthropic key but no Claude/Opus in llm tiers)
+  const inferProvider = (m: string): string => {
+    const t = m.trim();
+    if (t.includes("/")) return t.split("/")[0]!.trim().toLowerCase();
+    const lower = t.toLowerCase();
+    if (lower.startsWith("gemini-")) return "google";
+    if (lower.startsWith("claude-")) return "anthropic";
+    if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return "openai";
+    return "";
+  };
+  const providersInTiers = new Set<string>();
+  for (const model of [...nanoOrder, ...defaultOrder, ...heavyOrder]) {
+    const p = inferProvider(model);
+    if (p) providersInTiers.add(p);
+  }
+  const knownPrefixes: Record<string, string> = { google: "Google", openai: "OpenAI", anthropic: "Anthropic" };
+  for (const p of providersWithKeys) {
+    if (!providersInTiers.has(p)) {
+      const name = knownPrefixes[p] ?? p;
+      const example = p === "anthropic" ? "anthropic/claude-opus-4-6" : p === "google" ? "google/gemini-3.1-pro-preview" : `${p}/<model>`;
+      log(`  ℹ️  You have an API key for ${name} but no ${name} models in llm tiers — add e.g. ${example} to llm.default or llm.heavy to use and test it.`);
+    }
+  }
+  // Gateway providers (for reference): plugin only uses providers with keys in plugin config
+  const apiConfig = ctx.api?.config as Record<string, unknown> | undefined;
+  const gatewayProviders = apiConfig?.models && typeof apiConfig.models === "object" && (apiConfig.models as Record<string, unknown>).providers && typeof (apiConfig.models as Record<string, unknown>).providers === "object"
+    ? Object.keys((apiConfig.models as Record<string, unknown>).providers as Record<string, unknown>).filter(Boolean).sort()
+    : [];
+  if (gatewayProviders.length > 0) {
+    const onlyInGateway = gatewayProviders.filter((g) => !allProviders.includes(g));
+    if (onlyInGateway.length > 0) {
+      log(`  Gateway also has providers: ${onlyInGateway.join(", ")} (plugin uses only providers with keys in plugin config; add llm.providers.<name> and <name>/model to llm tiers to use them here).`);
+    }
+  }
   if (defaultOrder.length > 1 || heavyOrder.length > 1) {
     log(`  (if a model fails, the next in the list is tried)`);
   }
@@ -1003,7 +1061,15 @@ export async function runVerifyForCli(
     const TEST_LLM_TIMEOUT_MS = 15_000;
     let anyUnconfigured = false;
     log("\n  LLM reachability (--test-llm):");
+    const isNonChatModel = (m: string) => {
+      const bare = m.includes("/") ? m.split("/")[1] ?? m : m;
+      return bare.toLowerCase().includes("-codex");
+    };
     for (const model of allModels) {
+      if (isNonChatModel(model)) {
+        log(`    ${model}: ${WARN}skipped — Codex/agentic models use a different API (not chat/completions)`);
+        continue;
+      }
       try {
         await chatComplete({
           model,
@@ -1025,8 +1091,8 @@ export async function runVerifyForCli(
       }
     }
     if (anyUnconfigured) {
-      log(`  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config.`);
-      log(`    Example: llm.providers.anthropic.apiKey = "sk-ant-..." (and optionally .baseURL for the endpoint).`);
+      log(`  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config, or set env vars.`);
+      log(`    Anthropic: llm.providers.anthropic.apiKey in config, or ANTHROPIC_API_KEY in the environment.`);
     }
   }
 
@@ -1066,7 +1132,7 @@ export async function runVerifyForCli(
     log(`  ${est.mode.padEnd(10)}: ~$${low}-${high}/mo  (${est.description})`);
   }
   log(`  ℹ️  Estimates assume ~100 conversations/month with nano-tier models.`);
-  log(`     Heavy models (Opus, GPT-5.2) for distill/self-correction increase costs 5-10×.`);
+  log(`     Heavy models (Opus, GPT-5.4) for distill/self-correction increase costs 5-10×.`);
 
   log("\n───── Ingestion & Distillation ─────");
   if (cfg.ingest) {

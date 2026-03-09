@@ -30,7 +30,7 @@ export const hybridConfigSchema = {
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
 
 const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-4.1-mini";
-const OPENAI_HEAVY_CRON_MODEL = "openai/gpt-5.2";
+const OPENAI_HEAVY_CRON_MODEL = "openai/gpt-5.4";
 const GEMINI_DEFAULT_MODEL = "google/gemini-2.5-flash";
 const GEMINI_HEAVY_MODEL = "google/gemini-3.1-pro-preview";
 const CLAUDE_DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";

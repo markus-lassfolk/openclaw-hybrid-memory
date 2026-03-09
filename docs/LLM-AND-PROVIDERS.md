@@ -44,7 +44,9 @@ When `llm.nano` is not configured, nano ops fall back to `llm.default[0]`.
 
 ## Configuring models: `llm` block
 
-Set `llm.nano`, `llm.default`, and `llm.heavy` with ordered model lists. The plugin tries each in order; if one fails (no key, rate limit, 5xx), it tries the next.
+Set `llm.nano`, `llm.default`, and `llm.heavy` with ordered model lists. The plugin tries each in order; if one fails (no key, rate limit, 5xx), it tries the next. Model IDs can be **with or without** a provider prefix: `gemini-3.1-pro-preview` and `google/gemini-3.1-pro-preview` are equivalent (the plugin infers `google/` for bare `gemini-*` names so the correct API is used; same for `claude-*` → `anthropic/`, `gpt-*`/`o1` → `openai/`).
+
+**Gateway provider keys:** At startup the plugin merges the gateway’s provider config (e.g. `models.providers` or `llm.providers` in OpenClaw config) into its own `llm.providers`. So any API keys you have in the gateway (Anthropic, Minimax, etc.) are available to the plugin without duplicating them in the plugin config. Add that provider’s models to `llm.default` or `llm.heavy` (e.g. `minimax/your-model`) to use them. Plugin-explicit `llm.providers.<name>` always wins over the gateway merge for that provider.
 
 ```json
 {
@@ -88,11 +90,13 @@ Use **exact `provider/model` IDs** as shown by `openclaw models list` (e.g. `goo
 
 When `llm` is **not configured** in the plugin, the plugin automatically derives model tiers from your OpenClaw `agents.defaults.model` (the same list shown by `openclaw models list`):
 
-- **nano tier**: models with `nano`, `mini`, `haiku`, or `lite` in their name
-- **default tier**: all models, lighter first
-- **heavy tier**: all models, heavier first (`pro`, `opus`, `o3` etc. come first)
+- **default tier**: **agent order** (primary then fallbacks) — reflection and general features use the same order you set in `openclaw.json`
+- **heavy tier**: **capable first** — heavy models (`pro`, `opus`, `o3`) then medium then light, for distill/self-correction
+- **nano tier**: **cheap first** — nano/light/medium only, so classify/summarize never start with Opus
 
 This means a freshly installed plugin works with whatever models you have configured in OpenClaw — no `llm` block required. The verify output shows `(auto from agents.defaults.model)` when this is in effect.
+
+**If your only model is heavy (e.g. Claude Opus):** The plugin detects when the gateway list is heavy-only and **prepends a cheap fallback** (`gpt-4.1-nano`, `gemini-2.0-flash-lite`, `claude-3-5-haiku`) to the default and nano tiers. That way maintenance tasks (classify, summarize, cron job runner, etc.) try a cheaper model first instead of running hundreds of tasks as Opus. Set **`llm.default`** and **`llm.nano`** explicitly in plugin config if you want to override. After upgrading, run **`openclaw hybrid-mem verify --fix`** so stored cron job models are re-resolved from the updated tiers.
 
 ---
 
