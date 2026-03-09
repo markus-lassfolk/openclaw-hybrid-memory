@@ -13,6 +13,7 @@
  */
 
 import type { FrustrationDetectionConfig } from "../config/types/features.js";
+export type { FrustrationDetectionConfig };
 
 // ---------------------------------------------------------------------------
 // Signal type definitions

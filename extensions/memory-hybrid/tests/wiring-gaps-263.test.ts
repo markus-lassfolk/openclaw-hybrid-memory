@@ -48,6 +48,8 @@ function makeMetrics(overrides: Partial<ToolMetrics> & { tool: string }): ToolMe
     unknownCalls: overrides.unknownCalls ?? 1,
     avgDurationMs: overrides.avgDurationMs ?? 500,
     avgCallsPerSession: overrides.avgCallsPerSession ?? 3,
+    successRate: overrides.successRate ?? 0.7,
+    redundancyScore: overrides.redundancyScore ?? 0.2,
     compositeScore: overrides.compositeScore ?? 0.7,
     lastUpdated: overrides.lastUpdated ?? Date.now(),
   };
@@ -65,8 +67,9 @@ function frustrationTurns(userMessages: string[]): FrustrationConversationTurn[]
 const defaultCfg: FrustrationDetectionConfig = {
   enabled: true,
   windowSize: 8,
-  decayRate: 0.85,
+  decayRate: 0.9,
   injectionThreshold: 0.2,
+  feedToImplicitPipeline: true,
   adaptationThresholds: { medium: 0.3, high: 0.6, critical: 0.8 },
 };
 
