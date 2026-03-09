@@ -213,7 +213,6 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
     for (const row of rows) {
       const m = measureRuleEffectiveness(row.id, factsDb, config);
       if (!m) continue;
-      report.rulesAnalyzed++;
 
       // Only act on rules with enough age (at least windowDays old)
       const ageSec = report.measuredAt - m.createdAt;
@@ -221,6 +220,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
       if (ageSec < minAgeSec) continue;
       if (m.sampleSize < minSampleSize) continue;
 
+      report.rulesAnalyzed++;
       report.measurements.push(m);
 
       // Auto-deprecate harmful rules
