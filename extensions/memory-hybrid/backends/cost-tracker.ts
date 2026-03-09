@@ -50,6 +50,8 @@ export interface CostReport {
 
 export class CostTracker {
   private readonly db: Database.Database;
+  /** Rate-limit: log at most one DB error per session to avoid spamming the console. */
+  private _errorLogged = false;
 
   constructor(db: Database.Database) {
     this.db = db;
@@ -91,8 +93,12 @@ export class CostTracker {
           entry.durationMs ?? null,
           (entry.success ?? true) ? 1 : 0,
         );
-    } catch {
-      // Silently swallow — never let cost tracking break LLM calls
+    } catch (err) {
+      // Never let cost tracking break LLM calls — but log the first failure per session for debuggability
+      if (!this._errorLogged) {
+        this._errorLogged = true;
+        console.warn(`[cost-tracker] Failed to record cost entry: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 

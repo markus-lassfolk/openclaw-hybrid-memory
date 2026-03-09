@@ -42,32 +42,32 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   const explicit = getCurrentCostFeature();
   if (explicit) return explicit;
 
-  // Heuristic: scan message content for known feature fingerprints
+  // Heuristic: scan message content for known feature fingerprints.
+  // Patterns are specific to avoid false positives on common English words.
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const content = messages
     .map((m: unknown) => String((m as Record<string, unknown>)?.content ?? ""))
     .join(" ")
     .toLowerCase();
 
-  // Use more specific patterns to avoid false positives
-  // Order matters: more specific checks first, generic fallbacks last
-  if (content.includes("extract facts") || content.includes("distill")) return "distill";
+  // More specific patterns to reduce false positives
+  if (/\b(memory\s+categ|classify\s+(this\s+)?(memory|fact|entry)|auto.?classif|categorize\s+(this|the)\s+(memory|fact))/i.test(content)) return "auto-classify";
   if (content.includes("hyde") || content.includes("hypothetical document")) return "query-expansion";
-  if (content.includes("classify") && content.includes("memory")) return "auto-classify";
-  if (content.includes("rerank")) return "reranking";
+  if (/\brerank(ing)?\b/.test(content)) return "reranking";
+  if (/\b(memory\s+reflection|reflect\s+on\s+(recent|your|past)|weekly\s+reflection|synthesize\s+(patterns|insights))\b/.test(content)) return "reflection";
   if (content.includes("self-correction") || content.includes("self correction")) return "self-correction";
-  if (content.includes("reinforcement") && content.includes("extract")) return "reinforcement-extract";
-  if (content.includes("implicit feedback") || content.includes("feedback signal")) return "implicit-feedback";
-  if (content.includes("trajectory analysis")) return "trajectory-analysis";
-  if (content.includes("frustration detect")) return "frustration-detection";
-  if (content.includes("cross-agent learning")) return "cross-agent-learning";
+  if (/\b(reinforcement.extract|reinforce(ment)?\s+(signal|pattern|memory|learning))\b/.test(content)) return "reinforcement-extract";
+  if (content.includes("implicit") && content.includes("feedback")) return "implicit-feedback";
+  if (content.includes("trajectory")) return "trajectory-analysis";
+  if (content.includes("frustrat")) return "frustration-detection";
+  if (content.includes("cross-agent") || content.includes("generaliz")) return "cross-agent-learning";
   if (content.includes("tool effectiveness") || content.includes("tool scoring")) return "tool-effectiveness";
-  if (content.includes("language keyword") || content.includes("programming language keyword")) return "language-keywords";
-  if (content.includes("consolidat") && content.includes("memory")) return "consolidation";
-  if (content.includes("memory-to-skills") || (content.includes("extract") && content.includes("skill") && content.includes("memory"))) return "memory-to-skills";
-  if (content.includes("persona proposal") || (content.includes("persona") && content.includes("suggest"))) return "persona-proposals";
-  if (content.includes("continuous verification") || (content.includes("verif") && content.includes("fact"))) return "continuous-verification";
-  if (content.includes("reflection") && (content.includes("memory") || content.includes("conversation"))) return "reflection";
+  if (/\b(extract\s+(key\s+)?facts?\s+from|distill\s+(memories|facts|session|knowledge|this\s+session)|consolidate\s+(into\s+)?facts)\b/.test(content)) return "distill";
+  if (/\b(language.?keyword|keyword.?extract)\b/.test(content)) return "language-keywords";
+  if (/\b(consolidat(e|ing|ion)\s+(memories|facts|episodic|events))\b/.test(content)) return "consolidation";
+  if (/\b(memory.to.skills|skill\s+(suggestion|draft|cluster)|draft\s+(new\s+)?skill)\b/.test(content)) return "memory-to-skills";
+  if (content.includes("persona") && (content.includes("proposal") || content.includes("trait"))) return "persona-proposals";
+  if (/\b(continuous.?verification|verify\s+(memory|hybrid|plugin)\s+config)\b/.test(content)) return "continuous-verification";
 
   return "unknown";
 }
@@ -218,6 +218,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
               const adjustedBody = isOpenAI
                 ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
                 : { ...(body as object), model: bareModel };
+              const start = Date.now();
               const promise = client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
               // Fire-and-forget cost tracking — never blocks or modifies the returned promise
               if (costTracker) {
@@ -225,19 +226,27 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
                 void (Promise.resolve(promise) as Promise<unknown>).then(
                   (resp: unknown) => {
                     try {
+                      const durationMs = Date.now() - start;
                       const r = resp as { usage?: { prompt_tokens?: number; completion_tokens?: number } } | null;
                       costTracker.record({
                         feature,
                         model,
                         inputTokens: r?.usage?.prompt_tokens ?? 0,
                         outputTokens: r?.usage?.completion_tokens ?? 0,
+                        durationMs,
                         success: true,
                       });
                     } catch { /* never let tracking break LLM calls */ }
                   },
                   () => {
                     try {
-                      costTracker.record({ feature, model, inputTokens: 0, outputTokens: 0, success: false });
+                      const durationMs = Date.now() - start;
+                      // Estimate input tokens from request messages (actual count unavailable on failure)
+                      const reqMessages = Array.isArray((body as Record<string, unknown>).messages)
+                        ? (body as Record<string, unknown>).messages as unknown[]
+                        : [];
+                      const estimatedInputTokens = Math.ceil(JSON.stringify(reqMessages).length / 4);
+                      costTracker.record({ feature, model, inputTokens: estimatedInputTokens, outputTokens: 0, durationMs, success: false });
                     } catch { /* never let tracking break LLM calls */ }
                   },
                 );

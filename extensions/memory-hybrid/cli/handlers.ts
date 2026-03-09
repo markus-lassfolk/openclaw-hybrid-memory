@@ -982,25 +982,28 @@ export async function runVerifyForCli(
   // ───── Cost Tracking ─────
   log("\n───── Cost Tracking ─────");
   if (!ctx.cfg.costTracking.enabled) {
-    log(`  costTracking: ${OFF}`);
+    log(`  Cost tracking: ⏸ Disabled`);
+    log(`  Enable: openclaw hybrid-mem config-set costTracking.enabled true`);
   } else if (ctx.costTracker) {
     const totalCost = ctx.costTracker.getTotalCost(7);
     if (totalCost.calls === 0) {
-      log(`  costTracking: ${ON} (no data yet — costs will be tracked after first LLM calls)`);
+      log(`  Cost tracking: ✅ Active — collecting data (first report available after ~1 hour of use)`);
     } else {
       const topFeatures = ctx.costTracker.getReport({ days: 7 });
-      const topSpenders = topFeatures.features.slice(0, 3).map(
-        (f) => `${f.feature} ($${f.estimatedCostUsd.toFixed(3)})`,
-      );
-      log(`  costTracking: ${ON} (${totalCost.calls} events in last 7 days)`);
-      log(`  Last 7d spend: ~$${totalCost.estimatedCostUsd.toFixed(3)} across ${totalCost.calls} LLM calls`);
+      const totalUsd = totalCost.estimatedCostUsd;
+      const topSpenders = topFeatures.features.slice(0, 3).map((f) => {
+        const p = totalUsd > 0 ? Math.round((f.estimatedCostUsd / totalUsd) * 100) : 0;
+        return `${f.feature}: ${p}%`;
+      });
+      log(`  Cost tracking: ✅ Active — $${totalUsd.toFixed(3)} last 7 days (${totalCost.calls} LLM calls)`);
       if (topSpenders.length > 0) {
-        log(`  Top spenders: ${topSpenders.join(", ")}`);
+        log(`  Top features: ${topSpenders.join(", ")}`);
       }
       log(`  Run 'openclaw hybrid-mem cost-report' for full breakdown.`);
     }
   } else {
-    log(`  costTracking: ${OFF}`);
+    log(`  Cost tracking: ⏸ Disabled`);
+    log(`  Enable: openclaw hybrid-mem config-set costTracking.enabled true`);
   }
 
   // ───── Estimated Monthly Cost by Mode ─────
@@ -4426,6 +4429,8 @@ export interface CostReportCliOpts {
   model?: boolean;
   feature?: string;
   csv?: boolean;
+  /** Output format: "pretty" (default, emoji + percentages) or "compact" (terse, no emoji). */
+  format?: "pretty" | "compact";
 }
 
 /**
@@ -4440,10 +4445,12 @@ export function runCostReportForCli(
   const { costTracker } = ctx;
   const { log } = sink;
   const days = opts.days ?? 7;
+  const compact = opts.format === "compact";
 
   if (!costTracker) {
     if (!ctx.cfg.costTracking.enabled) {
-      log("Cost tracking is disabled. Enable it by setting costTracking.enabled: true in plugin config.");
+      log("Cost tracking is disabled.");
+      log("Enable it: openclaw hybrid-mem config-set costTracking.enabled true");
     } else {
       log("Cost tracking is not available (costTracker not initialized).");
     }
@@ -4456,15 +4463,23 @@ export function runCostReportForCli(
   function fmtCost(n: number): string {
     return `$${n.toFixed(4)}`;
   }
+  function pct(part: number, total: number): string {
+    if (total === 0) return "  0%";
+    return `${Math.round((part / total) * 100)}%`.padStart(4);
+  }
 
   if (opts.model) {
     // Model breakdown
     const breakdown = costTracker.getModelBreakdown(days);
     if (breakdown.length === 0) {
-      log(`No LLM cost data in the last ${days} days.`);
+      if (compact) {
+        log(`No LLM cost data in the last ${days} days.`);
+      } else {
+        log(`\n✅ Cost tracking is active — no data yet for the last ${days} days.`);
+        log(`   Data appears after your first LLM calls (~1 hour of typical use).`);
+      }
       return;
     }
-    log(`\n───── LLM Cost Report by Model (last ${days} days) ─────\n`);
     if (opts.csv) {
       log("model,calls,input_tokens,output_tokens,est_cost_usd");
       for (const r of breakdown) {
@@ -4472,9 +4487,18 @@ export function runCostReportForCli(
       }
       return;
     }
+    const totalCost = breakdown.reduce((s, r) => s + r.estimatedCostUsd, 0);
+    const totalCalls = breakdown.reduce((s, r) => s + r.calls, 0);
+    if (!compact) {
+      log(`\n📊 LLM Cost Report — by Model (last ${days} days)`);
+      log(`💰 Total: ${fmtCost(totalCost)} across ${totalCalls} calls`);
+      log("");
+    } else {
+      log(`\n───── LLM Cost by Model (last ${days} days) ─────`);
+    }
     const colW = [
       Math.max(20, ...breakdown.map((r) => r.model.length)) + 2,
-      8, 12, 12, 12,
+      8, 12, 12, 12, 5,
     ];
     const header = [
       "Model".padEnd(colW[0]!),
@@ -4482,9 +4506,10 @@ export function runCostReportForCli(
       "In-Tokens".padStart(colW[2]!),
       "Out-Tokens".padStart(colW[3]!),
       "Est. Cost".padStart(colW[4]!),
+      ...(compact ? [] : ["  %".padStart(colW[5]!)]),
     ].join("  ");
     log(header);
-    log("-".repeat(header.length));
+    log("─".repeat(header.length));
     for (const r of breakdown) {
       log([
         r.model.padEnd(colW[0]!),
@@ -4492,28 +4517,34 @@ export function runCostReportForCli(
         fmtNum(r.inputTokens).padStart(colW[2]!),
         fmtNum(r.outputTokens).padStart(colW[3]!),
         fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
+        ...(compact ? [] : [pct(r.estimatedCostUsd, totalCost).padStart(colW[5]!)]),
       ].join("  "));
     }
     const total = breakdown.reduce(
       (acc, r) => ({ calls: acc.calls + r.calls, inputTokens: acc.inputTokens + r.inputTokens, outputTokens: acc.outputTokens + r.outputTokens, estimatedCostUsd: acc.estimatedCostUsd + r.estimatedCostUsd }),
       { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
     );
-    log("-".repeat(header.length));
+    log("─".repeat(header.length));
     log([
       "Total".padEnd(colW[0]!),
       String(total.calls).padStart(colW[1]!),
       fmtNum(total.inputTokens).padStart(colW[2]!),
       fmtNum(total.outputTokens).padStart(colW[3]!),
       fmtCost(total.estimatedCostUsd).padStart(colW[4]!),
+      ...(compact ? [] : ["100%".padStart(colW[5]!)]),
     ].join("  "));
   } else {
     // Feature breakdown
     const report = costTracker.getReport({ days, feature: opts.feature });
     if (report.features.length === 0) {
-      log(`No LLM cost data in the last ${days} days.`);
+      if (compact) {
+        log(`No LLM cost data in the last ${days} days.`);
+      } else {
+        log(`\n✅ Cost tracking is active — no data yet for the last ${days} days.`);
+        log(`   Costs will appear here after your first LLM calls (~1 hour of typical use).`);
+      }
       return;
     }
-    log(`\n───── LLM Cost Report (last ${days} days) ─────\n`);
     if (opts.csv) {
       log("feature,calls,input_tokens,output_tokens,est_cost_usd");
       for (const r of report.features) {
@@ -4521,9 +4552,17 @@ export function runCostReportForCli(
       }
       return;
     }
+    if (!compact) {
+      const featureCount = report.features.length;
+      log(`\n📊 LLM Cost Report — last ${days} days`);
+      log(`💰 Total: ${fmtCost(report.total.estimatedCostUsd)} across ${featureCount} feature${featureCount === 1 ? "" : "s"} (${report.total.calls} LLM calls)`);
+      log("");
+    } else {
+      log(`\n───── LLM Cost Report (last ${days} days) ─────`);
+    }
     const colW = [
       Math.max(20, ...report.features.map((r) => r.feature.length)) + 2,
-      8, 12, 12, 12,
+      8, 12, 12, 12, 5,
     ];
     const header = [
       "Feature".padEnd(colW[0]!),
@@ -4531,9 +4570,10 @@ export function runCostReportForCli(
       "In-Tokens".padStart(colW[2]!),
       "Out-Tokens".padStart(colW[3]!),
       "Est. Cost".padStart(colW[4]!),
+      ...(compact ? [] : ["  %".padStart(colW[5]!)]),
     ].join("  ");
     log(header);
-    log("-".repeat(header.length));
+    log("─".repeat(header.length));
     for (const r of report.features) {
       log([
         r.feature.padEnd(colW[0]!),
@@ -4541,15 +4581,17 @@ export function runCostReportForCli(
         fmtNum(r.inputTokens).padStart(colW[2]!),
         fmtNum(r.outputTokens).padStart(colW[3]!),
         fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
+        ...(compact ? [] : [pct(r.estimatedCostUsd, report.total.estimatedCostUsd).padStart(colW[5]!)]),
       ].join("  "));
     }
-    log("-".repeat(header.length));
+    log("─".repeat(header.length));
     log([
       "Total".padEnd(colW[0]!),
       String(report.total.calls).padStart(colW[1]!),
       fmtNum(report.total.inputTokens).padStart(colW[2]!),
       fmtNum(report.total.outputTokens).padStart(colW[3]!),
       fmtCost(report.total.estimatedCostUsd).padStart(colW[4]!),
+      ...(compact ? [] : ["100%".padStart(colW[5]!)]),
     ].join("  "));
     log("");
     // Unknown-model warning
@@ -4567,5 +4609,5 @@ export function runCostReportForCli(
   }
   log("");
   log("ℹ️  Costs are estimates based on published model pricing. Actual costs may vary.");
-  log("   Embedding calls (text-embedding-3-small) are not included in this report.");
+  log("   Embedding calls are not included in this report.");
 }

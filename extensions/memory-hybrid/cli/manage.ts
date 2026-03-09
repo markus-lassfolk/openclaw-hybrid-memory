@@ -1611,15 +1611,17 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--model", "Show breakdown by model instead of feature")
     .option("--feature <name>", "Filter to a specific feature (e.g. auto-classify)")
     .option("--csv", "Output as CSV")
-    .action(withExit(async (opts?: { days?: string; model?: boolean; feature?: string; csv?: boolean }) => {
+    .option("--format <format>", "Output format: pretty (default, emoji+%) or compact (terse)", "pretty")
+    .action(withExit(async (opts?: { days?: string; model?: boolean; feature?: string; csv?: boolean; format?: string }) => {
       if (!runCostReport) {
         console.error("cost-report is not available in this context.");
         process.exitCode = 1;
         return;
       }
       const days = opts?.days ? parseInt(opts.days, 10) : 7;
+      const format = opts?.format === "compact" ? "compact" as const : "pretty" as const;
       runCostReport(
-        { days, model: !!opts?.model, feature: opts?.feature, csv: !!opts?.csv },
+        { days, model: !!opts?.model, feature: opts?.feature, csv: !!opts?.csv, format },
         { log: (msg) => console.log(msg) },
       );
     }));
