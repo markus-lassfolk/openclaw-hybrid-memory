@@ -10,6 +10,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- (none yet)
+
+---
+
+## [2026.3.90] - 2026-03-09
+
+Milestone A+B: future-date decay, episodic event log, local embeddings (Ollama/ONNX), multi-model RRF, contextual variants, query expansion, re-ranking, verification store, provenance tracing, document ingestion; real-time frustration detection and cross-agent learning (#263/#265); dependency bumps.
+
+### Added
+
 - **Future-date decay protection (#144):** Facts containing future dates have their `decay_freeze_until` timestamp set to prevent them from expiring before they are relevant. Enabled by default. Config: `futureDateProtection.enabled` (default: `true`), `futureDateProtection.maxFreezeDays` (default: `365`; `0` = no limit). See [CONFIGURATION.md](docs/CONFIGURATION.md#future-date-decay-protection-144).
 
 - **Episodic event log — Layer 1 passive capture (#150):** New `event-log.db` database alongside `memory.db` provides a high-fidelity, append-only session journal of all events (facts learned, decisions made, actions taken, entities mentioned, preferences expressed, corrections). Raw episodic events are cheap to write and serve as raw material for the Dream Cycle consolidation pipeline. API: `append()`, `appendBatch()`, `getBySession()`, `getByTimeRange()`, `getUnconsolidated()`, `getByEntity()`, `markConsolidated()`, `archiveConsolidated()`, `getStats()`. Config: `eventLog.archivalDays` (default: 90), `eventLog.archivePath`. See [extensions/memory-hybrid/docs/event-log.md](extensions/memory-hybrid/docs/event-log.md).
@@ -30,12 +40,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Document ingestion — folder ingestion, progress callbacks, hash dedup, vision (#206):** New tools `memory_ingest_document` and `memory_ingest_folder` convert documents (PDF, DOCX, PPTX, XLSX, HTML, Markdown, CSV, EPUB, images, and more) to Markdown via the MarkItDown Python bridge, chunk the result, and store each chunk as a fact. Features: SHA-256 hash deduplication (skip duplicate documents), structured progress callbacks (`{ stage, pct, message }`), LLM vision for image files, optional path allowlist for security, configurable chunk size and overlap. Config: `documents.enabled` (default: false — opt-in), `documents.pythonPath` (default: `python3`), `documents.chunkSize` (default: 2000), `documents.chunkOverlap` (default: 200), `documents.maxDocumentSize` (default: 50 MB), `documents.autoTag` (default: true), `documents.visionEnabled` (default: false), `documents.visionModel`, `documents.allowedPaths`. Requires `pip install markitdown`. See [CONFIGURATION.md](docs/CONFIGURATION.md#document-ingestion-206).
 
+- **Real-time frustration detection, cross-agent learning, tool effectiveness (#263, #265):** Frustration signals from user messages are detected in real time; cross-agent learning and tool effectiveness scoring improve recall and tool recommendations.
+
 ### Documentation
 
 - **CONFIGURATION.md:** New sections for all 10 Milestone A+B features: future-date decay protection (#144), local embedding providers — Ollama/ONNX (#153), multi-model embedding registry (#158), contextual variants (#159), LLM re-ranking (#161), verification store (#162), provenance tracing (#163), and document ingestion (#206). Query expansion (#160) section was already present and has been retained.
 - **FEATURES.md:** Feature table extended with entries for all 10 issues (#144-#206) with links to the relevant CONFIGURATION.md anchors.
 - **CLI-REFERENCE.md:** Commands-by-category table; run-all, generate-proposals, scope list/stats/prune/promote, active-tasks; full 9 maintenance cron jobs table (nightly-memory-sweep, self-correction-analysis, nightly-memory-to-skills, nightly-dream-cycle, weekly-reflection, weekly-extract-procedures, weekly-deep-maintenance, weekly-persona-proposals, monthly-consolidation); verify --fix description updated.
 - **cron-jobs.ts:** Aligned with handlers.ts: all 9 jobs with shell-command form; comment that canonical source is MAINTENANCE_CRON_JOBS in handlers.ts.
+
+### Changed
+
+- **Dependencies:** Minor and patch dependency bumps (minor-and-patch group, #266).
 
 ---
 
@@ -557,7 +573,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.02.271...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.90...HEAD
+[2026.3.90]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.90
 [2026.02.271]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.271
 [2026.02.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.270
 [2026.02.240]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.240
