@@ -15,7 +15,6 @@ import { registerVerifyCommands, type VerifyContext } from "./verify.js";
 import { registerDistillCommands, type DistillContext } from "./distill.js";
 import { registerManageCommands, type ManageContext } from "./manage.js";
 import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
-import { registerDashboardCommand } from "./dashboard-cmd.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type {
@@ -80,8 +79,6 @@ export type { ActiveTaskContext };
 export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
-  issueStore?: import("../backends/issue-store.js").IssueStore | null;
-  workflowStore?: import("../backends/workflow-store.js").WorkflowStore | null;
   aliasDb?: AliasDB | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
   embeddings: EmbeddingProvider;
@@ -246,12 +243,6 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     throw err;
   }
 
-  try {
-    registerDashboardCommand(mem, ctx);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:dashboard" });
-    throw err;
-  }
 
   if (ctx.activeTask) {
     try {
