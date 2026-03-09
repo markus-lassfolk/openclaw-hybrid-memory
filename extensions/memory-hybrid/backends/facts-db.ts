@@ -327,7 +327,6 @@ export class FactsDB {
     }
   }
 
-  /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
   /** Create implicit_signals table for behavioral feedback signals (#262). */
   private migrateImplicitSignalsTable(): void {
     this.liveDb.exec(`
@@ -434,6 +433,7 @@ export class FactsDB {
     }
   }
 
+  /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
   private migrateReinforcementColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
@@ -763,26 +763,28 @@ export class FactsDB {
     if (!tableInfo) return;
     const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)") as Array<{ table: string }> | undefined;
     if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // FK already present — nothing to do
-    this.liveDb.exec(`
-      CREATE TABLE verified_facts_new (
-        id TEXT PRIMARY KEY,
-        fact_id TEXT NOT NULL,
-        canonical_text TEXT NOT NULL,
-        checksum TEXT NOT NULL,
-        verified_at TEXT NOT NULL,
-        verified_by TEXT NOT NULL,
-        next_verification TEXT,
-        version INTEGER DEFAULT 1,
-        previous_version_id TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
-      );
-      INSERT INTO verified_facts_new SELECT * FROM verified_facts;
-      DROP TABLE verified_facts;
-      ALTER TABLE verified_facts_new RENAME TO verified_facts;
-      CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
-      CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
-    `);
+    this.liveDb.transaction(() => {
+      this.liveDb.exec(`
+        CREATE TABLE verified_facts_new (
+          id TEXT PRIMARY KEY,
+          fact_id TEXT NOT NULL,
+          canonical_text TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          verified_at TEXT NOT NULL,
+          verified_by TEXT NOT NULL,
+          next_verification TEXT,
+          version INTEGER DEFAULT 1,
+          previous_version_id TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+        );
+        INSERT INTO verified_facts_new SELECT * FROM verified_facts;
+        DROP TABLE verified_facts;
+        ALTER TABLE verified_facts_new RENAME TO verified_facts;
+        CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
+        CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
+      `);
+    })();
   }
 
   /**

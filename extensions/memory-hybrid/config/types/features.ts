@@ -221,6 +221,77 @@ export type ImplicitFeedbackConfig = {
   trajectoryLLMAnalysis: boolean;
 };
 
+/** Frustration signal weights override (Issue #263 — Phase 1). */
+export type FrustrationSignalWeights = {
+  short_reply?: number;
+  imperative_tone?: number;
+  repeated_instruction?: number;
+  caps_or_emphasis?: number;
+  explicit_frustration?: number;
+  correction_frequency?: number;
+  question_to_command?: number;
+  reduced_context?: number;
+  emoji_shift?: number;
+};
+
+/** Frustration detection configuration (Issue #263 — Phase 1). */
+export type FrustrationDetectionConfig = {
+  /** Enable real-time frustration detection (default: true). */
+  enabled: boolean;
+  /** Sliding window: number of conversation turns to analyse (default: 8). */
+  windowSize: number;
+  /** Recency decay applied per turn (default: 0.85). */
+  decayRate: number;
+  /** Custom per-signal weights overriding defaults (0-1). */
+  signalWeights?: FrustrationSignalWeights;
+  /** Frustration level (0-1) at which to inject a hint into system context (default: 0.3). */
+  injectionThreshold: number;
+  /** Frustration level thresholds per adaptation category. */
+  adaptationThresholds: {
+    medium: number;   // default 0.3
+    high: number;     // default 0.5
+    critical: number; // default 0.7
+  };
+  /** Export frustration signals to the #262 implicit feedback pipeline (default: true). */
+  feedToImplicitPipeline: boolean;
+};
+
+/** Cross-agent learning configuration (Issue #263 — Phase 2). */
+export type CrossAgentLearningConfig = {
+  /** Enable cross-agent learning in the nightly cycle (default: false). */
+  enabled: boolean;
+  /** Days of agent-scoped facts to consider (default: 14). */
+  windowDays: number;
+  /** LLM model for generalisation (default: resolved from llm.nano). */
+  model?: string;
+  /** Fallback models if primary fails. */
+  fallbackModels?: string[];
+  /** Batch size per LLM call (default: 20). */
+  batchSize: number;
+  /** Minimum confidence of source agent fact (default: 0.4). */
+  minSourceConfidence: number;
+  /** Run during nightly cycle (default: true when enabled). */
+  runInNightlyCycle: boolean;
+};
+
+/** Tool effectiveness scoring configuration (Issue #263 — Phase 3). */
+export type ToolEffectivenessConfig = {
+  /** Enable tool effectiveness scoring (default: true when workflowTracking.enabled). */
+  enabled: boolean;
+  /** Minimum total calls before a tool is scored (default: 3). */
+  minCalls: number;
+  /** Top-N tools to surface in reports (default: 10). */
+  topN: number;
+  /** Score below which a tool is flagged as low-scorer (default: 0.3). */
+  lowScoreThreshold: number;
+  /** Score decay per nightly run (default: 0.95). */
+  decayFactor: number;
+  /** Run scoring in the nightly cycle (default: true when enabled). */
+  runInNightlyCycle: boolean;
+  /** Inject tool-preference hints into agent context (default: true). */
+  injectHints?: boolean;
+};
+
 /** Closed-loop rule effectiveness measurement (Issue #262). */
 export type ClosedLoopConfig = {
   /** Enable closed-loop measurement (default: true). */

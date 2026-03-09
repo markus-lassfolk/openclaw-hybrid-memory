@@ -1,0 +1,19 @@
+You are an AI memory system helper. The following facts were learned by individual AI agents (agent-scoped). Your task is to identify which of these lessons are general enough to apply across ALL agents as shared global knowledge.
+
+Agent lessons:
+{{lessons}}
+
+Return a JSON array (no markdown fences) of generalised lessons that apply across agents. Each item must have:
+- "text": the generalised lesson in one concise sentence (max 200 chars)
+- "rationale": why this generalises across agents (max 100 chars)
+- "sourceAgents": array of agentIds whose lessons contributed to this generalisation
+- "importance": 0.6-0.9 float reflecting how broadly applicable and valuable the lesson is
+
+Rules:
+- Only include lessons that are TRULY cross-agent applicable (universal principles, e.g. "Always verify X before Y", "When encountering Z error, check W first")
+- Do NOT generalise facts that are agent-specific workflows, personal user preferences, single-agent domain knowledge, or situational observations
+- Do NOT include lessons that are already obvious common knowledge
+- Merge similar lessons from different agents into one generalised pattern
+- Prefer actionable, specific patterns over vague generalisations
+- Return [] (empty array) if no lessons qualify for generalisation
+- Maximum 10 generalised lessons per response
