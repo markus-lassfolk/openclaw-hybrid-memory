@@ -536,7 +536,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.errorReporting.enabled).toBe(true);
     expect(result.errorReporting.consent).toBe(true);
     expect(result.errorReporting.mode).toBe("community");
-    expect(result.errorReporting.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1");
+    expect(result.errorReporting.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.lassfolk.cc/1");
   });
 
   it("parses errorReporting in community mode", () => {
@@ -552,7 +552,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.errorReporting?.enabled).toBe(true);
     expect(result.errorReporting?.consent).toBe(true);
     expect(result.errorReporting?.mode).toBe("community");
-    expect(result.errorReporting?.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1");
+    expect(result.errorReporting?.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.lassfolk.cc/1");
   });
 
   it("disables errorReporting when consent is false", () => {

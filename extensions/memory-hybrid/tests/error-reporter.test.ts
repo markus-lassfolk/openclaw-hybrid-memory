@@ -25,7 +25,7 @@ describe("Error Reporter", () => {
 
     it("should export DEFAULT_GLITCHTIP_DSN pointing to the community GlitchTip instance", async () => {
       const { DEFAULT_GLITCHTIP_DSN } = await import("../services/error-reporter.js");
-      expect(DEFAULT_GLITCHTIP_DSN).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1");
+      expect(DEFAULT_GLITCHTIP_DSN).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.lassfolk.cc/1");
     });
   });
 

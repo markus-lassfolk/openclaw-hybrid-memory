@@ -19,7 +19,7 @@ import * as SentryType from "@sentry/node";
  * Users can opt out by setting errorReporting.consent: false or errorReporting.enabled: false.
  * Privacy: No PII, prompts, API keys, or user data is ever sent. See sanitizeEvent().
  */
-export const DEFAULT_GLITCHTIP_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.villapolly.duckdns.org/1";
+export const DEFAULT_GLITCHTIP_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.lassfolk.cc/1";
 
 export interface ErrorReporterConfig {
   enabled: boolean;
