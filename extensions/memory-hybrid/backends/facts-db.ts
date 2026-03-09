@@ -2900,19 +2900,6 @@ export class FactsDB {
       params.push(opts.entity);
     }
 
-    const countRow = this.liveDb
-      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`)
-      .get(...params) as { cnt: number };
-    const total = countRow?.cnt ?? 0;
-
-    const rows = this.liveDb
-      .prepare(
-        `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
-         COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
-         created_at, recall_count FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      )
-      .all(...params, opts.limit, opts.offset) as Array<Record<string, unknown>>;
-
     const toDashboardRow = (row: Record<string, unknown>) => ({
       id: row.id,
       text: row.text,
@@ -2957,6 +2944,19 @@ export class FactsDB {
       const facts = pageIds.map((id) => byId.get(id)).filter(Boolean).map((r) => toDashboardRow(r!));
       return { facts, total: searchTotal };
     }
+
+    const countRow = this.liveDb
+      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`)
+      .get(...params) as { cnt: number };
+    const total = countRow?.cnt ?? 0;
+
+    const rows = this.liveDb
+      .prepare(
+        `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
+         COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
+         created_at, recall_count FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...params, opts.limit, opts.offset) as Array<Record<string, unknown>>;
 
     const facts = rows.map((r) => toDashboardRow(r));
     return { facts, total };
