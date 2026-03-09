@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { generateTraceId, buildCouncilSessionKey, getProvenanceHeaders, buildProvenanceMetadata } from "../utils/provenance.js";
+import { generateTraceId, buildCouncilSessionKey, buildProvenanceMetadata } from "../utils/provenance.js";
 import { relativeTime } from "./shared.js";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
 import type {

@@ -21,7 +21,7 @@
 
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync, cpSync, statSync, readdirSync, copyFileSync } from "node:fs";
-import { join, dirname, basename } from "node:path";
+import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { capturePluginError } from "../services/error-reporter.js";
 
