@@ -218,7 +218,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Issue lifecycle tracking (always enabled — lightweight, Issue #137)
   if (issueStore) {
-    registerIssueTools({ issueStore }, api);
+    registerIssueTools({ issueStore, cfg }, api);
   }
 
   // Workflow pattern tool (always registered when store available; recording is gated by cfg, Issue #209)

@@ -11,6 +11,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 
 import type { IssueStore } from "../backends/issue-store.js";
 import type { IssueStatus, IssueSeverity } from "../types/issue-types.js";
+import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 const ISSUE_STATUSES = [
@@ -26,10 +27,13 @@ const ISSUE_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 
 export interface IssueToolsContext {
   issueStore: IssueStore;
+  /** Optional config for verbosity-aware output (Issue #282). */
+  cfg?: Pick<HybridMemoryConfig, "verbosity">;
 }
 
 export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginApi): void {
   const { issueStore } = ctx;
+  const verbosity = ctx.cfg?.verbosity ?? "normal";
 
   // -------------------------------------------------------------------------
   // memory_issue_create
@@ -62,11 +66,14 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
 
         try {
           const issue = issueStore.create({ title, symptoms, severity, tags });
+          const createText = verbosity === "quiet"
+            ? `Issue: ${issue.id}.`
+            : `Created issue "${issue.title}" [${issue.id}] (status: ${issue.status}, severity: ${issue.severity})`;
           return {
             content: [
               {
                 type: "text",
-                text: `Created issue "${issue.title}" [${issue.id}] (status: ${issue.status}, severity: ${issue.severity})`,
+                text: createText,
               },
             ],
             details: issue,
@@ -130,11 +137,14 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
             issue = issueStore.update(id, { rootCause, fix, rollback, symptoms });
           }
 
+          const updateText = verbosity === "quiet"
+            ? `Issue ${issue.id}: ${issue.status}.`
+            : `Updated issue "${issue.title}" [${issue.id}] (status: ${issue.status})`;
           return {
             content: [
               {
                 type: "text",
-                text: `Updated issue "${issue.title}" [${issue.id}] (status: ${issue.status})`,
+                text: updateText,
               },
             ],
             details: issue,

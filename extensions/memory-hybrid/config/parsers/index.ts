@@ -488,6 +488,20 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     verification: parseVerificationConfig(cfg),
     provenance: parseProvenanceConfig(cfg),
     costTracking: parseCostTrackingConfig(cfg),
+    verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
   };
+}
+
+/** Parse verbosity level from config. Defaults to "normal" when not set. */
+export function parseVerbosityLevel(cfg: Record<string, unknown>): import("../types/index.js").VerbosityLevel {
+  const valid = ["quiet", "normal", "verbose"] as const;
+  const raw = cfg.verbosity;
+  if (typeof raw === "string" && (valid as readonly string[]).includes(raw)) {
+    return raw as import("../types/index.js").VerbosityLevel;
+  }
+  if (raw !== undefined) {
+    console.warn(`memory-hybrid: invalid verbosity "${raw}"; expected one of: ${valid.join(", ")}. Defaulting to "normal".`);
+  }
+  return "normal";
 }

@@ -5,6 +5,9 @@ import type {
   HealthConfig,
   MonthlyReviewConfig,
   MaintenanceConfig,
+  CouncilConfig,
+  CouncilProvenanceMode,
+  CronReliabilityConfig,
 } from "../types/maintenance.js";
 
 export function parseVerificationConfig(cfg: Record<string, unknown>): VerificationConfig {
@@ -76,6 +79,40 @@ export function parseHealthConfig(cfg: Record<string, unknown>): HealthConfig {
   };
 }
 
+export function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig {
+  const councilRaw = (cfg.maintenance as Record<string, unknown> | undefined)?.council as Record<string, unknown> | undefined;
+  const validModes: CouncilProvenanceMode[] = ["meta+receipt", "meta", "receipt", "none"];
+  const provenance: CouncilProvenanceMode =
+    typeof councilRaw?.provenance === "string" && validModes.includes(councilRaw.provenance as CouncilProvenanceMode)
+      ? (councilRaw.provenance as CouncilProvenanceMode)
+      : "meta+receipt";
+  const sessionKeyPrefix =
+    typeof councilRaw?.sessionKeyPrefix === "string" && councilRaw.sessionKeyPrefix.trim().length > 0
+      ? councilRaw.sessionKeyPrefix.trim()
+      : "council-review";
+  return { provenance, sessionKeyPrefix };
+}
+
+export function parseCronReliabilityConfig(cfg: Record<string, unknown>): CronReliabilityConfig {
+  const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
+  const reliabilityRaw = maintenanceRaw?.cronReliability as Record<string, unknown> | undefined;
+  return {
+    nightlyCron:
+      typeof reliabilityRaw?.nightlyCron === "string" && reliabilityRaw.nightlyCron.trim().length > 0
+        ? reliabilityRaw.nightlyCron.trim()
+        : "0 3 * * *",
+    weeklyBackupCron:
+      typeof reliabilityRaw?.weeklyBackupCron === "string" && reliabilityRaw.weeklyBackupCron.trim().length > 0
+        ? reliabilityRaw.weeklyBackupCron.trim()
+        : "0 4 * * 0",
+    verifyOnBoot: reliabilityRaw?.verifyOnBoot !== false,
+    staleThresholdHours:
+      typeof reliabilityRaw?.staleThresholdHours === "number" && reliabilityRaw.staleThresholdHours > 0
+        ? Math.floor(reliabilityRaw.staleThresholdHours)
+        : 28,
+  };
+}
+
 export function parseMaintenanceConfig(cfg: Record<string, unknown>): MaintenanceConfig {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const monthlyReviewRaw = maintenanceRaw?.monthlyReview as Record<string, unknown> | undefined;
@@ -90,5 +127,9 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
         ? Math.min(31, Math.max(1, Math.floor(monthlyReviewRaw.dayOfMonth)))
         : 1,
   };
-  return { monthlyReview };
+  return {
+    monthlyReview,
+    cronReliability: parseCronReliabilityConfig(cfg),
+    council: parseCouncilConfig(cfg),
+  };
 }

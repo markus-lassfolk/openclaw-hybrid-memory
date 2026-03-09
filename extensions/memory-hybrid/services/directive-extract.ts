@@ -50,7 +50,20 @@ export type DirectiveExtractResult = {
 const MAX_USER_MSG = 800;
 const MAX_ASSISTANT_MSG = 500;
 
-/** Patterns that indicate a user message should be skipped (heartbeat, cron, system, etc.). */
+/**
+ * Patterns that indicate a user message should be skipped (heartbeat, cron, system, etc.).
+ *
+ * NOTE (Issue #282 — heartbeat quiet mode): The plugin skips CAPTURE from heartbeat
+ * messages here, but does NOT generate heartbeat output itself. The "HEARTBEAT_OK"
+ * response and any health-report text are produced entirely by OpenClaw core (the agent
+ * session runner), which is outside this plugin's scope. Verbosity-aware suppression of
+ * "all clear" heartbeat output must therefore be implemented in OpenClaw core.
+ *
+ * What this plugin's `verbosity` config DOES control:
+ *   - Tool response text (memory_recall, memory_store, etc.)
+ *   - CLI command output (hybrid-mem status, backup, etc.)
+ *   - Pre-compaction flush log messages
+ */
 const SKIP_PATTERNS = [
   /heartbeat/i,
   /cron\s+job|cronjob|schedule.*run|run\s+the\s+nightly|run\s+the\s+weekly/i,

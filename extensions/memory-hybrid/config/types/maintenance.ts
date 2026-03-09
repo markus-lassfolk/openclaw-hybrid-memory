@@ -62,4 +62,54 @@ export type MonthlyReviewConfig = {
 /** Maintenance configuration group. */
 export type MaintenanceConfig = {
   monthlyReview: MonthlyReviewConfig;
+  /** Cron reliability settings for memory maintenance jobs (Issue #281). */
+  cronReliability: CronReliabilityConfig;
+  /** Council review provenance configuration (Issue #280). */
+  council: CouncilConfig;
+};
+
+/**
+ * ACP provenance configuration for council reviews (Issue #280).
+ *
+ * Council reviews are orchestrated externally (by the main agent, not the plugin).
+ * This config provides the mode setting; actual header generation is done via
+ * getProvenanceHeaders() in utils/provenance.ts.
+ */
+export type CouncilProvenanceMode = "meta+receipt" | "meta" | "receipt" | "none";
+
+export type CouncilConfig = {
+  /**
+   * Provenance metadata level to include in council review spawn calls and PR comments.
+   * - "meta+receipt": include ACP meta headers + GitHub receipt comment (default)
+   * - "meta": ACP headers only (X-Trace-Id, X-Council-Member, X-Session-Key)
+   * - "receipt": GitHub PR comment receipt only
+   * - "none": disable provenance metadata
+   */
+  provenance: CouncilProvenanceMode;
+  /**
+   * Optional: label prefix for council session keys (e.g. "council-review" → "council-review-abc123").
+   * Default: "council-review"
+   */
+  sessionKeyPrefix: string;
+};
+
+/**
+ * Cron reliability configuration for memory maintenance (Issue #281).
+ * Controls nightly cycle schedule, weekly backup, and boot-time health verification.
+ */
+export type CronReliabilityConfig = {
+  /** Cron expression for nightly maintenance cycle (default: "0 3 * * *"). */
+  nightlyCron: string;
+  /** Cron expression for weekly backup (default: "0 4 * * 0"). */
+  weeklyBackupCron: string;
+  /**
+   * When true, check cron health at startup and log warnings for missing or stale jobs.
+   * Default: true.
+   */
+  verifyOnBoot: boolean;
+  /**
+   * Max staleness in hours before a job is considered "stale" (default: 28).
+   * Applies only to daily/nightly jobs; weekly jobs use 7 days.
+   */
+  staleThresholdHours: number;
 };

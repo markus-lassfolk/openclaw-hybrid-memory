@@ -16,8 +16,8 @@ export {
   OPENAI_MODELS,
 } from "./parsers/core.js";
 
-// Re-export vectorDimsForModel from parsers/index
-export { vectorDimsForModel } from "./parsers/index.js";
+// Re-export vectorDimsForModel and parseVerbosityLevel from parsers/index
+export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
 
 // Main config schema
 import { parseConfig } from "./parsers/index.js";

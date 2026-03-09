@@ -37,6 +37,9 @@ import type {
   NightlyCycleConfig,
   HealthConfig,
   MaintenanceConfig,
+  CouncilConfig,
+  CouncilProvenanceMode,
+  CronReliabilityConfig,
 } from "./maintenance.js";
 
 import type {
@@ -265,6 +268,16 @@ export type SelfCorrectionConfig = {
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
 export type ConfigMode = "essential" | "normal" | "expert" | "full";
 
+/**
+ * Output verbosity level for CLI commands and tool responses.
+ * - quiet: minimal output — counts/totals only, no decorative headers or config echo.
+ *   Ideal for scripted/cron use and low-noise deployments (default for essential mode).
+ * - normal: current default behaviour — balanced output with key details.
+ * - verbose: extra detail — full breakdowns, all fields, config summaries.
+ *   Ideal for debugging and interactive sessions (default for full mode).
+ */
+export type VerbosityLevel = "quiet" | "normal" | "verbose";
+
 export type MemoryCategory = string;
 
 export type HybridMemoryConfig = {
@@ -424,6 +437,12 @@ export type HybridMemoryConfig = {
   provenance: ProvenanceConfig;
   /** LLM cost tracking — per-feature token usage and estimated cost (Issue #270, default: enabled). */
   costTracking: CostTrackingConfig;
+  /**
+   * Output verbosity level for CLI commands and tool responses (Issue #282).
+   * quiet: counts/totals only. normal: balanced default. verbose: full detail.
+   * Defaults: essential→quiet, normal→normal, expert→normal, full→verbose.
+   */
+  verbosity: VerbosityLevel;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
 };

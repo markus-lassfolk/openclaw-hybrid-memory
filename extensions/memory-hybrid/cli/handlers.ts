@@ -76,6 +76,7 @@ import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { capProposalConfidence } from "./proposals.js";
+import { relativeTime } from "./shared.js";
 import {
   CLI_STORE_IMPORTANCE,
   BATCH_STORE_IMPORTANCE,
@@ -234,24 +235,7 @@ function createProgressReporter(
   };
 }
 
-// Helper function for relative time display
-function relativeTime(ms: number): string {
-  const diff = ms - Date.now();
-  const abs = Math.abs(diff);
-  const future = diff > 0;
-
-  if (abs < 60000) return future ? "in <1m" : "just now";
-  if (abs < 3600000) {
-    const m = Math.floor(abs / 60000);
-    return future ? `in ${m}m` : `${m}m ago`;
-  }
-  if (abs < 86400000) {
-    const h = Math.floor(abs / 3600000);
-    return future ? `in ${h}h` : `${h}h ago`;
-  }
-  const d = Math.floor(abs / 86400000);
-  return future ? `in ${d}d` : `${d}d ago`;
-}
+// relativeTime is exported from ./shared.ts and imported at the top of this file.
 
 /**
  * Handler Context
@@ -672,8 +656,21 @@ export async function runVerifyForCli(
   sink: VerifyCliSink,
 ): Promise<void> {
   const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai } = ctx;
-  const log = sink.log;
-  const err = sink.error ?? sink.log;
+  const verbosity = cfg.verbosity ?? "normal";
+  // In quiet mode: suppress ✅ / [OK] lines and section headers (─────); only pass through failures and summaries.
+  const rawLog = sink.log;
+  const log: typeof rawLog = verbosity === "quiet"
+    ? (msg: string) => {
+        // Suppress lines that are purely informational OK messages, section headers, and indented feature status lines
+        const trimmed = msg.trimStart();
+        const isOkLine = /^✅|^\[OK\]/.test(trimmed);
+        const isHeader = /^─{3,}/.test(trimmed);
+        // Suppress indented status lines (feature flags, config display) unless they contain failure indicators
+        const isIndentedStatus = /^\s{2,}/.test(msg) && !/❌|\[FAIL\]|FAIL —|Error|error/.test(msg);
+        if (!isOkLine && !isHeader && !isIndentedStatus) rawLog(msg);
+      }
+    : rawLog;
+  const err = sink.error ?? rawLog;
   const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
   const OK = noEmoji ? "[OK]" : "✅";
   const FAIL = noEmoji ? "[FAIL]" : "❌";
@@ -805,6 +802,7 @@ export async function runVerifyForCli(
     : "Mode: Custom";
   log(`\n───── Memory Mode ─────`);
   log(`${modeLabel}${restartPending ? " — restart pending" : ""}`);
+  log(`  verbosity: ${cfg.verbosity ?? "normal"}`);
 
   log("\n───── Core Features ─────");
   log(`  autoCapture: ${bool(cfg.autoCapture)}`);
@@ -4016,6 +4014,28 @@ export function runConfigSetForCli(
     }
     return { ok: true, configPath, message: `Set extraction.extractionPasses = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
   }
+  // verbosity: must be one of the valid levels
+  if (k === "verbosity") {
+    const validVerbosity = ["quiet", "normal", "verbose"];
+    if (!validVerbosity.includes(value)) {
+      return { ok: false, error: `Invalid verbosity: "${value}". Use one of: ${validVerbosity.join(", ")}` };
+    }
+    out.config.verbosity = value;
+    try {
+      hybridConfigSchema.parse(out.config);
+    } catch (schemaErr: unknown) {
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-verbosity" });
+      return { ok: false, error: `Invalid config value: ${schemaErr}` };
+    }
+    try {
+      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
+      writeFileSync(getRestartPendingPath(), "", "utf-8");
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-verbosity" });
+      return { ok: false, error: `Could not write config: ${e}` };
+    }
+    return { ok: true, configPath, message: `Set verbosity = "${value}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+  }
   if (!setNested(out.config, k, value)) {
     return { ok: false, error: `Invalid config key: ${key}` };
   }
@@ -4530,7 +4550,9 @@ export function runCostReportForCli(
   const { costTracker } = ctx;
   const { log } = sink;
   const days = opts.days ?? 7;
-  const compact = opts.format === "compact";
+  const verbosity = ctx.cfg.verbosity ?? "normal";
+  // quiet: only totals (compact layout); normal/verbose: full per-feature breakdown with savings
+  const compact = opts.format === "compact" || verbosity === "quiet";
 
   // --modes: show config-mode cost estimate table (no live data needed)
   if (opts.modes) {

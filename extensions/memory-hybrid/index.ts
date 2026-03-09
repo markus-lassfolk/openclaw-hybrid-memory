@@ -442,6 +442,24 @@ const memoryHybridPlugin = {
       throw err;
     }
 
+    // ContextEngine Plugin Slot (Issue #273) — feature-detected, non-fatal if unavailable
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    import("./services/context-engine.js")
+      .then(({ registerHybridContextEngine }) =>
+        registerHybridContextEngine({
+          factsDb,
+          vectorDb,
+          wal,
+          embeddings,
+          cfg,
+          logger: api.logger,
+          pluginVersion: versionInfo.pluginVersion,
+        }),
+      )
+      .catch((err: unknown) => {
+        api.logger.warn?.(`memory-hybrid: ContextEngine registration skipped: ${err}`);
+      });
+
     // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
     try {
       registerLifecycleHooks({
@@ -499,6 +517,50 @@ const memoryHybridPlugin = {
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:service" });
       throw err;
+    }
+
+    // Issue #281 — Verify cron health on boot
+    //
+    // When `maintenance.cronReliability.verifyOnBoot` is true (the default), check
+    // whether a backup cron entry exists and log a warning if missing. This does NOT
+    // auto-install the cron entry — users must explicitly run `hybrid-mem backup schedule`
+    // to install it.
+    //
+    // This runs asynchronously and is entirely non-fatal: cron check failures
+    // (e.g. no `crontab` binary, read-only environment) are logged as debug and do not
+    // block the plugin from starting.
+    if (cfg.maintenance?.cronReliability?.verifyOnBoot !== false) {
+      setImmediate(() => {
+        void (async () => {
+          try {
+            const { execSync } = await import("node:child_process");
+
+            // Check if a backup cron is already registered
+            let currentCrontab = "";
+            try {
+              currentCrontab = execSync("crontab -l 2>/dev/null", { encoding: "utf-8" });
+            } catch {
+              // No existing crontab
+            }
+
+            if (currentCrontab.includes("hybrid-mem backup")) {
+              // Already scheduled — nothing to do
+              api.logger.debug?.("memory-hybrid: boot-check — weekly backup cron already present");
+              return;
+            }
+
+            // Cron not found — log warning
+            const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
+            api.logger.warn?.(
+              `memory-hybrid: boot-check — weekly backup cron not found. ` +
+              `Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`
+            );
+          } catch (err) {
+            // Non-fatal — crontab may not be available (containers, read-only envs)
+            api.logger.debug?.(`memory-hybrid: boot-check — could not verify backup cron (non-fatal): ${err}`);
+          }
+        })();
+      });
     }
   },
 };

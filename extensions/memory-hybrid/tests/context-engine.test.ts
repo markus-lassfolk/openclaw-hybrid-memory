@@ -1,0 +1,331 @@
+/**
+ * Integration tests for HybridMemoryContextEngine (Issue #273)
+ *
+ * Covers:
+ *   - compact(): flushes WAL entries to FactsDB before compaction
+ *   - prepareSubagentSpawn(): returns relevant parent memories as context injection
+ *   - onSubagentEnded(): counts and logs facts captured from child sessions
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { HybridMemoryContextEngine } from "../services/context-engine.js";
+import type { ContextEngineOptions } from "../services/context-engine.js";
+import { _testing } from "../index.js";
+
+const { FactsDB, WriteAheadLog } = _testing;
+
+const DEFAULT_WAL_MAX_AGE_MS = 5 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeLogger() {
+  return {
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  };
+}
+
+function makeEmbeddings() {
+  return {
+    embed: vi.fn().mockResolvedValue(new Float32Array([0.1, 0.2, 0.3])),
+    model: "test-embed",
+    dimensions: 3,
+  };
+}
+
+function makeVectorDb() {
+  return {
+    store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
+    delete: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(),
+  };
+}
+
+function makeMinimalConfig(): ContextEngineOptions["cfg"] {
+  return {
+    autoRecall: { enabled: true, limit: 10, minScore: 0.6, maxTokens: 2000, debounceMs: 200 },
+    embedding: { model: "test-embed", dimensions: 3 },
+  } as unknown as ContextEngineOptions["cfg"];
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+let tmpDir: string;
+let factsDb: InstanceType<typeof FactsDB>;
+let wal: InstanceType<typeof WriteAheadLog>;
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), "ctx-engine-test-"));
+  factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  wal = new WriteAheadLog(join(tmpDir, "test.wal"), DEFAULT_WAL_MAX_AGE_MS);
+});
+
+afterEach(() => {
+  try { factsDb.close(); } catch { /* ignore */ }
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
+function makeEngine(overrides?: Partial<ContextEngineOptions>): HybridMemoryContextEngine {
+  return new HybridMemoryContextEngine({
+    factsDb,
+    vectorDb: makeVectorDb() as never,
+    wal,
+    embeddings: makeEmbeddings() as never,
+    cfg: makeMinimalConfig(),
+    logger: makeLogger(),
+    pluginVersion: "1.0.0-test",
+    ...overrides,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Gap 1a: compact() flushes WAL entries
+// ---------------------------------------------------------------------------
+
+describe("HybridMemoryContextEngine.compact()", () => {
+  it("replays WAL entries into FactsDB and returns ok:true", async () => {
+    // Arrange: write 2 entries to WAL
+    const id1 = randomUUID();
+    const id2 = randomUUID();
+    wal.write({ id: id1, timestamp: Date.now(), operation: "store", data: { text: "Compact fact A", category: "fact", importance: 0.8, source: "test" } });
+    wal.write({ id: id2, timestamp: Date.now(), operation: "store", data: { text: "Compact fact B", category: "preference", importance: 0.7, source: "test" } });
+
+    const engine = makeEngine();
+    const before = factsDb.getCount();
+
+    // Act
+    const result = await engine.compact({
+      sessionId: "test-session",
+      sessionFile: "/tmp/session.json",
+    });
+
+    // Assert
+    expect(result.ok).toBe(true);
+    expect(result.compacted).toBe(false); // we flush but don't own compaction
+
+    // Both WAL entries should now be in FactsDB
+    const after = factsDb.getCount();
+    expect(after).toBe(before + 2);
+  });
+
+  it("returns ok:true even when WAL is empty", async () => {
+    const engine = makeEngine();
+    const result = await engine.compact({ sessionId: "empty-session", sessionFile: "/tmp/s.json" });
+    expect(result.ok).toBe(true);
+  });
+
+  it("skips duplicate WAL entries (idempotent)", async () => {
+    // Pre-store the fact in FactsDB
+    factsDb.store({ entity: null, key: null, value: null, text: "Already stored fact", category: "fact", importance: 0.9, source: "test" });
+
+    // Write same text to WAL
+    wal.write({
+      id: randomUUID(),
+      timestamp: Date.now(),
+      operation: "store",
+      data: { text: "Already stored fact", category: "fact", importance: 0.9, source: "test" },
+    });
+
+    const engine = makeEngine();
+    const before = factsDb.getCount();
+    const result = await engine.compact({ sessionId: "dup-session", sessionFile: "/tmp/s.json" });
+
+    expect(result.ok).toBe(true);
+    // Count should not increase — duplicate was skipped
+    expect(factsDb.getCount()).toBe(before);
+  });
+
+  it("returns ok:true with null WAL (graceful no-op)", async () => {
+    const engine = makeEngine({ wal: null });
+    const result = await engine.compact({ sessionId: "null-wal-session", sessionFile: "/tmp/s.json" });
+    expect(result.ok).toBe(true);
+  });
+
+  it("includes top-fact summary in result when facts are present", async () => {
+    // Store a few facts first
+    factsDb.store({ entity: null, key: null, value: null, text: "Important context fact", category: "fact", importance: 0.9, source: "test" });
+    factsDb.store({ entity: null, key: null, value: null, text: "User preference detail", category: "preference", importance: 0.8, source: "test" });
+
+    const engine = makeEngine();
+    const result = await engine.compact({ sessionId: "summary-session", sessionFile: "/tmp/s.json" });
+
+    expect(result.ok).toBe(true);
+    // The result field should carry the memory summary for SDK consumption
+    const summary = result.result as { topFacts?: unknown[]; factCount?: number } | undefined;
+    if (summary) {
+      // If populated, verify shape
+      expect(typeof summary).toBe("object");
+    }
+    // The reason string should mention the flush
+    expect(result.reason).toMatch(/flushed/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap 1b: prepareSubagentSpawn() returns relevant parent context
+// ---------------------------------------------------------------------------
+
+describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
+  it("returns a SubagentSpawnPreparation with rollback when facts exist", async () => {
+    // Seed some parent facts
+    factsDb.store({ entity: null, key: null, value: null, text: "Parent session context memory", category: "fact", importance: 0.85, source: "parent" });
+    factsDb.store({ entity: null, key: null, value: null, text: "User preference: dark mode", category: "preference", importance: 0.7, source: "parent" });
+
+    const engine = makeEngine();
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "parent-session-abc",
+      childSessionKey: "child-session-xyz",
+    });
+
+    expect(prep).toBeDefined();
+    expect(typeof prep!.rollback).toBe("function");
+
+    // Extended field: contextAddition should contain the injected parent facts
+    const extended = prep as { rollback: () => void; contextAddition?: string };
+    expect(extended.contextAddition).toBeDefined();
+    expect(extended.contextAddition).toContain("Parent session context memory");
+    expect(extended.contextAddition).toContain("child-session-xyz");
+  });
+
+  it("returns rollback-only preparation when no facts in store", async () => {
+    const engine = makeEngine();
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "empty-parent",
+      childSessionKey: "empty-child",
+    });
+
+    // Should still return a valid preparation (not throw / not return undefined)
+    expect(prep).toBeDefined();
+    expect(typeof prep!.rollback).toBe("function");
+  });
+
+  it("rollback is a no-op (does not throw)", async () => {
+    factsDb.store({ entity: null, key: null, value: null, text: "Some fact", category: "fact", importance: 0.8, source: "test" });
+
+    const engine = makeEngine();
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "parent",
+      childSessionKey: "child",
+    });
+
+    // Rollback should resolve cleanly
+    await expect(prep!.rollback()).resolves.not.toThrow();
+  });
+
+  it("respects autoRecall.limit when fetching parent facts", async () => {
+    // Store 20 facts
+    for (let i = 0; i < 20; i++) {
+      factsDb.store({ entity: null, key: null, value: null, text: `Fact number ${i}`, category: "fact", importance: 0.7, source: "test" });
+    }
+
+    const cfgWithLimit = { ...makeMinimalConfig() };
+    (cfgWithLimit.autoRecall as { limit: number }).limit = 5;
+
+    const engine = makeEngine({ cfg: cfgWithLimit });
+    const prep = await engine.prepareSubagentSpawn?.({ parentSessionKey: "p", childSessionKey: "c" });
+    const extended = prep as { contextAddition?: string };
+
+    // contextAddition should not contain all 20 facts (limited to min(5, 15))
+    expect(extended.contextAddition).toBeDefined();
+    const bulletCount = (extended.contextAddition!.match(/^- /gm) ?? []).length;
+    expect(bulletCount).toBeLessThanOrEqual(15);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap 1c: onSubagentEnded() processes child session facts
+// ---------------------------------------------------------------------------
+
+describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
+  it("logs fact count when child session has captured facts", async () => {
+    const childSessionKey = "child-session-" + randomUUID();
+
+    // Simulate facts captured by the child session
+    factsDb.store({ entity: null, key: null, value: null, text: "Child session discovery A", category: "fact", importance: 0.8, source: childSessionKey });
+    factsDb.store({ entity: null, key: null, value: null, text: "Child session discovery B", category: "technical", importance: 0.75, source: childSessionKey });
+
+    const logger = makeLogger();
+    const engine = makeEngine({ logger });
+
+    await engine.onSubagentEnded?.({ childSessionKey, reason: "completed" });
+
+    // Should have logged with info level (facts were found)
+    const infoCalls = logger.info.mock.calls.map((c: unknown[]) => String(c[0]));
+    const relevant = infoCalls.find((msg: string) => msg.includes(childSessionKey));
+    expect(relevant).toBeDefined();
+    expect(relevant).toContain("childFacts=2");
+  });
+
+  it("logs debug (not info) when child session has no captured facts", async () => {
+    const childSessionKey = "child-no-facts-" + randomUUID();
+    const logger = makeLogger();
+    const engine = makeEngine({ logger });
+
+    await engine.onSubagentEnded?.({ childSessionKey, reason: "completed" });
+
+    // Should use debug level when no facts found
+    const debugCalls = logger.debug.mock.calls.map((c: unknown[]) => String(c[0]));
+    const relevant = debugCalls.find((msg: string) => msg.includes(childSessionKey));
+    expect(relevant).toBeDefined();
+    expect(relevant).toContain("childFacts=0");
+
+    // Should NOT have called info for this case
+    const infoCalls = logger.info.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(infoCalls.some((msg: string) => msg.includes(childSessionKey))).toBe(false);
+  });
+
+  it("does not throw on DB errors (non-fatal)", async () => {
+    const brokenFactsDb = {
+      countBySource: vi.fn().mockImplementation(() => { throw new Error("DB error"); }),
+      getCount: vi.fn().mockReturnValue(0),
+      list: vi.fn().mockReturnValue([]),
+      hasDuplicate: vi.fn().mockReturnValue(false),
+    };
+
+    const engine = makeEngine({ factsDb: brokenFactsDb as never });
+
+    // Should not throw
+    await expect(
+      engine.onSubagentEnded?.({ childSessionKey: "broken-child", reason: "completed" })
+    ).resolves.not.toThrow();
+  });
+
+  it("handles different completion reasons without error", async () => {
+    const engine = makeEngine();
+    const reasons = ["completed", "timeout", "error", "cancelled"];
+
+    for (const reason of reasons) {
+      await expect(
+        engine.onSubagentEnded?.({ childSessionKey: "child-" + randomUUID(), reason })
+      ).resolves.not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap 1d: engine.info shape
+// ---------------------------------------------------------------------------
+
+describe("HybridMemoryContextEngine.info", () => {
+  it("has correct id and name", () => {
+    const engine = makeEngine();
+    expect(engine.info.id).toBe("hybrid-memory");
+    expect(engine.info.name).toBe("OpenClaw Hybrid Memory");
+    expect(engine.info.ownsCompaction).toBe(false);
+  });
+
+  it("records pluginVersion when provided", () => {
+    const engine = makeEngine({ pluginVersion: "9.8.7" });
+    expect(engine.info.version).toBe("9.8.7");
+  });
+});

@@ -270,8 +270,21 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             api: { logger: api.logger },
           };
           const applyResult = await applyApprovedProposal(applyCtx, proposal.id);
+          const applyVerbosity = cfg.verbosity ?? "normal";
           if (applyResult.ok) {
             api.logger.info(`memory-hybrid: persona proposal auto-applied — ${proposal.id} → ${applyResult.targetFile}`);
+            if (applyVerbosity === "quiet") {
+              // Quiet: only emit ID + file, suppress change preview
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Applied: ${proposal.id} → ${applyResult.targetFile}.`,
+                  },
+                ],
+                details: { proposalId: proposal.id, status: "applied", targetFile: applyResult.targetFile, backupPath: applyResult.backupPath },
+              };
+            }
             const changePreview = applyResult.suggestedChange.length > 500
               ? applyResult.suggestedChange.slice(0, 500) + "…"
               : applyResult.suggestedChange;
@@ -289,13 +302,28 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             content: [
               {
                 type: "text",
-                text: `Proposal ${proposal.id} was approved automatically but applying to the file failed: ${applyResult.error}\n\nYou can run \`openclaw proposals apply ${proposal.id}\` after fixing the issue.`,
+                text: applyVerbosity === "quiet"
+                  ? `Proposal ${proposal.id}: apply failed — ${applyResult.error}`
+                  : `Proposal ${proposal.id} was approved automatically but applying to the file failed: ${applyResult.error}\n\nYou can run \`openclaw proposals apply ${proposal.id}\` after fixing the issue.`,
               },
             ],
             details: { proposalId: proposal.id, status: "approved", applyError: applyResult.error },
           };
         }
 
+        const verbosity = cfg.verbosity ?? "normal";
+        if (verbosity === "quiet") {
+          // Quiet: ID and status only — no verbose details
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Proposal ${proposal.id}: pending.`,
+              },
+            ],
+            details: { proposalId: proposal.id, status: "pending", expiresAt: proposal.expiresAt },
+          };
+        }
         return {
           content: [
             {
@@ -322,15 +350,28 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { status, targetFile } = params as { status?: string; targetFile?: string };
+        const verbosity = cfg.verbosity ?? "normal";
 
-        const proposals = proposalsDb!.list({ status, targetFile });
+        let proposals = proposalsDb!.list({ status, targetFile });
+
+        // Quiet mode: suppress freshly-created pending proposals (< 24h old) to reduce noise,
+        // but keep all non-pending proposals (approved/rejected/applied/wont-fix) visible.
+        // Only apply quiet filter when no explicit status was provided by the user
+        if (verbosity === "quiet" && !status) {
+          const oneDayAgo = Math.floor(Date.now() / 1000) - SECONDS_PER_DAY;
+          proposals = proposals.filter(
+            (p) => p.status !== "pending" || p.createdAt < oneDayAgo,
+          );
+        }
 
         if (proposals.length === 0) {
           return {
             content: [
               {
                 type: "text",
-                text: "No proposals found matching filters.",
+                text: verbosity === "quiet"
+                  ? "No pending proposals awaiting review."
+                  : "No proposals found matching filters.",
               },
             ],
             details: { count: 0, filters: { status, targetFile } },
@@ -340,14 +381,26 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         const lines = proposals.map((p) => {
           const age = Math.floor((Date.now() / 1000 - p.createdAt) / SECONDS_PER_DAY);
           const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / SECONDS_PER_DAY) : null;
+          if (verbosity === "quiet") {
+            // Compact: one line per proposal with just the actionable info
+            const expireStr = expires !== null ? ` (expires ${expires}d)` : "";
+            return `[${p.status.toUpperCase()}] ${p.id} — ${p.title}${expireStr}`;
+          }
           return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? p.observation.slice(0, 120) + "..." : p.observation}`;
         });
+
+        const pendingCount = proposals.filter(p => p.status === "pending").length;
+        const summaryText = verbosity === "quiet"
+          ? (pendingCount > 0
+              ? `${proposals.length} proposal(s) (${pendingCount} awaiting review):\n${lines.join("\n")}`
+              : `${proposals.length} proposal(s):\n${lines.join("\n")}`)
+          : `Found ${proposals.length} proposal(s):\n\n${lines.join("\n\n")}`;
 
         return {
           content: [
             {
               type: "text",
-              text: `Found ${proposals.length} proposal(s):\n\n${lines.join("\n\n")}`,
+              text: summaryText,
             },
           ],
           details: { count: proposals.length, proposals: proposals.map(p => ({ id: p.id, status: p.status, title: p.title, targetFile: p.targetFile })) },

@@ -193,6 +193,12 @@ export type HybridMemCliContext = {
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;
+  /** Resolved path to LanceDB vector store (for backup). */
+  resolvedLancePath?: string;
+  /** Create a point-in-time backup snapshot (Issue #276). */
+  runBackup?: (opts?: { backupDir?: string }) => Promise<import("../cli/backup.js").BackupCliResult>;
+  /** Verify SQLite DB integrity without creating a backup (Issue #276). */
+  runBackupVerify?: () => import("../cli/backup.js").BackupVerifyResult;
 };
 
 /** Chainable command type (Commander-style). */

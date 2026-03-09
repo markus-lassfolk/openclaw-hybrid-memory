@@ -186,13 +186,21 @@ export function registerUtilityTools(
         const breakdown = factsDb.statsBreakdown();
         const expired = factsDb.countExpired();
 
+        const verbosity = cfg.verbosity ?? "normal";
+        let text: string;
+        if (verbosity === "quiet") {
+          // Quiet: compact one-liner — statsBreakdown and countExpired are still computed above
+          // and included in the `details` field for programmatic consumers; they're intentionally
+          // omitted from the human-readable text to reduce noise in quiet sessions.
+          text = `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).`;
+        } else {
+          const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;
+          const verboseExtra = verbosity === "verbose" ? `\nMode: ${mode}` : "";
+          text = baseText + verboseExtra;
+        }
+
         return {
-          content: [
-            {
-              type: "text",
-              text: `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`,
-            },
-          ],
+          content: [{ type: "text", text }],
           details: { hardPruned, softPruned, breakdown, pendingExpired: expired },
         };
       },
@@ -245,13 +253,17 @@ export function registerUtilityTools(
             api.logger,
             provenanceService,
           );
+          const verbosity = cfg.verbosity ?? "normal";
+          let reflectText: string;
+          if (verbosity === "quiet") {
+            reflectText = `Reflected: ${result.patternsStored} patterns stored.`;
+          } else if (verbosity === "verbose") {
+            reflectText = `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days, model: ${defaultModel}).`;
+          } else {
+            reflectText = `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days).`;
+          }
           return {
-            content: [
-              {
-                type: "text",
-                text: `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days).`,
-              },
-            ],
+            content: [{ type: "text", text: reflectText }],
             details: {
               factsAnalyzed: result.factsAnalyzed,
               patternsExtracted: result.patternsExtracted,
