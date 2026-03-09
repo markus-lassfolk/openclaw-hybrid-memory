@@ -13,6 +13,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import type OpenAI from "openai";
@@ -20,6 +21,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { registerMemoryTools } from "../tools/memory-tools.js";
 import { registerGraphTools } from "../tools/graph-tools.js";
+import { registerProvenanceTools } from "../tools/provenance-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerPersonaTools } from "../tools/persona-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
@@ -32,6 +34,8 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
+import { registerVerificationTools } from "../tools/verification-tools.js";
+import type { VerificationStore } from "../services/verification-store.js";
 import {
   registerUtilityTools,
   type RunReflectionFn,
@@ -39,17 +43,21 @@ import {
   type RunReflectionMetaFn,
 } from "../tools/utility-tools.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 
 export interface ToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
   embeddings: EmbeddingProvider;
+  embeddingRegistry?: EmbeddingRegistry | null;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   proposalsDb: ProposalsDB | null;
   eventLog: EventLog | null;
+  provenanceService?: ProvenanceService | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
@@ -58,6 +66,8 @@ export interface ToolsContext {
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
   toolProposalStore?: ToolProposalStore | null;
+  verificationStore?: VerificationStore | null;
+  variantQueue?: VariantGenerationQueue | null;
   resolvedSqlitePath: string;
   pythonBridge?: PythonBridge | null;
   timers: {
@@ -97,16 +107,19 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     vectorDb,
     cfg,
     embeddings,
+    embeddingRegistry,
     openai,
     wal,
     credentialsDb,
     proposalsDb,
     eventLog,
+    provenanceService,
     aliasDb,
     issueStore,
     workflowStore,
     crystallizationStore,
     toolProposalStore,
+    verificationStore,
     lastProgressiveIndexIds,
     currentAgentIdRef,
     pendingLLMWarnings,
@@ -120,11 +133,12 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     runReflectionRules,
     runReflectionMeta,
     pythonBridge,
+    variantQueue,
   } = ctx;
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, aliasDb, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
+    { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, verificationStore, variantQueue, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),
@@ -135,6 +149,11 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Graph tools (memory linking and traversal)
   if (cfg.graph.enabled) {
     registerGraphTools({ factsDb, cfg }, api);
+  }
+
+  // Provenance tools (when provenance tracing is enabled)
+  if (cfg.provenance.enabled && provenanceService) {
+    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api);
   }
 
   // Credential tools (secure credential storage and retrieval)
@@ -175,7 +194,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Utility tools (reflection, consolidation, export)
   registerUtilityTools(
-    { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath },
+    { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService },
     api,
     runReflection,
     runReflectionRules,
@@ -186,7 +205,15 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Document ingestion tool (opt-in, requires Python + markitdown)
   if (cfg.documents.enabled && pythonBridge) {
-    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge }, api);
+    registerDocumentTools(
+      { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService },
+      api,
+    );
+  }
+
+  // Verification tools (Issue #162)
+  if (cfg.verification.enabled && verificationStore) {
+    registerVerificationTools({ factsDb, verificationStore }, api);
   }
 
   // Issue lifecycle tracking (always enabled — lightweight, Issue #137)

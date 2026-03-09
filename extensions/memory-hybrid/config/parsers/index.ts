@@ -9,6 +9,7 @@ import {
   resolveEnvVars,
   parseStoreConfig,
   parseWALConfig,
+  parseEventLogConfig,
   parsePathConfig,
   parseVectorConfig,
   parseCredentialsConfig,
@@ -57,6 +58,11 @@ import {
   parseWorkflowTrackingConfig,
   parseCrystallizationConfig,
   parseSelfExtensionConfig,
+  parseImplicitFeedbackConfig,
+  parseClosedLoopConfig,
+  parseFrustrationDetectionConfig,
+  parseCrossAgentLearningConfig,
+  parseToolEffectivenessConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -221,11 +227,27 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     resolvedApiKey = resolveEnvVars((embedding.apiKey as string).trim());
   }
 
+  // Resolve model from explicit 'model' field or provider-specific aliases (ollamaModel, onnxModelPath)
+  const primaryModelStr = typeof embedding?.model === "string" ? embedding.model.trim() : "";
+  const ollamaModelAlias = typeof embedding?.ollamaModel === "string" ? (embedding.ollamaModel as string).trim() : "";
+  const onnxModelPathAlias = typeof embedding?.onnxModelPath === "string" ? (embedding.onnxModelPath as string).trim() : "";
+  const resolvedModelStr =
+    primaryModelStr ||
+    (embeddingProvider === "ollama" ? ollamaModelAlias : "") ||
+    (embeddingProvider === "onnx" ? onnxModelPathAlias : "") ||
+    "";
+
   // Validate that model is specified for non-OpenAI providers
-  if (embeddingProvider !== "openai" && (!embedding || typeof embedding.model !== "string" || embedding.model.trim().length === 0)) {
-    throw new Error(`embedding.model is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`);
+  if (embeddingProvider !== "openai" && !resolvedModelStr) {
+    const fieldHint =
+      embeddingProvider === "ollama"
+        ? "embedding.model (or embedding.ollamaModel)"
+        : embeddingProvider === "onnx"
+          ? "embedding.model (or embedding.onnxModelPath)"
+          : "embedding.model";
+    throw new Error(`${fieldHint} is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`);
   }
-  const singleModel = typeof embedding?.model === "string" ? embedding.model : DEFAULT_MODEL;
+  const singleModel = resolvedModelStr || DEFAULT_MODEL;
   const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
   let embeddingModels: string[] | undefined;
   // Parse models for all providers (#6): for openai, these are the model preference list;
@@ -405,6 +427,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       preferredProviders: preferredProviders.length > 1 ? preferredProviders : undefined,
       googleApiKey: resolvedGoogleApiKey,
       multiModels: parsedMultiModels.length > 0 ? parsedMultiModels : undefined,
+      autoMigrate: embedding?.autoMigrate === true,
     },
     lanceDbPath:
       typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,
@@ -419,6 +442,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     credentials: parseCredentialsConfig(cfg),
     graph: parseGraphConfig(cfg),
     wal: parseWALConfig(cfg),
+    eventLog: parseEventLogConfig(cfg),
     personaProposals: parsePersonaProposalsConfig(cfg),
     passiveObserver: parsePassiveObserverConfig(cfg),
     reflection: parseReflectionConfig(cfg),
@@ -452,6 +476,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     workflowTracking: parseWorkflowTrackingConfig(cfg),
     crystallization: parseCrystallizationConfig(cfg),
     selfExtension: parseSelfExtensionConfig(cfg),
+    implicitFeedback: parseImplicitFeedbackConfig(cfg),
+    closedLoop: parseClosedLoopConfig(cfg),
+    frustrationDetection: parseFrustrationDetectionConfig(cfg),
+    crossAgentLearning: parseCrossAgentLearningConfig(cfg),
+    toolEffectiveness: parseToolEffectivenessConfig(cfg),
     contextualVariants: parseContextualVariantsConfig(cfg),
     queryExpansion: parseQueryExpansionConfig(cfg),
     reranking: parseRerankingConfig(cfg),

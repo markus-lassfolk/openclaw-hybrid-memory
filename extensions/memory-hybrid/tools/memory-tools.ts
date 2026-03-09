@@ -15,11 +15,15 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import { toFloat32Array } from "../services/embedding-registry.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
+import type { ProvenanceService } from "../services/provenance.js";
 import {
   isCredentialLike,
   tryParseCredentialForVault,
@@ -27,6 +31,7 @@ import {
 } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { QueryExpander } from "../services/query-expander.js";
 import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
 import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
 import {
@@ -44,6 +49,10 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { detectFutureDate } from "../utils/date-detector.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import { shouldAutoVerify } from "../services/verification-store.js";
+import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -51,13 +60,100 @@ export interface PluginContext {
   cfg: HybridMemoryConfig;
   aliasDb?: AliasDB | null;
   embeddings: EmbeddingProvider;
+  embeddingRegistry?: EmbeddingRegistry | null;
   openai: OpenAI;
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   eventLog: EventLog | null;
+  provenanceService?: ProvenanceService | null;
+  verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
+  variantQueue?: VariantGenerationQueue | null;
+}
+
+async function storeRegistryEmbeddings({
+  factsDb,
+  embeddingRegistry,
+  embeddings,
+  factId,
+  text,
+  vector,
+  logger,
+  operation,
+}: {
+  factsDb: FactsDB;
+  embeddingRegistry: EmbeddingRegistry | null | undefined;
+  embeddings: EmbeddingProvider;
+  factId: string;
+  text: string;
+  vector?: number[] | Float32Array;
+  logger: { warn: (msg: string) => void };
+  operation: string;
+}): Promise<void> {
+  if (!embeddingRegistry) return;
+
+  const vectors = new Map<string, Float32Array>();
+
+  if (vector && vector.length > 0) {
+    vectors.set(embeddings.modelName, toFloat32Array(vector));
+  }
+
+  if (embeddingRegistry.isMultiModel()) {
+    const models = embeddingRegistry.getModels();
+    const tasks = models.map(async (cfg) => ({
+      name: cfg.name,
+      vec: await embeddingRegistry.embed(text, cfg.name),
+    }));
+    const settled = await Promise.allSettled(tasks);
+    for (const s of settled) {
+      if (s.status === "fulfilled") {
+        vectors.set(s.value.name, s.value.vec);
+      } else {
+        capturePluginError(
+          s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
+          { subsystem: "embeddings", operation },
+        );
+      }
+    }
+    if (!vector) {
+      try {
+        const vec = await embeddingRegistry.embed(text);
+        const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
+        vectors.set(modelName, vec);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "embeddings",
+          operation,
+        });
+      }
+    }
+  } else if (!vector) {
+    try {
+      const vec = await embeddingRegistry.embed(text);
+      const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
+      vectors.set(modelName, vec);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "embeddings",
+        operation,
+      });
+    }
+  }
+
+  if (vectors.size === 0) return;
+  for (const [model, vec] of vectors) {
+    try {
+      factsDb.storeEmbedding(factId, model, "canonical", vec, vec.length);
+    } catch (err) {
+      logger.warn(`memory-hybrid: fact_embeddings store failed (${model}): ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "fact-embeddings",
+        operation,
+      });
+    }
+  }
 }
 
 /**
@@ -88,7 +184,7 @@ export function registerMemoryTools(
     minScore?: number
   ) => Promise<MemoryEntry[]>
 ): void {
-  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, aliasDb } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, embeddingRegistry, verificationStore, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings, variantQueue } = ctx;
 
   api.registerTool(
     {
@@ -388,6 +484,14 @@ export function registerMemoryTools(
             ? cfg.retrieval.strategies.filter((s) => s !== "semantic")
             : cfg.retrieval.strategies;
           const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
+          const queryExpander =
+            cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
+              ? new QueryExpander(cfg.queryExpansion, openai)
+              : null;
+          const embedFn =
+            queryExpander && queryVector != null
+              ? (text: string) => embeddings.embed(text)
+              : null;
           const rrfOutput = await runRetrievalPipeline(
             query,
             queryVector,
@@ -403,6 +507,13 @@ export function registerMemoryTools(
             asOfSec ?? undefined,
             cfg.aliases?.enabled ? aliasDb : null,
             cfg.clusters,
+            embeddingRegistry ?? null,
+            factsDb,
+            queryExpander ?? null,
+            embedFn,
+            undefined, // queryExpansionContext (could pass recent conversation if available)
+            cfg.reranking,
+            openai,
           );
 
           // Merge entity-lookup results first, then append RRF results (deduped).
@@ -442,6 +553,7 @@ export function registerMemoryTools(
           const ftsResults = factsDb.search(query, limit, {
             ...recallOpts,
             reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+            diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
           });
           let lanceResults: SearchResult[] = [];
           if (queryVector) {
@@ -545,17 +657,34 @@ export function registerMemoryTools(
           contradictionStatus.set(r.entry.id, factsDb.isContradicted(r.entry.id));
         }
 
+        // Check integrity for verified facts (Issue #162): flag tampered results.
+        const tamperStatus = new Map<string, boolean>();
+        if (verificationStore && cfg.verification.enabled) {
+          for (const r of results) {
+            try {
+              const report = verificationStore.checkIntegrity(r.entry.id);
+              if (report.checked > 0 && !report.valid) {
+                tamperStatus.set(r.entry.id, true);
+              }
+            } catch {
+              // Don't block retrieval on integrity check failure
+            }
+          }
+        }
+
         logRecall(true);
         const text = results
           .map((r, i) => {
             const contradicted = contradictionStatus.get(r.entry.id) ?? false;
             const contradictedPrefix = contradicted ? "[⚠️ CONTRADICTED] " : "";
+            const tampered = tamperStatus.get(r.entry.id) ?? false;
+            const tamperedPrefix = tampered ? "[⚠️ TAMPERED] " : "";
             const meta = expansionMeta.get(r.entry.id);
             const expansionSuffix =
               meta && meta.expansionSource === "graph"
                 ? ` [graph+${meta.hopCount}hop${meta.linkPath ? `: ${meta.linkPath}` : ""}]`
                 : "";
-            return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}`;
+            return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${tamperedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}`;
           })
           .join("\n");
 
@@ -769,6 +898,16 @@ export function registerMemoryTools(
               "Scope target (userId, agentId, or sessionId). Required when scope is user, agent, or session.",
           }),
         ),
+        verification_tier: Type.Optional(
+          Type.String({
+            description: "Optional verification tier override (e.g. 'critical') to force verification store enrollment.",
+          }),
+        ),
+        decayFreezeUntil: Type.Optional(
+          Type.Number({
+            description: "Unix epoch seconds until which confidence decay is paused. Auto-detected from future dates in text if omitted.",
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
@@ -784,6 +923,8 @@ export function registerMemoryTools(
             supersedes,
             scope: paramScope,
             scopeTarget: paramScopeTarget,
+            verification_tier: verificationTier,
+            decayFreezeUntil: paramDecayFreezeUntil,
           } = params as {
             text: string;
             importance?: number;
@@ -796,10 +937,30 @@ export function registerMemoryTools(
             supersedes?: string;
             scope?: "global" | "user" | "agent" | "session";
             scopeTarget?: string;
+            verification_tier?: string;
+            decayFreezeUntil?: number;
           };
 
           let textToStore = text;
-        textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+          textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+          const provenanceSessionId = api.context?.sessionId ?? null;
+          const recordActiveStoreProvenance = (factId: string, sourceText?: string) => {
+            if (!provenanceService || !cfg.provenance.enabled) return;
+            try {
+              provenanceService.addEdge(factId, {
+                edgeType: "DERIVED_FROM",
+                sourceType: "active_store",
+                sourceId: provenanceSessionId ?? "unknown-session",
+                sourceText,
+              });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "provenance",
+                operation: "memory-store-provenance",
+                factId,
+              });
+            }
+          };
 
         if (factsDb.hasDuplicate(textToStore)) {
           return {
@@ -833,6 +994,30 @@ export function registerMemoryTools(
           };
         }
 
+        const explicitVerificationTier = (verificationTier ?? "").trim().toLowerCase();
+
+        const maybeAutoVerify = (factId: string, factText: string, autoTags: string[], autoEntity?: string | null, autoKey?: string | null, autoValue?: string | null) => {
+          if (!cfg.verification.enabled || !verificationStore) return;
+          const shouldEnroll =
+            explicitVerificationTier === "critical" ||
+            (cfg.verification.autoClassify && shouldAutoVerify({
+              text: factText,
+              category,
+              tags: autoTags,
+              entity: autoEntity,
+              key: autoKey,
+              value: autoValue,
+              verificationTier: verificationTier ?? null,
+            }));
+          if (!shouldEnroll) return;
+          try {
+            const verifiedBy = explicitVerificationTier === "critical" ? "agent" : "system";
+            verificationStore.verify(factId, factText, verifiedBy);
+          } catch (err) {
+            api.logger.warn?.(`memory-hybrid: auto-verify failed for ${factId}: ${err}`);
+          }
+        };
+
         // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
         // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
         if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
@@ -865,7 +1050,11 @@ export function registerMemoryTools(
               source: "conversation",
               decayClass: paramDecayClass ?? "permanent",
               tags: ["auth", ...extractTags(pointerText, "Credentials")],
+              provenanceSession: provenanceSessionId,
+              extractionMethod: "active",
+              extractionConfidence: importance,
             });
+            recordActiveStoreProvenance(pointerEntry.id, pointerText);
             try {
               addOperationBreadcrumb("vector", "store-credential-pointer");
               const vector = await embeddings.embed(pointerText);
@@ -879,6 +1068,16 @@ export function registerMemoryTools(
                   id: pointerEntry.id,
                 });
               }
+              await storeRegistryEmbeddings({
+                factsDb,
+                embeddingRegistry,
+                embeddings,
+                factId: pointerEntry.id,
+                text: pointerText,
+                vector,
+                logger: api.logger,
+                operation: "store-credential-pointer",
+              });
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "vector",
@@ -984,9 +1183,21 @@ export function registerMemoryTools(
                   scope,
                   scopeTarget,
                   sourceSessions: api.context?.sessionId ?? undefined,
+                  provenanceSession: provenanceSessionId,
+                  extractionMethod: "active",
+                  extractionConfidence: Math.max(importance, oldFact.importance),
                 });
+                recordActiveStoreProvenance(newEntry.id, textToStore);
                 factsDb.supersede(classification.targetId, newEntry.id);
                 aliasDb?.deleteByFactId(classification.targetId);
+                maybeAutoVerify(
+                  newEntry.id,
+                  textToStore,
+                  newEntry.tags ?? tags,
+                  newEntry.entity,
+                  newEntry.key,
+                  newEntry.value,
+                );
 
                 const finalImportance = Math.max(importance, oldFact.importance);
                 try {
@@ -996,6 +1207,16 @@ export function registerMemoryTools(
                       await vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
                     }
                   }
+                  await storeRegistryEmbeddings({
+                    factsDb,
+                    embeddingRegistry,
+                    embeddings,
+                    factId: newEntry.id,
+                    text: textToStore,
+                    vector,
+                    logger: api.logger,
+                    operation: "store-update-supersede",
+                  });
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                     subsystem: "vector",
@@ -1007,6 +1228,11 @@ export function registerMemoryTools(
                 }
 
                 walRemove(walEntryId, api.logger);
+
+                // Issue #159: enqueue contextual variant generation (non-blocking)
+                if (variantQueue) {
+                  variantQueue.enqueue({ factId: newEntry.id, text: textToStore, category: category as string });
+                }
 
                 api.logger.info?.(
                   `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
@@ -1093,6 +1319,11 @@ export function registerMemoryTools(
             scopeTarget = null;
           }
         }
+        const decayFreezeUntil =
+          paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
+            ? paramDecayFreezeUntil
+            : detectFutureDate(textToStore, cfg.futureDateProtection ?? { enabled: false });
+
         const nowSec = Math.floor(Date.now() / 1000);
         const storeSessionId = api.context?.sessionId ?? null;
         const entry = factsDb.store({
@@ -1109,10 +1340,15 @@ export function registerMemoryTools(
           scope,
           scopeTarget,
           sourceSessions: storeSessionId ?? undefined,
+          provenanceSession: provenanceSessionId,
+          extractionMethod: "active",
+          extractionConfidence: importance,
+          decayFreezeUntil: decayFreezeUntil ?? undefined,
           ...(supersedes?.trim()
             ? { validFrom: nowSec, supersedesId: supersedes.trim() }
             : {}),
         });
+        recordActiveStoreProvenance(entry.id, textToStore);
         if (supersedes?.trim()) {
           factsDb.supersede(supersedes.trim(), entry.id);
           aliasDb?.deleteByFactId(supersedes.trim());
@@ -1132,6 +1368,16 @@ export function registerMemoryTools(
               });
             }
           }
+          await storeRegistryEmbeddings({
+            factsDb,
+            embeddingRegistry,
+            embeddings,
+            factId: entry.id,
+            text: textToStore,
+            vector,
+            logger: api.logger,
+            operation: "store-fact",
+          });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "vector",
@@ -1143,6 +1389,33 @@ export function registerMemoryTools(
         }
 
         walRemove(walEntryId, api.logger);
+
+        // Issue #150: write event to episodic event log
+        if (eventLog) {
+          try {
+            const eventType = categoryToEventType(category);
+            eventLog.append({
+              sessionId: api.context?.sessionId ?? "unknown",
+              timestamp: new Date().toISOString(),
+              eventType,
+              content: {
+                text: textToStore.slice(0, 500),
+                factId: entry.id,
+                category,
+                importance,
+                source: "memory_store",
+              },
+              entities: entity ? [entity] : undefined,
+            });
+          } catch {
+            // Non-fatal
+          }
+        }
+
+        // Issue #159: enqueue contextual variant generation (non-blocking)
+        if (variantQueue) {
+          variantQueue.enqueue({ factId: entry.id, text: textToStore, category: category as string });
+        }
 
         // Issue #149: generate and store retrieval aliases (non-blocking)
         if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
@@ -1253,6 +1526,7 @@ export function registerMemoryTools(
             ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
             ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
             ...(contradictions.length > 0 ? { contradictions: contradictions.map((c) => ({ contradictionId: c.contradictionId, oldFactId: c.oldFactId })) } : {}),
+            ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
           },
         };
         } catch (err) {

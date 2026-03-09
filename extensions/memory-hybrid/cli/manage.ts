@@ -38,6 +38,7 @@ import { withExit, type Chainable } from "./shared.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
 import { runContextAudit } from "../services/context-audit.js";
+import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -141,9 +142,13 @@ export type ManageContext = {
   runExtractDaily?: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
   runExtractDirectives?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
   runExtractReinforcement?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
+  runExtractImplicitFeedback?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; includeTrajectories?: boolean; includeClosedLoop?: boolean }) => Promise<{ signalsExtracted: number; positiveCount: number; negativeCount: number; trajectoriesBuilt: number; sessionsScanned: number; closedLoopReport?: string }>;
   runGenerateAutoSkills?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runDreamCycle?: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runContinuousVerification?: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
+  runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
+  runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -192,10 +197,14 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runExtractDaily,
     runExtractDirectives,
     runExtractReinforcement,
+    runExtractImplicitFeedback,
     runGenerateAutoSkills,
     runGenerateProposals,
     resolvePath,
     runDreamCycle,
+    runContinuousVerification,
+    runCrossAgentLearning,
+    runToolEffectiveness,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
@@ -281,6 +290,15 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
               run: async () => {
                 const r = await runExtractReinforcement({ days: 7, verbose, dryRun: false });
                 log(`Extract-reinforcement: ${r.sessionsScanned} sessions scanned.`);
+              },
+            }]
+          : []),
+        ...(runExtractImplicitFeedback
+          ? [{
+              name: "extract-implicit (3 days)",
+              run: async () => {
+                const r = await runExtractImplicitFeedback({ days: 3, verbose, dryRun: false });
+                log(`Extract-implicit: ${r.signalsExtracted} signals (${r.positiveCount}+/${r.negativeCount}-) from ${r.sessionsScanned} sessions.`);
               },
             }]
           : []),
@@ -615,6 +633,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const sqlResults = factsDb.search(query, 50, {
           scopeFilter,
           tierFilter: opts?.tier === 'cold' ? 'all' : 'warm',
+          reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+          diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
         });
 
         // Filter vector results by scope
@@ -1290,14 +1310,76 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         }
         if (res.skipped) {
           console.log("Dream cycle skipped (nightlyCycle.enabled = false in config).");
-          return;
+        } else {
+          console.log(`Dream cycle complete: ${res.digestSummary}`);
+          console.log(`  Facts pruned: ${res.factsPruned}`);
+          console.log(`  Facts decayed: ${res.factsDecayed}`);
+          console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
+          console.log(`  Patterns found: ${res.patternsFound}`);
+          console.log(`  Rules generated: ${res.rulesGenerated}`);
         }
-        console.log(`Dream cycle complete: ${res.digestSummary}`);
-        console.log(`  Facts pruned: ${res.factsPruned}`);
-        console.log(`  Facts decayed: ${res.factsDecayed}`);
-        console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
-        console.log(`  Patterns found: ${res.patternsFound}`);
-        console.log(`  Rules generated: ${res.rulesGenerated}`);
+
+        if (!res.skipped && runContinuousVerification && cfg.verification.enabled && cfg.verification.continuousVerification) {
+          let verificationRes;
+          try {
+            verificationRes = await runContinuousVerification();
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "continuous-verification" });
+            throw err;
+          }
+          console.log("Continuous verification complete:");
+          console.log(`  Checked: ${verificationRes.checked}`);
+          console.log(`  Confirmed: ${verificationRes.confirmed}`);
+          console.log(`  Stale: ${verificationRes.stale}`);
+          console.log(`  Uncertain: ${verificationRes.uncertain}`);
+          console.log(`  Errors: ${verificationRes.errors}`);
+        }
+
+        // Extract implicit feedback signals as part of nightly cycle
+        if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
+          try {
+            const implRes = await runExtractImplicitFeedback({ days: 3, dryRun: false, includeClosedLoop: false });
+            console.log(`Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsScanned} sessions.`);
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:extract-implicit" });
+          }
+        }
+
+        // Closed-loop effectiveness analysis
+        if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
+          try {
+            const clReport = runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true });
+            console.log(`Closed-loop analysis: ${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted.`);
+            if (clReport.rulesAnalyzed > 0) {
+              const report = getEffectivenessReport(factsDb);
+              if (report && report.length > 0) console.log(report);
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:closed-loop" });
+          }
+        }
+
+        // Cross-agent learning (Issue #263 — Phase 2)
+        if (!res.skipped && runCrossAgentLearning && cfg.crossAgentLearning?.enabled && cfg.crossAgentLearning?.runInNightlyCycle !== false) {
+          try {
+            const caRes = await runCrossAgentLearning();
+            console.log(`Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`);
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:cross-agent-learning" });
+          }
+        }
+
+        // Tool effectiveness scoring (Issue #263 — Phase 3)
+        if (!res.skipped && runToolEffectiveness && cfg.toolEffectiveness?.enabled !== false && cfg.toolEffectiveness?.runInNightlyCycle !== false) {
+          try {
+            const teOutput = await runToolEffectiveness({});
+            if (teOutput && !teOutput.startsWith("No tool")) {
+              console.log(`Tool effectiveness: ${teOutput.split("\n")[0]}`);
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:tool-effectiveness" });
+          }
+        }
       }));
   }
 
@@ -1444,6 +1526,89 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       if (res.toolsApplied != null && res.toolsApplied > 0) {
         console.log(`TOOLS.md updates applied: ${res.toolsApplied}`);
       }
+    }));
+
+  if (runExtractImplicitFeedback) {
+    mem
+      .command("extract-implicit")
+      .description("Extract implicit feedback signals from session transcripts and route to reinforcement/self-correction pipelines")
+      .option("--days <n>", "Days to look back (default 3)", "3")
+      .option("--dry-run", "Show what would be stored without storing")
+      .option("--verbose", "Show detailed signal output per session")
+      .option("--no-trajectories", "Skip trajectory building")
+      .option("--no-closed-loop", "Skip closed-loop analysis")
+      .action(withExit(async (opts?: { days?: string; dryRun?: boolean; verbose?: boolean; trajectories?: boolean; closedLoop?: boolean }) => {
+        const days = opts?.days ? parseInt(opts.days, 10) : 3;
+        const dryRun = !!opts?.dryRun;
+        const verbose = !!opts?.verbose;
+        const includeTrajectories = opts?.trajectories !== false;
+        const includeClosedLoop = opts?.closedLoop !== false;
+        let res;
+        try {
+          res = await runExtractImplicitFeedback({ days, dryRun, verbose, includeTrajectories, includeClosedLoop });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "extract-implicit" });
+          throw err;
+        }
+        console.log(`Extract-implicit complete: ${res.signalsExtracted} signals from ${res.sessionsScanned} sessions ${dryRun ? "(dry-run)" : ""}`);
+        console.log(`  Positive signals: ${res.positiveCount}`);
+        console.log(`  Negative signals: ${res.negativeCount}`);
+        console.log(`  Trajectories built: ${res.trajectoriesBuilt}`);
+        if (res.closedLoopReport) {
+          console.log("\n" + res.closedLoopReport);
+        }
+      }));
+  }
+
+  // ----- cross-agent-learning (Issue #263 — Phase 2) -----
+  mem
+    .command("cross-agent-learning")
+    .description("Generalise agent-scoped lessons into global patterns (Issue #263 — Phase 2)")
+    .action(withExit(async () => {
+      if (!runCrossAgentLearning) {
+        console.error("cross-agent-learning is not available in this context.");
+        process.exitCode = 1;
+        return;
+      }
+      if (!cfg.crossAgentLearning?.enabled) {
+        console.log("Cross-agent learning is disabled (crossAgentLearning.enabled = false).");
+        return;
+      }
+      let res;
+      try {
+        res = await runCrossAgentLearning();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "cross-agent-learning" });
+        throw err;
+      }
+      console.log(`Cross-agent learning complete:`);
+      console.log(`  Agents scanned: ${res.agentsScanned}`);
+      console.log(`  Lessons considered: ${res.lessonsConsidered}`);
+      console.log(`  Generalised stored: ${res.generalisedStored}`);
+      console.log(`  Links created: ${res.linksCreated}`);
+      console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
+      if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
+    }));
+
+  // ----- tool-effectiveness (Issue #263 — Phase 3) -----
+  mem
+    .command("tool-effectiveness")
+    .description("Compute and display tool effectiveness scores from workflow traces (Issue #263 — Phase 3)")
+    .option("--verbose", "Show detailed per-tool breakdown")
+    .action(withExit(async (opts?: { verbose?: boolean }) => {
+      if (!runToolEffectiveness) {
+        console.error("tool-effectiveness is not available in this context.");
+        process.exitCode = 1;
+        return;
+      }
+      let output: string;
+      try {
+        output = await runToolEffectiveness({ verbose: !!opts?.verbose });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "tool-effectiveness" });
+        throw err;
+      }
+      console.log(output);
     }));
 
   mem

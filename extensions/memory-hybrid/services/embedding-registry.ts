@@ -14,6 +14,7 @@ import type { EmbeddingModelConfig } from "../config.js";
 import {
   Embeddings,
   OllamaEmbeddingProvider,
+  OnnxEmbeddingProvider,
   type EmbeddingProvider,
 } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -194,10 +195,10 @@ function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
   }
 
   if (cfg.provider === "onnx") {
-    throw new Error(
-      `EmbeddingModelConfig for '${cfg.name}': ONNX provider is not yet implemented. ` +
-        "Use provider='ollama' or provider='openai'.",
-    );
+    return new OnnxEmbeddingProvider({
+      model: cfg.name,
+      dimensions: cfg.dimensions,
+    });
   }
 
   throw new Error(
@@ -210,7 +211,7 @@ function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
 // ---------------------------------------------------------------------------
 
 /** Convert number[] or Float32Array to Float32Array. */
-function toFloat32Array(vec: number[] | Float32Array): Float32Array {
+export function toFloat32Array(vec: number[] | Float32Array): Float32Array {
   return vec instanceof Float32Array ? vec : new Float32Array(vec);
 }
 

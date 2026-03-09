@@ -103,6 +103,14 @@ export type ReinforcementConfig = {
   maxConfidence: number;
   /** Cosine similarity threshold above which a new fact is treated as a repeat of an existing one (default: 0.85). */
   similarityThreshold: number;
+  /** Max reinforcement events to store per fact before FIFO eviction (default: 50). */
+  maxEventsPerFact?: number;
+  /** Weight applied to diversity score when calculating effective boost (default: 1.0). */
+  diversityWeight?: number;
+  /** When false, skip storing context columns (query_snippet, topic, etc.) per event (default: true). */
+  trackContext?: boolean;
+  /** Base boost amount before diversity weighting is applied (default: 1.0). */
+  boostAmount?: number;
 };
 
 /** Future-date decay freeze protection (#144). */
@@ -157,6 +165,10 @@ export type DocumentsConfig = {
   maxDocumentSize: number;
   /** Automatically add filename as a tag to ingested facts (default: true) */
   autoTag: boolean;
+  /** Enable LLM vision for image ingestion (default: false) */
+  visionEnabled: boolean;
+  /** Optional vision model (default: resolved from llm.default) */
+  visionModel?: string;
   /** Optional allowlist of absolute directory paths; when set, ingestion only allows files under these paths */
   allowedPaths?: string[];
 };
@@ -171,4 +183,127 @@ export type SelfExtensionConfig = {
   minToolSavings: number;
   /** Maximum number of pending proposals allowed at any time (default: 20). */
   maxProposals: number;
+};
+
+/** Signal types for implicit feedback detection (Issue #262). */
+export type ImplicitSignalType =
+  | "rephrase"
+  | "immediate_action"
+  | "topic_change"
+  | "grateful_close"
+  | "self_service"
+  | "escalation"
+  | "terse_response"
+  | "extended_engagement"
+  | "copy_paste"
+  | "correction_cascade"
+  | "silence_after_action";
+
+/** Implicit feedback detection from behavioral conversation signals (Issue #262). */
+export type ImplicitFeedbackConfig = {
+  /** Enable implicit feedback detection (default: true). */
+  enabled: boolean;
+  /** Minimum confidence to include a signal (default: 0.5). */
+  minConfidence: number;
+  /** Signal types to detect; defaults to all types. */
+  signalTypes: ImplicitSignalType[];
+  /** Similarity threshold for rephrase detection (default: 0.8). */
+  rephraseThreshold: number;
+  /** Similarity threshold for topic-change detection (default: 0.3). */
+  topicChangeThreshold: number;
+  /** Fraction of avg message length below which terse_response fires (default: 0.4). */
+  terseResponseRatio: number;
+  /** Feed positive implicit signals into the reinforcement pipeline (default: true). */
+  feedToReinforcement: boolean;
+  /** Feed negative implicit signals into the self-correction pipeline (default: true). */
+  feedToSelfCorrection: boolean;
+  /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
+  trajectoryLLMAnalysis: boolean;
+};
+
+/** Frustration signal weights override (Issue #263 — Phase 1). */
+export type FrustrationSignalWeights = {
+  short_reply?: number;
+  imperative_tone?: number;
+  repeated_instruction?: number;
+  caps_or_emphasis?: number;
+  explicit_frustration?: number;
+  correction_frequency?: number;
+  question_to_command?: number;
+  reduced_context?: number;
+  emoji_shift?: number;
+};
+
+/** Frustration detection configuration (Issue #263 — Phase 1). */
+export type FrustrationDetectionConfig = {
+  /** Enable real-time frustration detection (default: true). */
+  enabled: boolean;
+  /** Sliding window: number of conversation turns to analyse (default: 8). */
+  windowSize: number;
+  /** Recency decay applied per turn (default: 0.85). */
+  decayRate: number;
+  /** Custom per-signal weights overriding defaults (0-1). */
+  signalWeights?: FrustrationSignalWeights;
+  /** Frustration level (0-1) at which to inject a hint into system context (default: 0.3). */
+  injectionThreshold: number;
+  /** Frustration level thresholds per adaptation category. */
+  adaptationThresholds: {
+    medium: number;   // default 0.3
+    high: number;     // default 0.5
+    critical: number; // default 0.7
+  };
+  /** Export frustration signals to the #262 implicit feedback pipeline (default: true). */
+  feedToImplicitPipeline: boolean;
+};
+
+/** Cross-agent learning configuration (Issue #263 — Phase 2). */
+export type CrossAgentLearningConfig = {
+  /** Enable cross-agent learning in the nightly cycle (default: false). */
+  enabled: boolean;
+  /** Days of agent-scoped facts to consider (default: 14). */
+  windowDays: number;
+  /** LLM model for generalisation (default: resolved from llm.nano). */
+  model?: string;
+  /** Fallback models if primary fails. */
+  fallbackModels?: string[];
+  /** Batch size per LLM call (default: 20). */
+  batchSize: number;
+  /** Minimum confidence of source agent fact (default: 0.4). */
+  minSourceConfidence: number;
+  /** Run during nightly cycle (default: true when enabled). */
+  runInNightlyCycle: boolean;
+};
+
+/** Tool effectiveness scoring configuration (Issue #263 — Phase 3). */
+export type ToolEffectivenessConfig = {
+  /** Enable tool effectiveness scoring (default: true when workflowTracking.enabled). */
+  enabled: boolean;
+  /** Minimum total calls before a tool is scored (default: 3). */
+  minCalls: number;
+  /** Top-N tools to surface in reports (default: 10). */
+  topN: number;
+  /** Score below which a tool is flagged as low-scorer (default: 0.3). */
+  lowScoreThreshold: number;
+  /** Score decay per nightly run (default: 0.95). */
+  decayFactor: number;
+  /** Run scoring in the nightly cycle (default: true when enabled). */
+  runInNightlyCycle: boolean;
+  /** Inject tool-preference hints into agent context (default: true). */
+  injectHints?: boolean;
+};
+
+/** Closed-loop rule effectiveness measurement (Issue #262). */
+export type ClosedLoopConfig = {
+  /** Enable closed-loop measurement (default: true). */
+  enabled: boolean;
+  /** Days before and after rule creation to compare (default: 7). */
+  measurementWindowDays: number;
+  /** Minimum total feedback events required before scoring (default: 5). */
+  minSampleSize: number;
+  /** Effect score threshold below which a rule is auto-deprecated (default: -0.3). */
+  autoDeprecateThreshold: number;
+  /** Effect score threshold above which a rule's confidence is boosted (default: 0.5). */
+  autoBoostThreshold: number;
+  /** Run measurement in the nightly cycle (default: true). */
+  runInNightlyCycle: boolean;
 };

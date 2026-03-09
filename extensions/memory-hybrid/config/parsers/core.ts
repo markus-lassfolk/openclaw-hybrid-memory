@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { StoreConfig, WALConfig, PathConfig } from "../types/core.js";
+import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "../types/core.js";
 import type {
   CredentialsConfig,
   CredentialAutoCaptureConfig,
@@ -15,6 +15,7 @@ import { parseDuration } from "../../utils/duration.js";
 export const DEFAULT_MODEL = "text-embedding-3-small";
 export const DEFAULT_LANCE_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
 export const DEFAULT_SQLITE_PATH = join(homedir(), ".openclaw", "memory", "facts.db");
+export const DEFAULT_EVENT_ARCHIVE_PATH = "~/.openclaw/event-archive";
 
 export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-small": 1536,
@@ -22,6 +23,7 @@ export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-ada-002": 1536,
   // Local / HuggingFace models that users may have previously generated vectors with
   "all-MiniLM-L6-v2": 384,
+  "bge-small-en-v1.5": 384,
   // Common Ollama embedding models
   "nomic-embed-text": 768,
   "mxbai-embed-large": 1024,
@@ -68,6 +70,20 @@ export function parseWALConfig(cfg: Record<string, unknown>): WALConfig {
     enabled: walRaw?.enabled !== false,
     walPath: typeof walRaw?.walPath === "string" ? walRaw.walPath : undefined,
     maxAge: typeof walRaw?.maxAge === "number" && walRaw.maxAge > 0 ? walRaw.maxAge : 5 * 60 * 1000,
+  };
+}
+
+export function parseEventLogConfig(cfg: Record<string, unknown>): EventLogConfig {
+  const eventLogRaw = cfg.eventLog as Record<string, unknown> | undefined;
+  return {
+    archivalDays:
+      typeof eventLogRaw?.archivalDays === "number" && eventLogRaw.archivalDays >= 1
+        ? Math.min(3650, Math.floor(eventLogRaw.archivalDays))
+        : 90,
+    archivePath:
+      typeof eventLogRaw?.archivePath === "string" && eventLogRaw.archivePath.trim().length > 0
+        ? eventLogRaw.archivePath.trim()
+        : DEFAULT_EVENT_ARCHIVE_PATH,
   };
 }
 
@@ -235,6 +251,13 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
         ? Math.floor(scRaw.spawnThreshold)
         : 15,
     spawnModel: typeof scRaw.spawnModel === "string" ? scRaw.spawnModel : "",
+    positiveRulesSection:
+      typeof scRaw.positiveRulesSection === "string" && scRaw.positiveRulesSection.trim().length > 0
+        ? scRaw.positiveRulesSection.trim()
+        : "Positive Reinforcement Rules",
+    reinforcementLLMAnalysis: scRaw.reinforcementLLMAnalysis !== false,
+    reinforcementToProposals: scRaw.reinforcementToProposals !== false,
+    agentsRuleToProposals: scRaw.agentsRuleToProposals !== false,
   };
 }
 

@@ -1,7 +1,7 @@
 /**
  * Contextual Variant Generator (Issue #159).
  *
- * At fact storage time, generate 1-2 contextual expansions via LLM and embed
+ * At fact storage time, generate contextual expansions via LLM and embed
  * them alongside the canonical text. This bridges semantic gaps — a fact about
  * "HA runs on Proxmox VM 100 at 192.168.1.212" also gets a variant like
  * "smart home server infrastructure" so it matches queries from different angles.
@@ -20,16 +20,28 @@ import type { ContextualVariantsConfig } from "../config.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
-// Prompt template
+// Prompt templates
 // ---------------------------------------------------------------------------
 
-const VARIANT_PROMPT_TEMPLATE = `Given this memory fact:
+export type ContextualVariantType = "contextual-means" | "contextual-search";
+
+const CONTEXTUAL_MEANS_PROMPT_TEMPLATE = `Given this memory fact:
 "{text}"
 Category: {category}
 
-Generate {count} brief alternative phrasings that capture the same meaning using different vocabulary or framing. Each phrasing should be a single concise sentence that someone might use to search for this information.
+Generate {count} brief alternative phrasings that explain what this means using different vocabulary or framing. Each phrasing should be a single concise sentence.
 
-Return ONLY a JSON array of strings, no other text. Example: ["phrasing one", "phrasing two"]`;
+Return ONLY a JSON array of strings, no other text. Example: ["meaning one", "meaning two"]`;
+
+const CONTEXTUAL_SEARCH_PROMPT_TEMPLATE = `Given this memory fact:
+"{text}"
+Category: {category}
+
+List 3-5 different ways someone might search for this information. Each should be a short query or phrase.
+
+Return ONLY a JSON array of strings, no other text. Example: ["search phrase one", "search phrase two"]`;
+
+const VARIANT_TYPES: ContextualVariantType[] = ["contextual-means", "contextual-search"];
 
 // ---------------------------------------------------------------------------
 // ContextualVariantGenerator
@@ -40,8 +52,8 @@ Return ONLY a JSON array of strings, no other text. Example: ["phrasing one", "p
  * Implements rate limiting and graceful degradation.
  */
 export class ContextualVariantGenerator {
-  /** Sliding-window call timestamps for rate limiting (ms epoch). */
-  private callTimestamps: number[] = [];
+  /** Sliding-window call timestamps for rate limiting (ms epoch), per variant type. */
+  private callTimestamps: Map<ContextualVariantType, number[]> = new Map();
 
   constructor(
     private readonly config: ContextualVariantsConfig,
@@ -52,7 +64,11 @@ export class ContextualVariantGenerator {
    * Generate 0-N contextual variant phrasings for the given fact text.
    * Returns empty array when disabled, rate-limited, or on LLM error.
    */
-  async generateVariants(text: string, category: string): Promise<string[]> {
+  async generateVariants(
+    text: string,
+    category: string,
+    variantType: ContextualVariantType,
+  ): Promise<string[]> {
     if (!this.config.enabled) return [];
 
     // Category filter: skip if categories list is set and this category is not in it.
@@ -64,17 +80,27 @@ export class ContextualVariantGenerator {
       return [];
     }
 
-    // Rate limiting: sliding window of maxPerMinute calls per 60s.
+    // Rate limiting: sliding window of maxPerMinute calls per 60s, per variant type.
     const now = Date.now();
     const windowMs = 60_000;
-    this.callTimestamps = this.callTimestamps.filter((t) => now - t < windowMs);
-    if (this.callTimestamps.length >= this.config.maxPerMinute) {
+    let timestamps = this.callTimestamps.get(variantType) ?? [];
+    timestamps = timestamps.filter((t) => now - t < windowMs);
+    if (timestamps.length >= this.config.maxPerMinute) {
       return [];
     }
-    this.callTimestamps.push(now);
+    timestamps.push(now);
+    this.callTimestamps.set(variantType, timestamps);
 
-    const count = Math.max(1, this.config.maxVariantsPerFact);
-    const prompt = VARIANT_PROMPT_TEMPLATE.replace("{text}", () => text)
+    const count =
+      variantType === "contextual-search"
+        ? Math.max(1, Math.min(5, this.config.maxVariantsPerFact))
+        : Math.max(1, this.config.maxVariantsPerFact);
+    const promptTemplate =
+      variantType === "contextual-search"
+        ? CONTEXTUAL_SEARCH_PROMPT_TEMPLATE
+        : CONTEXTUAL_MEANS_PROMPT_TEMPLATE;
+    const prompt = promptTemplate
+      .replace("{text}", () => text)
       .replace("{category}", () => category)
       .replace("{count}", () => String(count));
 
@@ -90,7 +116,11 @@ export class ContextualVariantGenerator {
         timeoutMs: 15_000,
       });
 
-      return parseVariantsFromResponse(response, this.config.maxVariantsPerFact);
+      const maxVariants =
+        variantType === "contextual-search"
+          ? 5
+          : this.config.maxVariantsPerFact;
+      return parseVariantsFromResponse(response, maxVariants);
     } catch (err) {
       // Graceful degradation — log but never throw (fact already stored)
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -104,12 +134,16 @@ export class ContextualVariantGenerator {
   /** Expose call count in window for testing rate limiting. */
   get callsInWindow(): number {
     const now = Date.now();
-    return this.callTimestamps.filter((t) => now - t < 60_000).length;
+    let total = 0;
+    for (const timestamps of this.callTimestamps.values()) {
+      total += timestamps.filter((t) => now - t < 60_000).length;
+    }
+    return total;
   }
 
   /** Reset call timestamps (for testing). */
   _resetRateLimit(): void {
-    this.callTimestamps = [];
+    this.callTimestamps.clear();
   }
 }
 
@@ -150,7 +184,11 @@ export class VariantGenerationQueue {
   constructor(
     private readonly generator: ContextualVariantGenerator,
     /** Called with generated variants for a fact. Should store them in DB. */
-    private readonly onVariantsGenerated: (factId: string, variants: string[]) => Promise<void>,
+    private readonly onVariantsGenerated: (
+      factId: string,
+      variantType: ContextualVariantType,
+      variants: string[],
+    ) => Promise<void>,
   ) {}
 
   /** Add a fact to the variant generation queue. Non-blocking. */
@@ -169,13 +207,19 @@ export class VariantGenerationQueue {
       while (this.queue.length > 0) {
         const batch = this.queue.splice(0, this.batchSize);
         for (const item of batch) {
-          try {
-            const variants = await this.generator.generateVariants(item.text, item.category);
-            if (variants.length > 0) {
-              await this.onVariantsGenerated(item.factId, variants);
+          for (const variantType of VARIANT_TYPES) {
+            try {
+              const variants = await this.generator.generateVariants(
+                item.text,
+                item.category,
+                variantType,
+              );
+              if (variants.length > 0) {
+                await this.onVariantsGenerated(item.factId, variantType, variants);
+              }
+            } catch {
+              // Graceful degradation — skip this variant type
             }
-          } catch {
-            // Graceful degradation — skip this item
           }
         }
       }

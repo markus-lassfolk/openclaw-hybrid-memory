@@ -130,6 +130,7 @@ export type HybridMemCliContext = {
   runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{ metaExtracted: number; metaStored: number }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runDreamCycle: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runContinuousVerification: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -158,6 +159,7 @@ export type HybridMemCliContext = {
   runAnalyzeFeedbackPhrases: (opts: { days?: number; model?: string; outputPath?: string; learn?: boolean }) => Promise<AnalyzeFeedbackPhrasesResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runExtractImplicitFeedback?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; includeTrajectories?: boolean; includeClosedLoop?: boolean }) => Promise<{ signalsExtracted: number; positiveCount: number; negativeCount: number; trajectoriesBuilt: number; sessionsScanned: number; closedLoopReport?: string }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runExport: (opts: {
     outputPath: string;
@@ -187,6 +189,8 @@ export type HybridMemCliContext = {
   resolvePath?: (file: string) => string;
   /** Active task working memory context (required when activeTask.enabled = true) */
   activeTask?: ActiveTaskContext;
+  runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
+  runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
 };
 
 /** Chainable command type (Commander-style). */

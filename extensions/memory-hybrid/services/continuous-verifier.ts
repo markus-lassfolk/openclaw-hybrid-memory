@@ -58,7 +58,7 @@ export function buildVerificationPrompt(
     `You are a fact-verification assistant. Determine whether the following verified fact is still accurate based on recent knowledge.\n\n` +
     `Verified fact: ${factText}\n\n` +
     `Recent knowledge about "${entity}":\n${recentSection}\n\n` +
-    `Is the verified fact still accurate?\n` +
+    `Is this still accurate based on recent knowledge?\n` +
     `Answer with exactly one of: CONFIRMED, STALE, or UNCERTAIN, followed by a brief reason.\n` +
     `Example: "CONFIRMED – the IP address is still in use"\n` +
     `Example: "STALE – the server was decommissioned last month"\n` +
@@ -96,7 +96,11 @@ export function parseVerificationOutcome(response: string): VerificationOutcome 
 const DEFAULT_MODEL = "openai/gpt-4.1-nano";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const RECENT_FACTS_DAYS = 90;
-const STALE_CONFIDENCE = 0.3;
+// Confidence assigned to facts the LLM determines are stale. Kept below 0.3
+// so that natural decay cycles will eventually remove them, while still
+// preventing immediate deletion (threshold is < 0.1). Previously 0.5, which
+// was misleadingly high — stale facts should not appear reliable in recall.
+const STALE_CONFIDENCE = 0.2;
 
 export class ContinuousVerifier {
   private readonly store: VerificationStore;
@@ -167,7 +171,7 @@ export class ContinuousVerifier {
    * - Fetches recent (last 90 days) facts about the same entity from FactsDB.
    * - Asks the LLM whether the fact is still accurate.
    * - CONFIRMED → bumps verified_at and next_verification in the store.
-   * - STALE     → sets confidence to 0.3 and tags the underlying fact 'needs-verification'.
+   * - STALE     → sets confidence to 0.5 and tags the underlying fact 'needs-verification'.
    * - UNCERTAIN → tags the underlying fact 'review-needed'.
    * - Errors are counted but do not abort the cycle.
    */

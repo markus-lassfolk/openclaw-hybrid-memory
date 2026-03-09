@@ -12,6 +12,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
+import type { ProvenanceService } from "./provenance.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import {
   REFLECTION_MAX_FACT_LENGTH,
@@ -24,6 +25,7 @@ import {
 } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
+import { randomUUID } from "node:crypto";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -119,6 +121,7 @@ export async function runReflection(
   config: ReflectionConfig,
   opts: ReflectionOptions,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionResult> {
   // Feature-gating: exit 0 if reflection is disabled
   if (config.enabled === false) {
@@ -217,6 +220,7 @@ export async function runReflection(
   }
 
   let stored = 0;
+  const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const patternText of uniqueNewPatterns) {
     let vec: number[];
     try {
@@ -261,7 +265,24 @@ export async function runReflection(
       source: "reflection",
       decayClass: "permanent",
       tags: ["reflection", "pattern"],
+      extractionMethod: "reflection",
+      extractionConfidence: REFLECTION_IMPORTANCE,
     });
+    if (provenanceService && reflectionRunId) {
+      try {
+        provenanceService.addEdge(entry.id, {
+          edgeType: "DERIVED_FROM",
+          sourceType: "reflection",
+          sourceId: reflectionRunId,
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "reflection-provenance-derived",
+          subsystem: "provenance",
+          factId: entry.id,
+        });
+      }
+    }
 
     if (opts.verbose) {
       logger.info(`memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? '...' : ''}`);
@@ -305,6 +326,7 @@ export async function runReflectionRules(
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionRulesResult> {
   const nowSec = Math.floor(Date.now() / 1000);
   const patternFacts = factsDb.getByCategory("pattern").filter(
@@ -385,6 +407,7 @@ export async function runReflectionRules(
     if (i + 20 < existingRuleFacts.length) await new Promise((r) => setTimeout(r, 200));
   }
   let stored = 0;
+  const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const ruleText of uniqueRules) {
     let vec: number[];
     try {
@@ -427,7 +450,24 @@ export async function runReflectionRules(
       source: "reflection",
       decayClass: "permanent",
       tags: ["reflection", "rule"],
+      extractionMethod: "reflection",
+      extractionConfidence: REFLECTION_IMPORTANCE,
     });
+    if (provenanceService && reflectionRunId) {
+      try {
+        provenanceService.addEdge(entry.id, {
+          edgeType: "DERIVED_FROM",
+          sourceType: "reflection",
+          sourceId: reflectionRunId,
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "reflection-rules-provenance-derived",
+          subsystem: "provenance",
+          factId: entry.id,
+        });
+      }
+    }
 
     if (opts.verbose) {
       logger.info(`memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? '...' : ''}`);
@@ -459,6 +499,7 @@ export async function runReflectionMeta(
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
   const patternFacts = factsDb.getByCategory("pattern").filter(
@@ -539,6 +580,7 @@ export async function runReflectionMeta(
     if (i + 20 < existingMetaFacts.length) await new Promise((r) => setTimeout(r, 200));
   }
   let stored = 0;
+  const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const metaText of uniqueMetas) {
     let vec: number[];
     try {
@@ -581,7 +623,24 @@ export async function runReflectionMeta(
       source: "reflection",
       decayClass: "permanent",
       tags: ["reflection", "pattern", "meta"],
+      extractionMethod: "reflection",
+      extractionConfidence: REFLECTION_IMPORTANCE,
     });
+    if (provenanceService && reflectionRunId) {
+      try {
+        provenanceService.addEdge(entry.id, {
+          edgeType: "DERIVED_FROM",
+          sourceType: "reflection",
+          sourceId: reflectionRunId,
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "reflection-meta-provenance-derived",
+          subsystem: "provenance",
+          factId: entry.id,
+        });
+      }
+    }
 
     if (opts.verbose) {
       logger.info(`memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? '...' : ''}`);

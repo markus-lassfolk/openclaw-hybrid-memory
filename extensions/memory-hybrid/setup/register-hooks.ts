@@ -11,6 +11,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
@@ -23,11 +24,13 @@ export interface HooksContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  embeddingRegistry?: EmbeddingRegistry | null;
   openai: OpenAI;
   cfg: HybridMemoryConfig;
   credentialsDb: CredentialsDB | null;
   aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
+  eventLog: import("../backends/event-log.js").EventLog | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
@@ -58,11 +61,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
       embeddings: ctx.embeddings,
+      embeddingRegistry: ctx.embeddingRegistry ?? null,
       openai: ctx.openai,
       cfg: ctx.cfg,
       credentialsDb: ctx.credentialsDb,
       aliasDb: ctx.aliasDb,
       wal: ctx.wal,
+      eventLog: ctx.eventLog,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
@@ -90,6 +95,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   try {
     hooks.onAgentStart(api);
     hooks.onAgentEnd(api);
+    hooks.onFrustrationDetect?.(api);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:attach" });
     throw err;

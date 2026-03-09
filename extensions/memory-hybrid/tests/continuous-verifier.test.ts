@@ -18,7 +18,7 @@
  *   ContinuousVerifier.runCycle:
  *     - returns {checked:0,...} when no facts are due
  *     - CONFIRMED path: store updated (new version), confirmed counter incremented
- *     - STALE path: fact confidence set to 0.3, tag 'needs-verification' added
+ *     - STALE path: fact confidence set to 0.5, tag 'needs-verification' added
  *     - UNCERTAIN path: tag 'review-needed' added, confidence unchanged
  *     - counts errors without aborting the rest of the cycle
  *     - processes multiple facts in a single cycle
@@ -267,7 +267,7 @@ describe("ContinuousVerifier.runCycle — CONFIRMED", () => {
 // ---------------------------------------------------------------------------
 
 describe("ContinuousVerifier.runCycle — STALE", () => {
-  it("reduces fact confidence to 0.3 and adds 'needs-verification' tag", async () => {
+  it("reduces fact confidence to 0.5 and adds 'needs-verification' tag", async () => {
     const mockOpenAI = makeMockOpenAI("STALE – decommissioned");
     const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
 
@@ -297,7 +297,7 @@ describe("ContinuousVerifier.runCycle — STALE", () => {
 
     const updated = factsDb.getById(factId);
     expect(updated).not.toBeNull();
-    expect(updated!.confidence).toBe(0.3);
+    expect(updated!.confidence).toBe(0.2);
     expect(updated!.tags).toContain("needs-verification");
   });
 

@@ -10,11 +10,13 @@ import { ProposalsDB } from "../backends/proposals-db.js";
 import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
-import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType } from "../config.js";
+import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
+import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
+import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
@@ -23,6 +25,7 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProvenanceService } from "../services/provenance.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
+import { VerificationStore } from "../services/verification-store.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -193,6 +196,7 @@ export interface DatabaseContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  embeddingRegistry: EmbeddingRegistry;
   openai: OpenAI;
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
@@ -203,6 +207,7 @@ export interface DatabaseContext {
   workflowStore: WorkflowStore;
   crystallizationStore: CrystallizationStore;
   toolProposalStore: ToolProposalStore;
+  verificationStore: VerificationStore | null;
   provenanceService: ProvenanceService | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
@@ -242,6 +247,11 @@ export function initializeDatabases(
       `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
     );
   });
+  const embeddingRegistry = buildEmbeddingRegistry(
+    embeddings,
+    cfg.embedding.model,
+    resolveEmbeddingRegistryModels(cfg.embedding),
+  );
 
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
@@ -322,11 +332,12 @@ export function initializeDatabases(
     api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
   }
 
-  // Initialize EventLog when nightlyCycle is enabled (episodic consolidation, nightly
-  // contradiction resolution) or graph.autoSupersede is on (contradiction events). This avoids creating event-log.db for
-  // users who don't need it.
+  // Initialize EventLog whenever any episodic feature is enabled: nightlyCycle (consolidation,
+  // contradiction resolution), graph.autoSupersede (contradiction events), or passiveObserver
+  // (Layer 1 write-before-store, Issue #150). This ensures any code path that appends to
+  // event_log gets a live instance rather than silently skipping.
   let eventLog: EventLog | null = null;
-  if (cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede) {
+  if (cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede || cfg.passiveObserver.enabled) {
     const eventLogPath = join(dirname(resolvedSqlitePath), "event-log.db");
     eventLog = new EventLog(eventLogPath);
     api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
@@ -360,6 +371,19 @@ export function initializeDatabases(
   const toolProposalStorePath = join(dirname(resolvedSqlitePath), "tool-proposals.db");
   const toolProposalStore = new ToolProposalStore(toolProposalStorePath);
   api.logger.info(`memory-hybrid: tool proposal store initialized (${toolProposalStorePath})`);
+
+  // Initialize VerificationStore when enabled (Issue #162).
+  // Share FactsDB's db instance so verified_facts lives in the same connection —
+  // avoids a second Database handle on facts.db and prevents dual table-creation conflicts.
+  let verificationStore: VerificationStore | null = null;
+  if (cfg.verification.enabled) {
+    verificationStore = new VerificationStore(factsDb.getRawDb(), {
+      backupPath: cfg.verification.backupPath,
+      reverificationDays: cfg.verification.reverificationDays,
+      logger: api.logger,
+    });
+    api.logger.info("memory-hybrid: verification store enabled");
+  }
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -397,7 +421,12 @@ export function initializeDatabases(
       (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
         previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
-    if (!previousEmbeddingMeta || embeddingConfigChanged) {
+    // When autoMigrate is enabled, still record the initial baseline on first run so future
+    // changes can be detected. For subsequent runs with a config change, let runEmbeddingMaintenance
+    // handle the meta update to avoid pre-updating before the migration service can detect the change.
+    if (!cfg.embedding.autoMigrate && (!previousEmbeddingMeta || embeddingConfigChanged)) {
+      factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
+    } else if (cfg.embedding.autoMigrate && !previousEmbeddingMeta && !embeddingConfigChanged) {
       factsDb.setEmbeddingMeta(currentEmbeddingMeta.provider, currentEmbeddingMeta.model);
     }
   } catch (err) {
@@ -524,10 +553,39 @@ export function initializeDatabases(
     api.logger.warn(`memory-hybrid: async initialization encountered an error: ${err}`);
   });
 
+  // autoMigrate path: use the embedding-migration service when autoMigrate=true (Issue #153).
+  // Runs asynchronously so it does not block plugin start.
+  if (cfg.embedding.autoMigrate && embeddingConfigChanged) {
+    void (async () => {
+      try {
+        await runEmbeddingMaintenance({
+          factsDb,
+          vectorDb,
+          embeddings,
+          currentProvider: cfg.embedding.provider,
+          currentModel: cfg.embedding.model,
+          autoMigrate: true,
+          batchSize: cfg.embedding.batchSize,
+          logger: {
+            info: (msg) => api.logger.info(msg),
+            warn: (msg) => api.logger.warn(msg),
+          },
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "autoMigrate-embedding",
+          subsystem: "embeddings",
+        });
+        api.logger.warn(`memory-hybrid: autoMigrate embedding run failed: ${err}`);
+      }
+    })();
+  }
+
   // Schema validation + re-embedding (Issue #128 + #153).
   // Runs asynchronously so it does not block plugin start.
   // vectorDb.count() triggers lazy initialization, after which wasRepaired is set.
-  if (cfg.vector.autoRepair || embeddingConfigChanged) {
+  // Skip this block when autoMigrate is enabled and config changed — runEmbeddingMaintenance handles it.
+  if ((cfg.vector.autoRepair || embeddingConfigChanged) && !(cfg.embedding.autoMigrate && embeddingConfigChanged)) {
     void (async () => {
       const reembedProgressPath = join(dirname(resolvedSqlitePath), ".reembed-progress.json");
       try {
@@ -632,6 +690,7 @@ export function initializeDatabases(
     factsDb,
     vectorDb,
     embeddings,
+    embeddingRegistry,
     openai,
     credentialsDb,
     wal,
@@ -642,12 +701,28 @@ export function initializeDatabases(
     workflowStore,
     crystallizationStore,
     toolProposalStore,
+    verificationStore,
     provenanceService,
     resolvedLancePath,
     resolvedSqlitePath,
     health,
     initialized,
   };
+}
+
+function resolveEmbeddingRegistryModels(
+  embedding: HybridMemoryConfig["embedding"],
+): EmbeddingModelConfig[] | undefined {
+  if (Array.isArray(embedding.multiModels) && embedding.multiModels.length > 0) {
+    return embedding.multiModels;
+  }
+  const rawModels = (embedding as unknown as { models?: unknown }).models;
+  if (!Array.isArray(rawModels) || rawModels.length === 0) return undefined;
+  const hasObjectModels = rawModels.every(
+    (item) => item && typeof item === "object",
+  );
+  if (!hasObjectModels) return undefined;
+  return rawModels as EmbeddingModelConfig[];
 }
 
 /**
@@ -665,9 +740,10 @@ export function closeOldDatabases(context: {
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
   toolProposalStore?: ToolProposalStore | null;
+  verificationStore?: VerificationStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, provenanceService } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -739,6 +815,13 @@ export function closeOldDatabases(context: {
       toolProposalStore.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "toolProposalStore" });
+    }
+  }
+  if (verificationStore) {
+    try {
+      verificationStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "verificationStore" });
     }
   }
   if (provenanceService) {

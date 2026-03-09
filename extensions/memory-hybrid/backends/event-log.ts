@@ -8,10 +8,15 @@
 
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, createWriteStream, createReadStream, existsSync, renameSync, unlinkSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGzip, createGunzip } from "node:zlib";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { expandTilde } from "../utils/path.js";
 
 export type EventType =
   | "fact_learned"
@@ -20,6 +25,16 @@ export type EventType =
   | "entity_mentioned"
   | "preference_expressed"
   | "correction";
+
+export function categoryToEventType(category: string): EventType {
+  switch (category) {
+    case "preference": return "preference_expressed";
+    case "decision": return "decision_made";
+    case "action": return "action_taken";
+    case "entity": return "entity_mentioned";
+    default: return "fact_learned";
+  }
+}
 
 export interface EventLogEntry {
   id: string;
@@ -136,6 +151,14 @@ export class EventLog {
     return rows.map((r) => this.rowToEntry(r));
   }
 
+  /** Return a single event by id (or null if not found). */
+  getById(id: string): EventLogEntry | null {
+    const row = this.liveDb
+      .prepare(`SELECT * FROM event_log WHERE id = ?`)
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToEntry(row) : null;
+  }
+
   /** Return events whose timestamp falls within [from, to] (ISO strings), optionally filtered by eventType. */
   getByTimeRange(from: string, to: string, eventType?: string): EventLogEntry[] {
     const params: unknown[] = [from, to];
@@ -190,6 +213,134 @@ export class EventLog {
       }
     });
     updateAll(eventIds);
+  }
+
+  /**
+   * Archive consolidated events older than N days to compressed JSONL files.
+   * Returns the number of rows archived and the files written.
+   */
+  async archiveConsolidated(
+    olderThanDays: number,
+    archiveDir: string,
+  ): Promise<{ archived: number; files: string[] }> {
+    if (olderThanDays <= 0) return { archived: 0, files: [] };
+    const cutoff = new Date(
+      Date.now() - olderThanDays * 24 * 3600 * 1000,
+    ).toISOString();
+    const resolvedDir = expandTilde(archiveDir);
+    mkdirSync(resolvedDir, { recursive: true });
+
+    const months = this.liveDb
+      .prepare(
+        `SELECT DISTINCT strftime('%Y-%m', timestamp) AS ym
+         FROM event_log
+         WHERE timestamp < ? AND consolidated_into IS NOT NULL
+         ORDER BY ym ASC`,
+      )
+      .all(cutoff) as { ym: string | null }[];
+
+    const files: string[] = [];
+    let archived = 0;
+    for (const row of months) {
+      const month = row.ym;
+      if (!month) continue;
+      const countRow = this.liveDb
+        .prepare(
+          `SELECT COUNT(*) AS count FROM event_log
+           WHERE timestamp < ?
+             AND consolidated_into IS NOT NULL
+             AND strftime('%Y-%m', timestamp) = ?`,
+        )
+        .get(cutoff, month) as { count: number };
+      if (!countRow?.count) continue;
+
+      const ids: string[] = [];
+      const stmt = this.liveDb.prepare(
+        `SELECT * FROM event_log
+         WHERE timestamp < ?
+           AND consolidated_into IS NOT NULL
+           AND strftime('%Y-%m', timestamp) = ?
+         ORDER BY timestamp ASC`,
+      );
+      const filePath = join(resolvedDir, `${month}.jsonl.gz`);
+      const tempPath = `${filePath}.tmp`;
+      const rowToEntry = this.rowToEntry.bind(this);
+
+      try {
+        const lineStream = Readable.from((async function* () {
+          const seenIds = new Set<string>();
+
+          if (existsSync(filePath)) {
+            try {
+              const input = createReadStream(filePath).pipe(createGunzip());
+              const rl = createInterface({ input, crlfDelay: Infinity });
+              for await (const line of rl) {
+                if (!line.trim()) continue;
+                try {
+                  const o = JSON.parse(line) as { id?: string };
+                  if (o.id) seenIds.add(o.id);
+                } catch {
+                  // Skip corrupt line but still yield to preserve archive
+                }
+                yield line + "\n";
+              }
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "read-existing-archive",
+                severity: "info",
+                subsystem: "event-log",
+              });
+              const backupPath = `${filePath}.corrupted.${Date.now()}`;
+              try {
+                renameSync(filePath, backupPath);
+              } catch (renameErr) {
+                capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
+                  operation: "backup-corrupted-archive",
+                  severity: "info",
+                  subsystem: "event-log",
+                });
+              }
+            }
+          }
+
+          for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
+            const entry = rowToEntry(r);
+            ids.push(entry.id);
+            if (!seenIds.has(entry.id)) {
+              seenIds.add(entry.id);
+              yield JSON.stringify(entry) + "\n";
+            }
+          }
+        })());
+
+        await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
+
+        // renameSync must succeed before we delete source rows.
+        // If rename throws, we fall into the catch block and tempPath is cleaned up.
+        renameSync(tempPath, filePath);
+
+        // Only delete rows after both the write pipeline AND the atomic rename have
+        // succeeded — ensures rows are never deleted from SQLite unless their data
+        // is safely in the final archive file.
+        const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
+        const deleteBatch = this.liveDb.transaction((batch: string[]) => {
+          for (const id of batch) del.run(id);
+        });
+        deleteBatch(ids);
+        files.push(filePath);
+        archived += ids.length;
+      } catch (err) {
+        if (existsSync(tempPath)) {
+          try {
+            unlinkSync(tempPath);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+        throw err;
+      }
+    }
+    return { archived, files };
   }
 
   /**

@@ -17,7 +17,10 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { FactsDB } from '../backends/facts-db.js'
 import type { VectorDB } from '../backends/vector-db.js'
+import type { EventLog } from '../backends/event-log.js'
+import { categoryToEventType } from '../backends/event-log.js'
 import type { EmbeddingProvider } from './embeddings.js'
+import type { ProvenanceService } from './provenance.js'
 import type OpenAI from 'openai'
 import type { MemoryCategory, ReinforcementConfig } from '../config.js'
 import { chunkTextByChars } from '../utils/text.js'
@@ -248,6 +251,10 @@ export async function runPassiveObserver(
     proceduresSessionsDir?: string
     /** Confidence reinforcement config (Issue #147). When set and enabled, similar facts get confidence boost instead of silent skip. */
     reinforcement?: ReinforcementConfig
+    /** Provenance tracking (Issue #163). */
+    provenanceService?: ProvenanceService | null
+    /** Episodic event log (Issue #150). When set, each stored fact is also appended to Layer 1. */
+    eventLog?: EventLog | null
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -557,6 +564,28 @@ export async function runPassiveObserver(
           continue
         }
 
+        // Write episodic event FIRST (Issue #150, Layer 1): record before factsDb so that if
+        // factsDb fails we still have the event record. If eventLog fails we continue to store
+        // the fact — event log unavailability must never block fact writes.
+        let eventId: string | null = null
+        if (opts.eventLog) {
+          try {
+            eventId = opts.eventLog.append({
+              sessionId,
+              timestamp: new Date().toISOString(),
+              eventType: categoryToEventType(fact.category),
+              content: {
+                text: fact.text,
+                category: fact.category,
+                importance: fact.importance,
+                source: 'passive-observer',
+              },
+            })
+          } catch {
+            // Non-fatal — event log write failure must never block fact storage
+          }
+        }
+
         // Store to SQLite — tag with session scope so facts can be scoped to session lifecycle
         const stored = factsDb.store({
           text: fact.text,
@@ -571,7 +600,27 @@ export async function runPassiveObserver(
           scope: 'session',
           scopeTarget: sessionId,
           tags: ['passive-observer'],
+          provenanceSession: sessionId,
+          extractionMethod: 'passive',
+          extractionConfidence: fact.importance,
         })
+
+        if (opts.provenanceService) {
+          try {
+            opts.provenanceService.addEdge(stored.id, {
+              edgeType: "DERIVED_FROM",
+              sourceType: "event_log",
+              sourceId: eventId ?? sessionId,
+              sourceText: fact.text,
+            })
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: 'passive-observer-provenance',
+              subsystem: 'provenance',
+              factId: stored.id,
+            })
+          }
+        }
 
         // Contradiction detection (Issue #142): check for same entity+key with different value
         // Pass scope so detection stays within session boundary.

@@ -18,6 +18,7 @@ import { runFindDuplicates } from "../services/find-duplicates.js";
 import { runConsolidate } from "../services/consolidation.js";
 import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
 import { runDreamCycle, type DreamCycleResult } from "../services/dream-cycle.js";
+import { runVerificationCycle, type VerificationCycleResult } from "../services/continuous-verifier.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runExport } from "../services/export-memory.js";
@@ -213,6 +214,7 @@ export interface CliContextServices {
     mode?: "replace" | "additive";
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
   runDreamCycle: () => Promise<DreamCycleResult>;
+  runContinuousVerification: () => Promise<VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -234,6 +236,8 @@ export interface HybridMemCliRegistrationContext {
   aliasDb: HandlerContext["aliasDb"];
   wal: HandlerContext["wal"];
   proposalsDb: HandlerContext["proposalsDb"];
+  verificationStore?: import("../services/verification-store.js").VerificationStore | null;
+  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;
@@ -246,7 +250,7 @@ function buildCliContextServices(
   ctx: HybridMemCliRegistrationContext,
   api: ClawdbotPluginApi,
 ): CliContextServices {
-  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, resolvedSqlitePath, aliasDb, verificationStore, provenanceService } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
   return {
@@ -257,7 +261,7 @@ function buildCliContextServices(
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
         return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
       }
-      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb);
+      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
@@ -265,15 +269,15 @@ function buildCliContextServices(
         defaultWindow: cfg.reflection.defaultWindow,
         minObservations: cfg.reflection.minObservations,
         enabled: cfg.reflection.enabled,
-      }, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
+      }, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
     },
     runReflectionRules: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      return runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
+      return runReflectionRules(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
     },
     runReflectionMeta: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink);
+      return runReflectionMeta(factsDb, vectorDb, embeddings, openai, { ...opts, model: opts.model ?? defaultModel, fallbackModels }, logSink, provenanceService);
     },
     runClassify: (opts) =>
       runClassifyForCli(factsDb, openai, cfg.autoClassify, { ...opts, model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel }, discoveredPath, logSink, undefined),
@@ -316,10 +320,22 @@ function buildCliContextServices(
           model: dreamModel,
           fallbackModels: fallbackModels ?? [],
           consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
+          eventLogArchivalDays: cfg.eventLog.archivalDays,
+          eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
         },
         logSink,
+        provenanceService,
       );
+    },
+    runContinuousVerification: async () => {
+      if (!verificationStore || !cfg.verification.enabled || !cfg.verification.continuousVerification) {
+        return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
+      }
+      return runVerificationCycle(verificationStore, factsDb, openai, {
+        cycleDays: cfg.verification.cycleDays,
+        verificationModel: cfg.verification.verificationModel,
+      });
     },
     runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
     getMemoryCategories: () => [...getMemoryCategories()],
@@ -684,6 +700,7 @@ export function createHybridMemCliContext(
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
     runDreamCycle: services.runDreamCycle,
+    runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
@@ -701,6 +718,9 @@ export function createHybridMemCliContext(
     runAnalyzeFeedbackPhrases: (opts) => handlers.runAnalyzeFeedbackPhrasesForCli(handlerCtx, opts),
     runExtractDirectives: (opts) => handlers.runExtractDirectivesForCli(handlerCtx, opts),
     runExtractReinforcement: (opts) => handlers.runExtractReinforcementForCli(handlerCtx, opts),
+    runExtractImplicitFeedback: (opts) => handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
+    runCrossAgentLearning: () => handlers.runCrossAgentLearningForCli(handlerCtx),
+    runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
     runExport: services.runExport,
     richStatsExtras: buildRichStatsExtras(handlerCtx),
     listCommands: buildListCommands(handlerCtx, api),

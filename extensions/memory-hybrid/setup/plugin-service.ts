@@ -9,7 +9,9 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getDefaultCronModel, getCronModelConfig } from "../config.js";
+import type { ProvenanceService } from "../services/provenance.js";
 import type OpenAI from "openai";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import {
   initErrorReporter,
   isErrorReporterActive,
@@ -28,15 +30,18 @@ export interface PluginServiceContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: import("../services/embeddings.js").EmbeddingProvider;
+  embeddingRegistry: EmbeddingRegistry;
   credentialsDb: CredentialsDB | null;
   proposalsDb: ProposalsDB | null;
   wal: WriteAheadLog | null;
+  eventLog?: import("../backends/event-log.js").EventLog | null;
   cfg: HybridMemoryConfig;
   openai: OpenAI;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   api: ClawdbotPluginApi;
   pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
+  provenanceService?: ProvenanceService | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -68,12 +73,14 @@ export function createPluginService(ctx: PluginServiceContext) {
     credentialsDb,
     proposalsDb,
     wal,
+    eventLog,
     cfg,
     openai,
     resolvedLancePath,
     resolvedSqlitePath,
     api,
     timers,
+    provenanceService,
   } = ctx;
 
   let observerRunning = false;
@@ -345,7 +352,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               openai,
               cfg.passiveObserver,
               cfg.categories,
-              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement },
+              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement, provenanceService, eventLog },
               api.logger,
             );
             if (result.factsStored > 0 || result.factsExtracted > 0 || result.factsReinforced > 0) {

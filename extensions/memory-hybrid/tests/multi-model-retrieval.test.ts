@@ -335,6 +335,94 @@ describe("Multi-model semantic search via fact_embeddings", () => {
     vi.unstubAllGlobals();
   });
 
+  it("RRF ordering: fact appearing in both models ranks above facts appearing in only one", async () => {
+    // factShared is embedded under both model-1 and model-2
+    // factOnlyA is embedded under model-1 only
+    // factOnlyB is embedded under model-2 only
+    //
+    // When each model ranks factShared at position 1 and the single-model fact at position 2:
+    //   factShared RRF score = 1/(60+1) + 1/(60+1) ≈ 0.0328  (appears in 2 strategies)
+    //   factOnlyA  RRF score = 1/(60+2)             ≈ 0.0161  (appears in 1 strategy)
+    //   factOnlyB  RRF score = 1/(60+2)             ≈ 0.0161  (appears in 1 strategy)
+    // Expected order: factShared first, then factOnlyA and factOnlyB (tied, any order).
+
+    const factShared = storeTestFact(factsDb, "Machine learning fundamentals");
+    const factOnlyA  = storeTestFact(factsDb, "Python syntax guide");
+    const factOnlyB  = storeTestFact(factsDb, "Neural network architecture");
+
+    // model-1 embedding space: factShared ≈ query, factOnlyA second
+    factsDb.storeEmbedding(factShared, "model-1", "canonical", new Float32Array([1, 0, 0, 0]), 4);
+    factsDb.storeEmbedding(factOnlyA,  "model-1", "canonical", new Float32Array([0.9, 0.1, 0, 0]), 4);
+
+    // model-2 embedding space: factShared ≈ query, factOnlyB second
+    factsDb.storeEmbedding(factShared, "model-2", "canonical", new Float32Array([1, 0, 0, 0]), 4);
+    factsDb.storeEmbedding(factOnlyB,  "model-2", "canonical", new Float32Array([0.9, 0.1, 0, 0]), 4);
+
+    const primary = makeMockProvider("text-embedding-3-small", 4, [0, 0, 0, 0]);
+    const registry = new EmbeddingRegistry(primary, "text-embedding-3-small");
+
+    // Both models embed the query as [1, 0, 0, 0] — pointing toward factShared
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ embeddings: [[1, 0, 0, 0]] }),
+      text: async () => "",
+    } as Response);
+    vi.stubGlobal("fetch", mockFetch);
+
+    registry.register({ name: "model-1", provider: "ollama", dimensions: 4, role: "general" });
+    registry.register({ name: "model-2", provider: "ollama", dimensions: 4, role: "domain" });
+
+    const rawDb = factsDb.getRawDb();
+    const vectorDb = makeMockVectorDb();
+
+    const result = await runRetrievalPipeline(
+      "machine learning",
+      null,
+      rawDb,
+      vectorDb,
+      factsDb,
+      { strategies: ["semantic"], rrf_k: 60, ambientBudgetTokens: 2000, explicitBudgetTokens: 4000, graphWalkDepth: 0, semanticTopK: 10, fts5TopK: 10 },
+      4000,
+      undefined, undefined, undefined, undefined, undefined, null, undefined,
+      registry,
+      factsDb,
+    );
+
+    const foundIds = result.fused.map((r) => r.factId);
+
+    // All three facts must be present in the fused results
+    expect(foundIds).toContain(factShared);
+    expect(foundIds).toContain(factOnlyA);
+    expect(foundIds).toContain(factOnlyB);
+
+    // factShared must appear before both single-model facts (RRF cross-model boost)
+    const idxShared = foundIds.indexOf(factShared);
+    const idxOnlyA  = foundIds.indexOf(factOnlyA);
+    const idxOnlyB  = foundIds.indexOf(factOnlyB);
+    expect(idxShared).toBeLessThan(idxOnlyA);
+    expect(idxShared).toBeLessThan(idxOnlyB);
+
+    // Verify the raw RRF scores satisfy the expected math
+    const scoreShared = result.fused.find((r) => r.factId === factShared)!.rrfScore;
+    const scoreOnlyA  = result.fused.find((r) => r.factId === factOnlyA)!.rrfScore;
+    const scoreOnlyB  = result.fused.find((r) => r.factId === factOnlyB)!.rrfScore;
+
+    // factShared gets contributions from two model lanes; each single-model fact gets one
+    expect(scoreShared).toBeGreaterThan(scoreOnlyA);
+    expect(scoreShared).toBeGreaterThan(scoreOnlyB);
+
+    // The two single-model facts were each ranked #2 in their respective model lanes
+    const expectedSingleScore = 1 / (60 + 2);
+    expect(scoreOnlyA).toBeCloseTo(expectedSingleScore, 5);
+    expect(scoreOnlyB).toBeCloseTo(expectedSingleScore, 5);
+
+    // factShared gets rank-1 contribution from both model-1 and model-2
+    const expectedSharedScore = 1 / (60 + 1) + 1 / (60 + 1);
+    expect(scoreShared).toBeCloseTo(expectedSharedScore, 5);
+
+    vi.unstubAllGlobals();
+  });
+
   it("skips multi-model search when registry has no additional models", async () => {
     const factId = storeTestFact(factsDb, "test");
     factsDb.storeEmbedding(factId, "nomic-embed-text", "canonical", new Float32Array([1, 0, 0, 0]), 4);

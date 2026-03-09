@@ -1,33 +1,49 @@
 # Error Reporting (GlitchTip/Sentry Integration)
 
-**Status:** Optional, opt-in, privacy-first  
-**Requires:** `@sentry/node` (optional peer dependency)  
-**Default:** Disabled (consent required)
+**Status:** Enabled by default (community mode, opt-out)
+**Requires:** `@sentry/node` (optional peer dependency)
+**Default:** Enabled - anonymous error reporting to a community GlitchTip instance
 
 ## Overview
 
-The `openclaw-hybrid-memory` plugin supports optional error reporting to a self-hosted GlitchTip instance (or Sentry-compatible service). This feature helps identify and fix bugs by capturing exception details when things go wrong.
+The `openclaw-hybrid-memory` plugin includes anonymous error reporting to help identify and fix bugs. By default it sends sanitized exception data to a **community GlitchTip instance** maintained by the plugin author. This is **opt-out**: to disable, set `errorReporting.enabled: false` in your config.
+
+You can also switch to a **self-hosted** GlitchTip or Sentry instance by setting `mode: "self-hosted"` with your own DSN.
 
 **🔒 Privacy is NON-NEGOTIABLE:**
-- **Explicit opt-in required** — error reporting is disabled by default
 - **No user prompts, memory text, or API keys** are ever sent
-- **Strict allowlist approach** — only safe, sanitized data is reported
-- **No tracking, no PII, no breadcrumbs** — your privacy is protected
+- **Strict allowlist approach** - only safe, sanitized data is reported
+- **No tracking, no PII, no breadcrumbs** - your privacy is protected
+- **To opt out:** set `errorReporting.enabled: false` and restart the gateway
 
 ---
 
 ## Configuration
 
-Add the following to your `openclaw.json` (gateway config) or plugin config:
+**Default behaviour (no config needed to enable):** Error reporting is on by default in `community` mode, sending anonymised exceptions to the plugin author's GlitchTip instance.
 
+**To opt out:**
+```json
+{
+  "plugins": {
+    "openclaw-hybrid-memory": {
+      "errorReporting": {
+        "enabled": false
+      }
+    }
+  }
+}
+```
+
+**To switch to a self-hosted GlitchTip or Sentry instance:**
 ```json
 {
   "plugins": {
     "openclaw-hybrid-memory": {
       "errorReporting": {
         "enabled": true,
-        "consent": true,
-        "dsn": "https://7d641cabffdb4557a7bd2f02c338dc80@villapolly.duckdns.org/1",
+        "mode": "self-hosted",
+        "dsn": "https://<key>@<your-glitchtip-host>/<project-id>",
         "environment": "production",
         "sampleRate": 1.0
       }
@@ -40,19 +56,20 @@ Add the following to your `openclaw.json` (gateway config) or plugin config:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `enabled` | boolean | No | `false` | Enable error reporting |
-| `consent` | boolean | **YES** | `false` | **Explicit user consent required** |
-| `dsn` | string | Yes (if enabled) | — | GlitchTip/Sentry Data Source Name |
+| `enabled` | boolean | No | `true` | Enable error reporting. Set `false` to opt out entirely. |
+| `consent` | boolean | No | `true` | Explicit consent flag. Set `false` to opt out (same effect as `enabled: false`). |
+| `mode` | string | No | `"community"` | `"community"` = use the plugin author's GlitchTip instance (default); `"self-hosted"` = use your own DSN. |
+| `dsn` | string | Yes when `mode: "self-hosted"` | — | Your GlitchTip/Sentry Data Source Name. Not needed in community mode. |
 | `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging") |
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
-| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw’s runtime context (`api.context.agentId`) when available; there is no hostname fallback (to avoid PII leakage). |
+| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw's runtime context (`api.context.agentId`) when available; there is no hostname fallback (to avoid PII leakage). |
 | `botName` | string | No | — | **Optional.** Friendly name for this bot (e.g. `Maeve`, `Doris`). Sent as a tag so reports show a readable name in GlitchTip. Max 64 characters. |
 
 At plugin init the reporter applies `bot_id` / `bot_name` **tags** only (no Sentry user context), so GlitchTip can filter and group errors by bot without transmitting user identity. Example tag filter: `bot_name:Doris`.
 
 ### Setting via config-set
 
-You can set any error-reporting key with the CLI so you don’t have to edit JSON by hand:
+You can set any error-reporting key with the CLI so you don't have to edit JSON by hand:
 
 ```bash
 openclaw hybrid-mem config-set errorReporting.enabled true
@@ -161,10 +178,10 @@ The error reporter implements **defense-in-depth** privacy:
 
 ### Layer 1: Configuration
 
-- `sendDefaultPii: false` — no personally identifiable information
-- `maxBreadcrumbs: 0` — breadcrumbs can contain user prompts
-- `autoSessionTracking: false` — no session tracking
-- `integrations: []` — all default integrations disabled (they capture too much)
+- `sendDefaultPii: false` - no personally identifiable information
+- `maxBreadcrumbs: 0` - breadcrumbs can contain user prompts
+- `autoSessionTracking: false` - no session tracking
+- `integrations: []` - all default integrations disabled (they capture too much)
 
 ### Layer 2: beforeBreadcrumb Hook
 
@@ -224,7 +241,7 @@ try {
 
 ### Q: Is this enabled by default?
 
-**No.** Error reporting is **disabled by default** and requires explicit `consent: true` in the config.
+**Yes.** Error reporting is **enabled by default** in `community` mode, sending anonymised exceptions to the plugin author's GlitchTip instance. To opt out, set `errorReporting.enabled: false` in your config and restart the gateway.
 
 ### Q: Can I use this without self-hosting?
 
@@ -293,13 +310,13 @@ If you're auditing this feature for security/privacy compliance, verify:
 3. Verify the GlitchTip project exists and is active
 4. Check OpenClaw logs for Sentry initialization errors
 
-### "Subagent main failed" (or other Cursor/IDE errors) — nothing in GlitchTip
+### "Subagent main failed" (or other Cursor/IDE errors) - nothing in GlitchTip
 
-**Cause:** The plugin’s error reporter runs only inside the **OpenClaw gateway process** when the plugin is loaded. It does **not** run in Cursor’s subagent processes (e.g. `mcp_task` / explore / shell agents). Those run in separate processes that never load this plugin, so they never call `capturePluginError()` and nothing is sent to GlitchTip.
+**Cause:** The plugin's error reporter runs only inside the **OpenClaw gateway process** when the plugin is loaded. It does **not** run in Cursor's subagent processes (e.g. `mcp_task` / explore / shell agents). Those run in separate processes that never load this plugin, so they never call `capturePluginError()` and nothing is sent to GlitchTip.
 
 **What gets reported:** Only errors that occur in plugin code (tools, hooks, CLI, chat, DB init, etc.) **inside the gateway** and that are caught by a path that calls `capturePluginError()`.
 
-**What does not:** Cursor IDE subagent failures, timeouts, or crashes in other processes. For those, check Cursor’s own logs or output; they are outside this plugin’s scope.
+**What does not:** Cursor IDE subagent failures, timeouts, or crashes in other processes. For those, check Cursor's own logs or output; they are outside this plugin's scope.
 
 ### Too many errors being reported
 
@@ -320,5 +337,5 @@ If you're auditing this feature for security/privacy compliance, verify:
 
 ---
 
-**Built with privacy-first principles.**  
+**Built with privacy-first principles.**
 If you have questions or concerns, please [open an issue](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues).

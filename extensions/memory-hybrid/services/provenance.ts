@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 // ---------------------------------------------------------------------------
 
 export type ProvenanceEdgeType = "DERIVED_FROM" | "CONSOLIDATED_FROM" | "REFLECTED_FROM";
-export type ProvenanceSourceType = "event_log" | "active_store" | "consolidation" | "reflection";
+export type ProvenanceSourceType = "event_log" | "active_store" | "consolidation" | "reflection" | "document";
 
 export interface ProvenanceEdge {
   edgeType: ProvenanceEdgeType;

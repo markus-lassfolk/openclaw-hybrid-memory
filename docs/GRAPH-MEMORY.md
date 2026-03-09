@@ -113,6 +113,8 @@ Add the `graph` section to your plugin config:
 | `autoLinkLimit` | number | `3` | Max similar facts to auto-link per storage |
 | `maxTraversalDepth` | number | `2` | Max hops for graph traversal in recall |
 | `useInRecall` | boolean | `true` | Enable graph traversal in memory_recall |
+| `coOccurrenceWeight` | number | `0.3` | Link strength for temporal co-occurrence RELATED_TO edges (facts recalled together) |
+| `autoSupersede` | boolean | `true` | Auto-create a SUPERSEDES edge and supersede the old fact when an entity+key conflict is detected on store |
 
 **Recommendation**: Start with `autoLink: false` and manually create links using `memory_link` to establish high-quality relationships. Enable `autoLink: true` later once you have a critical mass of facts.
 

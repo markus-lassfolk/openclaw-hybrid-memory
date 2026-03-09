@@ -7,10 +7,11 @@
 
 import Database from "better-sqlite3";
 import { mkdirSync, appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { homedir } from "node:os";
 import { capturePluginError } from "./error-reporter.js";
+import { expandTilde } from "../utils/path.js";
+import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,11 +51,33 @@ function computeChecksum(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-function expandTilde(p: string): string {
-  if (p === "~" || p.startsWith("~/")) {
-    return join(homedir(), p.slice(1));
+function isIpAddress(value: string): boolean {
+  const ipPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
+  return ipPattern.test(value);
+}
+
+function isHostname(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed.length < 3) return false;
+  if (isIpAddress(trimmed)) return false;
+  if (!/^[a-z0-9.-]+$/.test(trimmed)) return false;
+  if (!/[a-z0-9]/.test(trimmed)) return false;
+  if (trimmed.includes("..") || trimmed.startsWith(".") || trimmed.endsWith(".")) return false;
+  if (!trimmed.includes(".")) return false;
+  return true;
+}
+
+function containsHostname(text: string): boolean {
+  const hostnamePattern = /\b[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+\b/gi;
+  const matches = text.match(hostnamePattern);
+  if (!matches) return false;
+  
+  for (const match of matches) {
+    if (/[a-z]/i.test(match)) {
+      return true;
+    }
   }
-  return p;
+  return false;
 }
 
 function toISODate(d: Date): string {
@@ -100,25 +123,43 @@ function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
 }
 
 // ---------------------------------------------------------------------------
-// shouldAutoClassify — heuristic check for infrastructure-type facts
+// shouldAutoVerify — heuristic check for critical facts
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the fact looks like an IP address or infrastructure/technical
- * fact that should be considered for verification. Does NOT auto-enroll — requires explicit opt-in.
+ * Returns true if the fact should be automatically verified.
  */
-export function shouldAutoClassify(fact: {
+export function shouldAutoVerify(fact: {
   text: string;
   category: string;
   tags: string[];
+  entity?: string | null;
+  key?: string | null;
+  value?: string | null;
+  verificationTier?: string | null;
 }): boolean {
-  // IP address pattern
-  const ipPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
-  if (ipPattern.test(fact.text)) return true;
+  const verificationTier = (fact.verificationTier ?? "").trim().toLowerCase();
+  if (verificationTier === "critical") return true;
+
+  const entity = (fact.entity ?? "").trim();
+  const text = fact.text ?? "";
+  if (entity && (isIpAddress(entity) || isHostname(entity))) return true;
+  if (isIpAddress(text) || containsHostname(text)) return true;
+
+  const entityLower = entity.toLowerCase();
+  const keyLower = (fact.key ?? "").toLowerCase();
+  const valueLower = (fact.value ?? "").toLowerCase();
+  if (
+    entityLower.includes("credential") ||
+    keyLower.includes("credential") ||
+    valueLower.startsWith(VAULT_POINTER_PREFIX)
+  ) {
+    return true;
+  }
 
   // Infrastructure + technical category
   if (
-    fact.tags.includes("infrastructure") &&
+    fact.tags.map((t) => t.toLowerCase()).includes("infrastructure") &&
     fact.category === "technical"
   ) {
     return true;
@@ -135,18 +176,35 @@ export class VerificationStore {
   private db: Database.Database;
   private readonly backupPath: string;
   private readonly reverificationDays: number;
+  private readonly logger?: { warn?: (msg: string) => void; error?: (msg: string) => void };
+  /** When false, connection is shared (e.g. FactsDB.getRawDb()); close() must not call db.close(). */
+  private readonly ownsConnection: boolean;
 
+  /**
+   * @param dbPathOrInstance - Either a file path string (opens its own connection) or an
+   *   existing Database instance to share (e.g. FactsDB.getRawDb()). When sharing an
+   *   instance, the caller is responsible for pragma setup and lifecycle.
+   */
   constructor(
-    dbPath: string,
+    dbPathOrInstance: string | Database.Database,
     options?: {
       backupPath?: string;
       reverificationDays?: number;
+      logger?: { warn?: (msg: string) => void; error?: (msg: string) => void };
     },
   ) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.applyPragmas();
+    if (typeof dbPathOrInstance === "string") {
+      mkdirSync(dirname(dbPathOrInstance), { recursive: true });
+      this.db = new Database(dbPathOrInstance);
+      this.ownsConnection = true;
+      this.applyPragmas();
+    } else {
+      // Shared instance — caller owns the connection lifecycle
+      this.db = dbPathOrInstance;
+      this.ownsConnection = false;
+    }
     this.reverificationDays = options?.reverificationDays ?? 30;
+    this.logger = options?.logger;
 
     const rawBackup = options?.backupPath ?? "~/.openclaw/verified-facts.json";
     this.backupPath = expandTilde(rawBackup);
@@ -161,7 +219,7 @@ export class VerificationStore {
     this.db.pragma("synchronous = NORMAL");
   }
 
-  /** Schema for standalone verification DB (no facts table). When verified_facts lives in FactsDB, the migration in facts-db.ts is used (with FK to facts(id) ON DELETE CASCADE). */
+  /** Schema for standalone verification DB (no facts table). When verified_facts lives in FactsDB, the migration in facts-db.ts is used. */
   private initSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS verified_facts (
@@ -214,7 +272,19 @@ export class VerificationStore {
       )
       .run(id, factId, text, checksum, now, verifiedBy, nextVerification, now);
 
-    this.writeBackup({ action: "verify", id, factId, text, checksum, verifiedBy, verifiedAt: now, nextVerification, version: 1 });
+    this.writeBackup({
+      action: "verify",
+      id,
+      fact_id: factId,
+      canonical_text: text,
+      checksum,
+      verified_at: now,
+      verified_by: verifiedBy,
+      version: 1,
+      nextVerification,
+      previousVersionId: null,
+      ts: now,
+    });
 
     return id;
   }
@@ -268,29 +338,65 @@ export class VerificationStore {
 
     const live = computeChecksum(row.canonical_text);
     if (live !== row.checksum) {
-      throw new VerificationError(
-        `Checksum mismatch for verified fact ${row.id} (fact_id=${factId}): stored checksum does not match canonical_text`,
-      );
+      const message =
+        `Checksum mismatch for verified fact ${row.id} (fact_id=${factId}): stored checksum does not match canonical_text`;
+      this.logCorruption(message);
+      throw new VerificationError(message);
     }
 
     return rowToVerifiedFact(row);
   }
 
   // -------------------------------------------------------------------------
-  // listDueForReverification — facts whose next_verification <= now
+  // listDueForReverification — facts whose next_verification <= now or verified_at is stale
   // -------------------------------------------------------------------------
 
   listDueForReverification(): VerifiedFact[] {
     const now = toISODate(new Date());
+    const cutoff = toISODate(addDays(new Date(), -this.reverificationDays));
     const rows = this.db
       .prepare(
-        `SELECT * FROM verified_facts
-         WHERE next_verification IS NOT NULL AND next_verification <= ?
-         ORDER BY next_verification ASC`,
+        `SELECT vf.*
+         FROM verified_facts vf
+         JOIN (
+           SELECT fact_id, MAX(version) as max_version
+           FROM verified_facts
+           GROUP BY fact_id
+         ) latest
+         ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+         WHERE (vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
+            OR vf.verified_at <= ?
+         ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC`,
       )
-      .all(now) as VerifiedFactRow[];
+      .all(now, cutoff) as VerifiedFactRow[];
 
-    return rows.map(rowToVerifiedFact);
+    return rows
+      .filter((row) => this.validateRowChecksum(row))
+      .map(rowToVerifiedFact);
+  }
+
+  // -------------------------------------------------------------------------
+  // listLatestVerified — latest versions for each fact_id
+  // -------------------------------------------------------------------------
+
+  listLatestVerified(): VerifiedFact[] {
+    const rows = this.db
+      .prepare(
+        `SELECT vf.*
+         FROM verified_facts vf
+         JOIN (
+           SELECT fact_id, MAX(version) as max_version
+           FROM verified_facts
+           GROUP BY fact_id
+         ) latest
+         ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+         ORDER BY vf.verified_at DESC`,
+      )
+      .all() as VerifiedFactRow[];
+
+    return rows
+      .filter((row) => this.validateRowChecksum(row))
+      .map(rowToVerifiedFact);
   }
 
   // -------------------------------------------------------------------------
@@ -354,14 +460,15 @@ export class VerificationStore {
     this.writeBackup({
       action: "update",
       id: newId,
-      factId: existing.fact_id,
-      text: newText,
+      fact_id: existing.fact_id,
+      canonical_text: newText,
       checksum,
-      verifiedBy,
-      verifiedAt: now,
-      nextVerification,
+      verified_at: now,
+      verified_by: verifiedBy,
       version: newVersion,
+      nextVerification,
       previousVersionId: id,
+      ts: now,
     });
 
     return newId;
@@ -372,7 +479,30 @@ export class VerificationStore {
   // -------------------------------------------------------------------------
 
   close(): void {
-    this.db.close();
+    if (this.ownsConnection && this.db.open) {
+      this.db.close();
+    }
+  }
+
+  private validateRowChecksum(row: VerifiedFactRow): boolean {
+    const live = computeChecksum(row.canonical_text);
+    if (live !== row.checksum) {
+      const message =
+        `Checksum mismatch for verified fact ${row.id} (fact_id=${row.fact_id}): stored checksum does not match canonical_text`;
+      this.logCorruption(message);
+      return false;
+    }
+    return true;
+  }
+
+  private logCorruption(message: string): void {
+    if (this.logger?.error) {
+      this.logger.error(`memory-hybrid: verification corruption detected: ${message}`);
+      return;
+    }
+    if (this.logger?.warn) {
+      this.logger.warn(`memory-hybrid: verification corruption detected: ${message}`);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -381,9 +511,21 @@ export class VerificationStore {
 
   private hasLoggedBackupError = false;
 
-  private writeBackup(entry: Record<string, unknown>): void {
+  private writeBackup(entry: {
+    action: "verify" | "update";
+    id: string;
+    fact_id: string;
+    canonical_text: string;
+    checksum: string;
+    verified_at: string;
+    verified_by: string;
+    version: number;
+    nextVerification: string | null;
+    previousVersionId: string | null;
+    ts: string;
+  }): void {
     try {
-      const line = JSON.stringify({ ...entry, ts: new Date().toISOString() }) + "\n";
+      const line = JSON.stringify(entry) + "\n";
       appendFileSync(this.backupPath, line, { encoding: "utf8", mode: 0o600 });
     } catch (err) {
       if (!this.hasLoggedBackupError) {

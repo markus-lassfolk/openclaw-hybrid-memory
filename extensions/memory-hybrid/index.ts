@@ -161,6 +161,8 @@ import { registerTools } from "./setup/register-tools.js";
 import { registerLifecycleHooks, type HooksContext } from "./setup/register-hooks.js";
 import { capturePluginError } from "./services/error-reporter.js";
 import { PythonBridge } from "./services/python-bridge.js";
+import type { EmbeddingRegistry } from "./services/embedding-registry.js";
+import { ContextualVariantGenerator, VariantGenerationQueue } from "./services/contextual-variants.js";
 
 // Backend Imports (extracted from god file for maintainability)
 
@@ -175,7 +177,7 @@ import { PatternDetector, computePatternId, scorePattern } from "./services/patt
 import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
 import { SkillValidator } from "./services/skill-validator.js";
 import { CrystallizationProposer } from "./services/crystallization-proposer.js";
-import { VerificationStore, shouldAutoClassify, VerificationError } from "./services/verification-store.js";
+import { VerificationStore, shouldAutoVerify, VerificationError } from "./services/verification-store.js";
 import { ProvenanceService } from "./services/provenance.js";
 import { ToolProposalStore } from "./backends/tool-proposal-store.js";
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
@@ -215,6 +217,7 @@ let resolvedSqlitePath: string;
 let factsDb: FactsDB;
 let vectorDb: VectorDB;
 let embeddings: EmbeddingProvider;
+let embeddingRegistry: EmbeddingRegistry;
 let openai: OpenAI;
 let credentialsDb: CredentialsDB | null = null;
 let wal: WriteAheadLog | null = null;
@@ -227,7 +230,9 @@ let workflowStore: WorkflowStore | null = null;
 let crystallizationStore: import("./backends/crystallization-store.js").CrystallizationStore | null = null;
 let toolProposalStore: import("./backends/tool-proposal-store.js").ToolProposalStore | null = null;
 let provenanceService: ProvenanceService | null = null;
+let verificationStore: VerificationStore | null = null;
 let pythonBridge: PythonBridge | null = null;
+let variantQueue: VariantGenerationQueue | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
 // Timer references (wrapped in objects so they can be passed by reference)
@@ -290,7 +295,7 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, provenanceService });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
@@ -301,11 +306,13 @@ const memoryHybridPlugin = {
     crystallizationStore = null;
     toolProposalStore = null;
     provenanceService = null;
+    verificationStore = null;
     // pythonBridge shutdown will be added by #206
     if (pythonBridge) {
       pythonBridge.shutdown().catch(() => {});
       pythonBridge = null;
     }
+    variantQueue = null;
     pendingLLMWarnings = createPendingLLMWarnings();
 
     try {
@@ -320,6 +327,7 @@ const memoryHybridPlugin = {
       factsDb = dbContext.factsDb;
       vectorDb = dbContext.vectorDb;
       embeddings = dbContext.embeddings;
+      embeddingRegistry = dbContext.embeddingRegistry;
       openai = dbContext.openai;
       credentialsDb = dbContext.credentialsDb;
       wal = dbContext.wal;
@@ -331,6 +339,7 @@ const memoryHybridPlugin = {
       crystallizationStore = dbContext.crystallizationStore;
       toolProposalStore = dbContext.toolProposalStore;
       provenanceService = dbContext.provenanceService;
+      verificationStore = dbContext.verificationStore;
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
@@ -350,6 +359,21 @@ const memoryHybridPlugin = {
     pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
 
     // ========================================================================
+    // Contextual Variant Generator (Issue #159)
+    // ========================================================================
+
+    if (cfg.contextualVariants.enabled) {
+      const variantGenerator = new ContextualVariantGenerator(cfg.contextualVariants, openai);
+      variantQueue = new VariantGenerationQueue(variantGenerator, async (factId, variantType, variants) => {
+        for (const v of variants) {
+          factsDb.storeVariant(factId, variantType, v);
+        }
+      });
+    } else {
+      variantQueue = null;
+    }
+
+    // ========================================================================
     // Tools
 
     try {
@@ -358,15 +382,19 @@ const memoryHybridPlugin = {
       vectorDb,
       cfg,
       embeddings,
+      embeddingRegistry,
       openai,
       wal,
       credentialsDb,
       proposalsDb,
       eventLog,
+      provenanceService,
       issueStore,
       workflowStore,
       crystallizationStore,
       toolProposalStore,
+      verificationStore,
+      variantQueue,
       lastProgressiveIndexIds,
       currentAgentIdRef,
       pendingLLMWarnings,
@@ -399,6 +427,8 @@ const memoryHybridPlugin = {
       wal,
       proposalsDb,
       eventLog,
+      verificationStore,
+      provenanceService,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,
@@ -415,11 +445,13 @@ const memoryHybridPlugin = {
         factsDb,
         vectorDb,
         embeddings,
+        embeddingRegistry,
         openai,
         cfg,
         credentialsDb,
         aliasDb,
         wal,
+        eventLog,
         currentAgentIdRef,
         lastProgressiveIndexIds,
         restartPendingClearedRef,
@@ -446,9 +478,11 @@ const memoryHybridPlugin = {
         factsDb,
         vectorDb,
         embeddings,
+        embeddingRegistry,
         credentialsDb,
         proposalsDb,
         wal,
+        eventLog,
         cfg,
         openai,
         resolvedLancePath,
@@ -456,6 +490,7 @@ const memoryHybridPlugin = {
         api,
         timers,
         pythonBridge,
+        provenanceService,
       })
     );
     } catch (err) {
@@ -580,7 +615,7 @@ export const _testing = {
   deriveToolNameFromSequence,
   // Verification store for critical facts (Issue #162)
   VerificationStore,
-  shouldAutoClassify,
+  shouldAutoVerify,
   VerificationError,
   // Provenance tracing (Issue #163)
   ProvenanceService,

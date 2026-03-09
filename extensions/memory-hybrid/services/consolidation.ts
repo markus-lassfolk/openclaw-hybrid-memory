@@ -11,12 +11,14 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
+import type { ProvenanceService } from "./provenance.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { extractTags } from "../utils/tags.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
 import { normalizeVector, dotProductSimilarity } from "./reflection.js";
+import { randomUUID } from "node:crypto";
 
 export interface ConsolidateOptions {
   threshold: number;
@@ -130,6 +132,7 @@ export async function runConsolidate(
   opts: ConsolidateOptions,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   aliasDb?: import("./retrieval-aliases.js").AliasDB | null,
+  provenanceService?: ProvenanceService | null,
 ): Promise<ConsolidateResult> {
   const facts = factsDb.getFactsForConsolidation(opts.limit);
   const candidateFacts = opts.includeStructured
@@ -192,6 +195,7 @@ export async function runConsolidate(
 
   let merged = 0;
   let deleted = 0;
+  const consolidationRunId = provenanceService ? randomUUID() : null;
   for (const clusterIds of clusters) {
     const texts = clusterIds.map((id) => idToFact.get(id)!.text);
     const factsList = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
@@ -246,7 +250,24 @@ export async function runConsolidate(
       source: "conversation",
       sourceDate: maxSourceDate,
       tags: mergedTags.length > 0 ? mergedTags : undefined,
+      extractionMethod: "consolidation",
+      extractionConfidence: BATCH_STORE_IMPORTANCE,
     });
+    if (provenanceService && consolidationRunId) {
+      try {
+        provenanceService.addEdge(entry.id, {
+          edgeType: "DERIVED_FROM",
+          sourceType: "consolidation",
+          sourceId: consolidationRunId,
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "consolidate-provenance-derived",
+          subsystem: "provenance",
+          factId: entry.id,
+        });
+      }
+    }
     try {
       const vector = await embeddings.embed(mergedText);
       await vectorDb.store({ text: mergedText, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
@@ -262,6 +283,24 @@ export async function runConsolidate(
     // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
     for (const id of clusterIds) {
       factsDb.createLink(entry.id, id, "DERIVED_FROM", 1.0);
+    }
+    if (provenanceService) {
+      for (const sourceFact of clusterFacts) {
+        try {
+          provenanceService.addEdge(entry.id, {
+            edgeType: "CONSOLIDATED_FROM",
+            sourceType: "consolidation",
+            sourceId: sourceFact.id,
+            sourceText: sourceFact.text,
+          });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "consolidate-provenance-chain",
+            subsystem: "provenance",
+            factId: entry.id,
+          });
+        }
+      }
     }
     for (const id of clusterIds) {
       factsDb.delete(id);

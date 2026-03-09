@@ -13,6 +13,13 @@ import type {
   WorkflowTrackingConfig,
   CrystallizationConfig,
   SelfExtensionConfig,
+  ImplicitFeedbackConfig,
+  ImplicitSignalType,
+  ClosedLoopConfig,
+  FrustrationDetectionConfig,
+  FrustrationSignalWeights,
+  CrossAgentLearningConfig,
+  ToolEffectivenessConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -175,6 +182,19 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
       typeof reinforcementRaw?.similarityThreshold === "number" && reinforcementRaw.similarityThreshold > 0 && reinforcementRaw.similarityThreshold <= 1
         ? reinforcementRaw.similarityThreshold
         : 0.85,
+    maxEventsPerFact:
+      typeof reinforcementRaw?.maxEventsPerFact === "number" && reinforcementRaw.maxEventsPerFact > 0
+        ? Math.floor(reinforcementRaw.maxEventsPerFact)
+        : 50,
+    diversityWeight:
+      typeof reinforcementRaw?.diversityWeight === "number" && reinforcementRaw.diversityWeight >= 0
+        ? Math.min(1.0, reinforcementRaw.diversityWeight)
+        : 1.0,
+    trackContext: reinforcementRaw?.trackContext !== false,
+    boostAmount:
+      typeof reinforcementRaw?.boostAmount === "number" && reinforcementRaw.boostAmount > 0
+        ? reinforcementRaw.boostAmount
+        : 1.0,
   };
 }
 
@@ -213,6 +233,11 @@ export function parseDocumentsConfig(cfg: Record<string, unknown>): DocumentsCon
         ? Math.floor(documentsRaw.maxDocumentSize)
         : 50 * 1024 * 1024,
     autoTag: documentsRaw?.autoTag !== false,
+    visionEnabled: documentsRaw?.visionEnabled === true,
+    visionModel:
+      typeof documentsRaw?.visionModel === "string" && documentsRaw.visionModel.trim().length > 0
+        ? documentsRaw.visionModel.trim()
+        : undefined,
     allowedPaths: Array.isArray(documentsRaw?.allowedPaths)
       ? (documentsRaw.allowedPaths as string[]).filter((p) => typeof p === "string" && p.trim().length > 0).map((p) => p.trim())
       : undefined,
@@ -423,5 +448,181 @@ export function parseSelfExtensionConfig(cfg: Record<string, unknown>): SelfExte
       typeof raw?.maxProposals === "number" && raw.maxProposals > 0
         ? Math.floor(raw.maxProposals)
         : 20,
+  };
+}
+
+const ALL_IMPLICIT_SIGNAL_TYPES: ImplicitSignalType[] = [
+  "rephrase",
+  "immediate_action",
+  "topic_change",
+  "grateful_close",
+  "self_service",
+  "escalation",
+  "terse_response",
+  "extended_engagement",
+  "copy_paste",
+  "correction_cascade",
+  "silence_after_action",
+];
+
+export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): ImplicitFeedbackConfig {
+  const raw = cfg.implicitFeedback as Record<string, unknown> | undefined;
+  const validTypes = new Set<string>(ALL_IMPLICIT_SIGNAL_TYPES);
+  const signalTypes: ImplicitSignalType[] = Array.isArray(raw?.signalTypes)
+    ? (raw.signalTypes as unknown[]).filter((t): t is ImplicitSignalType => typeof t === "string" && validTypes.has(t))
+    : ALL_IMPLICIT_SIGNAL_TYPES;
+  return {
+    enabled: raw?.enabled !== false,
+    minConfidence:
+      typeof raw?.minConfidence === "number" && raw.minConfidence >= 0 && raw.minConfidence <= 1
+        ? raw.minConfidence
+        : 0.5,
+    signalTypes,
+    rephraseThreshold:
+      typeof raw?.rephraseThreshold === "number" && raw.rephraseThreshold > 0 && raw.rephraseThreshold <= 1
+        ? raw.rephraseThreshold
+        : 0.8,
+    topicChangeThreshold:
+      typeof raw?.topicChangeThreshold === "number" && raw.topicChangeThreshold >= 0 && raw.topicChangeThreshold <= 1
+        ? raw.topicChangeThreshold
+        : 0.3,
+    terseResponseRatio:
+      typeof raw?.terseResponseRatio === "number" && raw.terseResponseRatio > 0 && raw.terseResponseRatio <= 1
+        ? raw.terseResponseRatio
+        : 0.4,
+    feedToReinforcement: raw?.feedToReinforcement !== false,
+    feedToSelfCorrection: raw?.feedToSelfCorrection !== false,
+    trajectoryLLMAnalysis: raw?.trajectoryLLMAnalysis === true,
+  };
+}
+
+export function parseClosedLoopConfig(cfg: Record<string, unknown>): ClosedLoopConfig {
+  const raw = cfg.closedLoop as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    measurementWindowDays:
+      typeof raw?.measurementWindowDays === "number" && raw.measurementWindowDays > 0
+        ? Math.floor(raw.measurementWindowDays)
+        : 7,
+    minSampleSize:
+      typeof raw?.minSampleSize === "number" && raw.minSampleSize > 0
+        ? Math.floor(raw.minSampleSize)
+        : 5,
+    autoDeprecateThreshold:
+      typeof raw?.autoDeprecateThreshold === "number"
+        ? Math.max(-1, Math.min(0, raw.autoDeprecateThreshold))
+        : -0.3,
+    autoBoostThreshold:
+      typeof raw?.autoBoostThreshold === "number"
+        ? Math.max(0, Math.min(1, raw.autoBoostThreshold))
+        : 0.5,
+    runInNightlyCycle: raw?.runInNightlyCycle !== false,
+  };
+}
+
+export function parseFrustrationDetectionConfig(cfg: Record<string, unknown>): FrustrationDetectionConfig {
+  const raw = cfg.frustrationDetection as Record<string, unknown> | undefined;
+
+  // Parse optional signal weights
+  const weightsRaw = raw?.signalWeights as Record<string, unknown> | undefined;
+  let signalWeights: FrustrationSignalWeights | undefined;
+  if (weightsRaw && typeof weightsRaw === "object") {
+    const validSignals = [
+      "short_reply", "imperative_tone", "repeated_instruction", "caps_or_emphasis",
+      "explicit_frustration", "correction_frequency", "question_to_command",
+      "reduced_context", "emoji_shift",
+    ];
+    const parsed: FrustrationSignalWeights = {};
+    for (const sig of validSignals) {
+      if (typeof weightsRaw[sig] === "number") {
+        (parsed as Record<string, number>)[sig] = Math.max(0, Math.min(1, weightsRaw[sig] as number));
+      }
+    }
+    if (Object.keys(parsed).length > 0) signalWeights = parsed;
+  }
+
+  const thresholdsRaw = raw?.adaptationThresholds as Record<string, unknown> | undefined;
+
+  return {
+    enabled: raw?.enabled !== false,
+    windowSize:
+      typeof raw?.windowSize === "number" && raw.windowSize >= 2 && raw.windowSize <= 50
+        ? Math.floor(raw.windowSize)
+        : 8,
+    decayRate:
+      typeof raw?.decayRate === "number" && raw.decayRate > 0 && raw.decayRate <= 1
+        ? raw.decayRate
+        : 0.9,
+    signalWeights,
+    injectionThreshold:
+      typeof raw?.injectionThreshold === "number" && raw.injectionThreshold >= 0 && raw.injectionThreshold <= 1
+        ? raw.injectionThreshold
+        : 0.3,
+    adaptationThresholds: {
+      medium:
+        typeof thresholdsRaw?.medium === "number" && thresholdsRaw.medium >= 0 && thresholdsRaw.medium <= 1
+          ? thresholdsRaw.medium
+          : 0.3,
+      high:
+        typeof thresholdsRaw?.high === "number" && thresholdsRaw.high >= 0 && thresholdsRaw.high <= 1
+          ? thresholdsRaw.high
+          : 0.5,
+      critical:
+        typeof thresholdsRaw?.critical === "number" && thresholdsRaw.critical >= 0 && thresholdsRaw.critical <= 1
+          ? thresholdsRaw.critical
+          : 0.7,
+    },
+    feedToImplicitPipeline: raw?.feedToImplicitPipeline !== false,
+  };
+}
+
+export function parseCrossAgentLearningConfig(cfg: Record<string, unknown>): CrossAgentLearningConfig {
+  const raw = cfg.crossAgentLearning as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    windowDays:
+      typeof raw?.windowDays === "number" && raw.windowDays >= 1
+        ? Math.min(90, Math.floor(raw.windowDays))
+        : 14,
+    model:
+      typeof raw?.model === "string" && raw.model.trim().length > 0
+        ? raw.model.trim()
+        : undefined,
+    fallbackModels: Array.isArray(raw?.fallbackModels)
+      ? (raw.fallbackModels as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : undefined,
+    batchSize:
+      typeof raw?.batchSize === "number" && raw.batchSize >= 5
+        ? Math.min(100, Math.floor(raw.batchSize))
+        : 20,
+    minSourceConfidence:
+      typeof raw?.minSourceConfidence === "number" && raw.minSourceConfidence >= 0 && raw.minSourceConfidence <= 1
+        ? raw.minSourceConfidence
+        : 0.4,
+    runInNightlyCycle: raw?.runInNightlyCycle !== false,
+  };
+}
+
+export function parseToolEffectivenessConfig(cfg: Record<string, unknown>): ToolEffectivenessConfig {
+  const raw = cfg.toolEffectiveness as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    minCalls:
+      typeof raw?.minCalls === "number" && raw.minCalls >= 1
+        ? Math.floor(raw.minCalls)
+        : 3,
+    topN:
+      typeof raw?.topN === "number" && raw.topN >= 1
+        ? Math.min(50, Math.floor(raw.topN))
+        : 10,
+    lowScoreThreshold:
+      typeof raw?.lowScoreThreshold === "number" && raw.lowScoreThreshold >= 0 && raw.lowScoreThreshold <= 1
+        ? raw.lowScoreThreshold
+        : 0.3,
+    decayFactor:
+      typeof raw?.decayFactor === "number" && raw.decayFactor > 0 && raw.decayFactor <= 1
+        ? raw.decayFactor
+        : 0.95,
+    runInNightlyCycle: raw?.runInNightlyCycle !== false,
   };
 }
