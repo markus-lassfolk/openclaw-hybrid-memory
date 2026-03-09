@@ -86,8 +86,15 @@ export async function replayWalEntries(
         } else {
           skipped++;
         }
+      } else if (entry.operation === "delete" && entry.data?.text) {
+        const factId = entry.data.text as string;
+        const deleted = factsDb.delete(factId);
+        if (deleted) {
+          committed++;
+        } else {
+          skipped++;
+        }
       }
-      // Remove entry after successful processing (or if it was a no-op duplicate)
       wal.remove(entry.id);
     } catch {
       // Non-fatal: log individual entry failure and continue with remaining entries

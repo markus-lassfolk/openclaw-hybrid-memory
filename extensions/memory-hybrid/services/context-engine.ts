@@ -123,15 +123,11 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       let walSkipped = 0;
       if (wal) {
         try {
-          const walEntries = wal.readAll();
-          if (walEntries.length > 0) {
-            logger.debug?.(`memory-hybrid: context-engine compact — replaying ${walEntries.length} WAL entries for session ${params.sessionId}`);
-            const result = await replayWalEntries(wal, factsDb, vectorDb, embeddings);
-            walCommitted = result.committed;
-            walSkipped = result.skipped;
-            if (walCommitted > 0) {
-              logger.info?.(`memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`);
-            }
+          const result = await replayWalEntries(wal, factsDb, vectorDb, embeddings);
+          walCommitted = result.committed;
+          walSkipped = result.skipped;
+          if (walCommitted > 0 || walSkipped > 0) {
+            logger.info?.(`memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`);
           }
         } catch {
           // Non-fatal — WAL replay failure should not block compaction

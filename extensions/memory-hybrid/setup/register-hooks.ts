@@ -197,22 +197,12 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       // Flush WAL — replay any pending writes before the compaction LLM call
       // so the compaction summary can reference the most up-to-date memory state.
       if (ctx.wal) {
-        let walCommitted = 0;
-        let walSkipped = 0;
         try {
-          const walEntries = ctx.wal.readAll();
-          if (walEntries.length > 0) {
-            api.logger.debug?.(
-              `memory-hybrid: before_compaction — replaying ${walEntries.length} pending WAL entries`,
+          const result = await replayWalEntries(ctx.wal, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
+          if (result.committed > 0 || result.skipped > 0) {
+            api.logger.info?.(
+              `memory-hybrid: before_compaction — WAL replay: ${result.committed} committed, ${result.skipped} skipped`,
             );
-            const result = await replayWalEntries(ctx.wal, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
-            walCommitted = result.committed;
-            walSkipped = result.skipped;
-            if (walCommitted > 0) {
-              api.logger.info?.(
-                `memory-hybrid: before_compaction — WAL replay: ${walCommitted} committed, ${walSkipped} skipped`,
-              );
-            }
           }
         } catch {
           // Non-fatal — WAL replay failure should not block compaction
