@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { CostTracker } from "../backends/cost-tracker.js";
+import { withCostFeature, getCurrentCostFeature } from "../services/cost-context.js";
 
 function createInMemoryDb(): Database.Database {
   return new Database(":memory:");
@@ -190,6 +191,75 @@ describe("CostTracker", () => {
       tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 100, outputTokens: 20 });
       const deleted = tracker.pruneOldEntries(90);
       expect(deleted).toBe(0);
+    });
+  });
+
+  describe("record() error isolation", () => {
+    it("does not throw when the DB is closed", () => {
+      const tmpDb = new Database(":memory:");
+      const tmpTracker = new CostTracker(tmpDb);
+      tmpDb.close(); // close before recording
+      // Should silently swallow — never let tracking break callers
+      expect(() =>
+        tmpTracker.record({ feature: "test", model: "openai/gpt-4.1-nano", inputTokens: 1, outputTokens: 1 }),
+      ).not.toThrow();
+    });
+  });
+
+  describe("getReport() unknown model visibility", () => {
+    it("reports unknownModelCalls and unknownModels for unrecognized models", () => {
+      tracker.record({ feature: "test", model: "unknown/mystery-model", inputTokens: 100, outputTokens: 50 });
+      tracker.record({ feature: "test", model: "openai/gpt-4.1-nano", inputTokens: 100, outputTokens: 50 });
+
+      const report = tracker.getReport({ days: 1 });
+      expect(report.unknownModelCalls).toBe(1);
+      expect(report.unknownModels).toContain("unknown/mystery-model");
+    });
+
+    it("returns unknownModelCalls=0 when all models are recognized", () => {
+      tracker.record({ feature: "test", model: "openai/gpt-4.1-nano", inputTokens: 100, outputTokens: 50 });
+
+      const report = tracker.getReport({ days: 1 });
+      expect(report.unknownModelCalls).toBe(0);
+      expect(report.unknownModels).toHaveLength(0);
+    });
+  });
+
+  describe("cost-context AsyncLocalStorage integration", () => {
+    it("withCostFeature provides label to getCurrentCostFeature", () => {
+      let captured: string | undefined;
+      withCostFeature("my-feature", () => {
+        captured = getCurrentCostFeature();
+      });
+      expect(captured).toBe("my-feature");
+    });
+
+    it("getCurrentCostFeature returns undefined outside withCostFeature", () => {
+      expect(getCurrentCostFeature()).toBeUndefined();
+    });
+
+    it("labels are scoped — outer label is restored after inner completes", () => {
+      let inner: string | undefined;
+      let outer: string | undefined;
+      withCostFeature("outer", () => {
+        withCostFeature("inner", () => {
+          inner = getCurrentCostFeature();
+        });
+        outer = getCurrentCostFeature();
+      });
+      expect(inner).toBe("inner");
+      expect(outer).toBe("outer");
+    });
+
+    it("records entry with feature label provided via withCostFeature (proxy simulation)", () => {
+      // Simulate what the proxy does: record using the feature from context
+      withCostFeature("auto-classify", () => {
+        const feature = getCurrentCostFeature() ?? "unknown";
+        tracker.record({ feature, model: "openai/gpt-4.1-nano", inputTokens: 200, outputTokens: 50, success: true });
+      });
+      const report = tracker.getReport({ days: 1 });
+      expect(report.features[0]?.feature).toBe("auto-classify");
+      expect(report.features[0]?.calls).toBe(1);
     });
   });
 

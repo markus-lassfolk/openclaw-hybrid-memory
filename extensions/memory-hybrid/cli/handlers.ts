@@ -981,7 +981,9 @@ export async function runVerifyForCli(
 
   // ───── Cost Tracking ─────
   log("\n───── Cost Tracking ─────");
-  if (ctx.costTracker && ctx.cfg.costTracking.enabled !== false) {
+  if (!ctx.cfg.costTracking.enabled) {
+    log(`  costTracking: ${OFF}`);
+  } else if (ctx.costTracker) {
     const totalCost = ctx.costTracker.getTotalCost(7);
     if (totalCost.calls === 0) {
       log(`  costTracking: ${ON} (no data yet — costs will be tracked after first LLM calls)`);
@@ -4440,7 +4442,11 @@ export function runCostReportForCli(
   const days = opts.days ?? 7;
 
   if (!costTracker) {
-    log("Cost tracking is not available (costTracker not initialized).");
+    if (!ctx.cfg.costTracking.enabled) {
+      log("Cost tracking is disabled. Enable it by setting costTracking.enabled: true in plugin config.");
+    } else {
+      log("Cost tracking is not available (costTracker not initialized).");
+    }
     return;
   }
 
@@ -4466,7 +4472,10 @@ export function runCostReportForCli(
       }
       return;
     }
-    const colW = [40, 8, 12, 12, 12];
+    const colW = [
+      Math.max(20, ...breakdown.map((r) => r.model.length)) + 2,
+      8, 12, 12, 12,
+    ];
     const header = [
       "Model".padEnd(colW[0]!),
       "Calls".padStart(colW[1]!),
@@ -4512,7 +4521,10 @@ export function runCostReportForCli(
       }
       return;
     }
-    const colW = [30, 8, 12, 12, 12];
+    const colW = [
+      Math.max(20, ...report.features.map((r) => r.feature.length)) + 2,
+      8, 12, 12, 12,
+    ];
     const header = [
       "Feature".padEnd(colW[0]!),
       "Calls".padStart(colW[1]!),
@@ -4540,6 +4552,10 @@ export function runCostReportForCli(
       fmtCost(report.total.estimatedCostUsd).padStart(colW[4]!),
     ].join("  "));
     log("");
+    // Unknown-model warning
+    if (report.unknownModelCalls > 0) {
+      log(`⚠️  ${report.unknownModelCalls} call(s) used unrecognized models (cost unknown): ${report.unknownModels.join(", ")}`);
+    }
     // Model summary line
     const modelBreakdown = costTracker.getModelBreakdown(days);
     if (modelBreakdown.length > 0) {

@@ -42,6 +42,10 @@ export interface CostReport {
     estimatedCostUsd: number;
   };
   days: number;
+  /** Number of calls whose model was not in the pricing table (estimated_cost_usd IS NULL). */
+  unknownModelCalls: number;
+  /** Distinct unrecognized model names (for the warning message). */
+  unknownModels: string[];
 }
 
 export class CostTracker {
@@ -71,21 +75,25 @@ export class CostTracker {
   }
 
   record(entry: CostEntry): void {
-    const cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
-    this.db
-      .prepare(
-        `INSERT INTO llm_cost_log (feature, model, input_tokens, output_tokens, estimated_cost_usd, duration_ms, success)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        entry.feature,
-        entry.model,
-        entry.inputTokens,
-        entry.outputTokens,
-        cost,
-        entry.durationMs ?? null,
-        (entry.success ?? true) ? 1 : 0,
-      );
+    try {
+      const cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
+      this.db
+        .prepare(
+          `INSERT INTO llm_cost_log (feature, model, input_tokens, output_tokens, estimated_cost_usd, duration_ms, success)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          entry.feature,
+          entry.model,
+          entry.inputTokens,
+          entry.outputTokens,
+          cost,
+          entry.durationMs ?? null,
+          (entry.success ?? true) ? 1 : 0,
+        );
+    } catch {
+      // Silently swallow — never let cost tracking break LLM calls
+    }
   }
 
   getReport(options: { days?: number; feature?: string } = {}): CostReport {
@@ -134,7 +142,26 @@ export class CostTracker {
       { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
     );
 
-    return { features, total, days };
+    // Unknown-model query: calls where estimated_cost_usd IS NULL
+    let unknownModelCalls = 0;
+    let unknownModels: string[] = [];
+    try {
+      let unknownQuery = `SELECT COUNT(*) AS cnt, GROUP_CONCAT(DISTINCT model) AS models
+         FROM llm_cost_log WHERE timestamp >= ? AND estimated_cost_usd IS NULL`;
+      const unknownParams: (number | string)[] = [cutoff];
+      if (options.feature) {
+        unknownQuery += ` AND feature = ?`;
+        unknownParams.push(options.feature);
+      }
+      const unknownRow = this.db.prepare(unknownQuery).get(...unknownParams) as {
+        cnt: number | bigint;
+        models: string | null;
+      } | undefined;
+      unknownModelCalls = Number(unknownRow?.cnt ?? 0);
+      unknownModels = unknownRow?.models ? unknownRow.models.split(",").filter(Boolean) : [];
+    } catch { /* best-effort */ }
+
+    return { features, total, days, unknownModelCalls, unknownModels };
   }
 
   getModelBreakdown(days = 7): ModelBreakdown[] {

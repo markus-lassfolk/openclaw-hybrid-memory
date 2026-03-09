@@ -18,6 +18,7 @@ import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
 import { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 import { IssueStore } from "../backends/issue-store.js";
@@ -30,6 +31,44 @@ import { CostTracker } from "../backends/cost-tracker.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+
+/**
+ * Infer a human-readable feature label for a chat completion call.
+ * Checks AsyncLocalStorage first (precise, opt-in via withCostFeature),
+ * then falls back to heuristic scanning of message content.
+ */
+function inferFeatureLabel(body: Record<string, unknown>, _model: string): string {
+  // Precise label: caller wrapped in withCostFeature("label", () => ...)
+  const explicit = getCurrentCostFeature();
+  if (explicit) return explicit;
+
+  // Heuristic: scan message content for known feature fingerprints
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const content = messages
+    .map((m: unknown) => String((m as Record<string, unknown>)?.content ?? ""))
+    .join(" ")
+    .toLowerCase();
+
+  if (content.includes("classify") || content.includes("category")) return "auto-classify";
+  if (content.includes("hyde") || content.includes("hypothetical")) return "query-expansion";
+  if (content.includes("rerank")) return "reranking";
+  if (content.includes("reflect")) return "reflection";
+  if (content.includes("self-correction") || content.includes("self correction")) return "self-correction";
+  if (content.includes("reinforce")) return "reinforcement-extract";
+  if (content.includes("implicit") || content.includes("feedback signal")) return "implicit-feedback";
+  if (content.includes("trajectory")) return "trajectory-analysis";
+  if (content.includes("frustrat")) return "frustration-detection";
+  if (content.includes("cross-agent") || content.includes("generaliz")) return "cross-agent-learning";
+  if (content.includes("tool effectiveness") || content.includes("tool scoring")) return "tool-effectiveness";
+  if (content.includes("distill") || content.includes("extract facts")) return "distill";
+  if (content.includes("keyword")) return "language-keywords";
+  if (content.includes("consolidat")) return "consolidation";
+  if (content.includes("skill")) return "memory-to-skills";
+  if (content.includes("persona") || content.includes("proposal")) return "persona-proposals";
+  if (content.includes("verify") || content.includes("verification")) return "continuous-verification";
+
+  return "unknown";
+}
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 
@@ -44,7 +83,7 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
  *  - Other `provider/*` with explicit llm.providers config → custom endpoint
  *  - Unknown provider, no config → throws UnconfiguredProviderError
  */
-function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): OpenAI {
+function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
@@ -177,7 +216,31 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
               const adjustedBody = isOpenAI
                 ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
                 : { ...(body as object), model: bareModel };
-              return client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
+              const promise = client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
+              // Fire-and-forget cost tracking — never blocks or modifies the returned promise
+              if (costTracker) {
+                const feature = inferFeatureLabel(body as Record<string, unknown>, model);
+                void (Promise.resolve(promise) as Promise<unknown>).then(
+                  (resp: unknown) => {
+                    try {
+                      const r = resp as { usage?: { prompt_tokens?: number; completion_tokens?: number } } | null;
+                      costTracker.record({
+                        feature,
+                        model,
+                        inputTokens: r?.usage?.prompt_tokens ?? 0,
+                        outputTokens: r?.usage?.completion_tokens ?? 0,
+                        success: true,
+                      });
+                    } catch { /* never let tracking break LLM calls */ }
+                  },
+                  () => {
+                    try {
+                      costTracker.record({ feature, model, inputTokens: 0, outputTokens: 0, success: false });
+                    } catch { /* never let tracking break LLM calls */ }
+                  },
+                );
+              }
+              return promise;
             },
           },
         };
@@ -210,7 +273,7 @@ export interface DatabaseContext {
   toolProposalStore: ToolProposalStore;
   verificationStore: VerificationStore | null;
   provenanceService: ProvenanceService | null;
-  costTracker: CostTracker;
+  costTracker: CostTracker | null;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
   health: HealthStatus;
@@ -301,11 +364,21 @@ export function initializeDatabases(
       api.logger.info?.(`memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.join(", ")}${nano.length > 0 ? `; nano: ${nano.join(", ")}` : ""})`);
     }
   }
+  // CostTracker — created early so proxy can instrument every chat.completions.create call (Issue #270).
+  // Shares FactsDB's SQLite connection (same memory.db, avoids a second DB handle).
+  // Gated on cfg.costTracking.enabled (default: true).
+  const costTracker: CostTracker | null = cfg.costTracking?.enabled !== false
+    ? new CostTracker(factsDb.getRawDb())
+    : null;
+  if (costTracker) {
+    api.logger.info("memory-hybrid: LLM cost tracker initialized");
+  }
+
   // Chat/LLM client: multi-provider proxy that routes each model to the correct API.
   // google/* → Google Gemini OpenAI-compat API (uses distill.apiKey or llm.providers.google.apiKey)
   // openai/* or bare names → OpenAI API (uses embedding.apiKey or llm.providers.openai.apiKey)
   // Other providers → require llm.providers.<provider>.apiKey + optionally baseURL
-  const openai = buildMultiProviderOpenAI(cfg, api);
+  const openai = buildMultiProviderOpenAI(cfg, api, costTracker);
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {
@@ -387,10 +460,6 @@ export function initializeDatabases(
     api.logger.info("memory-hybrid: verification store enabled");
   }
 
-  // Initialize CostTracker — always enabled; recording gated by cfg.costTracking.enabled (Issue #270)
-  // Shares FactsDB's SQLite connection (same memory.db file, avoids a second DB handle).
-  const costTracker = new CostTracker(factsDb.getRawDb());
-  api.logger.info("memory-hybrid: LLM cost tracker initialized");
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;

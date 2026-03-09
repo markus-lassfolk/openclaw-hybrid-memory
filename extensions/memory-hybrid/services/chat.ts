@@ -98,19 +98,7 @@ export async function chatComplete(opts: {
     );
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    if (opts.costTracker && opts.feature && resp.usage) {
-      try {
-        opts.costTracker.record({
-          feature: opts.feature,
-          model,
-          inputTokens: resp.usage.prompt_tokens ?? 0,
-          outputTokens: resp.usage.completion_tokens ?? 0,
-          success: true,
-        });
-      } catch {
-        // Cost tracking is best-effort; never let it break the caller
-      }
-    }
+    // Cost tracking is handled by the OpenAI proxy in init-databases.ts — no recording here.
     return resp.choices[0]?.message?.content?.trim() ?? "";
   } catch (err) {
     clearTimeout(timeoutId);

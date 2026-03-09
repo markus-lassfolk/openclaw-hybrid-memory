@@ -2,7 +2,7 @@
  * Static LLM model pricing table for cost estimation.
  *
  * ⚠️ DISCLAIMER: Prices are rough estimates based on publicly published
- * rates as of early 2025. Actual billing may differ due to promotions,
+ * rates as of 2026. Actual billing may differ due to promotions,
  * batch discounts, caching, or provider changes. Do not use for billing.
  */
 
@@ -35,19 +35,20 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "minimax/MiniMax-M2.5": { inputPer1M: 0.20, outputPer1M: 1.10 },
 };
 
+/** Lowercased index built once at module load for O(1) case-insensitive lookup. */
+const MODEL_PRICING_LOWER: Record<string, ModelPricing> = Object.fromEntries(
+  Object.entries(MODEL_PRICING).map(([k, v]) => [k.toLowerCase(), v]),
+);
+
 /**
  * Look up pricing for a model. Returns null if the model is not in the table.
  * Model name is matched case-insensitively.
  */
 export function getModelPricing(model: string): ModelPricing | null {
-  // Direct match first
+  // Direct match first (fastest path)
   if (model in MODEL_PRICING) return MODEL_PRICING[model]!;
-  // Case-insensitive match
-  const lower = model.toLowerCase();
-  for (const [key, pricing] of Object.entries(MODEL_PRICING)) {
-    if (key.toLowerCase() === lower) return pricing;
-  }
-  return null;
+  // O(1) case-insensitive lookup via pre-built lowercase index
+  return MODEL_PRICING_LOWER[model.toLowerCase()] ?? null;
 }
 
 /**
