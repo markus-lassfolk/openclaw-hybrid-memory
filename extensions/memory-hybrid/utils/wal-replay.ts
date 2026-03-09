@@ -83,12 +83,15 @@ export async function replayWalEntries(
             }
           }
           committed++;
+          wal.remove(entry.id);
         } else {
           skipped++;
+          wal.remove(entry.id);
         }
       } else if (entry.operation === "update") {
         // Skip update operations during replay: WAL entries lack the targetId needed
         // to properly supersede the old fact, so replaying would create duplicates.
+        // Do not remove these entries — preserve them for future replay with improved logic.
         skipped++;
       } else if (entry.operation === "delete" && entry.data?.text) {
         const factId = entry.data.text as string;
@@ -98,8 +101,8 @@ export async function replayWalEntries(
         } else {
           skipped++;
         }
+        wal.remove(entry.id);
       }
-      wal.remove(entry.id);
     } catch {
       // Non-fatal: log individual entry failure and continue with remaining entries
     }

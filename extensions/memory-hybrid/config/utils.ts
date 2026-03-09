@@ -58,6 +58,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     personaProposals: { enabled: false },
     memoryTiering: { enabled: true, compactionOnSessionEnd: true },
     distill: { extractDirectives: true, extractReinforcement: true },
+    verbosity: "normal",
   },
   expert: {
     autoCapture: true,
@@ -86,6 +87,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     workflowTracking: { enabled: true },
     selfExtension: { enabled: true },
     crystallization: { enabled: true },
+    verbosity: "normal",
   },
   full: {
     autoCapture: true,
