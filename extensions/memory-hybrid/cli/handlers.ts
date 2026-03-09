@@ -1003,8 +1003,8 @@ export async function runVerifyForCli(
       log(`  Run 'openclaw hybrid-mem cost-report' for full breakdown.`);
     }
   } else {
-    log(`  Cost tracking: ⏸ Disabled`);
-    log(`  Enable: openclaw hybrid-mem config-set costTracking.enabled true`);
+    log(`  Cost tracking: ⚠️  Enabled in config but tracker failed to initialize`);
+    log(`  Check logs or run 'openclaw hybrid-mem verify --fix' to diagnose.`);
   }
 
   // ───── Estimated Monthly Cost by Mode ─────
