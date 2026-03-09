@@ -2867,7 +2867,7 @@ export class FactsDB {
   }
 
   /**
-   * List facts for dashboard/API: paginated, filterable by category/tier, optional FTS search.
+   * List facts for dashboard/API: paginated, filterable by category/tier/entity, optional FTS search.
    * Returns entries in dashboard shape (snake_case for JSON) and total count.
    */
   listForDashboard(opts: {
@@ -2876,6 +2876,7 @@ export class FactsDB {
     category?: string;
     tier?: string;
     decayClass?: string;
+    entity?: string;
     search?: string;
   }): { facts: Array<Record<string, unknown>>; total: number } {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -2893,6 +2894,10 @@ export class FactsDB {
     if (opts.decayClass) {
       where += " AND COALESCE(decay_class, 'stable') = ?";
       params.push(opts.decayClass);
+    }
+    if (opts.entity) {
+      where += " AND entity = ?";
+      params.push(opts.entity);
     }
 
     const countRow = this.liveDb
@@ -2929,12 +2934,13 @@ export class FactsDB {
       const ftsResults = searchFts(this.liveDb, opts.search.trim(), { limit: 2000 });
       const allFtsIds = ftsResults.map((r) => r.factId);
       if (allFtsIds.length === 0) return { facts: [], total: 0 };
-      // Apply category/tier/decayClass filters on top of FTS results to maintain consistency
+      // Apply category/tier/decayClass/entity filters on top of FTS results to maintain consistency
       const idPlaceholders = allFtsIds.map(() => "?").join(",");
       const filteredIdRows = this.liveDb
         .prepare(`SELECT id FROM facts WHERE id IN (${idPlaceholders}) AND ${where}`)
         .all(...allFtsIds, ...params) as Array<{ id: string }>;
-      const filteredIds = filteredIdRows.map((r) => r.id);
+      const filteredSet = new Set(filteredIdRows.map((r) => r.id));
+      const filteredIds = allFtsIds.filter((id) => filteredSet.has(id));
       const searchTotal = filteredIds.length;
       const pageIds = filteredIds.slice(opts.offset, opts.offset + opts.limit);
       if (pageIds.length === 0) return { facts: [], total: searchTotal };

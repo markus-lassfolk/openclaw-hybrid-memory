@@ -136,7 +136,7 @@ export function createDashboardServer(ctx: DashboardServerContext) {
         const limit = Math.min(500, Math.max(1, parseInt(searchParams.get("limit") ?? "100", 10)));
         const category = searchParams.get("category") ?? undefined;
         const entity = searchParams.get("entity") ?? undefined;
-        const { facts, total } = factsDb.listForDashboard({ limit, offset: 0, category, tier: undefined });
+        const { facts, total } = factsDb.listForDashboard({ limit, offset: 0, category, tier: undefined, entity });
         const nodeIds = new Set(facts.map((f) => f.id as string));
         const nodes = facts.map((f) => ({
           id: f.id,
