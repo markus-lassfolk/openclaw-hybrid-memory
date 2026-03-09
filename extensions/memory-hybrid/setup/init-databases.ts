@@ -60,7 +60,7 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   if (content.includes("implicit") && content.includes("feedback")) return "implicit-feedback";
   if (/\b(trajectory\s+(analysis|tracking|pattern))\b/.test(content)) return "trajectory-analysis";
   if (/\bfrustrat(ion|ed|ing)\b/.test(content)) return "frustration-detection";
-  if (content.includes("cross-agent") || /\bgeneraliz(e|ing|ation)\b/.test(content)) return "cross-agent-learning";
+  if (content.includes("cross-agent")) return "cross-agent-learning";
   if (content.includes("tool effectiveness") || content.includes("tool scoring")) return "tool-effectiveness";
   if (/\b(extract\s+(key\s+)?facts?\s+from|distill\s+(memories|facts|session|knowledge|this\s+session))\b/.test(content)) return "distill";
   if (/\b(language.?keyword|keyword.?extract)\b/.test(content)) return "language-keywords";
