@@ -2927,9 +2927,16 @@ export class FactsDB {
 
     if (opts.search && opts.search.trim()) {
       const ftsResults = searchFts(this.liveDb, opts.search.trim(), { limit: 2000 });
-      const factIds = ftsResults.map((r) => r.factId);
-      const searchTotal = factIds.length;
-      const pageIds = factIds.slice(opts.offset, opts.offset + opts.limit);
+      const allFtsIds = ftsResults.map((r) => r.factId);
+      if (allFtsIds.length === 0) return { facts: [], total: 0 };
+      // Apply category/tier/decayClass filters on top of FTS results to maintain consistency
+      const idPlaceholders = allFtsIds.map(() => "?").join(",");
+      const filteredIdRows = this.liveDb
+        .prepare(`SELECT id FROM facts WHERE id IN (${idPlaceholders}) AND ${where}`)
+        .all(...allFtsIds, ...params) as Array<{ id: string }>;
+      const filteredIds = filteredIdRows.map((r) => r.id);
+      const searchTotal = filteredIds.length;
+      const pageIds = filteredIds.slice(opts.offset, opts.offset + opts.limit);
       if (pageIds.length === 0) return { facts: [], total: searchTotal };
       const placeholders = pageIds.map(() => "?").join(",");
       const pageRows = this.liveDb

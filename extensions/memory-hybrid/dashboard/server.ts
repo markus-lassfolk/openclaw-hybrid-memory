@@ -5,7 +5,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { IssueStore } from "../backends/issue-store.js";
@@ -296,6 +296,14 @@ export function createDashboardServer(ctx: DashboardServerContext) {
       filePath = join(distDir, "index.html");
     } else {
       filePath = join(distDir, pathname);
+    }
+
+    // Path traversal guard: ensure resolved path stays within distDir
+    const resolvedPath = resolve(filePath);
+    const resolvedDistDir = resolve(distDir);
+    if (!resolvedPath.startsWith(resolvedDistDir + sep) && resolvedPath !== resolvedDistDir) {
+      sendJson(res, 403, { error: "Forbidden" });
+      return;
     }
 
     if (serveStatic(res, filePath)) return;
