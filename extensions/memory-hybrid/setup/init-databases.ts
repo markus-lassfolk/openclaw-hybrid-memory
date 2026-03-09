@@ -51,7 +51,7 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
     .toLowerCase();
 
   // More specific patterns to reduce false positives
-  if (/\b(memory\s+categ|classify\s+(this\s+)?(memory|fact|entry)|auto.?classif|categorize\s+(this|the)\s+(memory|fact))/i.test(content)) return "auto-classify";
+  if (/\b(memory\s+categ|classify\s+(this\s+)?(memory|fact|entry)|auto.?classif|categorize\s+(this|the)\s+(memory|fact))\b/.test(content)) return "auto-classify";
   if (content.includes("hyde") || content.includes("hypothetical document")) return "query-expansion";
   if (/\brerank(ing)?\b/.test(content)) return "reranking";
   if (/\b(memory\s+reflection|reflect\s+on\s+(recent|your|past)|weekly\s+reflection|synthesize\s+(patterns|insights))\b/.test(content)) return "reflection";
@@ -62,7 +62,7 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   if (content.includes("frustrat")) return "frustration-detection";
   if (content.includes("cross-agent") || content.includes("generaliz")) return "cross-agent-learning";
   if (content.includes("tool effectiveness") || content.includes("tool scoring")) return "tool-effectiveness";
-  if (/\b(extract\s+(key\s+)?facts?\s+from|distill\s+(memories|facts|session|knowledge|this\s+session)|consolidate\s+(into\s+)?facts)\b/.test(content)) return "distill";
+  if (/\b(extract\s+(key\s+)?facts?\s+from|distill\s+(memories|facts|session|knowledge|this\s+session))\b/.test(content)) return "distill";
   if (/\b(language.?keyword|keyword.?extract)\b/.test(content)) return "language-keywords";
   if (/\b(consolidat(e|ing|ion)\s+(memories|facts|episodic|events))\b/.test(content)) return "consolidation";
   if (/\b(memory.to.skills|skill\s+(suggestion|draft|cluster)|draft\s+(new\s+)?skill)\b/.test(content)) return "memory-to-skills";
