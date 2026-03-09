@@ -399,7 +399,7 @@ export function detectCorrectionCascade(
   const current = turns[turnIndex];
   if (current.role !== "user") return null;
 
-  const CORRECTION_RE = /\b(no|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
+  const CORRECTION_RE = /\b(no(?!\s+(problem|worries|need|issue|issues|questions?|thanks?))|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
 
   // Count corrections in the last 5 turns
   const window = turns.slice(Math.max(0, turnIndex - 4), turnIndex + 1);

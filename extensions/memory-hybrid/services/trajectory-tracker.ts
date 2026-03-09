@@ -39,7 +39,7 @@ export interface TrajectoryBoundary {
 // Patterns indicating positive sentiment in user messages
 const POSITIVE_RE = /\b(thanks|thank you|cheers|perfect|great|awesome|brilliant|excellent|wonderful|worked|done|fixed|solved|got it|success|that'?s it|exactly|correct|yes|nice|good)\b/i;
 // Patterns indicating correction
-const CORRECTION_RE = /\b(no|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
+const CORRECTION_RE = /\b(no(?!\s+(problem|worries|need|issue|issues|questions?|thanks?))|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
 
 /**
  * Classify sentiment of a user message.
