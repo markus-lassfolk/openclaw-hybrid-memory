@@ -1009,10 +1009,12 @@ export async function runVerifyForCli(
 
   // ───── Estimated Monthly Cost by Mode ─────
   log("\n───── Estimated Monthly Cost by Mode ─────");
-  log(`  essential: ~$0.50-2/mo  (classify + query expansion only)`);
-  log(`  normal:    ~$2-8/mo     (+ reflection, self-correction, reinforcement)`);
-  log(`  expert:    ~$8-20/mo    (+ implicit feedback, trajectory, passive observer)`);
-  log(`  full:      ~$15-40/mo   (+ cross-agent, frustration, dream-cycle, everything)`);
+  const modeEstimates = getModeCostEstimates();
+  for (const est of modeEstimates) {
+    const low = est.monthlyLow.toFixed(2);
+    const high = est.monthlyHigh.toFixed(2);
+    log(`  ${est.mode.padEnd(10)}: ~$${low}-${high}/mo  (${est.description})`);
+  }
   log(`  ℹ️  Estimates assume ~100 conversations/month with nano-tier models.`);
   log(`     Heavy models (Opus, GPT-5.2) for distill/self-correction increase costs 5-10×.`);
 
@@ -4682,7 +4684,7 @@ export function runCostReportForCli(
         fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
       ];
       if (hasSavings) {
-        parts.push((savings > 0 ? `-${fmtCost(savings).slice(1)}` : "").padStart(colW[5]!));
+        parts.push((savings > 0 ? `-$${savings.toFixed(4)}` : "").padStart(colW[5]!));
         parts.push(fmtCost(net).padStart(colW[6]!));
       }
       if (!compact) {
@@ -4699,7 +4701,7 @@ export function runCostReportForCli(
       fmtCost(report.total.estimatedCostUsd).padStart(colW[4]!),
     ];
     if (hasSavings) {
-      totalParts.push((`-${fmtCost(totalSavings).slice(1)}`).padStart(colW[5]!));
+      totalParts.push((`-$${totalSavings.toFixed(4)}`).padStart(colW[5]!));
       totalParts.push(fmtCost(Math.max(0, netCost)).padStart(colW[6]!));
     }
     if (!compact) {
