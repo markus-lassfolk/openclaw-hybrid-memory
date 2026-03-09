@@ -173,7 +173,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         compacted: false,
         reason: `flushed pending state (wal: ${walCommitted} committed)`,
         // Extended result field: SDK ≥ 2026.3.8 may inject memorySummary into context.
-        result: memorySummary ? { topFacts: factsDb.list(8), factCount: sessionFacts, memorySummary } : { factCount: sessionFacts },
+        result: memorySummary ? { topFacts, factCount: sessionFacts, memorySummary } : { factCount: sessionFacts },
       };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

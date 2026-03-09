@@ -550,7 +550,7 @@ const memoryHybridPlugin = {
             }
 
             // Cron not found — log warning
-            const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 3 * * 0";
+            const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
             api.logger.warn?.(
               `memory-hybrid: boot-check — weekly backup cron not found. ` +
               `Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`

@@ -384,18 +384,23 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           if (verbosity === "quiet") {
             // Compact: one line per proposal with just the actionable info
             const expireStr = expires !== null ? ` (expires ${expires}d)` : "";
-            return `[PENDING] ${p.id} — ${p.title}${expireStr}`;
+            return `[${p.status.toUpperCase()}] ${p.id} — ${p.title}${expireStr}`;
           }
           return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? p.observation.slice(0, 120) + "..." : p.observation}`;
         });
+
+        const pendingCount = proposals.filter(p => p.status === "pending").length;
+        const summaryText = verbosity === "quiet"
+          ? (pendingCount > 0
+              ? `${proposals.length} proposal(s) (${pendingCount} awaiting review):\n${lines.join("\n")}`
+              : `${proposals.length} proposal(s):\n${lines.join("\n")}`)
+          : `Found ${proposals.length} proposal(s):\n\n${lines.join("\n\n")}`;
 
         return {
           content: [
             {
               type: "text",
-              text: verbosity === "quiet"
-                ? `${proposals.length} proposal(s) awaiting review:\n${lines.join("\n")}`
-                : `Found ${proposals.length} proposal(s):\n\n${lines.join("\n\n")}`,
+              text: summaryText,
             },
           ],
           details: { count: proposals.length, proposals: proposals.map(p => ({ id: p.id, status: p.status, title: p.title, targetFile: p.targetFile })) },
