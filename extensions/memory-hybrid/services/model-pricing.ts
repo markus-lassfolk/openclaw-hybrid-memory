@@ -65,3 +65,66 @@ export function estimateCost(
   return (inputTokens / 1_000_000) * pricing.inputPer1M +
     (outputTokens / 1_000_000) * pricing.outputPer1M;
 }
+
+// ---------------------------------------------------------------------------
+// Config-mode cost estimates
+// ---------------------------------------------------------------------------
+
+export interface ModeEstimate {
+  mode: "essential" | "normal" | "expert" | "full";
+  /** Human-readable description of features enabled in this mode. */
+  description: string;
+  /** List of features enabled (for display). */
+  features: string[];
+  /** Estimated monthly cost lower bound (USD). */
+  monthlyLow: number;
+  /** Estimated monthly cost upper bound (USD). */
+  monthlyHigh: number;
+}
+
+/**
+ * Return cost estimates ($/month) for each config mode.
+ *
+ * Estimates are based on typical usage patterns with the default cheapest model
+ * (openai/gpt-4.1-nano at $0.10/$0.40 per 1M tokens). Actual costs depend on
+ * usage volume and model selection.
+ */
+export function getModeCostEstimates(): ModeEstimate[] {
+  return [
+    {
+      mode: "essential",
+      description: "Minimal — embeddings only, no LLM features",
+      features: ["embeddings", "structured-recall"],
+      monthlyLow: 0.00,
+      monthlyHigh: 0.05,
+    },
+    {
+      mode: "normal",
+      description: "Standard — auto-classify + query-expansion + HyDE",
+      features: ["embeddings", "auto-classify", "query-expansion", "hyde", "structured-recall"],
+      monthlyLow: 0.05,
+      monthlyHigh: 0.50,
+    },
+    {
+      mode: "expert",
+      description: "Full intelligence — adds reflection, self-correction, cross-agent learning",
+      features: [
+        "embeddings", "auto-classify", "query-expansion", "hyde", "structured-recall",
+        "reflection", "self-correction", "cross-agent-learning", "tool-effectiveness",
+      ],
+      monthlyLow: 0.50,
+      monthlyHigh: 3.00,
+    },
+    {
+      mode: "full",
+      description: "Everything — all features including distill, dream-cycle, extract-daily",
+      features: [
+        "embeddings", "auto-classify", "query-expansion", "hyde", "structured-recall",
+        "reflection", "self-correction", "cross-agent-learning", "tool-effectiveness",
+        "distill", "dream-cycle", "extract-daily", "extract-implicit", "consolidate",
+      ],
+      monthlyLow: 3.00,
+      monthlyHigh: 15.00,
+    },
+  ];
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateCost, getModelPricing, MODEL_PRICING } from "../services/model-pricing.js";
+import { estimateCost, getModelPricing, MODEL_PRICING, getModeCostEstimates } from "../services/model-pricing.js";
 
 describe("getModelPricing", () => {
   it("returns pricing for known OpenAI models", () => {
@@ -77,5 +77,55 @@ describe("MODEL_PRICING", () => {
     expect(keys.some((k) => k.startsWith("openai/"))).toBe(true);
     expect(keys.some((k) => k.startsWith("google/"))).toBe(true);
     expect(keys.some((k) => k.startsWith("anthropic/"))).toBe(true);
+  });
+});
+
+describe("getModeCostEstimates()", () => {
+  it("returns an array of 4 mode estimates", () => {
+    const estimates = getModeCostEstimates();
+    expect(estimates).toHaveLength(4);
+  });
+
+  it("covers all four config modes", () => {
+    const modes = getModeCostEstimates().map((e) => e.mode);
+    expect(modes).toContain("essential");
+    expect(modes).toContain("normal");
+    expect(modes).toContain("expert");
+    expect(modes).toContain("full");
+  });
+
+  it("has non-negative monthlyLow for all modes", () => {
+    for (const e of getModeCostEstimates()) {
+      expect(e.monthlyLow).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("has monthlyHigh >= monthlyLow for all modes", () => {
+    for (const e of getModeCostEstimates()) {
+      expect(e.monthlyHigh).toBeGreaterThanOrEqual(e.monthlyLow);
+    }
+  });
+
+  it("modes are ordered by cost (essential cheapest, full most expensive)", () => {
+    const estimates = getModeCostEstimates();
+    const essential = estimates.find((e) => e.mode === "essential")!;
+    const full = estimates.find((e) => e.mode === "full")!;
+    expect(full.monthlyHigh).toBeGreaterThan(essential.monthlyHigh);
+  });
+
+  it("each mode has a non-empty description and features list", () => {
+    for (const e of getModeCostEstimates()) {
+      expect(e.description.length).toBeGreaterThan(0);
+      expect(e.features.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("full mode includes all expert mode features", () => {
+    const estimates = getModeCostEstimates();
+    const expert = estimates.find((e) => e.mode === "expert")!;
+    const full = estimates.find((e) => e.mode === "full")!;
+    for (const feature of expert.features) {
+      expect(full.features).toContain(feature);
+    }
   });
 });

@@ -1612,7 +1612,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--feature <name>", "Filter to a specific feature (e.g. auto-classify)")
     .option("--csv", "Output as CSV")
     .option("--format <format>", "Output format: pretty (default, emoji+%) or compact (terse)", "pretty")
-    .action(withExit(async (opts?: { days?: string; model?: boolean; feature?: string; csv?: boolean; format?: string }) => {
+    .option("--modes", "Show estimated $/month cost ranges for each config mode (essential/normal/expert/full)")
+    .action(withExit(async (opts?: { days?: string; model?: boolean; feature?: string; csv?: boolean; format?: string; modes?: boolean }) => {
       if (!runCostReport) {
         console.error("cost-report is not available in this context.");
         process.exitCode = 1;
@@ -1621,7 +1622,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const days = opts?.days ? parseInt(opts.days, 10) : 7;
       const format = opts?.format === "compact" ? "compact" as const : "pretty" as const;
       runCostReport(
-        { days, model: !!opts?.model, feature: opts?.feature, csv: !!opts?.csv, format },
+        { days, model: !!opts?.model, feature: opts?.feature, csv: !!opts?.csv, format, modes: !!opts?.modes },
         { log: (msg) => console.log(msg) },
       );
     }));

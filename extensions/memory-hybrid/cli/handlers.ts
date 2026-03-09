@@ -85,6 +85,7 @@ import {
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore, generateMonthlyReport } from "../services/tool-effectiveness.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
+import { getModeCostEstimates } from "../services/model-pricing.js";
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
@@ -3541,6 +3542,17 @@ export async function runSelfCorrectionRunForCli(
     logger.warn?.(`memory-hybrid: could not write report: ${e}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
   }
+  // Record savings: each auto-fixed incident avoided ~2 manual LLM round-trips
+  if (autoFixed > 0 && ctx.costTracker && !opts?.dryRun) {
+    ctx.costTracker.recordSavings({
+      feature: "self-correction",
+      action: "auto-fixed incident",
+      countAvoided: autoFixed,
+      estimatedSavingUsd: autoFixed * 0.002,
+      note: `${autoFixed} incident(s) auto-remediated`,
+    });
+  }
+
   return {
     incidentsFound: incidents.length,
     analysed: analysed.length,
@@ -4367,6 +4379,18 @@ export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<
   const openai = ctx.openai;
 
   const result = await runCrossAgentLearning(factsDb, openai, caCfg, ctx.logger ?? {});
+
+  // Record savings: each generalised pattern avoids re-learning by other agents
+  if (result.generalisedStored > 0 && ctx.costTracker) {
+    ctx.costTracker.recordSavings({
+      feature: "cross-agent-learning",
+      action: "generalised pattern stored",
+      countAvoided: result.generalisedStored,
+      estimatedSavingUsd: result.generalisedStored * 0.001,
+      note: `${result.agentsScanned} agent(s) scanned, ${result.skippedDuplicates} duplicates skipped`,
+    });
+  }
+
   return result;
 }
 
@@ -4431,6 +4455,8 @@ export interface CostReportCliOpts {
   csv?: boolean;
   /** Output format: "pretty" (default, emoji + percentages) or "compact" (terse, no emoji). */
   format?: "pretty" | "compact";
+  /** Show config-mode cost estimate table instead of live data. */
+  modes?: boolean;
 }
 
 /**
@@ -4446,6 +4472,46 @@ export function runCostReportForCli(
   const { log } = sink;
   const days = opts.days ?? 7;
   const compact = opts.format === "compact";
+
+  // --modes: show config-mode cost estimate table (no live data needed)
+  if (opts.modes) {
+    const estimates = getModeCostEstimates();
+    if (!compact) {
+      log("");
+      log("📊 Config-Mode Cost Estimates ($/month, estimated)");
+      log("   Based on typical usage with the default cheapest model (gpt-4.1-nano).");
+      log("   Actual costs depend on your volume, model choices, and feature config.");
+      log("");
+    } else {
+      log("───── Config-Mode Cost Estimates ─────");
+    }
+    const modeW = 12;
+    const descW = 58;
+    const costW = 20;
+    const header = [
+      "Mode".padEnd(modeW),
+      "Description".padEnd(descW),
+      "Est. $/month".padStart(costW),
+    ].join("  ");
+    log(header);
+    log("─".repeat(header.length));
+    for (const e of estimates) {
+      const costRange = `$${e.monthlyLow.toFixed(2)} – $${e.monthlyHigh.toFixed(2)}`;
+      log([
+        e.mode.padEnd(modeW),
+        e.description.padEnd(descW),
+        costRange.padStart(costW),
+      ].join("  "));
+      if (!compact) {
+        log(`${"".padEnd(modeW)}  Features: ${e.features.join(", ")}`);
+        log("");
+      }
+    }
+    if (!compact) {
+      log(`Set mode: openclaw hybrid-mem config-mode <mode>`);
+    }
+    return;
+  }
 
   if (!costTracker) {
     if (!ctx.cfg.costTracking.enabled) {
@@ -4534,6 +4600,14 @@ export function runCostReportForCli(
   } else {
     // Feature breakdown
     const report = costTracker.getReport({ days, feature: opts.feature });
+    const savingsReport = costTracker.getSavingsReport(days);
+
+    // Build a savings lookup by feature for fast join
+    const savingsByFeature = new Map<string, number>();
+    for (const s of savingsReport.features) {
+      savingsByFeature.set(s.feature, s.estimatedSavingUsd);
+    }
+
     if (report.features.length === 0) {
       if (compact) {
         log(`No LLM cost data in the last ${days} days.`);
@@ -4541,56 +4615,97 @@ export function runCostReportForCli(
         log(`\n✅ Cost tracking is active — no data yet for the last ${days} days.`);
         log(`   Costs will appear here after your first LLM calls (~1 hour of typical use).`);
       }
-      return;
-    }
-    if (opts.csv) {
-      log("feature,calls,input_tokens,output_tokens,est_cost_usd");
-      for (const r of report.features) {
-        log(`${r.feature},${r.calls},${r.inputTokens},${r.outputTokens},${r.estimatedCostUsd.toFixed(6)}`);
+      // Still show savings if any exist (value delivered without cost)
+      if (savingsReport.total.estimatedSavingUsd > 0 && !compact) {
+        log(`\n💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`);
       }
       return;
     }
+    if (opts.csv) {
+      log("feature,calls,input_tokens,output_tokens,est_cost_usd,est_savings_usd,net_cost_usd");
+      for (const r of report.features) {
+        const savings = savingsByFeature.get(r.feature) ?? 0;
+        log(`${r.feature},${r.calls},${r.inputTokens},${r.outputTokens},${r.estimatedCostUsd.toFixed(6)},${savings.toFixed(6)},${(r.estimatedCostUsd - savings).toFixed(6)}`);
+      }
+      return;
+    }
+
+    const totalSavings = savingsReport.total.estimatedSavingUsd;
+    const netCost = report.total.estimatedCostUsd - totalSavings;
+
     if (!compact) {
       const featureCount = report.features.length;
       log(`\n📊 LLM Cost Report — last ${days} days`);
-      log(`💰 Total: ${fmtCost(report.total.estimatedCostUsd)} across ${featureCount} feature${featureCount === 1 ? "" : "s"} (${report.total.calls} LLM calls)`);
+      log(`💰 Gross cost: ${fmtCost(report.total.estimatedCostUsd)} across ${featureCount} feature${featureCount === 1 ? "" : "s"} (${report.total.calls} LLM calls)`);
+      if (totalSavings > 0) {
+        log(`💚 Automation savings: ${fmtCost(totalSavings)} (${savingsReport.total.countAvoided} ops avoided)`);
+        log(`📉 Net cost: ${fmtCost(Math.max(0, netCost))}`);
+      }
       log("");
     } else {
       log(`\n───── LLM Cost Report (last ${days} days) ─────`);
     }
+
+    const hasSavings = totalSavings > 0;
+    // Column widths: Feature | Calls | In-Tokens | Out-Tokens | Est.Cost | [Savings] | [Net] | [%]
     const colW = [
       Math.max(20, ...report.features.map((r) => r.feature.length)) + 2,
-      8, 12, 12, 12, 5,
+      8, 12, 12, 12,
+      ...(hasSavings ? [12, 12] : []),
+      ...(compact ? [] : [5]),
     ];
-    const header = [
+    const headerParts = [
       "Feature".padEnd(colW[0]!),
       "Calls".padStart(colW[1]!),
       "In-Tokens".padStart(colW[2]!),
       "Out-Tokens".padStart(colW[3]!),
       "Est. Cost".padStart(colW[4]!),
-      ...(compact ? [] : ["  %".padStart(colW[5]!)]),
-    ].join("  ");
+    ];
+    if (hasSavings) {
+      headerParts.push("Savings".padStart(colW[5]!));
+      headerParts.push("Net Cost".padStart(colW[6]!));
+    }
+    if (!compact) {
+      headerParts.push("  %".padStart(colW[hasSavings ? 7 : 5]!));
+    }
+    const header = headerParts.join("  ");
     log(header);
     log("─".repeat(header.length));
     for (const r of report.features) {
-      log([
+      const savings = savingsByFeature.get(r.feature) ?? 0;
+      const net = Math.max(0, r.estimatedCostUsd - savings);
+      const parts = [
         r.feature.padEnd(colW[0]!),
         String(r.calls).padStart(colW[1]!),
         fmtNum(r.inputTokens).padStart(colW[2]!),
         fmtNum(r.outputTokens).padStart(colW[3]!),
         fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
-        ...(compact ? [] : [pct(r.estimatedCostUsd, report.total.estimatedCostUsd).padStart(colW[5]!)]),
-      ].join("  "));
+      ];
+      if (hasSavings) {
+        parts.push((savings > 0 ? `-${fmtCost(savings).slice(1)}` : "").padStart(colW[5]!));
+        parts.push(fmtCost(net).padStart(colW[6]!));
+      }
+      if (!compact) {
+        parts.push(pct(r.estimatedCostUsd, report.total.estimatedCostUsd).padStart(colW[hasSavings ? 7 : 5]!));
+      }
+      log(parts.join("  "));
     }
     log("─".repeat(header.length));
-    log([
+    const totalParts = [
       "Total".padEnd(colW[0]!),
       String(report.total.calls).padStart(colW[1]!),
       fmtNum(report.total.inputTokens).padStart(colW[2]!),
       fmtNum(report.total.outputTokens).padStart(colW[3]!),
       fmtCost(report.total.estimatedCostUsd).padStart(colW[4]!),
-      ...(compact ? [] : ["100%".padStart(colW[5]!)]),
-    ].join("  "));
+    ];
+    if (hasSavings) {
+      totalParts.push((`-${fmtCost(totalSavings).slice(1)}`).padStart(colW[5]!));
+      totalParts.push(fmtCost(Math.max(0, netCost)).padStart(colW[6]!));
+    }
+    if (!compact) {
+      totalParts.push("100%".padStart(colW[hasSavings ? 7 : 5]!));
+    }
+    log(totalParts.join("  "));
     log("");
     // Unknown-model warning
     if (report.unknownModelCalls > 0) {
@@ -4603,6 +4718,11 @@ export function runCostReportForCli(
         .map((m) => `${m.model} (${m.calls} calls)`)
         .join(", ");
       log(`Models used: ${modelSummary}`);
+    }
+    // Savings breakdown if any (and we have savings not already shown inline)
+    if (!hasSavings && savingsReport.features.length > 0) {
+      log("");
+      log(`💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`);
     }
   }
   log("");

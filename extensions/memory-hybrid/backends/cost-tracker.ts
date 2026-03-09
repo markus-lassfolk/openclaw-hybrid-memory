@@ -1,12 +1,49 @@
 /**
  * LLM Cost Tracker — persists per-call token usage into llm_cost_log table
- * in the existing memory.db SQLite database (shared with FactsDB).
+ * and intelligent-automation savings into llm_savings_log, both in the
+ * existing memory.db SQLite database (shared with FactsDB).
  *
  * ⚠️ Costs are estimates based on published model pricing, not billing-accurate.
  */
 
 import type Database from "better-sqlite3";
 import { estimateCost } from "../services/model-pricing.js";
+
+/**
+ * A savings entry records work performed automatically that would have
+ * otherwise required manual LLM calls or human effort.
+ * E.g. self-correction auto-fixing an incident, or auto-classify batching N facts.
+ */
+export interface SavingsEntry {
+  /** Feature that generated the savings (e.g. 'self-correction', 'auto-classify'). */
+  feature: string;
+  /** Human-readable description of the action (e.g. 'auto-fixed incident'). */
+  action: string;
+  /** Number of individual operations that were avoided or batched. */
+  countAvoided: number;
+  /** Estimated USD value of the savings (may be 0 if unknown). */
+  estimatedSavingUsd: number;
+  /** Optional free-text note for debugging. */
+  note?: string;
+}
+
+export interface SavingsFeatureRow {
+  feature: string;
+  /** Number of recordSavings() calls contributing to this feature. */
+  entries: number;
+  countAvoided: number;
+  estimatedSavingUsd: number;
+}
+
+export interface SavingsReport {
+  features: SavingsFeatureRow[];
+  total: {
+    entries: number;
+    countAvoided: number;
+    estimatedSavingUsd: number;
+  };
+  days: number;
+}
 
 export interface CostEntry {
   feature: string;         // e.g. 'auto-classify', 'query-expansion'
@@ -73,6 +110,18 @@ export class CostTracker {
       );
       CREATE INDEX IF NOT EXISTS idx_cost_log_feature ON llm_cost_log(feature);
       CREATE INDEX IF NOT EXISTS idx_cost_log_timestamp ON llm_cost_log(timestamp);
+
+      CREATE TABLE IF NOT EXISTS llm_savings_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL DEFAULT (unixepoch()),
+        feature TEXT NOT NULL,
+        action TEXT NOT NULL,
+        count_avoided INTEGER NOT NULL DEFAULT 0,
+        estimated_saving_usd REAL NOT NULL DEFAULT 0,
+        note TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_savings_log_feature ON llm_savings_log(feature);
+      CREATE INDEX IF NOT EXISTS idx_savings_log_timestamp ON llm_savings_log(timestamp);
     `);
   }
 
@@ -233,13 +282,85 @@ export class CostTracker {
   }
 
   /**
+   * Record an intelligent-automation saving event.
+   * Call this whenever a lifecycle feature does work that avoids manual LLM calls.
+   */
+  recordSavings(entry: SavingsEntry): void {
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO llm_savings_log (feature, action, count_avoided, estimated_saving_usd, note)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          entry.feature,
+          entry.action,
+          entry.countAvoided,
+          entry.estimatedSavingUsd,
+          entry.note ?? null,
+        );
+    } catch (err) {
+      if (!this._errorLogged) {
+        this._errorLogged = true;
+        console.warn(`[cost-tracker] Failed to record savings entry: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  /**
+   * Return a savings report grouped by feature for the last `days` days.
+   */
+  getSavingsReport(days = 7): SavingsReport {
+    const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+    const rows = this.db
+      .prepare(
+        `SELECT feature,
+                COUNT(*) AS entries,
+                SUM(count_avoided) AS countAvoided,
+                SUM(estimated_saving_usd) AS estimatedSavingUsd
+         FROM llm_savings_log
+         WHERE timestamp >= ?
+         GROUP BY feature
+         ORDER BY estimatedSavingUsd DESC`,
+      )
+      .all(cutoff) as Array<{
+        feature: string;
+        entries: number | bigint;
+        countAvoided: number | bigint;
+        estimatedSavingUsd: number;
+      }>;
+
+    const features: SavingsFeatureRow[] = rows.map((r) => ({
+      feature: r.feature,
+      entries: Number(r.entries),
+      countAvoided: Number(r.countAvoided),
+      estimatedSavingUsd: r.estimatedSavingUsd ?? 0,
+    }));
+
+    const total = features.reduce(
+      (acc, r) => ({
+        entries: acc.entries + r.entries,
+        countAvoided: acc.countAvoided + r.countAvoided,
+        estimatedSavingUsd: acc.estimatedSavingUsd + r.estimatedSavingUsd,
+      }),
+      { entries: 0, countAvoided: 0, estimatedSavingUsd: 0 },
+    );
+
+    return { features, total, days };
+  }
+
+  /**
    * Delete entries older than retainDays (default 90). Returns number deleted.
+   * Prunes both llm_cost_log and llm_savings_log.
    */
   pruneOldEntries(retainDays = 90): number {
     const cutoff = Math.floor(Date.now() / 1000) - retainDays * 86400;
-    const result = this.db
+    const costResult = this.db
       .prepare(`DELETE FROM llm_cost_log WHERE timestamp < ?`)
       .run(cutoff);
-    return result.changes;
+    const savingsResult = this.db
+      .prepare(`DELETE FROM llm_savings_log WHERE timestamp < ?`)
+      .run(cutoff);
+    return costResult.changes + savingsResult.changes;
   }
 }
