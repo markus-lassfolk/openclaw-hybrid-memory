@@ -594,7 +594,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               tierFilter,
               scopeFilter,
               reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
-              diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
             };
             let sqliteResults: SearchResult[] = [];
             if (opts?.entity) {
@@ -1624,11 +1623,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             : undefined;
 
           // Search both SQLite and vector backends
-          const ftsResults = ctx.factsDb.search(query, 5, { 
-            scopeFilter,
-            reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
-            diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
-          });
+          const ftsResults = ctx.factsDb.search(query, 5, { scopeFilter });
           const vector = await ctx.embeddings.embed(query);
           let lanceResults = await ctx.vectorDb.search(vector, 5, 0.3);
 

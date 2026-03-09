@@ -38,7 +38,6 @@ import { withExit, type Chainable } from "./shared.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
 import { runContextAudit } from "../services/context-audit.js";
-import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -142,7 +141,6 @@ export type ManageContext = {
   runExtractDaily?: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
   runExtractDirectives?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
   runExtractReinforcement?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ sessionsScanned: number }>;
-  runExtractImplicitFeedback?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; includeTrajectories?: boolean; includeClosedLoop?: boolean }) => Promise<{ signalsExtracted: number; positiveCount: number; negativeCount: number; trajectoriesBuilt: number; sessionsScanned: number; closedLoopReport?: string }>;
   runGenerateAutoSkills?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runDreamCycle?: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
@@ -195,7 +193,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runExtractDaily,
     runExtractDirectives,
     runExtractReinforcement,
-    runExtractImplicitFeedback,
     runGenerateAutoSkills,
     runGenerateProposals,
     resolvePath,
@@ -286,15 +283,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
               run: async () => {
                 const r = await runExtractReinforcement({ days: 7, verbose, dryRun: false });
                 log(`Extract-reinforcement: ${r.sessionsScanned} sessions scanned.`);
-              },
-            }]
-          : []),
-        ...(runExtractImplicitFeedback
-          ? [{
-              name: "extract-implicit (3 days)",
-              run: async () => {
-                const r = await runExtractImplicitFeedback({ days: 3, verbose, dryRun: false });
-                log(`Extract-implicit: ${r.signalsExtracted} signals (${r.positiveCount}+/${r.negativeCount}-) from ${r.sessionsScanned} sessions.`);
               },
             }]
           : []),
@@ -629,8 +617,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const sqlResults = factsDb.search(query, 50, {
           scopeFilter,
           tierFilter: opts?.tier === 'cold' ? 'all' : 'warm',
-          reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
-          diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
         });
 
         // Filter vector results by scope
@@ -1330,30 +1316,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.log(`  Uncertain: ${verificationRes.uncertain}`);
           console.log(`  Errors: ${verificationRes.errors}`);
         }
-
-        // Extract implicit feedback signals as part of nightly cycle
-        if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
-          try {
-            const implRes = await runExtractImplicitFeedback({ days: 3, dryRun: false, includeClosedLoop: false });
-            console.log(`Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsScanned} sessions.`);
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:extract-implicit" });
-          }
-        }
-
-        // Closed-loop effectiveness analysis
-        if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
-          try {
-            const clReport = runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true });
-            console.log(`Closed-loop analysis: ${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted.`);
-            if (clReport.rulesAnalyzed > 0) {
-              const report = getEffectivenessReport(factsDb);
-              if (report && report.length > 0) console.log(report);
-            }
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "dream-cycle:closed-loop" });
-          }
-        }
       }));
   }
 
@@ -1501,38 +1463,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`TOOLS.md updates applied: ${res.toolsApplied}`);
       }
     }));
-
-  if (runExtractImplicitFeedback) {
-    mem
-      .command("extract-implicit")
-      .description("Extract implicit feedback signals from session transcripts and route to reinforcement/self-correction pipelines")
-      .option("--days <n>", "Days to look back (default 3)", "3")
-      .option("--dry-run", "Show what would be stored without storing")
-      .option("--verbose", "Show detailed signal output per session")
-      .option("--no-trajectories", "Skip trajectory building")
-      .option("--no-closed-loop", "Skip closed-loop analysis")
-      .action(withExit(async (opts?: { days?: string; dryRun?: boolean; verbose?: boolean; trajectories?: boolean; closedLoop?: boolean }) => {
-        const days = opts?.days ? parseInt(opts.days, 10) : 3;
-        const dryRun = !!opts?.dryRun;
-        const verbose = !!opts?.verbose;
-        const includeTrajectories = opts?.trajectories !== false;
-        const includeClosedLoop = opts?.closedLoop !== false;
-        let res;
-        try {
-          res = await runExtractImplicitFeedback({ days, dryRun, verbose, includeTrajectories, includeClosedLoop });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "extract-implicit" });
-          throw err;
-        }
-        console.log(`Extract-implicit complete: ${res.signalsExtracted} signals from ${res.sessionsScanned} sessions ${dryRun ? "(dry-run)" : ""}`);
-        console.log(`  Positive signals: ${res.positiveCount}`);
-        console.log(`  Negative signals: ${res.negativeCount}`);
-        console.log(`  Trajectories built: ${res.trajectoriesBuilt}`);
-        if (res.closedLoopReport) {
-          console.log("\n" + res.closedLoopReport);
-        }
-      }));
-  }
 
   mem
     .command("analyze-feedback-phrases")

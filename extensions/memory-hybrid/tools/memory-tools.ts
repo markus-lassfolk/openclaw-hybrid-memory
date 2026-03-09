@@ -553,7 +553,6 @@ export function registerMemoryTools(
           const ftsResults = factsDb.search(query, limit, {
             ...recallOpts,
             reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
-            diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
           });
           let lanceResults: SearchResult[] = [];
           if (queryVector) {

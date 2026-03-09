@@ -718,7 +718,6 @@ export function createHybridMemCliContext(
     runAnalyzeFeedbackPhrases: (opts) => handlers.runAnalyzeFeedbackPhrasesForCli(handlerCtx, opts),
     runExtractDirectives: (opts) => handlers.runExtractDirectivesForCli(handlerCtx, opts),
     runExtractReinforcement: (opts) => handlers.runExtractReinforcementForCli(handlerCtx, opts),
-    runExtractImplicitFeedback: (opts) => handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
     runExport: services.runExport,
     richStatsExtras: buildRichStatsExtras(handlerCtx),
     listCommands: buildListCommands(handlerCtx, api),
