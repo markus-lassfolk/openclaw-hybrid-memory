@@ -134,16 +134,47 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         }
       }
 
-      // 2. Count total facts as a lightweight snapshot check
+      // 2. Count total facts and build a brief post-compaction memory summary.
+      //
+      //    The summary is returned in the `result` field so that SDK versions which
+      //    consume it can inject the top facts into the post-compaction context.
+      //    On older runtimes that only read `ok`/`compacted`/`reason`, the extra
+      //    fields are ignored — no behaviour change.
+      //
+      //    TODO(SDK #275): When the SDK exposes a dedicated `contextAddition` field
+      //    on CompactResult, move the summary string there instead of nesting it in
+      //    `result`. Until then, `result.memorySummary` serves as the best-effort
+      //    injection surface.
       let sessionFacts = 0;
+      let memorySummary: string | undefined;
       try {
         sessionFacts = factsDb.getCount();
+        const topFacts = factsDb.list(8);
+        if (topFacts.length > 0) {
+          const lines: string[] = [
+            "<!-- memory-hybrid: post-compaction memory summary -->",
+            "Key memories retained across compaction:",
+          ];
+          for (const f of topFacts) {
+            const entityPrefix = f.entity ? `[${f.entity}] ` : "";
+            const preview = f.text.length > 150 ? f.text.slice(0, 150) + "…" : f.text;
+            lines.push(`- ${entityPrefix}${preview}`);
+          }
+          lines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
+          memorySummary = lines.join("\n");
+        }
       } catch {
         // Non-fatal
       }
 
       logger.debug?.(`memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}`);
-      return { ok: true, compacted: false, reason: `flushed pending state (wal: ${walCommitted} committed)` };
+      return {
+        ok: true,
+        compacted: false,
+        reason: `flushed pending state (wal: ${walCommitted} committed)`,
+        // Extended result field: SDK ≥ 2026.3.8 may inject memorySummary into context.
+        result: memorySummary ? { topFacts: factsDb.list(8), factCount: sessionFacts, memorySummary } : { factCount: sessionFacts },
+      };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-engine",

@@ -136,12 +136,18 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
 
   // Issue #274 — Static memory instructions via prependSystemContext / appendSystemContext
   //
-  // Static capabilities text is injected as appendSystemContext (appended to the system prompt).
-  // Providers that support prompt caching (e.g. Anthropic) can cache this suffix, saving
-  // ~500-1000 tokens per turn compared to per-turn prependContext injection.
+  // SDK investigation (checked types/openclaw-plugin-sdk.d.ts and grep across the plugin):
+  //   - The current OpenClaw plugin SDK only exposes `prependContext` in the before_prompt_build
+  //     hook return type. Neither `prependSystemContext` nor `appendSystemContext` exist in the
+  //     SDK's ClawdbotPluginApi.on() handler signature.
   //
-  // Feature detection: if the return type doesn't support appendSystemContext/prependSystemContext
-  // the values are silently ignored by older OpenClaw runtimes (unknown fields are stripped).
+  //   - TODO(#274): When the OpenClaw SDK adds `prependSystemContext` or `appendSystemContext`
+  //     to the before_prompt_build return type, switch this hook to return:
+  //       { appendSystemContext: staticMemoryInstructions }
+  //     This would enable Anthropic prompt-cache to cache the stable system suffix, saving
+  //     ~500-1000 tokens per turn. Until then, `prependContext` is the correct approach —
+  //     it is supported by all OpenClaw versions and produces the correct runtime behaviour.
+  //
   // We ONLY inject when autoRecall is enabled — if the user opted out they don't want hints.
   if (ctx.cfg.autoRecall.enabled) {
     let staticMemoryInstructions: string | null = null;
@@ -162,17 +168,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       ].join("\n");
     };
 
-    // Register a before_prompt_build hook that injects static instructions once per session.
-    // Uses appendSystemContext for prompt-cache friendliness; falls back to prependContext on
-    // older runtimes that don't recognise the field.
+    // Register a before_prompt_build hook that injects static memory instructions.
+    // Uses prependContext — the only field supported by the current SDK (see TODO above).
+    // The content is built once and cached to minimise per-turn overhead.
     api.on("before_prompt_build", (): void | { prependContext: string } => {
       if (!staticMemoryInstructions) {
         staticMemoryInstructions = buildStaticInstructions();
       }
-      // Return object with prependContext (supported by all OpenClaw versions).
-      // On modern runtimes (≥ 2026.3.8) the field is treated as appendSystemContext
-      // by the runtime if it detects the content is stable / cache-friendly.
-      // On older runtimes the prependContext is injected per-turn — still correct.
       return { prependContext: staticMemoryInstructions };
     });
   }

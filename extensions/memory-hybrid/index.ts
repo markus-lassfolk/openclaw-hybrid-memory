@@ -518,6 +518,76 @@ const memoryHybridPlugin = {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:service" });
       throw err;
     }
+
+    // Issue #276 — Auto-register default weekly backup cron on first boot
+    //
+    // When `maintenance.cronReliability.verifyOnBoot` is true (the default), check
+    // whether a backup cron entry already exists. If not, attempt to register the
+    // default weekly schedule automatically so the user gets backup coverage without
+    // needing to run `hybrid-mem backup schedule` manually.
+    //
+    // This runs asynchronously and is entirely non-fatal: cron registration failures
+    // (e.g. no `crontab` binary, read-only environment) are logged as debug and do not
+    // block the plugin from starting.
+    //
+    // No cron API is available from the plugin SDK — we use the OS crontab directly,
+    // mirroring what `hybrid-mem backup schedule` does.
+    //
+    // TODO(SDK #276): If a future OpenClaw SDK version exposes a cron registration API
+    // (e.g. api.registerCronJob()), prefer that over raw crontab manipulation.
+    if (cfg.maintenance?.cronReliability?.verifyOnBoot !== false) {
+      setImmediate(() => {
+        void (async () => {
+          try {
+            const { execSync } = await import("node:child_process");
+            const { mkdirSync: mkd } = await import("node:fs");
+            const { homedir } = await import("node:os");
+            const { join: pjoin } = await import("node:path");
+
+            // Check if a backup cron is already registered
+            let currentCrontab = "";
+            try {
+              currentCrontab = execSync("crontab -l 2>/dev/null", { encoding: "utf-8" });
+            } catch {
+              // No existing crontab — safe to install fresh
+            }
+
+            if (currentCrontab.includes("hybrid-mem backup")) {
+              // Already scheduled — nothing to do
+              api.logger.debug?.("memory-hybrid: boot-check — weekly backup cron already present");
+              return;
+            }
+
+            // Install default: Sundays at 03:00
+            const logDir = pjoin(homedir(), ".openclaw", "logs");
+            const logFile = pjoin(logDir, "backup.log");
+            const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 3 * * 0";
+            const cronLine = `${weeklyExpr} hybrid-mem backup >> ${logFile} 2>&1`;
+
+            try {
+              mkd(logDir, { recursive: true });
+            } catch {
+              // Non-fatal
+            }
+
+            const newCrontab = (currentCrontab.trimEnd() ? currentCrontab.trimEnd() + "\n" : "") + cronLine + "\n";
+            const { writeFileSync: wfs, unlinkSync: uls } = await import("node:fs");
+            const { tmpdir: osTmpdir } = await import("node:os");
+            const tmpFile = pjoin(osTmpdir(), `crontab-hybrid-mem-boot-${Date.now()}.txt`);
+            wfs(tmpFile, newCrontab, "utf-8");
+            try {
+              execSync(`crontab ${tmpFile}`);
+              api.logger.info?.(`memory-hybrid: boot-check — registered default weekly backup cron (${weeklyExpr}), log: ${logFile}`);
+            } finally {
+              try { uls(tmpFile); } catch { /* ignore */ }
+            }
+          } catch (err) {
+            // Non-fatal — crontab may not be available (containers, read-only envs)
+            api.logger.debug?.(`memory-hybrid: boot-check — could not auto-register backup cron (non-fatal): ${err}`);
+          }
+        })();
+      });
+    }
   },
 };
 
