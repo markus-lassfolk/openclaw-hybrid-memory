@@ -37,6 +37,9 @@ import type {
   NightlyCycleConfig,
   HealthConfig,
   MaintenanceConfig,
+  CouncilConfig,
+  CouncilProvenanceMode,
+  CronReliabilityConfig,
 } from "./maintenance.js";
 
 import type {
