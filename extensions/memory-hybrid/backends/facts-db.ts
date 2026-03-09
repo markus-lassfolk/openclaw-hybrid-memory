@@ -226,6 +226,15 @@ export class FactsDB {
 
     // ---- Change reinforced_count to REAL for fractional boosts (#259, #260) ----
     this.migrateReinforcedCountToReal();
+
+    // ---- Implicit signals table (#262) ----
+    this.migrateImplicitSignalsTable();
+
+    // ---- Feedback trajectories table (#262) ----
+    this.migrateFeedbackTrajectoriesTable();
+
+    // ---- Feedback effectiveness table (#262) ----
+    this.migrateFeedbackEffectivenessTable();
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -233,7 +242,7 @@ export class FactsDB {
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS reinforcement_log (
         id TEXT PRIMARY KEY,
-        fact_id TEXT NOT NULL,
+        fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
         signal TEXT NOT NULL DEFAULT 'positive',
         query_snippet TEXT,
         topic TEXT,
@@ -244,23 +253,60 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_fact_id ON reinforcement_log(fact_id)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_occurred ON reinforcement_log(occurred_at)`);
+
+    // Idempotent migration: add FK constraint to existing tables that pre-date this migration.
+    // SQLite does not support ALTER TABLE ADD CONSTRAINT, so we use RENAME-RECREATE-INSERT-DROP.
+    const fkList = this.liveDb
+      .prepare(`PRAGMA foreign_key_list(reinforcement_log)`)
+      .all() as Array<{ table: string; from: string }>;
+    const hasFk = fkList.some((fk) => fk.from === "fact_id" && fk.table === "facts");
+    if (!hasFk) {
+      this.liveDb.transaction(() => {
+        this.liveDb.exec(`ALTER TABLE reinforcement_log RENAME TO reinforcement_log_v1`);
+        this.liveDb.exec(`
+          CREATE TABLE reinforcement_log (
+            id TEXT PRIMARY KEY,
+            fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+            signal TEXT NOT NULL DEFAULT 'positive',
+            query_snippet TEXT,
+            topic TEXT,
+            tool_sequence TEXT,
+            session_file TEXT,
+            occurred_at INTEGER NOT NULL
+          )
+        `);
+        // Copy only rows whose fact_id still exists (orphans are dropped).
+        this.liveDb.exec(
+          `INSERT INTO reinforcement_log SELECT * FROM reinforcement_log_v1 WHERE fact_id IN (SELECT id FROM facts)`,
+        );
+        this.liveDb.exec(`DROP TABLE reinforcement_log_v1`);
+        this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_fact_id ON reinforcement_log(fact_id)`);
+        this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_rl_occurred ON reinforcement_log(occurred_at)`);
+      })();
+    }
   }
 
-  /** Change reinforced_count from INTEGER to REAL to support fractional boost amounts (#259, #260). */
+  /** Change reinforced_count from INTEGER to REAL to support fractional boost amounts (#259, #260).
+   *  The entire migration per table is wrapped in a transaction so a failure mid-step leaves the
+   *  DB in a consistent state and the migration can be retried on the next startup.
+   *  Requires SQLite >= 3.35 for ALTER TABLE … DROP COLUMN.
+   */
   private migrateReinforcedCountToReal(): void {
     const factsCols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)
       .all() as Array<{ name: string; type: string }>;
     const factsReinforcedCol = factsCols.find((c) => c.name === "reinforced_count");
     if (factsReinforcedCol && factsReinforcedCol.type !== "REAL") {
-      this.liveDb.exec(`DROP INDEX IF EXISTS idx_facts_reinforced`);
-      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
-      this.liveDb.exec(`UPDATE facts SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
-      this.liveDb.exec(`ALTER TABLE facts DROP COLUMN reinforced_count`);
-      this.liveDb.exec(`ALTER TABLE facts RENAME COLUMN reinforced_count_real TO reinforced_count`);
-      this.liveDb.exec(
-        `CREATE INDEX IF NOT EXISTS idx_facts_reinforced ON facts(reinforced_count) WHERE reinforced_count > 0`,
-      );
+      this.liveDb.transaction(() => {
+        this.liveDb.exec(`DROP INDEX IF EXISTS idx_facts_reinforced`);
+        this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
+        this.liveDb.exec(`UPDATE facts SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
+        this.liveDb.exec(`ALTER TABLE facts DROP COLUMN reinforced_count`);
+        this.liveDb.exec(`ALTER TABLE facts RENAME COLUMN reinforced_count_real TO reinforced_count`);
+        this.liveDb.exec(
+          `CREATE INDEX IF NOT EXISTS idx_facts_reinforced ON facts(reinforced_count) WHERE reinforced_count > 0`,
+        );
+      })();
     }
 
     const proceduresCols = this.liveDb
@@ -268,18 +314,126 @@ export class FactsDB {
       .all() as Array<{ name: string; type: string }>;
     const proceduresReinforcedCol = proceduresCols.find((c) => c.name === "reinforced_count");
     if (proceduresReinforcedCol && proceduresReinforcedCol.type !== "REAL") {
-      this.liveDb.exec(`DROP INDEX IF EXISTS idx_procedures_reinforced`);
-      this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
-      this.liveDb.exec(`UPDATE procedures SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
-      this.liveDb.exec(`ALTER TABLE procedures DROP COLUMN reinforced_count`);
-      this.liveDb.exec(`ALTER TABLE procedures RENAME COLUMN reinforced_count_real TO reinforced_count`);
-      this.liveDb.exec(
-        `CREATE INDEX IF NOT EXISTS idx_procedures_reinforced ON procedures(reinforced_count) WHERE reinforced_count > 0`,
-      );
+      this.liveDb.transaction(() => {
+        this.liveDb.exec(`DROP INDEX IF EXISTS idx_procedures_reinforced`);
+        this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
+        this.liveDb.exec(`UPDATE procedures SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
+        this.liveDb.exec(`ALTER TABLE procedures DROP COLUMN reinforced_count`);
+        this.liveDb.exec(`ALTER TABLE procedures RENAME COLUMN reinforced_count_real TO reinforced_count`);
+        this.liveDb.exec(
+          `CREATE INDEX IF NOT EXISTS idx_procedures_reinforced ON procedures(reinforced_count) WHERE reinforced_count > 0`,
+        );
+      })();
     }
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
+  /** Create implicit_signals table for behavioral feedback signals (#262). */
+  private migrateImplicitSignalsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS implicit_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_file TEXT,
+        signal_type TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        polarity TEXT NOT NULL,
+        user_message TEXT,
+        agent_message TEXT,
+        preceding_turns INTEGER,
+        source TEXT DEFAULT 'implicit',
+        created_at INTEGER DEFAULT (unixepoch())
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_created ON implicit_signals(created_at)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_polarity ON implicit_signals(polarity)`);
+    this.liveDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_is_unique ON implicit_signals(session_file, signal_type, user_message, polarity)`);
+  }
+
+  /** Create feedback_trajectories table for multi-turn task sequence learning (#262). */
+  private migrateFeedbackTrajectoriesTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS feedback_trajectories (
+        id TEXT PRIMARY KEY,
+        session_file TEXT,
+        turns_json TEXT,
+        outcome TEXT,
+        outcome_signal TEXT,
+        key_pivot INTEGER,
+        lessons_json TEXT,
+        topic TEXT,
+        tools_used TEXT,
+        turn_count INTEGER,
+        created_at INTEGER DEFAULT (unixepoch())
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_session ON feedback_trajectories(session_file)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_outcome ON feedback_trajectories(outcome)`);
+  }
+
+  /** Create feedback_effectiveness table for closed-loop rule measurement (#262). */
+  private migrateFeedbackEffectivenessTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS feedback_effectiveness (
+        rule_id TEXT PRIMARY KEY REFERENCES facts(id) ON DELETE CASCADE,
+        rule_text TEXT,
+        created_at INTEGER,
+        window_start INTEGER,
+        window_end INTEGER,
+        corrections_before INTEGER DEFAULT 0,
+        corrections_after INTEGER DEFAULT 0,
+        praise_before INTEGER DEFAULT 0,
+        praise_after INTEGER DEFAULT 0,
+        implicit_positive_before INTEGER DEFAULT 0,
+        implicit_positive_after INTEGER DEFAULT 0,
+        implicit_negative_before INTEGER DEFAULT 0,
+        implicit_negative_after INTEGER DEFAULT 0,
+        effect_score REAL DEFAULT 0.0,
+        confidence REAL DEFAULT 0.0,
+        sample_size INTEGER DEFAULT 0,
+        measured_at INTEGER DEFAULT (unixepoch())
+      )
+    `);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fe_measured ON feedback_effectiveness(measured_at)`);
+
+    // Idempotent migration: add FK constraint to existing tables that pre-date this migration.
+    const fkList = this.liveDb
+      .prepare(`PRAGMA foreign_key_list(feedback_effectiveness)`)
+      .all() as Array<{ table: string; from: string }>;
+    const hasFk = fkList.some((fk) => fk.from === "rule_id" && fk.table === "facts");
+    if (!hasFk) {
+      this.liveDb.transaction(() => {
+        this.liveDb.exec(`ALTER TABLE feedback_effectiveness RENAME TO feedback_effectiveness_v1`);
+        this.liveDb.exec(`
+          CREATE TABLE feedback_effectiveness (
+            rule_id TEXT PRIMARY KEY REFERENCES facts(id) ON DELETE CASCADE,
+            rule_text TEXT,
+            created_at INTEGER,
+            window_start INTEGER,
+            window_end INTEGER,
+            corrections_before INTEGER DEFAULT 0,
+            corrections_after INTEGER DEFAULT 0,
+            praise_before INTEGER DEFAULT 0,
+            praise_after INTEGER DEFAULT 0,
+            implicit_positive_before INTEGER DEFAULT 0,
+            implicit_positive_after INTEGER DEFAULT 0,
+            implicit_negative_before INTEGER DEFAULT 0,
+            implicit_negative_after INTEGER DEFAULT 0,
+            effect_score REAL DEFAULT 0.0,
+            confidence REAL DEFAULT 0.0,
+            sample_size INTEGER DEFAULT 0,
+            measured_at INTEGER DEFAULT (unixepoch())
+          )
+        `);
+        // Copy only rows whose rule_id still references a valid fact (orphans are dropped).
+        this.liveDb.exec(
+          `INSERT INTO feedback_effectiveness SELECT * FROM feedback_effectiveness_v1 WHERE rule_id IN (SELECT id FROM facts)`,
+        );
+        this.liveDb.exec(`DROP TABLE feedback_effectiveness_v1`);
+        this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fe_measured ON feedback_effectiveness(measured_at)`);
+      })();
+    }
+  }
+
   private migrateReinforcementColumns(): void {
     const cols = this.liveDb
       .prepare(`PRAGMA table_info(facts)`)

@@ -13,6 +13,9 @@ import type {
   WorkflowTrackingConfig,
   CrystallizationConfig,
   SelfExtensionConfig,
+  ImplicitFeedbackConfig,
+  ImplicitSignalType,
+  ClosedLoopConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -181,7 +184,7 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
         : 50,
     diversityWeight:
       typeof reinforcementRaw?.diversityWeight === "number" && reinforcementRaw.diversityWeight >= 0
-        ? reinforcementRaw.diversityWeight
+        ? Math.min(1.0, reinforcementRaw.diversityWeight)
         : 1.0,
     trackContext: reinforcementRaw?.trackContext !== false,
     boostAmount:
@@ -441,5 +444,74 @@ export function parseSelfExtensionConfig(cfg: Record<string, unknown>): SelfExte
       typeof raw?.maxProposals === "number" && raw.maxProposals > 0
         ? Math.floor(raw.maxProposals)
         : 20,
+  };
+}
+
+const ALL_IMPLICIT_SIGNAL_TYPES: ImplicitSignalType[] = [
+  "rephrase",
+  "immediate_action",
+  "topic_change",
+  "grateful_close",
+  "self_service",
+  "escalation",
+  "terse_response",
+  "extended_engagement",
+  "copy_paste",
+  "correction_cascade",
+  "silence_after_action",
+];
+
+export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): ImplicitFeedbackConfig {
+  const raw = cfg.implicitFeedback as Record<string, unknown> | undefined;
+  const validTypes = new Set<string>(ALL_IMPLICIT_SIGNAL_TYPES);
+  const signalTypes: ImplicitSignalType[] = Array.isArray(raw?.signalTypes)
+    ? (raw.signalTypes as unknown[]).filter((t): t is ImplicitSignalType => typeof t === "string" && validTypes.has(t))
+    : ALL_IMPLICIT_SIGNAL_TYPES;
+  return {
+    enabled: raw?.enabled !== false,
+    minConfidence:
+      typeof raw?.minConfidence === "number" && raw.minConfidence >= 0 && raw.minConfidence <= 1
+        ? raw.minConfidence
+        : 0.5,
+    signalTypes,
+    rephraseThreshold:
+      typeof raw?.rephraseThreshold === "number" && raw.rephraseThreshold > 0 && raw.rephraseThreshold <= 1
+        ? raw.rephraseThreshold
+        : 0.8,
+    topicChangeThreshold:
+      typeof raw?.topicChangeThreshold === "number" && raw.topicChangeThreshold >= 0 && raw.topicChangeThreshold <= 1
+        ? raw.topicChangeThreshold
+        : 0.3,
+    terseResponseRatio:
+      typeof raw?.terseResponseRatio === "number" && raw.terseResponseRatio > 0 && raw.terseResponseRatio <= 1
+        ? raw.terseResponseRatio
+        : 0.4,
+    feedToReinforcement: raw?.feedToReinforcement !== false,
+    feedToSelfCorrection: raw?.feedToSelfCorrection !== false,
+    trajectoryLLMAnalysis: raw?.trajectoryLLMAnalysis === true,
+  };
+}
+
+export function parseClosedLoopConfig(cfg: Record<string, unknown>): ClosedLoopConfig {
+  const raw = cfg.closedLoop as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    measurementWindowDays:
+      typeof raw?.measurementWindowDays === "number" && raw.measurementWindowDays > 0
+        ? Math.floor(raw.measurementWindowDays)
+        : 7,
+    minSampleSize:
+      typeof raw?.minSampleSize === "number" && raw.minSampleSize > 0
+        ? Math.floor(raw.minSampleSize)
+        : 5,
+    autoDeprecateThreshold:
+      typeof raw?.autoDeprecateThreshold === "number"
+        ? Math.max(-1, Math.min(0, raw.autoDeprecateThreshold))
+        : -0.3,
+    autoBoostThreshold:
+      typeof raw?.autoBoostThreshold === "number"
+        ? Math.max(0, Math.min(1, raw.autoBoostThreshold))
+        : 0.5,
+    runInNightlyCycle: raw?.runInNightlyCycle !== false,
   };
 }

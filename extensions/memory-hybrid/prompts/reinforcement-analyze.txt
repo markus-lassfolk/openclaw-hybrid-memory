@@ -40,11 +40,13 @@ For each incident, determine:
 
 Output ONLY a JSON array of objects. One object per incident. No markdown, no code fences. Each object must have: category, severity, remediationType, remediationContent (object or string as needed).
 
-Example outputs:
-{"category":"workflow","severity":"strong","remediationType":"POSITIVE_RULE","remediationContent":"Break complex multi-step tasks into milestone-based sub-agents with clear scoped briefs — each focused on one deliverable."}
-{"category":"communication","severity":"moderate","remediationType":"PATTERN_FACT","remediationContent":{"text":"User consistently praises proactive CI fixes (lint, tests) done without being asked","tags":["reinforcement","behavioral","ci","proactive"]}}
-{"category":"technical","severity":"strong","remediationType":"MEMORY_STORE","remediationContent":{"text":"User values thorough inline code review comments as resolvable GitHub threads","entity":"Preferences","key":"code_review_style","tags":["reinforcement","code-review","preferences"]}}
+Example output (JSON array):
+[
+{"category":"workflow","severity":"strong","remediationType":"POSITIVE_RULE","remediationContent":"Break complex multi-step tasks into milestone-based sub-agents with clear scoped briefs — each focused on one deliverable."},
+{"category":"communication","severity":"moderate","remediationType":"PATTERN_FACT","remediationContent":{"text":"User consistently praises proactive CI fixes (lint, tests) done without being asked","tags":["reinforcement","behavioral","ci","proactive"]}},
+{"category":"technical","severity":"strong","remediationType":"MEMORY_STORE","remediationContent":{"text":"User values thorough inline code review comments as resolvable GitHub threads","entity":"Preferences","key":"code_review_style","tags":["reinforcement","code-review","preferences"]}},
 {"category":"behavior","severity":"mild","remediationType":"NO_ACTION","remediationContent":""}
+]
 
 Incidents (JSON array):
 {{incidents_json}}

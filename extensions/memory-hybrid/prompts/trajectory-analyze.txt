@@ -1,0 +1,37 @@
+You are a trajectory analyst for an AI agent interaction system.
+
+Below is a multi-turn conversation trajectory represented as a JSON array of turns. Each turn has:
+- role: "user" or "assistant"
+- contentSummary: a brief summary of the turn content
+- sentiment: "positive" | "negative" | "neutral"
+- corrections: number of corrections or rephrases in this turn
+
+Analyze the trajectory and determine:
+
+1. **What worked**: Identify the approaches, strategies, or responses that led to positive outcomes or user satisfaction. Be specific about turn indices and what was effective.
+
+2. **What didn't work**: Identify turns or approaches that caused confusion, required corrections, or led to user frustration. Note patterns of failure.
+
+3. **The key lesson**: A single, actionable insight that captures the most important learning from this trajectory. This should be a concrete behavioral rule the agent can apply in future interactions.
+
+4. **The pivot point**: The turn index (0-based) where the trajectory meaningfully changed direction — either from failing to succeeding, or where a critical mistake was made. Set to null if the trajectory was consistently good or consistently bad throughout.
+
+5. **Patterns**: 1-5 recurring patterns observed in this trajectory (e.g., "agent over-explains simple requests", "user benefits from step-by-step breakdowns", "corrections cluster around tool usage").
+
+Output ONLY a JSON object — no markdown, no code fences, no explanation. The object must have exactly these fields:
+
+{
+  "outcome": "success" | "partial" | "failure",
+  "keyLesson": string,
+  "pivotTurn": number | null,
+  "patterns": string[]
+}
+
+Where:
+- outcome: "success" if the trajectory ended with user satisfaction, "failure" if it ended with unresolved issues or frustration, "partial" if mixed results
+- keyLesson: A single actionable rule (present tense, imperative) — e.g., "Break ambiguous requests into clarifying questions before attempting a solution" or "Confirm the user's goal before executing multi-step tool sequences"
+- pivotTurn: 0-based index of the turn where the trajectory pivoted, or null if no clear pivot
+- patterns: Array of 1-5 concise pattern strings observed across the trajectory
+
+Trajectory (JSON array of turns):
+{{trajectory_json}}
