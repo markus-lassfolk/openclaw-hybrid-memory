@@ -237,18 +237,38 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
   async onSubagentEnded(params: { childSessionKey: string; reason: string }): Promise<void> {
     const { factsDb, logger } = this.opts;
     try {
-      // Count any session-scoped facts from the child session to confirm capture happened
-      const childSessionFacts = factsDb.list(1, { source: params.childSessionKey });
-      const capturedCount = childSessionFacts.length;
+      // Count facts captured from the child session (written to the shared store by the
+      // child's own agent_end autoCapture hook while the child session was running).
+      const capturedCount = factsDb.countBySource(params.childSessionKey);
 
-      logger.debug?.(
-        `memory-hybrid: context-engine onSubagentEnded — child=${params.childSessionKey} reason=${params.reason} sessionFacts≥${capturedCount}`,
-      );
+      if (capturedCount > 0) {
+        logger.info?.(
+          `memory-hybrid: context-engine onSubagentEnded — child=${params.childSessionKey} reason=${params.reason} childFacts=${capturedCount}`,
+        );
+      } else {
+        logger.debug?.(
+          `memory-hybrid: context-engine onSubagentEnded — child=${params.childSessionKey} reason=${params.reason} childFacts=0 (no auto-captured facts found for this session key)`,
+        );
+      }
 
-      // TODO(future): When SDK passes result text via params.resultText, parse it here:
-      //   const texts = extractAutoCaptureCandidates(params.resultText);
-      //   for (const text of texts.filter(t => !factsDb.hasDuplicate(t))) { factsDb.store(...) }
-      // For now, all capture is delegated to the subagent_ended hook in lifecycle/hooks.ts.
+      // TODO(SDK #273): Implement result-text fact extraction once the SDK exposes it.
+      //
+      // The current hook signature only provides { childSessionKey, reason }.
+      // To implement full result-text capture, the SDK must expose one of:
+      //   params.resultText: string        — the final assistant text from the sub-agent
+      //   params.messages: unknown[]       — full message log (same shape as agent_end event)
+      //
+      // When available, mirror the agent_end autoCapture pipeline from lifecycle/hooks.ts:
+      //   1. Iterate messages, extract text/content blocks
+      //   2. Filter via shouldCapture() (needs to be added to ContextEngineOptions)
+      //   3. Classify with detectCategory() / classifyMemoryOperation()
+      //   4. Deduplicate via factsDb.hasDuplicate()
+      //   5. Store with source=params.childSessionKey, scope="global"
+      //
+      // Until then, all sub-agent fact capture is delegated to:
+      //   (a) The child session's own agent_end autoCapture hook (primary path — runs
+      //       inside the child's session and writes directly to the shared FactsDB)
+      //   (b) The subagent_end hook in lifecycle/hooks.ts (active-task checkpoint only)
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-engine",
