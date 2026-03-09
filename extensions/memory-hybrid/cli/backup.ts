@@ -68,7 +68,6 @@ function timestampedDir(root: string): string {
   const ts = now
     .toISOString()
     .replace(/[:.]/g, "-")
-    .replace("T", "T")
     .slice(0, 19); // YYYY-MM-DDTHH-mm-ss
   return join(root, ts);
 }
