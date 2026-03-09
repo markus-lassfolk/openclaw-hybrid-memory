@@ -21,7 +21,6 @@
 
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync, cpSync, statSync, readdirSync, copyFileSync } from "node:fs";
-import { readdir, stat, mkdir, copyFile } from "node:fs/promises";
 import { join, dirname, basename } from "node:path";
 import { homedir } from "node:os";
 import { capturePluginError } from "../services/error-reporter.js";
