@@ -1,3 +1,4 @@
+/** @module init-databases — Provider routing, cost instrumentation, and database bootstrap. */
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
