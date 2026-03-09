@@ -12,9 +12,9 @@ You can also switch to a **self-hosted** GlitchTip or Sentry instance by setting
 
 **🔒 Privacy is NON-NEGOTIABLE:**
 - **No user prompts, memory text, or API keys** are ever sent
-- **Strict allowlist approach** - only safe, sanitized data is reported
-- **No tracking, no PII, no breadcrumbs** - your privacy is protected
-- **To opt out:** set `errorReporting.enabled: false` and restart the gateway
+- **Strict allowlist approach** — only safe, sanitized fields are reported (`beforeSend` rebuilds the event)
+- **No request bodies / console logs / full breadcrumbs** — only limited `plugin.*` breadcrumbs are kept, with `message`/`data` stripped
+- **To opt out:** set `errorReporting.enabled: false` (or `consent: false`) and restart the gateway
 
 ---
 
@@ -60,7 +60,7 @@ You can also switch to a **self-hosted** GlitchTip or Sentry instance by setting
 | `consent` | boolean | No | `true` | Explicit consent flag. Set `false` to opt out (same effect as `enabled: false`). |
 | `mode` | string | No | `"community"` | `"community"` = use the plugin author's GlitchTip instance (default); `"self-hosted"` = use your own DSN. |
 | `dsn` | string | Yes when `mode: "self-hosted"` | — | Your GlitchTip/Sentry Data Source Name. Not needed in community mode. |
-| `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging") |
+| `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging"). If omitted, the reporter sets it to `"production"`. |
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
 | `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw's runtime context (`api.context.agentId`) when available; there is no hostname fallback (to avoid PII leakage). |
 | `botName` | string | No | — | **Optional.** Friendly name for this bot (e.g. `Maeve`, `Doris`). Sent as a tag so reports show a readable name in GlitchTip. Max 64 characters. |
@@ -166,9 +166,12 @@ Omit either or both if you do not need them.
 - ❌ Home directory paths (replaced with `$HOME`)
 - ❌ Email addresses (replaced with `[EMAIL]`)
 - ❌ IP addresses (replaced with `[IP]`)
-- ❌ Breadcrumbs (can contain user data)
-- ❌ HTTP requests or console logs
-- ❌ User identity, device info, or session data
+- ❌ HTTP request bodies, headers, or URLs
+- ❌ Console logs
+- ❌ Breadcrumb *messages* or *data* (those are stripped)
+- ❌ Device identifiers / hostnames (the plugin does **not** add these)
+
+**Note on “user identity”:** the plugin does not set a Sentry user, but if an upstream host process ever provides `event.user`, the reporter **scrubs and forwards only** `user.id` and `user.username` (to support GlitchTip "Users Affected"). No emails/IPs are ever sent.
 
 ---
 
@@ -178,14 +181,16 @@ The error reporter implements **defense-in-depth** privacy:
 
 ### Layer 1: Configuration
 
-- `sendDefaultPii: false` - no personally identifiable information
-- `maxBreadcrumbs: 0` - breadcrumbs can contain user prompts
-- `autoSessionTracking: false` - no session tracking
-- `integrations: []` - all default integrations disabled (they capture too much)
+- `sendDefaultPii: false` — no PII by default
+- `autoSessionTracking: false` — no session tracking
+- `integrations`: keeps **only** `LinkedErrors`, `InboundFilters`, `FunctionToString` (drops the rest)
+- `maxBreadcrumbs: 10` — but the hook drops everything except `plugin.*` categories, and strips `message`/`data`
 
 ### Layer 2: beforeBreadcrumb Hook
 
-Returns `null` to drop ALL breadcrumbs.
+- Keeps only breadcrumbs with category starting with `plugin.`
+- Strips `message` and `data` to avoid leaking user content
+- Drops all other breadcrumbs
 
 ### Layer 3: beforeSend Hook (Allowlist)
 
@@ -204,7 +209,7 @@ Rebuilds the event from scratch using a strict allowlist:
 
 The test suite (`tests/error-reporter.test.ts`) verifies:
 
-- No initialization without explicit consent
+- Reporter does not initialize when `enabled` is false or `consent` is false
 - Sanitization functions remove secrets
 - Privacy settings are enforced
 
@@ -276,12 +281,12 @@ The `@sentry/node` SDK is lazy-loaded only if error reporting is enabled. If dis
 
 If you're auditing this feature for security/privacy compliance, verify:
 
-- [ ] `consent: false` by default (user must opt in)
+- [ ] `consent: true` by default (opt-out)
 - [ ] `sendDefaultPii: false` always
-- [ ] `maxBreadcrumbs: 0` (breadcrumbs can contain prompts)
-- [ ] `integrations: []` (default integrations disabled)
+- [ ] `autoSessionTracking: false`
+- [ ] `integrations` are filtered to safe ones only
 - [ ] `beforeSend` rebuilds event with allowlist (not blocklist)
-- [ ] `beforeBreadcrumb` returns `null` (drop all)
+- [ ] `beforeBreadcrumb` allows only `plugin.*` and strips `message`/`data`
 - [ ] `scrubString()` removes API keys, emails, IPs, paths
 - [ ] `sanitizePath()` keeps only plugin-relative paths
 - [ ] Test suite includes PII leak prevention tests
