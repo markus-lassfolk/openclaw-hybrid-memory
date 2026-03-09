@@ -58,7 +58,6 @@ interface LLMGeneralisedLesson {
 
 const CROSS_AGENT_SOURCE = "cross-agent-learning";
 const CROSS_AGENT_TAG = "cross-agent";
-const GENERALISED_CATEGORIES = ["pattern", "rule"] as const;
 // Category whitelist for agent lessons we consider for generalisation
 const LEARNABLE_CATEGORIES = new Set(["pattern", "rule", "fact", "decision"]);
 

@@ -429,7 +429,7 @@ describe("parseFrustrationDetectionConfig", () => {
     const cfg = parseFrustrationDetectionConfig({});
     expect(cfg.enabled).toBe(true);
     expect(cfg.windowSize).toBe(8);
-    expect(cfg.decayRate).toBe(0.9);
+    expect(cfg.decayRate).toBe(0.85);
     expect(cfg.injectionThreshold).toBe(0.3);
     expect(cfg.adaptationThresholds.medium).toBe(0.3);
     expect(cfg.adaptationThresholds.high).toBe(0.5);
@@ -449,8 +449,8 @@ describe("parseFrustrationDetectionConfig", () => {
   });
 
   it("clamps decayRate to (0, 1]", () => {
-    expect(parseFrustrationDetectionConfig({ frustrationDetection: { decayRate: 1.5 } }).decayRate).toBe(0.9);
-    expect(parseFrustrationDetectionConfig({ frustrationDetection: { decayRate: 0 } }).decayRate).toBe(0.9);
+    expect(parseFrustrationDetectionConfig({ frustrationDetection: { decayRate: 1.5 } }).decayRate).toBe(0.85);
+    expect(parseFrustrationDetectionConfig({ frustrationDetection: { decayRate: 0 } }).decayRate).toBe(0.85);
     expect(parseFrustrationDetectionConfig({ frustrationDetection: { decayRate: 0.85 } }).decayRate).toBe(0.85);
   });
 

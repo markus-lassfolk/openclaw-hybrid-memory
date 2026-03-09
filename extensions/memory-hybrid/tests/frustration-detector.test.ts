@@ -37,7 +37,7 @@ function turns(userMessages: string[]): FrustrationConversationTurn[] {
 const defaultCfg: FrustrationDetectionConfig = {
   enabled: true,
   windowSize: 8,
-  decayRate: 0.9,
+  decayRate: 0.85,
   injectionThreshold: 0.3,
   adaptationThresholds: { medium: 0.3, high: 0.5, critical: 0.7 },
   feedToImplicitPipeline: true,

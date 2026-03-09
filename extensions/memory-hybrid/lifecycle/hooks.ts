@@ -1752,6 +1752,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   // Per-session frustration state: maps sessionKey → { level, turns[] }
   const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
 
+  // Shared tool effectiveness store (lazy-initialized, reused across messages)
+  let cachedToolStore: ToolEffectivenessStore | null = null;
+  const getToolEffectivenessStore = (): ToolEffectivenessStore => {
+    if (!cachedToolStore) {
+      const effectivenessDbPath = ctx.resolvedSqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
+      cachedToolStore = new ToolEffectivenessStore(effectivenessDbPath);
+    }
+    return cachedToolStore;
+  };
+
   const onFrustrationDetect = (api: ClawdbotPluginApi) => {
     if (ctx.cfg.frustrationDetection?.enabled === false) return;
     const fCfg = ctx.cfg.frustrationDetection;
@@ -1825,14 +1835,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         let toolHintText = "";
         if (ctx.cfg.toolEffectiveness?.enabled !== false && ctx.cfg.toolEffectiveness?.injectHints !== false) {
           try {
-            const effectivenessDbPath = ctx.resolvedSqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
-            const toolStore = new ToolEffectivenessStore(effectivenessDbPath);
-            try {
-              const contextLabel = currentAgentIdRef.value ?? "general";
-              toolHintText = generateToolHint(toolStore, contextLabel);
-            } finally {
-              toolStore.close();
-            }
+            const toolStore = getToolEffectivenessStore();
+            const contextLabel = currentAgentIdRef.value ?? "general";
+            toolHintText = generateToolHint(toolStore, contextLabel);
           } catch (thErr) {
             capturePluginError(thErr instanceof Error ? thErr : new Error(String(thErr)), {
               operation: "generate-tool-hint",
@@ -1859,6 +1864,52 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         });
       }
       return undefined;
+    });
+
+    // Capture assistant responses to maintain interleaved turn history
+    api.on("agent_end", async (event: unknown) => {
+      const ev = event as { messages?: unknown[] };
+      if (!ev.messages || ev.messages.length === 0) return;
+      const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+
+      try {
+        // Find the last assistant message
+        const assistantMsgs = ev.messages.filter((m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant");
+        const lastAssistant = assistantMsgs[assistantMsgs.length - 1] as { content?: unknown } | undefined;
+        if (!lastAssistant) return;
+
+        let assistantContent: string | undefined;
+        if (typeof lastAssistant.content === "string") {
+          assistantContent = lastAssistant.content;
+        } else if (Array.isArray(lastAssistant.content)) {
+          // Extract text from content blocks
+          const textBlocks: string[] = [];
+          for (const block of lastAssistant.content) {
+            if (block && typeof block === "object" && "type" in block && (block as { type?: string }).type === "text" && "text" in block && typeof (block as { text?: unknown }).text === "string") {
+              textBlocks.push((block as { text: string }).text);
+            }
+          }
+          if (textBlocks.length > 0) {
+            assistantContent = textBlocks.join(" ");
+          }
+        }
+
+        if (!assistantContent || assistantContent.trim().length === 0) return;
+
+        // Append assistant turn to session history
+        const state = frustrationStateMap.get(sessionKey);
+        if (state) {
+          state.turns.push({ role: "assistant", content: assistantContent });
+          if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
+          frustrationStateMap.set(sessionKey, state);
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "frustration-assistant-capture",
+          subsystem: "frustration",
+          severity: "info",
+        });
+      }
     });
   };
 

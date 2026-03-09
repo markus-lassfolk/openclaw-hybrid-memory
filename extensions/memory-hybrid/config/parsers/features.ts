@@ -552,7 +552,7 @@ export function parseFrustrationDetectionConfig(cfg: Record<string, unknown>): F
     decayRate:
       typeof raw?.decayRate === "number" && raw.decayRate > 0 && raw.decayRate <= 1
         ? raw.decayRate
-        : 0.9,
+        : 0.85,
     signalWeights,
     injectionThreshold:
       typeof raw?.injectionThreshold === "number" && raw.injectionThreshold >= 0 && raw.injectionThreshold <= 1
