@@ -147,9 +147,10 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       //    injection surface.
       let sessionFacts = 0;
       let memorySummary: string | undefined;
+      let topFacts: ReturnType<typeof factsDb.list> = [];
       try {
         sessionFacts = factsDb.getCount();
-        const topFacts = factsDb.list(8);
+        topFacts = factsDb.list(8);
         if (topFacts.length > 0) {
           const lines: string[] = [
             "<!-- memory-hybrid: post-compaction memory summary -->",
