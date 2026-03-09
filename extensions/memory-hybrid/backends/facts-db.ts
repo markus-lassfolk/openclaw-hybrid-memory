@@ -2922,10 +2922,17 @@ export class FactsDB {
       const allFtsIds = ftsResults.map((r) => r.factId);
       if (allFtsIds.length === 0) return { facts: [], total: 0 };
       // Apply category/tier/decayClass/entity filters on top of FTS results to maintain consistency
-      const idPlaceholders = allFtsIds.map(() => "?").join(",");
-      const filteredIdRows = this.liveDb
-        .prepare(`SELECT id FROM facts WHERE id IN (${idPlaceholders}) AND ${where}`)
-        .all(...allFtsIds, ...params) as Array<{ id: string }>;
+      // Chunk IDs to avoid exceeding SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (default 999, often 32766)
+      const CHUNK_SIZE = 500;
+      const filteredIdRows: Array<{ id: string }> = [];
+      for (let i = 0; i < allFtsIds.length; i += CHUNK_SIZE) {
+        const chunk = allFtsIds.slice(i, i + CHUNK_SIZE);
+        const idPlaceholders = chunk.map(() => "?").join(",");
+        const chunkRows = this.liveDb
+          .prepare(`SELECT id FROM facts WHERE id IN (${idPlaceholders}) AND ${where}`)
+          .all(...chunk, ...params) as Array<{ id: string }>;
+        filteredIdRows.push(...chunkRows);
+      }
       const filteredSet = new Set(filteredIdRows.map((r) => r.id));
       const filteredIds = allFtsIds.filter((id) => filteredSet.has(id));
       const searchTotal = filteredIds.length;
