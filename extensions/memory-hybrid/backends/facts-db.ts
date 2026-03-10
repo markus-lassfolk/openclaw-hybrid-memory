@@ -462,8 +462,11 @@ export class FactsDB {
    * Upsert the cursor after a successful incremental scan.
    * @param lastRunAt Scan completion timestamp (pass `Date.now()`). Used as the watermark for the
    *   23-hour startup guard — it records *when we last scanned*, not the newest session we saw.
+   * @param lastSessionTs Timestamp of the newest session processed (file mtime). Used for tracking
+   *   the actual session watermark. Pass `lastRunAt` if no sessions were processed.
    */
-  updateScanCursor(scanType: string, lastRunAt: number, sessionsProcessed: number): void {
+  updateScanCursor(scanType: string, lastRunAt: number, sessionsProcessed: number, lastSessionTs?: number): void {
+    const sessionTs = lastSessionTs ?? lastRunAt;
     this.liveDb
       .prepare(
         `INSERT INTO scan_cursors (scan_type, last_session_ts, last_run_at, sessions_processed)
@@ -473,7 +476,7 @@ export class FactsDB {
            last_run_at = excluded.last_run_at,
            sessions_processed = sessions_processed + excluded.sessions_processed`,
       )
-      .run(scanType, lastRunAt, lastRunAt, sessionsProcessed);
+      .run(scanType, sessionTs, lastRunAt, sessionsProcessed);
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */

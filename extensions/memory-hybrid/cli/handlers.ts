@@ -1685,6 +1685,25 @@ function getSessionFilePathsSince(sessionDir: string, days: number, sinceTimesta
 }
 
 /**
+ * Returns the maximum mtime (in epoch-ms) of the given file paths, or undefined if none exist.
+ * Used to track the newest session timestamp for scan cursors.
+ */
+function getMaxMtime(filePaths: string[]): number | undefined {
+  let maxMtime: number | undefined;
+  for (const p of filePaths) {
+    try {
+      const mtime = statSync(p).mtimeMs;
+      if (maxMtime === undefined || mtime > maxMtime) {
+        maxMtime = mtime;
+      }
+    } catch (err) {
+      // Ignore files that can't be stat'd
+    }
+  }
+  return maxMtime;
+}
+
+/**
  * Apply the 23h startup guard and concurrency lock for a scan type.
  * Returns a skip reason string if the scan should be skipped, or null if it can proceed.
  * If it can proceed, marks the scan as in-progress (caller must call clearScanLock when done).
@@ -1756,7 +1775,8 @@ export async function runExtractProceduresForCli(
       { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
     );
     if (!opts.dryRun) {
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+      const lastSessionTs = filePaths ? getMaxMtime(filePaths) : undefined;
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
     }
     return result;
   } catch (err) {
@@ -1919,7 +1939,8 @@ export async function runExtractDirectivesForCli(
 
     const returnVal = { ...result, stored };
     if (!opts.dryRun) {
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+      const lastSessionTs = getMaxMtime(filePaths);
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
     }
     return returnVal;
   } finally {
@@ -2149,7 +2170,8 @@ export async function runExtractReinforcementForCli(
   }
 
     if (!opts.dryRun) {
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+      const lastSessionTs = getMaxMtime(filePaths);
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
     }
     return result;
   } finally {
@@ -3381,7 +3403,8 @@ export async function runDistillForCli(
     capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
   }
   if (!opts.dryRun) {
-    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), filesToProcess.length);
+    const lastSessionTs = getMaxMtime(filesToProcess.map((f) => f.path));
+    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), filesToProcess.length, lastSessionTs);
   }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
   } finally {

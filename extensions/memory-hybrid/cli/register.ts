@@ -154,7 +154,8 @@ export type HybridMemCliContext = {
     dryRun?: boolean;
     model?: string;
     approve?: boolean;
-    noApplyTools?: boolean;
+    applyTools?: boolean;
+    full?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
   runAnalyzeFeedbackPhrases: (opts: { days?: number; model?: string; outputPath?: string; learn?: boolean }) => Promise<AnalyzeFeedbackPhrasesResult>;
   runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number; skipped?: boolean }>;
