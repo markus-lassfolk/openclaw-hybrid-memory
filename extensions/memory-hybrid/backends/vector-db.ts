@@ -228,7 +228,6 @@ export class VectorDB {
       this.storeCount++;
       if (!this.optimizeInProgress && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
         this.storeCount = 0;
-        this.optimizeInProgress = true;
         // Fire-and-forget; don't block the store operation
         this.optimize(24 * 60 * 60 * 1000)
           .catch(err => this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`));
