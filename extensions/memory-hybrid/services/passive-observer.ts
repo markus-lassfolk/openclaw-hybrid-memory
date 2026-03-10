@@ -246,7 +246,7 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
 export function isIdentityFact(text: string, agentName?: string): boolean {
   const patterns: RegExp[] = [
     /(?:my|your|the (?:agent|assistant|bot)(?:'s)?)\s+(?:email|name|role|account|address|phone|number)/i,
-    /(?:email|account|address|role)\s+(?:is|was|:)\s/i,
+    /(?<!(?:user|customer|their|his|her|[a-z]+)'s\s)(?<!(?:their|his|her)\s)(?:email|account|address|role)\s+(?:is|was|:)\s/i,
   ]
   if (agentName) {
     const escaped = agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

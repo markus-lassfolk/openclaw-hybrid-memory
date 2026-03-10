@@ -833,6 +833,22 @@ describe("isIdentityFact", () => {
     expect(isIdentityFact("YOUR EMAIL IS DORIS@EXAMPLE.COM")).toBe(true);
     expect(isIdentityFact("the ASSISTANT's name is doris", "doris")).toBe(true);
   });
+
+  it("does NOT flag 'The user's email is ...'", () => {
+    expect(isIdentityFact("The user's email is john@example.com")).toBe(false);
+  });
+
+  it("does NOT flag 'John's role is ...'", () => {
+    expect(isIdentityFact("John's role is team lead")).toBe(false);
+  });
+
+  it("does NOT flag 'The customer's address is ...'", () => {
+    expect(isIdentityFact("The customer's address is 123 Main St")).toBe(false);
+  });
+
+  it("does NOT flag 'Their account is ...'", () => {
+    expect(isIdentityFact("Their account is premium-user-123")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
