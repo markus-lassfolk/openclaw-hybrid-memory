@@ -261,6 +261,12 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
   };
 }
 
+/** Returns true when the key looks like a placeholder rather than a real credential. */
+function isPlaceholderApiKey(key: string): boolean {
+  if (key.length < 10) return true;
+  return /YOUR_.*_HERE|REPLACE_ME|x{3,}|sk-xxx/i.test(key);
+}
+
 export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefined {
   const llmRaw = cfg.llm as Record<string, unknown> | undefined;
   const defaultList = llmRaw && Array.isArray(llmRaw.default) ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
@@ -272,8 +278,13 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           Object.entries(llmProvidersRaw as Record<string, unknown>).map(([k, v]) => {
             if (!v || typeof v !== "object" || Array.isArray(v)) return [k, undefined];
             const pv = v as Record<string, unknown>;
+            const rawKey = typeof pv.apiKey === "string" && pv.apiKey.trim().length > 0 ? pv.apiKey.trim() : undefined;
+            const validKey = rawKey && !isPlaceholderApiKey(rawKey) ? rawKey : undefined;
+            if (rawKey && !validKey) {
+              console.warn(`memory-hybrid: Provider '${k}' has an invalid API key (looks like a placeholder) — skipping`);
+            }
             return [k.toLowerCase(), {
-              apiKey: typeof pv.apiKey === "string" && pv.apiKey.trim().length > 0 ? pv.apiKey.trim() : undefined,
+              apiKey: validKey,
               baseURL: typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined,
             } as LLMProviderConfig];
           }),

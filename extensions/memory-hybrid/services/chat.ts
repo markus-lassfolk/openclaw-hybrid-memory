@@ -175,6 +175,10 @@ export async function withLLMRetry<T>(
       if (lastError instanceof UnconfiguredProviderError) {
         throw lastError;
       }
+      // Don't retry 401 — wrong key won't be fixed by retrying
+      if (/\b401\b|unauthorized/i.test(lastError.message)) {
+        throw lastError;
+      }
       if (attempt === maxRetries || opts?.signal?.aborted) {
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
