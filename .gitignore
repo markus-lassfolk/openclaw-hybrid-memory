@@ -29,3 +29,4 @@ internal/
 .DS_Store
 Thumbs.db
 .claude/settings.json
+extensions/memory-hybrid/dist/

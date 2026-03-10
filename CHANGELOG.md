@@ -14,6 +14,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.100] - 2026-03-10
+
+Major stability release: LanceDB OOM fix, provider hardening, 4-model council review, 13 bug fixes, cron guard system.
+
+### Added
+
+- **LanceDB auto-compaction (#292):** `VectorDB.optimize()` method with race-condition guard (`promiseRef` pattern). Auto-compacts after every 100 `store()` calls. New CLI command `openclaw hybrid-mem optimize` for manual compaction. Weekly cron job integration.
+- **Cron job re-run guards (#304, #305):** `buildGuardPrefix()` generates `MIN_INTERVAL_MS` checks using `/tmp/hybrid-mem-guard-<job>.txt` timestamp files. Three tiers: daily (20h), weekly (5d), monthly (25d). Prevents jobs re-firing on every gateway restart.
+- **Per-URL Ollama circuit breaker (#298):** Module-level circuit breaker tracks failures per endpoint URL instead of globally. Prevents one bad Ollama endpoint from disabling all local models.
+- **Transient error retry logic (#301, #302):** LLM request timeouts and 5xx errors are now retried with configurable limits. Connection errors trigger graceful fallback to next provider.
+- **`Retry-After` header parsing (#296):** 429 rate-limit responses now respect the server's `Retry-After` header with exponential backoff.
+- **Provider fallback chain (#294, #300):** `UnconfiguredProviderError` now resolves fallback keys for OpenRouter, Anthropic, and generic API configurations. Embedding provider chain exhaustion handled gracefully — stores facts without embeddings when all providers fail.
+- **`is404Like` detection (#303):** LLM 404 responses (model not found) now skip retry loops and move to next model immediately.
+- **Try/finally scan locks:** `extract-directives`, `extract-reinforcement`, and `self-correction-run` now release concurrency locks in `finally` blocks, preventing lock leaks on errors.
+- **Gateway token leak fix (#init-databases):** Removed `OPENCLAW_GATEWAY_TOKEN` from the OpenAI provider fallback chain — was sending internal gateway tokens to external endpoints.
+- **Scan cursor fix:** `getScanCursor()` now returns `last_run_at` (not `last_session_ts`), fixing the 23-hour guard to check actual run time.
+- **`$HOME` expansion fix (#299):** `.last-post-upgrade-version` path now expands `$HOME` explicitly in `plugin-service.ts`.
+- **401 fast-fail (#295):** Authentication errors skip retry loops and fall back to next provider immediately.
+- **Config validation (#289):** Placeholder API key detection for `embedding.apiKey`. Nano-tier defaults for all background features.
+
+### Changed
+
+- **LLM tier defaults:** Background features (autoClassify, HyDE, query expansion, summarize) default to nano tier. Self-correction spawn model changed to Sonnet. Distill model tier defaults to Flash.
+- **Incremental processing for all scans (#288):** Watermark-based scan cursors. Full re-index only on explicit `--full` flag.
+
+### Fixed
+
+- 13 bugs identified from GlitchTip error reports (#294–#303) plus cron re-trigger (#304)
+- LanceDB OOM crashes: 9036 uncompacted fragments → 1 after optimize (freed 2.6 GB)
+- Race condition in `VectorDB.optimize()`: circular promise reference fixed with intermediate `promiseRef` variable
+- All 76 review threads from 4-model council review (GPT, Opus, Gemini, Sonnet) resolved
+
+### Security
+
+- Gateway token no longer leaked to external OpenAI-compatible endpoints
+- 401 errors no longer trigger infinite retry loops exposing invalid keys
+
+---
+
 ## [2026.3.92] - 2026-03-10
 
 Incremental extraction, startup guards, nano-tier defaults, and schema fix (#288/#289).
@@ -618,6 +657,7 @@ Major feature release including procedural memory, directive extraction, reinfor
 ---
 
 [Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.92...HEAD
+[2026.3.100]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.100
 [2026.3.92]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.92
 [2026.3.91]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.91
 [2026.3.90]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.90
