@@ -428,6 +428,22 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     }));
 
   mem
+    .command("vectordb-optimize")
+    .description("Compact LanceDB fragments and prune old versions to reclaim disk space and reduce memory usage")
+    .option("--older-than-days <days>", "Remove versions older than this many days (default: 7)", "7")
+    .action(withExit(async (opts?: { olderThanDays?: string }) => {
+      const olderThanDays = parseInt(opts?.olderThanDays ?? "7", 10);
+      const olderThanMs = olderThanDays * 24 * 60 * 60 * 1000;
+      try {
+        const stats = await vectorDb.optimize(olderThanMs);
+        console.log(`LanceDB: compacted ${stats.compacted} fragments, freed ${stats.removed} bytes`);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "vectordb-optimize" });
+        throw err;
+      }
+    }));
+
+  mem
     .command("stats")
     .description("Show memory statistics. Rich output includes procedures, rules, patterns, directives, graph, and operational info. Use --efficiency for tiers, sources, and token estimates.")
     .option("--efficiency", "Show tier/source breakdown, estimated tokens, and token-savings note")

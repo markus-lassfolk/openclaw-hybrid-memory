@@ -181,3 +181,58 @@ describe("VectorDB auto-repair on dimension mismatch (issue #128)", () => {
     db.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// VectorDB.optimize() — compaction and version pruning (issue #292)
+// ---------------------------------------------------------------------------
+
+describe("VectorDB.optimize() — compaction and version pruning (issue #292)", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+  let db: InstanceType<typeof VectorDB>;
+
+  const DIM = 3;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-optimize-test-"));
+    lanceDir = join(tmpDir, "lance");
+    db = new VectorDB(lanceDir, DIM);
+    // Store a few rows to create multiple fragments
+    for (let i = 0; i < 3; i++) {
+      await db.store({
+        text: `fact ${i}`,
+        vector: [0.1 * i, 0.2 * i, 0.3 * i],
+        importance: 0.5,
+        category: "fact",
+      });
+    }
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns compacted and removed stats with numeric values", async () => {
+    const stats = await db.optimize();
+    expect(typeof stats.compacted).toBe("number");
+    expect(typeof stats.removed).toBe("number");
+    expect(stats.compacted).toBeGreaterThanOrEqual(0);
+    expect(stats.removed).toBeGreaterThanOrEqual(0);
+  });
+
+  it("accepts a custom olderThanMs parameter", async () => {
+    // Should not throw when called with a custom retention window
+    const stats = await db.optimize(24 * 60 * 60 * 1000);
+    expect(typeof stats.compacted).toBe("number");
+    expect(typeof stats.removed).toBe("number");
+  });
+
+  it("DB remains usable after optimize — can still store and search", async () => {
+    await db.optimize();
+    const id = await db.store({ text: "post-optimize fact", vector: [0.5, 0.5, 0.5], importance: 0.8, category: "fact" });
+    expect(typeof id).toBe("string");
+    const results = await db.search([0.5, 0.5, 0.5], 5, 0);
+    expect(results.some((r) => r.entry.text === "post-optimize fact")).toBe(true);
+  });
+});

@@ -19,6 +19,8 @@ export class VectorDB {
   private closed = false;
   private sessionCount = 0;
   private logger: VectorDBLogger | null = null;
+  private storeCount = 0;
+  private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
    * LanceDB table due to a vector dimension mismatch. Callers can check this flag to
@@ -217,6 +219,14 @@ export class VectorDB {
       await this.ensureInitialized();
       const id = entry.id ?? randomUUID();
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
+      this.storeCount++;
+      if (this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
+        this.storeCount = 0;
+        // Fire-and-forget; don't block the store operation
+        this.optimize(24 * 60 * 60 * 1000).catch(err =>
+          this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`)
+        );
+      }
       return id;
     } catch (err) {
       capturePluginError(err as Error, {
@@ -226,6 +236,24 @@ export class VectorDB {
       this.logWarn(`memory-hybrid: LanceDB store failed: ${err}`);
       throw err;
     }
+  }
+
+  /**
+   * Compact fragments and clean up old versions to reclaim disk space and reduce memory usage.
+   * Should be called periodically (e.g., nightly maintenance) to prevent unbounded growth.
+   *
+   * @param olderThanMs - Clean up versions older than this many ms (default: 7 days = 604800000)
+   * @returns Statistics about the optimization (compaction + cleanup)
+   */
+  async optimize(olderThanMs: number = 7 * 24 * 60 * 60 * 1000): Promise<{ compacted: number; removed: number }> {
+    await this.ensureInitialized();
+    const table = this.getTable();
+    const cleanupOlderThan = new Date(Date.now() - olderThanMs);
+    const stats = await table.optimize({ cleanupOlderThan });
+    return {
+      compacted: stats.compaction?.fragmentsRemoved ?? 0,
+      removed: stats.prune?.bytesRemoved ?? 0,
+    };
   }
 
   async search(

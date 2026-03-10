@@ -104,8 +104,8 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "nano", enabled: true },
   // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
-  // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
+  // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem vectordb-optimize\n3. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
@@ -1718,7 +1718,7 @@ function acquireScanSlot(
     logger.info?.(msg);
     return msg;
   }
-  if (lastRunAt && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
+  if (lastRunAt != null && lastRunAt > 0 && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
     const hoursAgo = ((Date.now() - lastRunAt) / 3_600_000).toFixed(1);
     const msg = `Skipping ${scanType}: last run was ${hoursAgo}h ago (threshold: 23h). Use --full to override.`;
     logger.info?.(msg);
@@ -3189,11 +3189,11 @@ export async function runDistillForCli(
 
   try {
   const gatherOpts = useWatermark && cursor
-    ? { sinceTimestampMs: cursor.lastRunAt }
+    ? { sinceTimestampMs: cursor.lastSessionTs }
     : { all: opts.all, days: opts.days ?? (opts.all ? 90 : 3), since: opts.since };
 
   if (useWatermark && cursor) {
-    logger.info?.(`memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastRunAt).toISOString()})`);
+    logger.info?.(`memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastSessionTs).toISOString()})`);
   }
 
   const sessionFiles = gatherSessionFiles(gatherOpts);
@@ -5080,4 +5080,27 @@ export function runCostReportForCli(
   log("");
   log("ℹ️  Costs are estimates based on published model pricing. Actual costs may vary.");
   log("   Embedding calls are not included in this report.");
+}
+
+/**
+ * Compact LanceDB fragments and prune old versions to reclaim disk space and reduce memory usage.
+ * Wraps VectorDB.optimize(). For ad-hoc use via `openclaw hybrid-mem vectordb-optimize`.
+ */
+export async function runVectorDbOptimizeForCli(
+  ctx: HandlerContext,
+  opts: { olderThanDays?: number },
+  sink: { log: (msg: string) => void },
+): Promise<{ compacted: number; removed: number }> {
+  const { vectorDb, logger } = ctx;
+  const { log } = sink;
+  const olderThanMs = (opts.olderThanDays ?? 7) * 24 * 60 * 60 * 1000;
+  try {
+    const stats = await vectorDb.optimize(olderThanMs);
+    log(`LanceDB: compacted ${stats.compacted} fragments, freed ${stats.removed} bytes`);
+    logger?.info?.(`memory-hybrid: vectordb-optimize — compacted=${stats.compacted} freed=${stats.removed}B`);
+    return stats;
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "vectordb-optimize" });
+    throw err;
+  }
 }
