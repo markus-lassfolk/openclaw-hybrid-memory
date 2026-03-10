@@ -118,10 +118,12 @@ So the two suggested jobs (nightly sweep + weekly reflection) cover **distillati
 
 ### Weekly extraction pipeline (procedures, directives, reinforcement)
 
-The **weekly-extract-procedures** job (Sunday 04:00 by default) runs: `extract-procedures` → `extract-directives` → `extract-reinforcement` → `generate-auto-skills`. To avoid locking your main AI and reduce token cost:
+The **weekly-extract-procedures** job (Sunday 04:00 by default) runs four steps in sequence: `extract-procedures` → `extract-directives` → `extract-reinforcement` → `generate-auto-skills`. Steps 1 and 2 are fast (no LLM); step 3 (**extract-reinforcement**) runs an LLM and can take several minutes; step 4 runs after step 3 completes.
+
+**Why "step 3 running in the background"?** OpenClaw's cron runner may send a status update after steps 1 and 2. At that moment step 3 is still running, so you see "extract-reinforcement: Currently running in the background" and "generate-auto-skills: Pending". The plugin runs all four commands sequentially in one process; "background" here means step 3 is in progress. A single "all done" notification would require OpenClaw's job runner to report only when the full chain exits.
 
 - **Job model:** The job is scheduled with the **nano** tier, so the agent that runs these steps uses a cheap model (e.g. gpt-4.1-nano). Your primary model stays free for interactive use.
-- **Extraction LLM:** The only step that calls an LLM is **extract-reinforcement** (analysis of praise/reinforcement signals). Expert/Full presets set **`distill.extractionModelTier`** to **`"default"** so that step uses the default tier instead of heavy. Set **`distill.extractionModelTier: "nano"`** in plugin config for even lower cost.
+- **extract-reinforcement LLM:** The only step that calls an LLM is **extract-reinforcement**. Its model is set by **`distill.extractionModelTier`**: unset → **nano** tier (changed from "heavy" in v2026.3.91 for cost optimisation, e.g. gpt-4.1-nano); **`"default"`** (Expert/Full presets) → default tier; **`"heavy"`** → heavy tier (e.g. Opus, GPT-5.4). Set to `"heavy"` only if you need maximum extraction quality. Run **`openclaw hybrid-mem verify`** to see the current tier under "Ingestion & Distillation".
 - **When it runs:** The job is already at night (Sunday 04:00). Ensure your OpenClaw cron/scheduler runs at that time so the pipeline doesn’t run during active use. After upgrading, if you run **`openclaw hybrid-mem verify --fix`**, the job is re-created with the nano model; existing jobs keep their current model until you re-run install or verify --fix.
 
 ---

@@ -19,12 +19,12 @@ export type DistillContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (opts: { days: number; dryRun: boolean; verbose?: boolean }, sink: ExtractDailySink) => Promise<ExtractDailyResult>;
-  runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean }) => Promise<ExtractProceduresResult>;
+  runExtractProcedures: (opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean; full?: boolean }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
   runSkillsSuggest: (opts: { dryRun?: boolean; apply?: boolean; days?: number; verbose?: boolean }) => Promise<SkillsSuggestResult>;
-  runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number }, sink: DistillCliSink) => Promise<DistillCliResult>;
-  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number; stored?: number }>;
-  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number }>;
+  runDistill: (opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number; full?: boolean }, sink: DistillCliSink) => Promise<DistillCliResult>;
+  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; categories: string[]; extractedRule: string; precedingAssistant: string; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number; stored?: number; skipped?: boolean }>;
+  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{ incidents: Array<{ userMessage: string; agentBehavior: string; recalledMemoryIds: string[]; toolCallSequence: string[]; confidence: number; timestamp?: string; sessionFile: string }>; sessionsScanned: number; skipped?: boolean }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
@@ -53,7 +53,8 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--verbose", "Log each fact as it is stored")
     .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
     .option("--max-session-tokens <n>", "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)", "0")
-    .action(withExit(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string }) => {
+    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
+    .action(withExit(async (opts: { dryRun?: boolean; all?: boolean; days?: string; since?: string; model?: string; verbose?: boolean; maxSessions?: string; maxSessionTokens?: string; full?: boolean }) => {
       const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
       const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
       const maxSessionTokens = Math.max(0, parseInt(opts.maxSessionTokens || "0") || 0);
@@ -68,6 +69,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           verbose: !!opts.verbose,
           maxSessions: maxSessions > 0 ? maxSessions : undefined,
           maxSessionTokens: maxSessionTokens > 0 ? maxSessionTokens : undefined,
+          full: !!opts.full,
         },
         sink,
       );
@@ -136,13 +138,15 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
     .option("--dry-run", "Show what would be stored without writing")
     .option("--verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)")
-    .action(withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean; verbose?: boolean }) => {
+    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
+    .action(withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean; verbose?: boolean; full?: boolean }) => {
       const days = opts.days != null ? parseInt(opts.days, 10) : undefined;
       const result = await runExtractProcedures({
         sessionDir: opts.dir,
         days: Number.isFinite(days) ? days : undefined,
         dryRun: !!opts.dryRun,
         verbose: !!opts.verbose,
+        full: !!opts.full,
       });
       if (result.dryRun) {
         console.log(`\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`);
@@ -233,9 +237,10 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
     .option("--verbose", "Log each directive as it is detected")
     .option("--dry-run", "Show what would be extracted without storing")
-    .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
+    .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean }) => {
       const days = parseInt(opts.days ?? "3", 10);
-      const result = await runExtractDirectives({ days, verbose: opts.verbose, dryRun: opts.dryRun });
+      const result = await runExtractDirectives({ days, verbose: opts.verbose, dryRun: opts.dryRun, full: opts.full });
       console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
       if (opts.dryRun) {
         console.log(`[dry-run] Would store ${result.incidents.length} directives as facts.`);
@@ -252,9 +257,10 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
     .option("--verbose", "Log each reinforcement as it is detected")
     .option("--dry-run", "Show what would be annotated without storing")
-    .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean }) => {
+    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
+    .action(withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean }) => {
       const days = parseInt(opts.days ?? "3", 10);
-      const result = await runExtractReinforcement({ days, verbose: opts.verbose, dryRun: opts.dryRun });
+      const result = await runExtractReinforcement({ days, verbose: opts.verbose, dryRun: opts.dryRun, full: opts.full });
       console.log(`\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`);
       if (opts.dryRun) {
         console.log(`[dry-run] Would annotate facts/procedures with reinforcement data.`);

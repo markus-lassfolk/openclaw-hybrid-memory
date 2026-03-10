@@ -409,11 +409,12 @@ describe("ProvenanceService.prune", () => {
 // ---------------------------------------------------------------------------
 
 describe("ProvenanceConfig defaults in config parsing", () => {
-  it("defaults provenance.enabled to false", () => {
+  it("defaults provenance.enabled to true (expert preset)", () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
     });
-    expect(cfg.provenance.enabled).toBe(false);
+    // Expert preset enables provenance by default
+    expect(cfg.provenance.enabled).toBe(true);
   });
 
   it("defaults provenance.retentionDays to 365", () => {

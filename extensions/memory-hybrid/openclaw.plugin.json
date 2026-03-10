@@ -1096,6 +1096,22 @@
           "spawnModel": {
             "type": "string",
             "description": "Model for spawn when analyzeViaSpawn is true. Empty or unset = use provider default from config (Gemini/OpenAI/Claude, same as maintenance cron jobs)"
+          },
+          "positiveRulesSection": {
+            "type": "string",
+            "description": "TOOLS.md section heading for positive reinforcement rules (default: Positive Reinforcement Rules)"
+          },
+          "reinforcementLLMAnalysis": {
+            "type": "boolean",
+            "description": "Run LLM analysis on reinforcement incidents to extract POSITIVE_RULE/MEMORY entries (default: true)"
+          },
+          "reinforcementToProposals": {
+            "type": "boolean",
+            "description": "Write PROPOSAL remediations from reinforcement analysis to proposalsDB (default: true)"
+          },
+          "agentsRuleToProposals": {
+            "type": "boolean",
+            "description": "Write AGENTS_RULE remediations from self-correction to proposalsDB (default: true)"
           }
         },
         "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
