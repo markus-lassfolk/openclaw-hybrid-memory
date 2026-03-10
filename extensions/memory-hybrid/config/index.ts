@@ -62,7 +62,7 @@ function getDefaultCronModelLegacy(
   }
   if (hasKey(pluginConfig.claude?.apiKey)) {
     const defaultModel = pluginConfig.claude?.defaultModel?.trim();
-    if (defaultModel) return defaultModel;
+    if (defaultModel) return tier === "nano" ? CLAUDE_NANO_MODEL : defaultModel;
     if (tier === "heavy") return CLAUDE_HEAVY_MODEL;
     if (tier === "nano") return CLAUDE_NANO_MODEL;
     return CLAUDE_DEFAULT_MODEL;
