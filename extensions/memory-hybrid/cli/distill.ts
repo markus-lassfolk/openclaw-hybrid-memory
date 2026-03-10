@@ -77,7 +77,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         console.log(`\nWould extract ${result.factsExtracted} facts from ${result.sessionsScanned} sessions.`);
       } else {
         console.log(
-          `\nDistill done: ${result.stored} stored, ${result.skipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
+          `\nDistill done: ${result.stored} stored, ${result.dedupSkipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
         );
       }
     }));

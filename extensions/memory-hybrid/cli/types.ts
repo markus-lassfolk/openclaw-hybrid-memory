@@ -71,7 +71,7 @@ export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => v
 export type IngestFilesResult = { stored: number; skipped: number; extracted: number; files: number; dryRun: boolean };
 export type IngestFilesSink = { log: (s: string) => void; warn: (s: string) => void };
 
-export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; skipped: number; dryRun: boolean };
+export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; dedupSkipped: number; dryRun: boolean; skipped?: boolean };
 export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
 export type SelfCorrectionExtractResult = {

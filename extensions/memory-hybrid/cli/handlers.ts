@@ -3184,7 +3184,7 @@ export async function runDistillForCli(
   const useWatermark = !opts.full && !opts.all && !opts.since;
   if (useWatermark && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
-    if (skip) return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: false };
+    if (skip) return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: false, skipped: true };
   }
 
   try {
@@ -3205,7 +3205,7 @@ export async function runDistillForCli(
       factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
       clearScanLock(SCAN_TYPE);
     }
-    return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
+    return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: opts.dryRun };
   }
   const cronCfgDistill = getCronModelConfig(cfg);
   const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
@@ -3299,7 +3299,7 @@ export async function runDistillForCli(
   progress.done();
   if (opts.dryRun) {
     sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
-    return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored: 0, skipped: 0, dryRun: true };
+    return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored: 0, dedupSkipped: 0, dryRun: true };
   }
   const sourceDateSec = (s: string | null | undefined) => {
     if (!s || typeof s !== "string") return null;
@@ -3407,7 +3407,7 @@ export async function runDistillForCli(
     const lastSessionTs = getMaxMtime(filesToProcess.map((f) => f.path));
     factsDb.updateScanCursor(SCAN_TYPE, Date.now(), filesToProcess.length, lastSessionTs);
   }
-  return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
+  return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, dedupSkipped: skipped, dryRun: false };
   } finally {
     if (useWatermark && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
@@ -5082,25 +5082,3 @@ export function runCostReportForCli(
   log("   Embedding calls are not included in this report.");
 }
 
-/**
- * Compact LanceDB fragments and prune old versions to reclaim disk space and reduce memory usage.
- * Wraps VectorDB.optimize(). For ad-hoc use via `openclaw hybrid-mem vectordb-optimize`.
- */
-export async function runVectorDbOptimizeForCli(
-  ctx: HandlerContext,
-  opts: { olderThanDays?: number },
-  sink: { log: (msg: string) => void },
-): Promise<{ compacted: number; removed: number }> {
-  const { vectorDb, logger } = ctx;
-  const { log } = sink;
-  const olderThanMs = (opts.olderThanDays ?? 7) * 24 * 60 * 60 * 1000;
-  try {
-    const stats = await vectorDb.optimize(olderThanMs);
-    log(`LanceDB: compacted ${stats.compacted} fragments, freed ${stats.removed} bytes`);
-    logger?.info?.(`memory-hybrid: vectordb-optimize — compacted=${stats.compacted} freed=${stats.removed}B`);
-    return stats;
-  } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "vectordb-optimize" });
-    throw err;
-  }
-}

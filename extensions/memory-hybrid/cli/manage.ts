@@ -94,7 +94,7 @@ export type ManageContext = {
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
-  runDistill?: (opts: { dryRun: boolean; days?: number; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; skipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean }>;
+  runDistill?: (opts: { dryRun: boolean; days?: number; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; dedupSkipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean; skipped?: boolean }>;
   runRecordDistill?: () => Promise<unknown>;
   runExtractProcedures?: (opts: { days?: number; dryRun: boolean }) => Promise<unknown>;
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
