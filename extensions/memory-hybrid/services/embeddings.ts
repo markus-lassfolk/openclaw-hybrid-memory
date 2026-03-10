@@ -729,10 +729,21 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     return results[0];
   }
 
+  /** Maximum characters per input text sent to Ollama (~2000 tokens for most models). */
+  private static readonly MAX_INPUT_CHARS = 8000;
+
   async embedBatch(texts: string[]): Promise<number[][]> {
     const allResults: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
-      const batch = texts.slice(i, i + this.batchSize);
+      const batch = texts.slice(i, i + this.batchSize).map((t) => {
+        if (t.length > OllamaEmbeddingProvider.MAX_INPUT_CHARS) {
+          console.warn(
+            `memory-hybrid: Truncating embedding input from ${t.length} to ${OllamaEmbeddingProvider.MAX_INPUT_CHARS} chars for ${this.modelName}`,
+          );
+          return t.slice(0, OllamaEmbeddingProvider.MAX_INPUT_CHARS);
+        }
+        return t;
+      });
       let resp: Response;
       try {
         resp = await fetch(`${this.endpoint}/api/embed`, {
