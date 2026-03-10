@@ -112,3 +112,33 @@ NODE_PATH="$EXT_DIR/node_modules" node scripts/backfill-memory.mjs --dry-run
 ```
 
 See [../docs/MAINTENANCE.md](../docs/MAINTENANCE.md) for full details on deployment and backfill.
+
+---
+
+## Gateway watchdog (cron-only, no systemd)
+
+Use this when the gateway is **not** run as a systemd (or launchd) service: e.g. WSL2, containers, or when you prefer cron to start and supervise the gateway. The script checks every run (e.g. every 5 minutes via crontab) whether the gateway is running and responsive; if not, it restores **last-known-good config** (keeps 3 snapshots) and tries each in reverse order until the gateway is healthy.
+
+**Behaviour:**
+
+- **Health check:** `openclaw gateway probe` (no systemd).
+- **If healthy:** Optionally stamp current config as a new last-good snapshot (keeps 3 most recent).
+- **If not healthy:** Kill anything on the gateway port, start `openclaw gateway run` in the background, wait, probe. If that fails (e.g. bad config), restore each of the 3 good snapshots (newest first), start gateway, probe, until one works.
+
+**Install:**
+
+```bash
+mkdir -p ~/.openclaw/scripts ~/.openclaw/logs
+cp scripts/gateway-watchdog-cron.sh ~/.openclaw/scripts/
+chmod +x ~/.openclaw/scripts/gateway-watchdog-cron.sh
+```
+
+**Crontab (one entry, every 5 minutes):**
+
+```bash
+*/5 * * * * /home/markus/.openclaw/scripts/gateway-watchdog-cron.sh >> /home/markus/.openclaw/logs/watchdog.log 2>&1
+```
+
+**Optional:** Set `OPENCLAW_HOME` or `OPENCLAW_GATEWAY_PORT` in crontab or in the script if your state dir or port differ. Do **not** use `openclaw gateway start` (systemd) on the same machine; use either this watchdog with `gateway run` or systemd, not both.
+
+See [../docs/TROUBLESHOOTING.md](../docs/TROUBLESHOOTING.md) for WSL2 / no-systemd notes.

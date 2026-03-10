@@ -12,6 +12,7 @@ import {
   OnnxEmbeddingProvider,
   createEmbeddingProvider,
   __setOnnxRuntimeLoaderForTests,
+  _resetOllamaCircuitBreakerForTesting,
   type EmbeddingConfig,
 } from "../services/embeddings.js";
 import { promises as fs } from "node:fs";
@@ -176,6 +177,8 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
 describe("OllamaEmbeddingProvider", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // Reset module-level circuit breaker state so tests don't bleed into each other
+    _resetOllamaCircuitBreakerForTesting();
   });
 
   it("exposes correct dimensions and modelName", () => {
@@ -299,6 +302,8 @@ describe("OllamaEmbeddingProvider", () => {
 describe("FallbackEmbeddingProvider", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // Reset module-level Ollama circuit breaker state between tests
+    _resetOllamaCircuitBreakerForTesting();
   });
 
   it("uses primary provider when it succeeds", async () => {
@@ -371,6 +376,8 @@ describe("FallbackEmbeddingProvider", () => {
 describe("createEmbeddingProvider factory", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // Reset module-level circuit breaker state so tests don't bleed into each other
+    _resetOllamaCircuitBreakerForTesting();
   });
 
   it("creates OllamaEmbeddingProvider for provider='ollama'", () => {

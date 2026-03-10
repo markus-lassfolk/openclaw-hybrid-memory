@@ -436,7 +436,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       const olderThanMs = olderThanDays * 24 * 60 * 60 * 1000;
       try {
         const stats = await vectorDb.optimize(olderThanMs);
-        console.log(`LanceDB: compacted ${stats.compacted} fragments, freed ${stats.removed} bytes`);
+        console.log(`LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`);
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "vectordb-optimize" });
         throw err;

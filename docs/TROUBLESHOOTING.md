@@ -20,6 +20,15 @@ openclaw hybrid-mem stats         # show fact/vector counts
 
 ---
 
+## WSL2 / no systemd: run gateway under cron (last-known-good recovery)
+
+On **WSL2** or in **containers**, `systemctl --user` is often unavailable (`Failed to connect to bus: No medium found`). The gateway should **not** be run as a systemd service; run it in the foreground or let a **cron watchdog** start and supervise it.
+
+- **Log messages you can ignore:** “systemd user services unavailable”, “run the gateway in the foreground instead of openclaw gateway”, “Cleanup hint: systemctl --user disable …”. As long as you see “Listening: 127.0.0.1:18789” and “web gateway heartbeat”, the gateway is fine.
+- **Recommended:** Use the **cron-only watchdog** so that every 5 minutes something checks if the gateway is responsive and, if not, restores one of the last 3 known-good configs and starts the gateway with `openclaw gateway run`. That way a bad config edit is auto-recovered. See [scripts/README.md](../scripts/README.md#gateway-watchdog-cron-only-no-systemd): copy `scripts/gateway-watchdog-cron.sh` to `~/.openclaw/scripts/`, make it executable, and add one crontab entry. Do not use `openclaw gateway start` (systemd) together with this watchdog.
+
+---
+
 ## Install warning: "dangerous code patterns" / "credential harvesting"
 
 When you run `openclaw plugins install openclaw-hybrid-memory`, the OpenClaw plugin scanner may show:

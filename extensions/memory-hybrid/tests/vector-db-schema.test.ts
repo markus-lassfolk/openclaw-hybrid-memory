@@ -216,16 +216,18 @@ describe("VectorDB.optimize() — compaction and version pruning (issue #292)", 
   it("returns compacted and removed stats with numeric values", async () => {
     const stats = await db.optimize();
     expect(typeof stats.compacted).toBe("number");
-    expect(typeof stats.removed).toBe("number");
+    expect(typeof stats.removedFragments).toBe("number");
+    expect(typeof stats.freedBytes).toBe("number");
     expect(stats.compacted).toBeGreaterThanOrEqual(0);
-    expect(stats.removed).toBeGreaterThanOrEqual(0);
+    expect(stats.removedFragments).toBeGreaterThanOrEqual(0);
   });
 
   it("accepts a custom olderThanMs parameter", async () => {
     // Should not throw when called with a custom retention window
     const stats = await db.optimize(24 * 60 * 60 * 1000);
     expect(typeof stats.compacted).toBe("number");
-    expect(typeof stats.removed).toBe("number");
+    expect(typeof stats.removedFragments).toBe("number");
+    expect(typeof stats.freedBytes).toBe("number");
   });
 
   it("DB remains usable after optimize — can still store and search", async () => {

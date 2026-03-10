@@ -226,7 +226,16 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (prefix === "openai") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey)
+      // Only use the gateway token when routing through the local gateway.
+      // If a custom external baseURL is configured for the openai provider,
+      // do NOT fall back to gatewayToken — that would send the internal gateway
+      // token to an arbitrary external endpoint (security issue).
+      const hasCustomExternalBaseURL = Boolean(
+        providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl,
+      );
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (hasCustomExternalBaseURL ? undefined : gatewayToken)
+        ?? (hasCustomExternalBaseURL ? undefined : cfg.embedding.apiKey)
         ?? (process.env.OPENAI_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("openai", trimmed);
       const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
