@@ -179,16 +179,18 @@ export async function withLLMRetry<T>(
       if (/\b401\b|unauthorized/i.test(lastError.message)) {
         throw lastError;
       }
+      const is429 = /\b429\b|too many requests/i.test(lastError.message);
       if (attempt === maxRetries || opts?.signal?.aborted) {
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
           lastError,
           attempt + 1,
         );
-        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx)
+        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429)
         const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
+          is429 ||
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
@@ -208,7 +210,14 @@ export async function withLLMRetry<T>(
         }
         throw retryError;
       }
-      const delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
+      // 429: use longer exponential backoff (2s → 4s → 8s) to respect rate limits
+      let delay: number;
+      if (is429) {
+        delay = Math.pow(2, attempt + 1) * 1000;
+        console.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
+      } else {
+        delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
+      }
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -277,11 +286,15 @@ export async function chatCompleteWithRetry(opts: {
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
       const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
+      const is429 = /\b429\b|too many requests/i.test(lastError.message);
       if (isUnconfigured) unconfiguredCount++;
-      if (i < modelsToTry.length - 1 && !signal?.aborted && !isUnconfigured) {
-        console.warn(
-          `${label}: model ${currentModel} failed after retries, trying fallback model ${modelsToTry[i + 1]}...`,
-        );
+      if (i < modelsToTry.length - 1 && !signal?.aborted) {
+        if (!isUnconfigured) {
+          const reason = is429 ? "rate limited (429)" : "failed after retries";
+          console.warn(
+            `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
+          );
+        }
       }
     }
   }
