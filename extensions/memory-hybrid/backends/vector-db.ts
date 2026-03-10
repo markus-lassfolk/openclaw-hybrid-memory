@@ -21,7 +21,7 @@ export class VectorDB {
   private logger: VectorDBLogger | null = null;
   private storeCount = 0;
   private optimizeInProgress = false;
-  private optimizePromise: Promise<void> | null = null;
+  private optimizePromise: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
@@ -262,6 +262,7 @@ export class VectorDB {
       return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     }
     this.optimizeInProgress = true;
+    let promiseRef: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
     const optimizePromise = (async () => {
       try {
         const table = this.getTable();
@@ -269,16 +270,17 @@ export class VectorDB {
         const stats = await table.optimize({ cleanupOlderThan });
         return {
           compacted: stats.compaction?.fragmentsRemoved ?? 0,
-          removedFragments: stats.prune?.fragmentsRemoved ?? 0,
+          removedFragments: stats.prune?.oldVersionsRemoved ?? 0,
           freedBytes: stats.prune?.bytesRemoved ?? 0,
         };
       } finally {
         this.optimizeInProgress = false;
-        if (this.optimizePromise === optimizePromise) {
+        if (this.optimizePromise === promiseRef) {
           this.optimizePromise = null;
         }
       }
     })();
+    promiseRef = optimizePromise;
     this.optimizePromise = optimizePromise;
     return optimizePromise;
   }
