@@ -218,14 +218,16 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
 
     if (prefix === "google") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey);
+      const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey)
+        ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
       const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
       return { client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
     }
 
     if (prefix === "openai") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey);
+      const apiKey = resolveApiKey(providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey)
+        ?? (process.env.OPENAI_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("openai", trimmed);
       const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
       const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
@@ -233,7 +235,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (prefix === "anthropic") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey);
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (process.env.ANTHROPIC_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
       const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
