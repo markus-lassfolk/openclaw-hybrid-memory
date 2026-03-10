@@ -228,6 +228,7 @@ export class VectorDB {
       this.storeCount++;
       if (!this.optimizeInProgress && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
         this.storeCount = 0;
+        this.optimizeInProgress = true;
         // Fire-and-forget; don't block the store operation
         this.optimize(24 * 60 * 60 * 1000)
           .catch(err => this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`));
@@ -250,7 +251,7 @@ export class VectorDB {
    * @param olderThanMs - Clean up versions older than this many ms (default: 7 days = 604800000)
    * @returns Statistics about the optimization (compaction + cleanup)
    */
-  async optimize(olderThanMs: number = 7 * 24 * 60 * 60 * 1000): Promise<{ compacted: number; removed: number }> {
+  async optimize(olderThanMs: number = 7 * 24 * 60 * 60 * 1000): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
     await this.ensureInitialized();
     // Wait for any in-progress optimization to complete
     if (this.optimizePromise) {
@@ -259,7 +260,7 @@ export class VectorDB {
     // Check again after awaiting in case another optimize started
     if (this.optimizeInProgress) {
       this.logWarn("memory-hybrid: optimize() called while another optimize is in progress; skipping to prevent concurrent table operations");
-      return { compacted: 0, removed: 0 };
+      return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     }
     this.optimizeInProgress = true;
     const optimizePromise = (async () => {
@@ -269,7 +270,8 @@ export class VectorDB {
         const stats = await table.optimize({ cleanupOlderThan });
         return {
           compacted: stats.compaction?.fragmentsRemoved ?? 0,
-          removed: stats.prune?.bytesRemoved ?? 0,
+          removedFragments: stats.prune?.fragmentsRemoved ?? 0,
+          freedBytes: stats.prune?.bytesRemoved ?? 0,
         };
       } finally {
         this.optimizeInProgress = false;
