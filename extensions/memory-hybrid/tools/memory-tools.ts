@@ -17,6 +17,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import { toFloat32Array } from "../services/embedding-registry.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
@@ -466,11 +467,14 @@ export function registerMemoryTools(
             }
             queryVector = await embeddings.embed(textToEmbed);
           } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "search",
-              operation: "vector-embed",
-              phase: "runtime",
-            });
+            // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
+            if (!(err instanceof AllEmbeddingProvidersFailed)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "search",
+                operation: "vector-embed",
+                phase: "runtime",
+              });
+            }
             api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
             semanticWarning = "Semantic search unavailable due to embedding failure; results may be incomplete.";
           }
@@ -1079,12 +1083,15 @@ export function registerMemoryTools(
                 operation: "store-credential-pointer",
               });
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "vector",
-                operation: "store-credential-pointer",
-                phase: "runtime",
-                backend: "lancedb",
-              });
+              // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
+              if (!(err instanceof AllEmbeddingProvidersFailed)) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  subsystem: "vector",
+                  operation: "store-credential-pointer",
+                  phase: "runtime",
+                  backend: "lancedb",
+                });
+              }
               api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
             }
             return {
@@ -1119,12 +1126,18 @@ export function registerMemoryTools(
         try {
           vector = await embeddings.embed(textToStore);
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "embeddings",
-            operation: "store-embed",
-            phase: "runtime",
-          });
-          api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          if (err instanceof AllEmbeddingProvidersFailed) {
+            // Graceful degradation: store the fact without a vector.
+            // The fact is still findable by structured/keyword search.
+            api.logger.warn("memory-hybrid: Stored fact without embeddings — all providers unavailable");
+          } else {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "embeddings",
+              operation: "store-embed",
+              phase: "runtime",
+            });
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          }
         }
 
         // Classify the operation before storing (use embedding similarity)
@@ -1726,12 +1739,15 @@ export function registerMemoryTools(
             const vector = await embeddings.embed(query);
             lanceResults = await vectorDb.search(vector, 5, 0.7);
           } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "vector",
-              operation: "forget-vector-search",
-              phase: "runtime",
-              backend: "lancedb",
-            });
+            // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
+            if (!(err instanceof AllEmbeddingProvidersFailed)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "vector",
+                operation: "forget-vector-search",
+                phase: "runtime",
+                backend: "lancedb",
+              });
+            }
             api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
           }
 

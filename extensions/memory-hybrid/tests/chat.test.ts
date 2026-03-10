@@ -6,7 +6,13 @@ import {
   withLLMRetry,
   LLMRetryError,
   chatCompleteWithRetry,
+  createPendingLLMWarnings,
 } from "../services/chat.js";
+
+vi.mock("../services/error-reporter.js", () => ({
+  capturePluginError: vi.fn(),
+}));
+import * as errorReporter from "../services/error-reporter.js";
 
 describe("distillBatchTokenLimit", () => {
   it("returns 400_000 for Gemini models (conservative limit for fallback models)", () => {
@@ -384,4 +390,140 @@ describe("chatCompleteWithRetry", () => {
 
     await expectation;
   }, 20000); // Increase timeout
+});
+
+describe("chatComplete — GlitchTip suppression (#302, #303)", () => {
+  const mockOpenai = {
+    chat: {
+      completions: {
+        create: vi.fn(),
+      },
+    },
+  } as unknown as import("openai").default;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("#302: does not report 'Internal Server Error' (OpenAI SDK 500) to Sentry", async () => {
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
+      new Error("Internal Server Error"),
+    );
+    await expect(
+      chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai }),
+    ).rejects.toThrow();
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#302: does not report '500 Internal Server Error' to Sentry", async () => {
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
+      new Error("500 Internal Server Error"),
+    );
+    await expect(
+      chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai }),
+    ).rejects.toThrow();
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#303: does not report 404 Not Found to Sentry", async () => {
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
+      new Error("404 Not Found"),
+    );
+    await expect(
+      chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai }),
+    ).rejects.toThrow();
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("chatCompleteWithRetry — 500 and 404 fallback (#302, #303)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#302: falls back to next model after 500, using only 2 attempts (not full retry budget)", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn()
+            // Primary: fails twice with 500 then stops (is500 exits after attempt 1)
+            .mockRejectedValueOnce(new Error("Internal Server Error"))
+            .mockRejectedValueOnce(new Error("Internal Server Error"))
+            // Fallback: succeeds
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: "fallback ok" } }],
+            }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+      label: "test",
+    });
+
+    // Advance the single retry delay for the primary model (1 attempt then throw)
+    await vi.advanceTimersByTimeAsync(1100);
+    const result = await promise;
+    expect(result).toBe("fallback ok");
+    // Primary: 2 attempts, fallback: 1 attempt = 3 total
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(3);
+  });
+
+  it("#302: does not report to Sentry when all models fail with 500", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error("Internal Server Error")),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#303: queues user warning and does not report to Sentry when all models return 404", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error("404 Not Found")),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/404/);
+  });
 });

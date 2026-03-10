@@ -94,7 +94,7 @@ export type ManageContext = {
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
-  runDistill?: (opts: { dryRun: boolean; days?: number; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; skipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean }>;
+  runDistill?: (opts: { dryRun: boolean; days?: number; verbose?: boolean }, sink: { log: (s: string) => void; warn: (s: string) => void }) => Promise<{ stored: number; dedupSkipped: number; factsExtracted: number; sessionsScanned: number; dryRun?: boolean; skipped?: boolean }>;
   runRecordDistill?: () => Promise<unknown>;
   runExtractProcedures?: (opts: { days?: number; dryRun: boolean }) => Promise<unknown>;
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
@@ -425,6 +425,22 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         throw err;
       }
       console.log(`Tier compaction: hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
+    }));
+
+  mem
+    .command("vectordb-optimize")
+    .description("Compact LanceDB fragments and prune old versions to reclaim disk space and reduce memory usage")
+    .option("--older-than-days <days>", "Remove versions older than this many days (default: 7)", "7")
+    .action(withExit(async (opts?: { olderThanDays?: string }) => {
+      const olderThanDays = parseInt(opts?.olderThanDays ?? "7", 10);
+      const olderThanMs = olderThanDays * 24 * 60 * 60 * 1000;
+      try {
+        const stats = await vectorDb.optimize(olderThanMs);
+        console.log(`LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "vectordb-optimize" });
+        throw err;
+      }
     }));
 
   mem

@@ -13,6 +13,19 @@ import { pipeline } from "node:stream/promises";
 import { capturePluginError } from "./error-reporter.js";
 import { withLLMRetry } from "./chat.js";
 
+/**
+ * Thrown by ChainEmbeddingProvider when every provider in the chain has failed.
+ * Callers should catch this and degrade gracefully (e.g. store without a vector)
+ * rather than reporting to error monitoring, since this is expected when all
+ * configured embedding backends are temporarily unavailable.
+ */
+export class AllEmbeddingProvidersFailed extends Error {
+  constructor() {
+    super("All embedding providers in the chain failed.");
+    this.name = "AllEmbeddingProvidersFailed";
+  }
+}
+
 /** Full embedding provider interface — implementations must expose these. */
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
@@ -699,6 +712,36 @@ export class Embeddings implements EmbeddingProvider {
   }
 }
 
+const OLLAMA_MAX_FAILS = 3;
+const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Module-level circuit breaker state keyed by Ollama endpoint URL.
+ * Shared across all OllamaEmbeddingProvider instances so that a failure on
+ * one instance is visible to new instances pointing at the same endpoint,
+ * while endpoints at different base URLs remain independent.
+ */
+const _ollamaCircuitByEndpoint = new Map<string, { failCount: number; disabledUntil: number }>();
+
+function _getOllamaCircuit(endpoint: string): { failCount: number; disabledUntil: number } {
+  if (!_ollamaCircuitByEndpoint.has(endpoint)) {
+    _ollamaCircuitByEndpoint.set(endpoint, { failCount: 0, disabledUntil: 0 });
+  }
+  return _ollamaCircuitByEndpoint.get(endpoint)!;
+}
+
+/**
+ * Reset the Ollama circuit breaker state for a given endpoint (or all endpoints if omitted).
+ * Intended for use in tests only — do not call in production code.
+ */
+export function _resetOllamaCircuitBreakerForTesting(endpoint?: string): void {
+  if (endpoint) {
+    _ollamaCircuitByEndpoint.delete(endpoint);
+  } else {
+    _ollamaCircuitByEndpoint.clear();
+  }
+}
+
 /**
  * Ollama-based embedding provider.
  * Calls Ollama REST API (POST /api/embed) — no external API key required.
@@ -729,10 +772,29 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     return results[0];
   }
 
+  /** Maximum characters per input text sent to Ollama (~2000 tokens for most models). */
+  private static readonly MAX_INPUT_CHARS = 8000;
+
   async embedBatch(texts: string[]): Promise<number[][]> {
+    // Circuit breaker: shared per endpoint so all instances pointing at the same URL are gated together.
+    // This prevents one bad endpoint from being retried across separately-constructed instances,
+    // while leaving providers at different base URLs unaffected.
+    const circuit = _getOllamaCircuit(this.endpoint);
+    if (Date.now() < circuit.disabledUntil) {
+      throw new Error(`Ollama circuit breaker open — disabled until ${new Date(circuit.disabledUntil).toISOString()} (endpoint: ${this.endpoint})`);
+    }
+
     const allResults: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
-      const batch = texts.slice(i, i + this.batchSize);
+      const batch = texts.slice(i, i + this.batchSize).map((t) => {
+        if (t.length > OllamaEmbeddingProvider.MAX_INPUT_CHARS) {
+          console.warn(
+            `memory-hybrid: Truncating embedding input from ${t.length} to ${OllamaEmbeddingProvider.MAX_INPUT_CHARS} chars for ${this.modelName}`,
+          );
+          return t.slice(0, OllamaEmbeddingProvider.MAX_INPUT_CHARS);
+        }
+        return t;
+      });
       let resp: Response;
       try {
         resp = await fetch(`${this.endpoint}/api/embed`, {
@@ -741,6 +803,14 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
           body: JSON.stringify({ model: this.modelName, input: batch }),
         });
       } catch (err) {
+        // Connection failure — update shared circuit breaker state for this endpoint
+        circuit.failCount++;
+        if (circuit.failCount >= OLLAMA_MAX_FAILS) {
+          circuit.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
+          console.warn(
+            `memory-hybrid: Ollama circuit breaker open — disabling endpoint ${this.endpoint} for 5min after ${circuit.failCount} failures`,
+          );
+        }
         throw new Error(`Ollama connection failed (${this.endpoint}): ${err}`);
       }
       if (!resp.ok) {
@@ -759,6 +829,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       }
       allResults.push(...data.embeddings);
     }
+    // Successful call — reset circuit breaker for this endpoint
+    circuit.failCount = 0;
+    circuit.disabledUntil = 0;
     return allResults;
   }
 }
@@ -923,18 +996,25 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       try {
         return await this.providers[this.activeIndex].embed(text);
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "embeddings",
-          operation: "chain-failover",
-          phase: "embed",
-        });
+        // Only capture individual provider failures when there are remaining fallbacks.
+        // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
+        const isLast = this.activeIndex + 1 >= this.providers.length;
+        if (!isLast) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "chain-failover",
+            phase: "embed",
+          });
+        }
         this.activeIndex++;
         if (this.activeIndex < this.providers.length) {
           this.modelName = this.providers[this.activeIndex].modelName;
         }
       }
     }
-    throw new Error("All embedding providers in the chain failed.");
+    // All providers exhausted — throw a typed error so callers can degrade gracefully
+    // without reporting noise to error monitoring.
+    throw new AllEmbeddingProvidersFailed();
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -942,18 +1022,21 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       try {
         return await this.providers[this.activeIndex].embedBatch(texts);
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "embeddings",
-          operation: "chain-failover",
-          phase: "embedBatch",
-        });
+        const isLast = this.activeIndex + 1 >= this.providers.length;
+        if (!isLast) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "chain-failover",
+            phase: "embedBatch",
+          });
+        }
         this.activeIndex++;
         if (this.activeIndex < this.providers.length) {
           this.modelName = this.providers[this.activeIndex].modelName;
         }
       }
     }
-    throw new Error("All embedding providers in the chain failed.");
+    throw new AllEmbeddingProvidersFailed();
   }
 }
 

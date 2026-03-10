@@ -55,13 +55,17 @@ function getDefaultCronModelLegacy(
   }
   if (hasKey(pluginConfig.distill?.apiKey)) {
     const defaultModel = pluginConfig.distill?.defaultModel?.trim();
-    if (defaultModel) return tier === "nano" ? GEMINI_NANO_MODEL : defaultModel;
+    // If the user explicitly configured a defaultModel, respect it for all tiers.
+    // Only fall back to provider-specific nano/heavy variants when no explicit model is set.
+    // Users who want a specific cheap model for nano operations should configure llm.nano instead.
+    if (defaultModel) return defaultModel;
     if (tier === "heavy") return GEMINI_HEAVY_MODEL;
     if (tier === "nano") return GEMINI_NANO_MODEL;
     return GEMINI_DEFAULT_MODEL;
   }
   if (hasKey(pluginConfig.claude?.apiKey)) {
     const defaultModel = pluginConfig.claude?.defaultModel?.trim();
+    // Same: respect explicit defaultModel for all tiers; use nano variant only when unset.
     if (defaultModel) return defaultModel;
     if (tier === "heavy") return CLAUDE_HEAVY_MODEL;
     if (tier === "nano") return CLAUDE_NANO_MODEL;
@@ -93,8 +97,8 @@ function getDefaultPreferredModelList(
   const list: string[] = [];
   if (hasKey(pluginConfig.distill?.apiKey)) {
     const m = pluginConfig.distill?.defaultModel?.trim();
-    if (tier === "nano") list.push(GEMINI_NANO_MODEL);
-    else list.push(m || (tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL));
+    // Respect explicit defaultModel for all tiers; fall back to tier-specific defaults only when unset.
+    list.push(m || (tier === "nano" ? GEMINI_NANO_MODEL : tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL));
   }
   if (hasKey(pluginConfig.embedding?.apiKey)) {
     if (tier === "nano") list.push(OPENAI_NANO_CRON_MODEL);
@@ -102,8 +106,8 @@ function getDefaultPreferredModelList(
   }
   if (hasKey(pluginConfig.claude?.apiKey)) {
     const m = pluginConfig.claude?.defaultModel?.trim();
-    if (tier === "nano") list.push(CLAUDE_NANO_MODEL);
-    else list.push(m || (tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL));
+    // Respect explicit defaultModel for all tiers; fall back to tier-specific defaults only when unset.
+    list.push(m || (tier === "nano" ? CLAUDE_NANO_MODEL : tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL));
   }
   if (list.length === 0) {
     list.push(getDefaultCronModelLegacy(pluginConfig, tier));

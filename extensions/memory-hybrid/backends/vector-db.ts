@@ -10,6 +10,18 @@ import { capturePluginError } from "../services/error-reporter.js";
 
 const LANCE_TABLE = "memories";
 
+/**
+ * Module-level optimization guard keyed by dbPath.
+ * Prevents concurrent optimize() calls on the same LanceDB table from multiple VectorDB instances
+ * (e.g. when the plugin restarts and a new instance is created before the old one finishes optimizing).
+ * NOTE: storeCount is per-instance and resets on restart — this is intentional; the worst case is
+ * a redundant optimization on the next store cycle after restart (benign).
+ */
+const _optimizingByPath = new Map<string, boolean>();
+/** Module-level consecutive optimize-failure counter keyed by dbPath. */
+const _optimizeFailuresByPath = new Map<string, number>();
+const _OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
+
 export type VectorDBLogger = { warn: (msg: string) => void };
 
 export class VectorDB {
@@ -19,6 +31,9 @@ export class VectorDB {
   private closed = false;
   private sessionCount = 0;
   private logger: VectorDBLogger | null = null;
+  private storeCount = 0;
+  private optimizePromise: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
+  private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
    * LanceDB table due to a vector dimension mismatch. Callers can check this flag to
@@ -215,8 +230,33 @@ export class VectorDB {
   }): Promise<string> {
     try {
       await this.ensureInitialized();
+      // Wait for any in-progress optimization to complete before writing
+      if (this.optimizePromise) {
+        await this.optimizePromise;
+      }
       const id = entry.id ?? randomUUID();
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
+      this.storeCount++;
+      if (!_optimizingByPath.get(this.dbPath) && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
+        this.storeCount = 0;
+        // Fire-and-forget; don't block the store operation
+        this.optimize(24 * 60 * 60 * 1000)
+          .then(() => {
+            _optimizeFailuresByPath.delete(this.dbPath);
+          })
+          .catch(err => {
+            const failures = (_optimizeFailuresByPath.get(this.dbPath) ?? 0) + 1;
+            _optimizeFailuresByPath.set(this.dbPath, failures);
+            if (failures >= _OPTIMIZE_FAILURE_WARN_THRESHOLD) {
+              this.logWarn(
+                `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row — ` +
+                `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
+              );
+            } else {
+              this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`);
+            }
+          });
+      }
       return id;
     } catch (err) {
       capturePluginError(err as Error, {
@@ -226,6 +266,48 @@ export class VectorDB {
       this.logWarn(`memory-hybrid: LanceDB store failed: ${err}`);
       throw err;
     }
+  }
+
+  /**
+   * Compact fragments and clean up old versions to reclaim disk space and reduce memory usage.
+   * Should be called periodically (e.g., nightly maintenance) to prevent unbounded growth.
+   *
+   * @param olderThanMs - Clean up versions older than this many ms (default: 7 days = 604800000)
+   * @returns Statistics about the optimization (compaction + cleanup)
+   */
+  async optimize(olderThanMs: number = 7 * 24 * 60 * 60 * 1000): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
+    await this.ensureInitialized();
+    // Wait for any in-progress optimization to complete
+    if (this.optimizePromise) {
+      await this.optimizePromise;
+    }
+    // Check again after awaiting in case another optimize started, globally this time
+    if (_optimizingByPath.get(this.dbPath)) {
+      this.logWarn("memory-hybrid: optimize() called while another optimize is in progress; skipping to prevent concurrent table operations");
+      return { compacted: 0, removedFragments: 0, freedBytes: 0 };
+    }
+    _optimizingByPath.set(this.dbPath, true);
+    let promiseRef: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
+    const optimizePromise = (async () => {
+      try {
+        const table = this.getTable();
+        const cleanupOlderThan = new Date(Date.now() - olderThanMs);
+        const stats = await table.optimize({ cleanupOlderThan });
+        return {
+          compacted: stats.compaction?.fragmentsRemoved ?? 0,
+          removedFragments: stats.prune?.oldVersionsRemoved ?? 0,
+          freedBytes: stats.prune?.bytesRemoved ?? 0,
+        };
+      } finally {
+        _optimizingByPath.set(this.dbPath, false);
+        if (this.optimizePromise === promiseRef) {
+          this.optimizePromise = null;
+        }
+      }
+    })();
+    promiseRef = optimizePromise;
+    this.optimizePromise = optimizePromise;
+    return optimizePromise;
   }
 
   async search(

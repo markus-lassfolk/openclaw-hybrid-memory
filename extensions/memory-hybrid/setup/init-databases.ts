@@ -218,14 +218,25 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
 
     if (prefix === "google") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey);
+      const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey)
+        ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
       const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
       return { client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
     }
 
     if (prefix === "openai") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey);
+      // Only use the gateway token when routing through the local gateway.
+      // If a custom external baseURL is configured for the openai provider,
+      // do NOT fall back to gatewayToken — that would send the internal gateway
+      // token to an arbitrary external endpoint (security issue).
+      const hasCustomExternalBaseURL = Boolean(
+        providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl,
+      );
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (hasCustomExternalBaseURL ? undefined : gatewayToken)
+        ?? (hasCustomExternalBaseURL ? undefined : cfg.embedding.apiKey)
+        ?? (process.env.OPENAI_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("openai", trimmed);
       const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
       const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
@@ -233,7 +244,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (prefix === "anthropic") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey);
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (process.env.ANTHROPIC_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
       const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
@@ -255,6 +267,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
     }
 
+    // Before giving up, try provider-specific env var pattern (but NOT the gateway token —
+    // that's scoped to the local gateway only and must never be sent to external endpoints).
+    // Covers any provider following the <PREFIX>_API_KEY convention.
+    const envFallbackKey = process.env[`${prefix.toUpperCase()}_API_KEY`]?.trim();
+    if (envFallbackKey) {
+      const baseURL = providerCfg?.baseURL;
+      const cacheKey = `custom:${prefix}:${envFallbackKey.slice(0, 8)}:${baseURL ?? "default"}`;
+      return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey: envFallbackKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+    }
 
     // Unknown provider with no config — throw so callers can skip to the next model cleanly
     throw new UnconfiguredProviderError(prefix, trimmed);

@@ -387,18 +387,28 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
 
       // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
-      const versionFile = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
+      const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
+      // Expand literal $HOME or leading ~ if the sqlite path wasn't fully resolved before being stored.
+      // Both forms can appear when the plugin config is serialized from user input before normalization.
+      const _home = process.env.HOME ?? homedir();
+      const versionFile = rawVersionFilePath
+        .replace(/\$HOME/g, _home)
+        .replace(/^~(?=\/|$)/, _home);
       timers.postUpgradeTimeout.value = setTimeout(() => {
         timers.postUpgradeTimeout.value = null;
         let lastVer = "";
         try {
           lastVer = readFileSync(versionFile, "utf-8").trim();
         } catch (err) {
-          capturePluginError(err as Error, {
-            operation: 'read-version-file',
-            severity: 'info',
-            subsystem: 'plugin-service'
-          });
+          // ENOENT is expected on first run — don't report to error monitoring
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") {
+            capturePluginError(err as Error, {
+              operation: 'read-version-file',
+              severity: 'warning',
+              subsystem: 'plugin-service'
+            });
+          }
           /* ignore */
         }
         if (lastVer === versionInfo.pluginVersion) return;
