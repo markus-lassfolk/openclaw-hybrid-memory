@@ -21,6 +21,7 @@ export class VectorDB {
   private logger: VectorDBLogger | null = null;
   private storeCount = 0;
   private optimizeInProgress = false;
+  private optimizePromise: Promise<void> | null = null;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
@@ -219,8 +220,8 @@ export class VectorDB {
     try {
       await this.ensureInitialized();
       // Wait for any in-progress optimization to complete before writing
-      while (this.optimizeInProgress) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+      if (this.optimizePromise) {
+        await this.optimizePromise;
       }
       const id = entry.id ?? randomUUID();
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
@@ -229,9 +230,15 @@ export class VectorDB {
         this.optimizeInProgress = true;
         this.storeCount = 0;
         // Fire-and-forget; don't block the store operation
-        this.optimize(24 * 60 * 60 * 1000)
+        const optimizePromise = this.optimize(24 * 60 * 60 * 1000)
           .catch(err => this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`))
-          .finally(() => { this.optimizeInProgress = false; });
+          .finally(() => {
+            this.optimizeInProgress = false;
+            if (this.optimizePromise === optimizePromise) {
+              this.optimizePromise = null;
+            }
+          });
+        this.optimizePromise = optimizePromise;
       }
       return id;
     } catch (err) {
@@ -253,13 +260,34 @@ export class VectorDB {
    */
   async optimize(olderThanMs: number = 7 * 24 * 60 * 60 * 1000): Promise<{ compacted: number; removed: number }> {
     await this.ensureInitialized();
-    const table = this.getTable();
-    const cleanupOlderThan = new Date(Date.now() - olderThanMs);
-    const stats = await table.optimize({ cleanupOlderThan });
-    return {
-      compacted: stats.compaction?.fragmentsRemoved ?? 0,
-      removed: stats.prune?.bytesRemoved ?? 0,
-    };
+    // Wait for any in-progress optimization to complete
+    if (this.optimizePromise) {
+      await this.optimizePromise;
+    }
+    // Check again after awaiting in case another optimize started
+    if (this.optimizeInProgress) {
+      this.logWarn("memory-hybrid: optimize() called while another optimize is in progress; skipping to prevent concurrent table operations");
+      return { compacted: 0, removed: 0 };
+    }
+    this.optimizeInProgress = true;
+    const optimizePromise = (async () => {
+      try {
+        const table = this.getTable();
+        const cleanupOlderThan = new Date(Date.now() - olderThanMs);
+        const stats = await table.optimize({ cleanupOlderThan });
+        return {
+          compacted: stats.compaction?.fragmentsRemoved ?? 0,
+          removed: stats.prune?.bytesRemoved ?? 0,
+        };
+      } finally {
+        this.optimizeInProgress = false;
+        if (this.optimizePromise === optimizePromise) {
+          this.optimizePromise = null;
+        }
+      }
+    })();
+    this.optimizePromise = optimizePromise;
+    return optimizePromise;
   }
 
   async search(

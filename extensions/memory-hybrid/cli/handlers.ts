@@ -3244,11 +3244,11 @@ export async function runDistillForCli(
   }
 
   try {
-  const gatherOpts = useWatermark && cursor
+  const gatherOpts = useWatermark && cursor && cursor.lastSessionTs > 0
     ? { sinceTimestampMs: cursor.lastSessionTs }
     : { all: opts.all, days: opts.days ?? (opts.all ? 90 : 3), since: opts.since };
 
-  if (useWatermark && cursor) {
+  if (useWatermark && cursor && cursor.lastSessionTs > 0) {
     logger.info?.(`memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastSessionTs).toISOString()})`);
   }
 
