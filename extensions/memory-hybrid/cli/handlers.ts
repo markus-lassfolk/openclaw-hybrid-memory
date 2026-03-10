@@ -3202,6 +3202,7 @@ export async function runDistillForCli(
   if (filesToProcess.length === 0) {
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
     if (useWatermark && !opts.dryRun) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
       clearScanLock(SCAN_TYPE);
     }
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
@@ -3639,7 +3640,7 @@ export async function runSelfCorrectionRunForCli(
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-empty-report" });
     }
-    if (!opts.dryRun && !opts.full && !opts.incidents && !opts.extractPath) {
+    if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
       factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
       clearScanLock(SCAN_TYPE);
     }
@@ -3856,7 +3857,7 @@ export async function runSelfCorrectionRunForCli(
     });
   }
 
-  if (!opts.dryRun && !opts.full && !opts.incidents && !opts.extractPath) {
+  if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
     factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
   }
 
