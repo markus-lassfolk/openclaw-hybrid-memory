@@ -115,8 +115,10 @@ export async function chatComplete(opts: {
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
-      /^5\d{2}\s/.test(msg.trim());
-    const isConfigError = err instanceof UnconfiguredProviderError;
+      /^5\d{2}\s/.test(msg.trim()) ||
+      msg.includes("internal server error");  // #302: OpenAI SDK InternalServerError has no numeric prefix
+    const isConfigError = err instanceof UnconfiguredProviderError ||
+      /\b404\b/.test(msg);  // #303: model not found = wrong model name in config, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -207,6 +209,7 @@ export async function withLLMRetry<T>(
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
+          is500 ||  // #302: 500 server errors are transient
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
@@ -215,6 +218,7 @@ export async function withLLMRetry<T>(
           fullMsg.includes("timed out") ||
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
+          causeMsg.includes("internal server error") ||  // #302: OpenAI SDK InternalServerError format
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
           /\b405\s+method\s+not\s+allowed/i.test(fullMsg);
         if (!isTransient) {
@@ -305,12 +309,14 @@ export async function chatCompleteWithRetry(opts: {
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
       const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
       const is404 = /\b404\b|not found/i.test(lastError.message);
+      const is500 = /\b500\b|internal server error/i.test(lastError.message);  // #302
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
           const reason = is429 ? "rate limited (429)"
             : isTimeout ? "timed out"
             : is404 ? "model not found (404)"
+            : is500 ? "server error (500)"  // #302
             : "failed after retries";
           console.warn(
             `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
@@ -321,6 +327,8 @@ export async function chatCompleteWithRetry(opts: {
   }
 
   const finalError = lastError ?? new Error("All models failed");
+  const finalIs500 = /\b500\b|internal server error/i.test(finalError.message);
+  const finalIs404 = /\b404\b/.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
@@ -332,6 +340,15 @@ export async function chatCompleteWithRetry(opts: {
       `⚠️ Memory plugin: No LLM provider keys are configured for ${unconfiguredProviders.join(", ")}. ` +
       `Memory features (HyDE search, classification, distillation) are degraded. ` +
       `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`
+    );
+  } else if (finalIs500) {
+    // #302: 500 server errors are transient — don't report to GlitchTip; request will be retried naturally
+  } else if (finalIs404) {
+    // #303: model not found across all fallbacks = misconfigured model name — surface to user, skip Sentry
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: LLM model not found (404) for all configured models. ` +
+      `Check model names in llm.default / llm.heavy / llm.nano config. ` +
+      `Run: openclaw hybrid-mem verify --test-llm`
     );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues
