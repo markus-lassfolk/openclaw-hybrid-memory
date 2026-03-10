@@ -182,7 +182,7 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
-      if (/\b404\b|not found/i.test(lastError.message)) {
+      if (/\b404\b/.test(lastError.message)) {
         const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
         console.warn(`memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`);
         throw lastError;
@@ -308,7 +308,7 @@ export async function chatCompleteWithRetry(opts: {
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
       const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
-      const is404 = /\b404\b|not found/i.test(lastError.message);
+      const is404 = /\b404\b/.test(lastError.message);
       const is500 = /\b500\b|internal server error/i.test(lastError.message);  // #302
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {

@@ -712,16 +712,12 @@ export class Embeddings implements EmbeddingProvider {
   }
 }
 
-// Module-level circuit breaker state for Ollama connection failures.
-let ollamaFailCount = 0;
-let ollamaDisabledUntil = 0;
 const OLLAMA_MAX_FAILS = 3;
 const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Reset the Ollama circuit breaker. Intended for use in tests to prevent state leakage. */
 export function resetOllamaCircuitBreaker(): void {
-  ollamaFailCount = 0;
-  ollamaDisabledUntil = 0;
+  // No-op: circuit breaker is now instance-level, so tests should create fresh instances
 }
 
 /**
@@ -733,6 +729,8 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   readonly modelName: string;
   private readonly endpoint: string;
   private readonly batchSize: number;
+  private failCount = 0;
+  private disabledUntil = 0;
 
   constructor(opts: {
     model: string;
@@ -759,8 +757,8 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     // Circuit breaker: skip Ollama entirely during cooldown period
-    if (Date.now() < ollamaDisabledUntil) {
-      throw new Error(`Ollama circuit breaker open — disabled until ${new Date(ollamaDisabledUntil).toISOString()}`);
+    if (Date.now() < this.disabledUntil) {
+      throw new Error(`Ollama circuit breaker open — disabled until ${new Date(this.disabledUntil).toISOString()}`);
     }
 
     const allResults: number[][] = [];
@@ -783,11 +781,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         });
       } catch (err) {
         // Connection failure — update circuit breaker state
-        ollamaFailCount++;
-        if (ollamaFailCount >= OLLAMA_MAX_FAILS) {
-          ollamaDisabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
+        this.failCount++;
+        if (this.failCount >= OLLAMA_MAX_FAILS) {
+          this.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
           console.warn(
-            `memory-hybrid: Ollama circuit breaker open — disabling for 5min after ${ollamaFailCount} failures`,
+            `memory-hybrid: Ollama circuit breaker open — disabling for 5min after ${this.failCount} failures`,
           );
         }
         throw new Error(`Ollama connection failed (${this.endpoint}): ${err}`);
@@ -809,7 +807,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       allResults.push(...data.embeddings);
     }
     // Successful call — reset circuit breaker
-    ollamaFailCount = 0;
+    this.failCount = 0;
     return allResults;
   }
 }

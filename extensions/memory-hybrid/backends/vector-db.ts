@@ -20,6 +20,7 @@ export class VectorDB {
   private sessionCount = 0;
   private logger: VectorDBLogger | null = null;
   private storeCount = 0;
+  private optimizeInProgress = false;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
@@ -220,12 +221,13 @@ export class VectorDB {
       const id = entry.id ?? randomUUID();
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
       this.storeCount++;
-      if (this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
+      if (this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL && !this.optimizeInProgress) {
         this.storeCount = 0;
+        this.optimizeInProgress = true;
         // Fire-and-forget; don't block the store operation
-        this.optimize(24 * 60 * 60 * 1000).catch(err =>
-          this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`)
-        );
+        this.optimize(24 * 60 * 60 * 1000)
+          .catch(err => this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`))
+          .finally(() => { this.optimizeInProgress = false; });
       }
       return id;
     } catch (err) {
