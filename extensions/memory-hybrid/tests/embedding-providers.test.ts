@@ -11,6 +11,7 @@ import {
   FallbackEmbeddingProvider,
   OnnxEmbeddingProvider,
   createEmbeddingProvider,
+  resetOllamaCircuitBreaker,
   __setOnnxRuntimeLoaderForTests,
   type EmbeddingConfig,
 } from "../services/embeddings.js";
@@ -24,6 +25,8 @@ import { join } from "node:path";
 
 afterEach(() => {
   __setOnnxRuntimeLoaderForTests(null);
+  // Reset Ollama circuit breaker so connection-failure tests don't leak state
+  resetOllamaCircuitBreaker();
 });
 
 /** Build a mock OpenAI client that returns a fixed embedding vector.

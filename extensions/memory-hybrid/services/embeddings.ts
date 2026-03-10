@@ -718,6 +718,12 @@ let ollamaDisabledUntil = 0;
 const OLLAMA_MAX_FAILS = 3;
 const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
+/** Reset the Ollama circuit breaker. Intended for use in tests to prevent state leakage. */
+export function resetOllamaCircuitBreaker(): void {
+  ollamaFailCount = 0;
+  ollamaDisabledUntil = 0;
+}
+
 /**
  * Ollama-based embedding provider.
  * Calls Ollama REST API (POST /api/embed) — no external API key required.
