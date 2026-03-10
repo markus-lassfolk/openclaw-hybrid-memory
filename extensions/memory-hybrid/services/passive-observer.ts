@@ -232,6 +232,30 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
 }
 
 // ---------------------------------------------------------------------------
+// Identity fact detection (Issue #306)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when a fact describes the agent's own identity (email, name, role, etc.).
+ * These facts should be stored as global/permanent instead of session-scoped.
+ *
+ * @param text - The fact text to classify.
+ * @param agentName - Optional known agent name (e.g. "Doris"). When provided, adds a
+ *   name-specific pattern so "Doris's email is …" is also detected.
+ */
+export function isIdentityFact(text: string, agentName?: string): boolean {
+  const patterns: RegExp[] = [
+    /(?:my|your|the (?:agent|assistant|bot)(?:'s)?)\s+(?:email|name|role|account|address|phone|number)/i,
+    /(?:email|account|address|role)\s+(?:is|was|:)\s/i,
+  ]
+  if (agentName) {
+    const escaped = agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    patterns.push(new RegExp(`${escaped}(?:'s)?\\s+(?:email|name|role|account)`, 'i'))
+  }
+  return patterns.some((p) => p.test(text))
+}
+
+// ---------------------------------------------------------------------------
 // Core run
 // ---------------------------------------------------------------------------
 
@@ -255,6 +279,8 @@ export async function runPassiveObserver(
     provenanceService?: ProvenanceService | null
     /** Episodic event log (Issue #150). When set, each stored fact is also appended to Layer 1. */
     eventLog?: EventLog | null
+    /** Agent's own name (e.g. "Doris"). Used by isIdentityFact() for name-specific detection. */
+    agentName?: string
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -586,19 +612,28 @@ export async function runPassiveObserver(
           }
         }
 
+        // Identity fact promotion (Issue #306): if this fact describes the agent itself,
+        // store it as global/permanent so it persists across sessions.
+        const identity = isIdentityFact(fact.text, opts.agentName)
+        if (identity) {
+          logger.info(
+            `passive-observer: promoting identity fact to global/permanent: "${fact.text.slice(0, 60)}..."`,
+          )
+        }
+
         // Store to SQLite — tag with session scope so facts can be scoped to session lifecycle
         const stored = factsDb.store({
           text: fact.text,
           category: fact.category as MemoryCategory,
-          importance: fact.importance,
+          importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
           confidence: 0.6,
           entity: null,
           key: null,
           value: null,
           source: 'passive-observer',
-          decayClass: 'session',
-          scope: 'session',
-          scopeTarget: sessionId,
+          decayClass: identity ? 'permanent' : 'session',
+          scope: identity ? 'global' : 'session',
+          scopeTarget: identity ? undefined : sessionId,
           tags: ['passive-observer'],
           provenanceSession: sessionId,
           extractionMethod: 'passive',
@@ -622,8 +657,8 @@ export async function runPassiveObserver(
           }
         }
 
-        // Contradiction detection (Issue #142): check for same entity+key with different value
-        // Pass scope so detection stays within session boundary.
+        // Contradiction detection (Issue #142): check for same entity+key with different value.
+        // For global/permanent identity facts, pass null scope so detection spans all scopes.
         factsDb.detectContradictions(stored.id, null, null, null, stored.scope ?? null, stored.scopeTarget ?? null);
 
         // Store to LanceDB

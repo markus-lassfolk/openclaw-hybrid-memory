@@ -16,6 +16,7 @@ import {
   saveCursors,
   getCursorsPath,
   runPassiveObserver,
+  isIdentityFact,
   type PassiveObserverConfig,
   type ExtractedFact,
 } from "../services/passive-observer.js";
@@ -768,5 +769,229 @@ describe("transcript chunking behavior", () => {
     for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(8000);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. isIdentityFact — unit tests (Issue #306)
+// ---------------------------------------------------------------------------
+
+describe("isIdentityFact", () => {
+  it("detects 'the agent's email is ...'", () => {
+    expect(isIdentityFact("The agent's email is doristheagent@gmail.com")).toBe(true);
+  });
+
+  it("detects 'your email is ...'", () => {
+    expect(isIdentityFact("Your email is doristheagent@gmail.com")).toBe(true);
+  });
+
+  it("detects 'my email is ...'", () => {
+    expect(isIdentityFact("My email is assistant@example.com")).toBe(true);
+  });
+
+  it("detects 'the assistant's name'", () => {
+    expect(isIdentityFact("The assistant's name is Doris")).toBe(true);
+  });
+
+  it("detects 'the bot's role'", () => {
+    expect(isIdentityFact("The bot's role is infrastructure assistant")).toBe(true);
+  });
+
+  it("detects 'email is ...' standalone", () => {
+    expect(isIdentityFact("Email is doris@example.com")).toBe(true);
+  });
+
+  it("detects 'account is ...'", () => {
+    expect(isIdentityFact("Account is doris-agent")).toBe(true);
+  });
+
+  it("detects 'role is ...'", () => {
+    expect(isIdentityFact("Role is senior infrastructure assistant")).toBe(true);
+  });
+
+  it("does NOT flag 'User mentioned they like coffee'", () => {
+    expect(isIdentityFact("User mentioned they like coffee")).toBe(false);
+  });
+
+  it("does NOT flag 'Send email to john@example.com'", () => {
+    expect(isIdentityFact("Send email to john@example.com")).toBe(false);
+  });
+
+  it("does NOT flag generic facts about the user", () => {
+    expect(isIdentityFact("The user prefers TypeScript over JavaScript")).toBe(false);
+  });
+
+  it("detects agent name-specific pattern when agentName is provided", () => {
+    expect(isIdentityFact("Doris's email is doris@gmail.com", "Doris")).toBe(true);
+  });
+
+  it("detects agent name without apostrophe when agentName is provided", () => {
+    expect(isIdentityFact("Doris email is doris@gmail.com", "Doris")).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(isIdentityFact("YOUR EMAIL IS DORIS@EXAMPLE.COM")).toBe(true);
+    expect(isIdentityFact("the ASSISTANT's name is doris", "doris")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Identity fact promotion end-to-end (Issue #306)
+// ---------------------------------------------------------------------------
+
+describe("runPassiveObserver identity fact promotion", () => {
+  let tmpDir: string;
+  let sessionsDir: string;
+
+  const makeConfig = (overrides: Partial<PassiveObserverConfig> = {}): PassiveObserverConfig => ({
+    enabled: true,
+    intervalMinutes: 15,
+    maxCharsPerChunk: 8000,
+    minImportance: 0.5,
+    deduplicationThreshold: 0.92,
+    ...overrides,
+  });
+
+  const makeLogger = () => ({ info: vi.fn(), warn: vi.fn() });
+
+  const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
+    getRecentFacts: vi.fn().mockReturnValue([]),
+    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
+    detectContradictions: vi.fn(),
+    setEmbeddingModel: vi.fn(),
+    ...overrides,
+  });
+
+  const makeVectorDb = () => ({
+    store: vi.fn().mockResolvedValue(undefined),
+  });
+
+  const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
+    embed: vi.fn().mockResolvedValue(vec),
+    embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
+    modelName: "mock-model",
+  });
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `observer-identity-test-${randomUUID()}`);
+    sessionsDir = join(tmpDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("stores identity fact with scope=global, decayClass=permanent", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "Your email is doristheagent@gmail.com" } }) + "\n";
+    writeFileSync(join(sessionsDir, "identity-sess.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "The agent's email is doristheagent@gmail.com", category: "fact", importance: 0.8 },
+        ]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+    const logger = makeLogger();
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact", "preference"],
+      { model: "test-model", dbDir: tmpDir },
+      logger,
+    );
+
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(stored.scope).toBe("global");
+    expect(stored.decayClass).toBe("permanent");
+    expect(stored.importance).toBeGreaterThanOrEqual(0.9);
+    expect(stored.scopeTarget).toBeUndefined();
+
+    // Logger should mention the promotion
+    const infoMessages = logger.info.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(infoMessages.some((m) => m.includes("promoting identity fact"))).toBe(true);
+
+    chatSpy.mockRestore();
+  });
+
+  it("stores non-identity fact with scope=session (default unchanged)", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "The team uses TypeScript." } }) + "\n";
+    writeFileSync(join(sessionsDir, "regular-sess.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "User mentioned they like coffee a lot", category: "fact", importance: 0.7 },
+        ]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(stored.scope).toBe("session");
+    expect(stored.decayClass).toBe("session");
+    expect(stored.scopeTarget).toBeDefined();
+
+    chatSpy.mockRestore();
+  });
+
+  it("promotes fact with explicit agentName='Doris'", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "Doris email is doris@gmail.com" } }) + "\n";
+    writeFileSync(join(sessionsDir, "doris-sess.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "Doris email is doris@gmail.com", category: "fact", importance: 0.75 },
+        ]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir, agentName: "Doris" },
+      makeLogger(),
+    );
+
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(stored.scope).toBe("global");
+    expect(stored.decayClass).toBe("permanent");
+
+    chatSpy.mockRestore();
   });
 });
