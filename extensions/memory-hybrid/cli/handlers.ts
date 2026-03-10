@@ -120,7 +120,7 @@ function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "d
   const { modelTier, ...rest } = def;
   const tier = modelTier ?? "default";
   const model = getDefaultCronModel(pluginConfig, tier);
-  return { ...rest, model };
+  return { ...rest, model, delivery: { mode: "none" as const } };
 }
 
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
@@ -200,6 +200,13 @@ function ensureMaintenanceCronJobs(
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+        // Fix delivery: "announce" + channel "system" or "last" requires WhatsApp target (E.164); maintenance jobs don't need delivery.
+        const d = existing.delivery as { mode?: string; channel?: string } | undefined;
+        if (d && d.mode === "announce" && (d.channel === "system" || d.channel === "last")) {
+          existing.delivery = { mode: "none" };
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
         }
@@ -1636,13 +1643,22 @@ export function runRecordDistillForCli(ctx: HandlerContext): RecordDistillResult
   }
 }
 
+/** In-memory concurrency lock: prevents two simultaneous scans of the same type. */
+const SCAN_IN_PROGRESS = new Map<string, boolean>();
+
+/** 23-hour threshold for startup guard (seconds). */
+const SCAN_MIN_INTERVAL_MS = 23 * 60 * 60 * 1000;
+
 /**
- * Returns session .jsonl file paths modified within the last `days` days.
+ * Returns session .jsonl file paths modified within the last `days` days,
+ * or — when `sinceTimestamp` is provided — modified strictly after that epoch-ms.
  * Shared by procedure/directive/reinforcement extraction.
  */
-function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
+function getSessionFilePathsSince(sessionDir: string, days: number, sinceTimestamp?: number): string[] {
   if (!existsSync(sessionDir)) return [];
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const cutoff = sinceTimestamp !== undefined
+    ? sinceTimestamp
+    : Date.now() - days * 24 * 60 * 60 * 1000;
   try {
     const files = readdirSync(sessionDir);
     return files
@@ -1650,7 +1666,7 @@ function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
       .map((f) => join(sessionDir, f))
       .filter((p) => {
         try {
-          return statSync(p).mtimeMs >= cutoff;
+          return statSync(p).mtimeMs > cutoff;
         } catch (err) {
           capturePluginError(err as Error, {
             operation: 'stat-check',
@@ -1667,23 +1683,66 @@ function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
 }
 
 /**
+ * Apply the 23h startup guard and concurrency lock for a scan type.
+ * Returns a skip reason string if the scan should be skipped, or null if it can proceed.
+ * If it can proceed, marks the scan as in-progress (caller must call clearScanLock when done).
+ */
+function acquireScanSlot(
+  scanType: string,
+  lastRunAt: number | undefined,
+  logger: { info?: (s: string) => void },
+): string | null {
+  if (SCAN_IN_PROGRESS.get(scanType)) {
+    const msg = `Skipping ${scanType}: already running`;
+    logger.info?.(msg);
+    return msg;
+  }
+  if (lastRunAt && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
+    const hoursAgo = ((Date.now() - lastRunAt) / 3_600_000).toFixed(1);
+    const msg = `Skipping ${scanType}: last run was ${hoursAgo}h ago (threshold: 23h). Use --full to override.`;
+    logger.info?.(msg);
+    return msg;
+  }
+  SCAN_IN_PROGRESS.set(scanType, true);
+  return null;
+}
+
+function clearScanLock(scanType: string): void {
+  SCAN_IN_PROGRESS.delete(scanType);
+}
+
+/**
  * Extract procedures from sessions
  */
 export async function runExtractProceduresForCli(
   ctx: HandlerContext,
-  opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean },
+  opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean; full?: boolean },
 ): Promise<ExtractProceduresResult> {
   const { factsDb, cfg, logger } = ctx;
+  const SCAN_TYPE = "extract-procedures";
   if (cfg.procedures?.enabled === false) {
     return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
   }
   const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Startup guard + concurrency lock (skip when not full mode)
+  if (!opts.full && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: false, skipped: true };
+  }
+
   let filePaths: string[] | undefined;
-  if (opts.days != null && opts.days > 0) {
+  if (!opts.full && cursor) {
+    // Incremental: only sessions modified after the last run
+    filePaths = getSessionFilePathsSince(sessionDir, opts.days ?? 7, cursor.lastRunAt);
+    logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+  } else if (opts.days != null && opts.days > 0) {
     filePaths = getSessionFilePathsSince(sessionDir, opts.days);
   }
+
   try {
-    return await extractProceduresFromSessions(
+    const result = await extractProceduresFromSessions(
       factsDb,
       {
         sessionDir: filePaths ? undefined : sessionDir,
@@ -1694,9 +1753,15 @@ export async function runExtractProceduresForCli(
       },
       { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
     );
+    if (!opts.dryRun) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+    }
+    return result;
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractProceduresForCli" });
     throw err;
+  } finally {
+    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }
 
@@ -1786,12 +1851,27 @@ export async function runSkillsSuggestForCli(
  */
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
-  opts: { days?: number; verbose?: boolean; dryRun?: boolean },
+  opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
 ): Promise<DirectiveExtractResult & { stored?: number }> {
-  const { factsDb, cfg } = ctx;
+  const { factsDb, cfg, logger } = ctx;
+  const SCAN_TYPE = "extract-directives";
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
-  const filePaths = getSessionFilePathsSince(sessionDir, days);
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Startup guard + concurrency lock (skip when not full mode)
+  if (!opts.full && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { incidents: [], sessionsScanned: 0, stored: 0, skipped: true } as DirectiveExtractResult & { stored?: number; skipped?: boolean };
+  }
+
+  let filePaths: string[];
+  if (!opts.full && cursor) {
+    filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
+    logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+  } else {
+    filePaths = getSessionFilePathsSince(sessionDir, days);
+  }
 
   const directiveRegex = getDirectiveSignalRegex();
   const result = runDirectiveExtract({ filePaths, directiveRegex });
@@ -1834,7 +1914,12 @@ export async function runExtractDirectivesForCli(
     }
   }
 
-  return { ...result, stored };
+  const returnVal = { ...result, stored };
+  if (!opts.dryRun) {
+    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+    if (!opts.full) clearScanLock(SCAN_TYPE);
+  }
+  return returnVal;
 }
 
 /**
@@ -1842,12 +1927,27 @@ export async function runExtractDirectivesForCli(
  */
 export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
-  opts: { days?: number; verbose?: boolean; dryRun?: boolean; workspace?: string },
+  opts: { days?: number; verbose?: boolean; dryRun?: boolean; workspace?: string; full?: boolean },
 ): Promise<ReinforcementExtractResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb, logger } = ctx;
+  const SCAN_TYPE = "extract-reinforcement";
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
-  const filePaths = getSessionFilePathsSince(sessionDir, days);
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Startup guard + concurrency lock
+  if (!opts.full && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { incidents: [], sessionsScanned: 0, skipped: true } as ReinforcementExtractResult & { skipped?: boolean };
+  }
+
+  let filePaths: string[];
+  if (!opts.full && cursor) {
+    filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
+    logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+  } else {
+    filePaths = getSessionFilePathsSince(sessionDir, days);
+  }
   const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
 
   const reinforcementRegex = getReinforcementSignalRegex();
@@ -1876,7 +1976,7 @@ export async function runExtractReinforcementForCli(
       const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
         incidents_json: JSON.stringify(result.incidents),
       });
-      const extractionTier = cfg.distill?.extractionModelTier ?? "heavy";
+      const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
       const cronCfg = getCronModelConfig(cfg);
       const tierPref = getLLMModelPreference(cronCfg, extractionTier);
       const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
@@ -2042,6 +2142,10 @@ export async function runExtractReinforcementForCli(
     }
   }
 
+  if (!opts.dryRun) {
+    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+    if (!opts.full) clearScanLock(SCAN_TYPE);
+  }
   return result;
 }
 
@@ -2604,16 +2708,19 @@ export async function runBackfillForCli(
 }
 
 /**
- * Gather session files from agents directory
+ * Gather session files from agents directory.
+ * When `sinceTimestampMs` is provided (watermark mode), returns only files with mtime > sinceTimestampMs.
  */
-function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string }): Array<{ path: string; mtime: number }> {
+function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string; sinceTimestampMs?: number }): Array<{ path: string; mtime: number }> {
   const openclawDir = join(homedir(), ".openclaw");
   const agentsDir = join(openclawDir, "agents");
   if (!existsSync(agentsDir)) return [];
   const cutoffMs =
-    opts.since
-      ? new Date(opts.since).getTime()
-      : Date.now() - (opts.all ? 90 : (opts.days ?? 3)) * 24 * 60 * 60 * 1000;
+    opts.sinceTimestampMs !== undefined
+      ? opts.sinceTimestampMs
+      : opts.since
+        ? new Date(opts.since).getTime()
+        : Date.now() - (opts.all ? 90 : (opts.days ?? 3)) * 24 * 60 * 60 * 1000;
   const out: Array<{ path: string; mtime: number }> = [];
   try {
     for (const agentName of readdirSync(agentsDir, { withFileTypes: true })) {
@@ -2625,7 +2732,7 @@ function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string
         const fp = join(sessionsDir, f.name);
         try {
           const stat = statSync(fp);
-          if (stat.mtimeMs >= cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
+          if (stat.mtimeMs > cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
         } catch (err) {
           capturePluginError(err as Error, { subsystem: "cli", operation: "gatherSessionFiles:stat", filePath: fp });
         }
@@ -2778,8 +2885,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   const truncatedBlock = userMessagesBlock.length > maxChars ? userMessagesBlock.slice(0, maxChars) + "\n[truncated...]" : userMessagesBlock;
   const prompt = fillPrompt(loadPrompt("analyze-feedback-phrases"), { user_messages: truncatedBlock });
   const cronCfg = getCronModelConfig(cfg);
-  const heavyPref = getLLMModelPreference(cronCfg, "heavy");
-  const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(cronCfg, "heavy");
+  const defaultPref = getLLMModelPreference(cronCfg, "default");
+  const model = opts.model ?? defaultPref[0] ?? getDefaultCronModel(cronCfg, "default");
   const { spawn } = await import("node:child_process");
   const { tmpdir: osTmp } = await import("node:os");
   const promptPath = join(osTmp(), `analyze-feedback-phrases-${Date.now()}.txt`);
@@ -3036,15 +3143,29 @@ export async function runIngestFilesForCli(
  */
 export async function runDistillForCli(
   ctx: HandlerContext,
-  opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number },
+  opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number; full?: boolean },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
-  const sessionFiles = gatherSessionFiles({
-    all: opts.all,
-    days: opts.days ?? (opts.all ? 90 : 3),
-    since: opts.since,
-  });
+  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, logger } = ctx;
+  const SCAN_TYPE = "distill";
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Startup guard + concurrency lock (skip when --all/--full/--since overrides watermark)
+  const useWatermark = !opts.full && !opts.all && !opts.since;
+  if (useWatermark && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: false };
+  }
+
+  const gatherOpts = useWatermark && cursor
+    ? { sinceTimestampMs: cursor.lastRunAt }
+    : { all: opts.all, days: opts.days ?? (opts.all ? 90 : 3), since: opts.since };
+
+  if (useWatermark && cursor) {
+    logger.info?.(`memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastRunAt).toISOString()})`);
+  }
+
+  const sessionFiles = gatherSessionFiles(gatherOpts);
   const maxSessions = opts.maxSessions ?? 0;
   const filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
   if (filesToProcess.length === 0) {
@@ -3247,6 +3368,10 @@ export async function runDistillForCli(
     sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
     capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
   }
+  if (!opts.dryRun) {
+    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), filesToProcess.length);
+    if (useWatermark) clearScanLock(SCAN_TYPE);
+  }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
 }
 
@@ -3432,9 +3557,22 @@ export async function runSelfCorrectionRunForCli(
     model?: string;
     approve?: boolean;
     applyTools?: boolean;
+    full?: boolean;
   },
 ): Promise<SelfCorrectionRunResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, logger, proposalsDb } = ctx;
+  const SCAN_TYPE = "self-correction-run";
+
+  // Startup guard + concurrency lock (skip if already ran within 23h and not forced)
+  // Only apply when no explicit incidents/extractPath provided (i.e. fresh scan)
+  if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) {
+    const cursor = factsDb.getScanCursor(SCAN_TYPE);
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) {
+      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, skipped: true };
+    }
+  }
+
   const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
   const reportDir = join(workspaceRoot, "memory", "reports");
@@ -3486,7 +3624,7 @@ export async function runSelfCorrectionRunForCli(
       const { tmpdir: osTmp } = await import("node:os");
       const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
       writeFileSync(promptPath, prompt, "utf-8");
-      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "heavy"));
+      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default"));
       const r = spawnSync(
         "openclaw",
         ["sessions", "spawn", "--model", spawnModel, "--message", "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.", "--attach", promptPath],
@@ -3674,6 +3812,11 @@ export async function runSelfCorrectionRunForCli(
       estimatedSavingUsd: autoFixed * 0.002,
       note: `${autoFixed} incident(s) auto-remediated`,
     });
+  }
+
+  if (!opts.dryRun && !opts.full && !opts.incidents && !opts.extractPath) {
+    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
+    clearScanLock(SCAN_TYPE);
   }
 
   return {
@@ -4107,7 +4250,19 @@ export function runConfigSetForCli(
     }
     return { ok: true, configPath, message: `Set verbosity = "${value}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
   }
-  if (!setNested(out.config, k, value)) {
+  // Enum-like keys: normalize value to lowercase so "Nano" → "nano" for schema validation
+  const enumKeys: Record<string, string[]> = {
+    "distill.extractionModelTier": ["nano", "default", "heavy"],
+  };
+  let valueToSet: unknown = value;
+  if (enumKeys[k]) {
+    const normalized = String(value).trim().toLowerCase();
+    if (!enumKeys[k].includes(normalized)) {
+      return { ok: false, error: `Invalid ${k}: "${value}". Use one of: ${enumKeys[k].join(", ")}` };
+    }
+    valueToSet = normalized;
+  }
+  if (!setNested(out.config, k, valueToSet)) {
     return { ok: false, error: `Invalid config key: ${key}` };
   }
   const written = getNested(out.config, k);
@@ -4389,9 +4544,9 @@ export async function runExtractImplicitFeedbackForCli(
             if (implicitCfg.trajectoryLLMAnalysis) {
               try {
                 const prompt = loadPrompt("trajectory-analyze");
-                const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
-                const model = heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
-                const fallbackModels = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+                const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+                const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+                const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
                 const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
                   const userMessage = opts.messages.find((m) => m.role === "user");
                   if (!userMessage) throw new Error("No user message found");
