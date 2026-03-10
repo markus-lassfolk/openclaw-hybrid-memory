@@ -327,7 +327,7 @@ export async function chatCompleteWithRetry(opts: {
   }
 
   const finalError = lastError ?? new Error("All models failed");
-  const finalIs500 = /\b500\b|internal server error/i.test(finalError.message);
+  const finalIs500 = /\b500\b|internal server error|internal error/i.test(finalError.message);
   const finalIs404 = /\b404\b/.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning

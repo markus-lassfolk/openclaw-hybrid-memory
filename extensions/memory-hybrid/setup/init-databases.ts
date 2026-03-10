@@ -258,16 +258,10 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
     }
 
-    // Before giving up, try common provider env var patterns (but NOT the gateway token —
+    // Before giving up, try provider-specific env var pattern (but NOT the gateway token —
     // that's scoped to the local gateway only and must never be sent to external endpoints).
-    // Covers openrouter, bailian, minimax-cn and any provider following the <PREFIX>_API_KEY convention.
-    const envCandidates = [
-      `OPENROUTER_API_KEY`,
-      `BAILIAN_API_KEY`,
-      `MINIMAX_API_KEY`,
-      `${prefix.toUpperCase()}_API_KEY`,
-    ];
-    const envFallbackKey = envCandidates.map((e) => process.env[e]?.trim()).find(Boolean);
+    // Covers any provider following the <PREFIX>_API_KEY convention.
+    const envFallbackKey = process.env[`${prefix.toUpperCase()}_API_KEY`]?.trim();
     if (envFallbackKey) {
       const baseURL = providerCfg?.baseURL;
       const cacheKey = `custom:${prefix}:${envFallbackKey.slice(0, 8)}:${baseURL ?? "default"}`;
