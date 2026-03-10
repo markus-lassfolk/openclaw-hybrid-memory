@@ -227,18 +227,10 @@ export class VectorDB {
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
       this.storeCount++;
       if (!this.optimizeInProgress && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
-        this.optimizeInProgress = true;
         this.storeCount = 0;
         // Fire-and-forget; don't block the store operation
-        const optimizePromise = this.optimize(24 * 60 * 60 * 1000)
-          .catch(err => this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`))
-          .finally(() => {
-            this.optimizeInProgress = false;
-            if (this.optimizePromise === optimizePromise) {
-              this.optimizePromise = null;
-            }
-          });
-        this.optimizePromise = optimizePromise;
+        this.optimize(24 * 60 * 60 * 1000)
+          .catch(err => this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`));
       }
       return id;
     } catch (err) {
