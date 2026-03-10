@@ -63,7 +63,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
+  try {
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    // Ignore cleanup failures in CI (ENOTEMPTY race condition)
+  }
 });
 
 function makeDb(): AliasDB {
