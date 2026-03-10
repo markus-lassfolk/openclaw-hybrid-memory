@@ -55,7 +55,7 @@ function getDefaultCronModelLegacy(
   }
   if (hasKey(pluginConfig.distill?.apiKey)) {
     const defaultModel = pluginConfig.distill?.defaultModel?.trim();
-    if (defaultModel) return tier === "nano" ? defaultModel : defaultModel;
+    if (defaultModel) return tier === "nano" ? GEMINI_NANO_MODEL : defaultModel;
     if (tier === "heavy") return GEMINI_HEAVY_MODEL;
     if (tier === "nano") return GEMINI_NANO_MODEL;
     return GEMINI_DEFAULT_MODEL;

@@ -1865,61 +1865,64 @@ export async function runExtractDirectivesForCli(
     if (skip) return { incidents: [], sessionsScanned: 0, stored: 0, skipped: true } as DirectiveExtractResult & { stored?: number; skipped?: boolean };
   }
 
-  let filePaths: string[];
-  if (!opts.full && cursor) {
-    filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
-    logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
-  } else {
-    filePaths = getSessionFilePathsSince(sessionDir, days);
-  }
-
-  const directiveRegex = getDirectiveSignalRegex();
-  const result = runDirectiveExtract({ filePaths, directiveRegex });
-
-  if (opts.verbose) {
-    for (const incident of result.incidents) {
-      console.log(`[${incident.sessionFile}] ${incident.categories.join(", ")}: ${incident.extractedRule}`);
+  try {
+    let filePaths: string[];
+    if (!opts.full && cursor) {
+      filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
+      logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+    } else {
+      filePaths = getSessionFilePathsSince(sessionDir, days);
     }
-  }
 
-  // Store directives as facts if not dry-run
-  let stored = 0;
-  if (!opts.dryRun) {
-    for (const incident of result.incidents) {
-      try {
-        if (factsDb.hasDuplicate(incident.extractedRule)) continue;
-        const category = incident.categories.includes("preference") ? "preference" :
-                        incident.categories.includes("absolute_rule") ? "rule" :
-                        incident.categories.includes("conditional_rule") ? "rule" :
-                        incident.categories.includes("warning") ? "rule" :
-                        incident.categories.includes("future_behavior") ? "rule" :
-                        incident.categories.includes("procedural") ? "pattern" :
-                        incident.categories.includes("correction") ? "decision" :
-                        incident.categories.includes("implicit_correction") ? "decision" :
-                        incident.categories.includes("explicit_memory") ? "fact" : "other";
-        factsDb.store({
-          text: incident.extractedRule,
-          category: category as MemoryCategory,
-          importance: 0.8,
-          entity: null,
-          key: null,
-          value: null,
-          source: `directive:${incident.sessionFile}`,
-          confidence: incident.confidence,
-        });
-        stored++;
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
+    const directiveRegex = getDirectiveSignalRegex();
+    const result = runDirectiveExtract({ filePaths, directiveRegex });
+
+    if (opts.verbose) {
+      for (const incident of result.incidents) {
+        console.log(`[${incident.sessionFile}] ${incident.categories.join(", ")}: ${incident.extractedRule}`);
       }
     }
-  }
 
-  const returnVal = { ...result, stored };
-  if (!opts.dryRun) {
-    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
-    if (!opts.full) clearScanLock(SCAN_TYPE);
+    // Store directives as facts if not dry-run
+    let stored = 0;
+    if (!opts.dryRun) {
+      for (const incident of result.incidents) {
+        try {
+          if (factsDb.hasDuplicate(incident.extractedRule)) continue;
+          const category = incident.categories.includes("preference") ? "preference" :
+                          incident.categories.includes("absolute_rule") ? "rule" :
+                          incident.categories.includes("conditional_rule") ? "rule" :
+                          incident.categories.includes("warning") ? "rule" :
+                          incident.categories.includes("future_behavior") ? "rule" :
+                          incident.categories.includes("procedural") ? "pattern" :
+                          incident.categories.includes("correction") ? "decision" :
+                          incident.categories.includes("implicit_correction") ? "decision" :
+                          incident.categories.includes("explicit_memory") ? "fact" : "other";
+          factsDb.store({
+            text: incident.extractedRule,
+            category: category as MemoryCategory,
+            importance: 0.8,
+            entity: null,
+            key: null,
+            value: null,
+            source: `directive:${incident.sessionFile}`,
+            confidence: incident.confidence,
+          });
+          stored++;
+        } catch (err) {
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
+        }
+      }
+    }
+
+    const returnVal = { ...result, stored };
+    if (!opts.dryRun) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+    }
+    return returnVal;
+  } finally {
+    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
-  return returnVal;
 }
 
 /**
@@ -1941,14 +1944,15 @@ export async function runExtractReinforcementForCli(
     if (skip) return { incidents: [], sessionsScanned: 0, skipped: true } as ReinforcementExtractResult & { skipped?: boolean };
   }
 
-  let filePaths: string[];
-  if (!opts.full && cursor) {
-    filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
-    logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
-  } else {
-    filePaths = getSessionFilePathsSince(sessionDir, days);
-  }
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  try {
+    let filePaths: string[];
+    if (!opts.full && cursor) {
+      filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
+      logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+    } else {
+      filePaths = getSessionFilePathsSince(sessionDir, days);
+    }
+    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
 
   const reinforcementRegex = getReinforcementSignalRegex();
   const result = runReinforcementExtract({ filePaths, reinforcementRegex });
@@ -2142,11 +2146,13 @@ export async function runExtractReinforcementForCli(
     }
   }
 
-  if (!opts.dryRun) {
-    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
-    if (!opts.full) clearScanLock(SCAN_TYPE);
+    if (!opts.dryRun) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned);
+    }
+    return result;
+  } finally {
+    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
-  return result;
 }
 
 /**
@@ -3170,6 +3176,9 @@ export async function runDistillForCli(
   const filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
   if (filesToProcess.length === 0) {
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
+    if (useWatermark && !opts.dryRun) {
+      clearScanLock(SCAN_TYPE);
+    }
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
   }
   const cronCfgDistill = getCronModelConfig(cfg);
@@ -3600,6 +3609,10 @@ export async function runSelfCorrectionRunForCli(
       writeFileSync(reportPath, emptyReport, "utf-8");
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-empty-report" });
+    }
+    if (!opts.dryRun && !opts.full && !opts.incidents && !opts.extractPath) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
+      clearScanLock(SCAN_TYPE);
     }
     return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
   }
