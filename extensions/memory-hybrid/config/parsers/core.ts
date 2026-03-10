@@ -264,7 +264,7 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
 /** Returns true when the key looks like a placeholder rather than a real credential. */
 function isPlaceholderApiKey(key: string): boolean {
   if (key.length < 10) return true;
-  return /YOUR_.*_HERE|REPLACE_ME|x{3,}|sk-xxx/i.test(key);
+  return /YOUR_.*_HERE|REPLACE_ME|^x+$|^sk-x+$/i.test(key);
 }
 
 export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefined {

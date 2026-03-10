@@ -1775,7 +1775,13 @@ export async function runExtractProceduresForCli(
       { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
     );
     if (!opts.dryRun) {
-      const lastSessionTs = filePaths ? getMaxMtime(filePaths) : undefined;
+      let lastSessionTs: number | undefined;
+      if (filePaths) {
+        lastSessionTs = getMaxMtime(filePaths);
+      } else {
+        const allFiles = getSessionFilePathsSince(sessionDir, 0);
+        lastSessionTs = getMaxMtime(allFiles);
+      }
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
     }
     return result;
