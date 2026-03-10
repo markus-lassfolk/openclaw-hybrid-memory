@@ -16,21 +16,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [2026.3.91] - 2026-03-09
 
-Memory Dashboard: Lovable web UI, shared REST API, and multi-dashboard layout (placeholders for GPT/Gemini/Claude).
+Incremental extraction, startup guards, nano-tier defaults, and schema fix (#288/#289).
 
 ### Added
 
-- **Memory Dashboard (Lovable):** Web UI in `dashboard/lovable/` for hybrid-memory inspection: overview stats (total facts, categories, links, issues, cost), facts-by-category/tier/decay and recent facts; interactive memory graph (force-directed, filters, node detail); facts explorer (paginated table with category/tier/search filters); issue tracker; knowledge clusters; cost & usage (daily/model/feature charts); feature configuration (read-only toggles from plugin config); workflow patterns. Built with React 18, TypeScript, Vite, Tailwind, shadcn/ui, Recharts, react-force-graph-2d. Uses mock data when no API is configured; set `VITE_API_BASE` to use the dashboard API for live data. Base path `/plugins/memory-dashboard/lovable/` for production hosting.
+- **Incremental extraction (#288):** `extract-procedures`, `extract-directives`, `extract-reinforcement`, `distill`, and `self-correction-run` now maintain a watermark (`scan_cursors` table in SQLite). On each run they process only sessions created after the last successful scan, making nightly jobs fast regardless of session history size. `--full` forces a full re-scan and bypasses the watermark; `--dry-run` never writes the cursor.
 
-- **Dashboard REST API:** Standalone HTTP server in `extensions/memory-hybrid/scripts/dashboard-api.ts`. Run with `npm run dashboard-api` from the extension directory (listens on port 18790; `PORT` env to override). Reads OpenClaw config from `OPENCLAW_HOME` or `~/.openclaw` and serves live data from FactsDB, IssueStore, CostTracker, and WorkflowStore. Endpoints: `GET /api/stats`, `/api/facts`, `/api/facts/:id`, `/api/graph`, `/api/issues`, `/api/clusters`, `/api/cost`, `/api/config`, `/api/workflows`. CORS enabled for local dashboard use. No new runtime dependencies; uses `tsx` (devDependency) to run the TypeScript script.
+- **Startup guards — 23-hour rate-limit (#289):** Each scan type checks the cursor's `lastRunAt` timestamp before acquiring the concurrency lock. If less than 23 hours have passed the job is skipped with a log message (`skipped: true`). Prevents runaway double-execution when OpenClaw retries a failed job.
 
-- **Multi-dashboard layout:** `dashboard/` contains `lovable/` (full app), plus placeholders `gpt/`, `gemini/`, `claude/` with READMEs so you can add dashboards generated from the same brief by different tools and compare results. All dashboards use the same API contract; see `dashboard/README.md` for shared API instructions and how to add new dashboards.
+- **`scan_cursors` schema (#288):** New SQLite table (`scan_type TEXT PRIMARY KEY, last_session_ts INTEGER, last_run_at INTEGER, sessions_processed INTEGER`) created during DB init. Seeded with a migration guard so existing databases upgrade automatically.
 
-### Documentation
+### Changed
 
-- **dashboard/README.md:** Describes layout (lovable vs gpt/gemini/claude), shared API (run from `extensions/memory-hybrid`), how to run each dashboard (mock vs real data), and how to add GPT/Gemini/Claude dashboards.
-- **dashboard/lovable/README.md:** Lovable-specific quick start (dev with mock, dev with API, production build), API endpoints table, tech stack, project structure.
-- **README.md (root):** Memory Dashboard section updated: one shared API, multiple dashboards (lovable, gpt, gemini, claude) for comparing briefs; link to `dashboard/README.md`.
+- **`extractionModelTier` default changed to `"nano"`:** `extract-reinforcement` now defaults to the nano-tier model (e.g. `gpt-4.1-nano`) when `distill.extractionModelTier` is unset. Previously it defaulted to `"heavy"`. Expert and Full presets set `extractionModelTier: "default"` to opt into the standard-tier model. This significantly reduces cost for most users.
+
+- **`weekly-extract-procedures` job model:** The cron job is now scheduled with `modelTier: "nano"` so the agent that orchestrates the extraction steps uses a cheap model. The LLM step inside `extract-reinforcement` is still controlled by `distill.extractionModelTier`.
+
+### Fixed
+
+- **Schema init order:** `scan_cursors` table is now created before any index is built, fixing a startup error on fresh installs.
 
 ---
 

@@ -115,9 +115,11 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true },
 ];
 
-/** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier). */
+/** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier).
+ * Strips the top-level `channel` field (maintenance jobs don't need user delivery) and sets delivery.mode = "none"
+ * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs. */
 function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
-  const { modelTier, ...rest } = def;
+  const { modelTier, channel: _channel, ...rest } = def;
   const tier = modelTier ?? "default";
   const model = getDefaultCronModel(pluginConfig, tier);
   return { ...rest, model, delivery: { mode: "none" as const } };
@@ -3163,6 +3165,7 @@ export async function runDistillForCli(
     if (skip) return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: false };
   }
 
+  try {
   const gatherOpts = useWatermark && cursor
     ? { sinceTimestampMs: cursor.lastRunAt }
     : { all: opts.all, days: opts.days ?? (opts.all ? 90 : 3), since: opts.since };
@@ -3379,9 +3382,11 @@ export async function runDistillForCli(
   }
   if (!opts.dryRun) {
     factsDb.updateScanCursor(SCAN_TYPE, Date.now(), filesToProcess.length);
-    if (useWatermark) clearScanLock(SCAN_TYPE);
   }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
+  } finally {
+    if (useWatermark && !opts.dryRun) clearScanLock(SCAN_TYPE);
+  }
 }
 
 /**
@@ -3582,6 +3587,7 @@ export async function runSelfCorrectionRunForCli(
     }
   }
 
+  try {
   const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
   const reportDir = join(workspaceRoot, "memory", "reports");
@@ -3829,7 +3835,6 @@ export async function runSelfCorrectionRunForCli(
 
   if (!opts.dryRun && !opts.full && !opts.incidents && !opts.extractPath) {
     factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
-    clearScanLock(SCAN_TYPE);
   }
 
   return {
@@ -3841,6 +3846,9 @@ export async function runSelfCorrectionRunForCli(
     toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
     toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
   };
+  } finally {
+    if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);
+  }
 }
 
 /**
