@@ -666,7 +666,7 @@ export async function runPassiveObserver(
           await vectorDb.store({
             text: fact.text,
             vector: vec,
-            importance: fact.importance,
+            importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
             category: fact.category,
             id: stored.id,
           })
