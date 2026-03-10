@@ -1755,8 +1755,9 @@ export async function runExtractProceduresForCli(
 
   let filePaths: string[] | undefined;
   if (!opts.full && cursor) {
-    // Incremental: only sessions modified after the last run
-    filePaths = getSessionFilePathsSince(sessionDir, opts.days ?? 7, cursor.lastRunAt);
+    // Incremental: only sessions modified after the last processed session timestamp
+    const sinceTimestamp = cursor.lastSessionTs ?? cursor.lastRunAt;
+    filePaths = getSessionFilePathsSince(sessionDir, opts.days ?? 7, sinceTimestamp);
     logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
   } else if (opts.days != null && opts.days > 0) {
     filePaths = getSessionFilePathsSince(sessionDir, opts.days);
