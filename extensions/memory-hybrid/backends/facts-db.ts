@@ -455,28 +455,36 @@ export class FactsDB {
       .prepare(`SELECT last_session_ts, last_run_at, sessions_processed FROM scan_cursors WHERE scan_type = ?`)
       .get(scanType) as { last_session_ts: number; last_run_at: number; sessions_processed: number } | undefined;
     if (!row) return null;
-    return { lastSessionTs: row.last_session_ts, lastRunAt: row.last_run_at, sessionsProcessed: row.sessions_processed };
+    return {
+      lastSessionTs: row.last_session_ts,
+      // Expose the session watermark as `lastRunAt` for callers that use it for incremental filtering.
+      lastRunAt: row.last_session_ts,
+      sessionsProcessed: row.sessions_processed,
+    };
   }
 
   /**
    * Upsert the cursor after a successful incremental scan.
-   * @param lastRunAt Scan completion timestamp (pass `Date.now()`). Used as the watermark for the
-   *   23-hour startup guard — it records *when we last scanned*, not the newest session we saw.
-   * @param lastSessionTs Timestamp of the newest session processed (file mtime). Used for tracking
-   *   the actual session watermark. Pass `lastRunAt` if no sessions were processed.
+   * @param lastSessionTs Timestamp of the newest session processed (file mtime). Pass `Date.now()`
+   *   when no session watermark is available (e.g. self-correction). Pass `0` when no sessions
+   *   were processed — `last_session_ts` will not be updated in that case.
+   * @param sessionsProcessed Number of sessions processed in this run.
    */
-  updateScanCursor(scanType: string, lastRunAt: number, sessionsProcessed: number, lastSessionTs?: number): void {
-    const sessionTs = lastSessionTs ?? lastRunAt;
+  updateScanCursor(scanType: string, lastSessionTs: number, sessionsProcessed: number): void {
+    const now = Date.now();
     this.liveDb
       .prepare(
         `INSERT INTO scan_cursors (scan_type, last_session_ts, last_run_at, sessions_processed)
          VALUES (?, ?, ?, ?)
          ON CONFLICT(scan_type) DO UPDATE SET
-           last_session_ts = excluded.last_session_ts,
+           last_session_ts = CASE
+             WHEN excluded.sessions_processed > 0 THEN excluded.last_session_ts
+             ELSE scan_cursors.last_session_ts
+           END,
            last_run_at = excluded.last_run_at,
-           sessions_processed = sessions_processed + excluded.sessions_processed`,
+           sessions_processed = scan_cursors.sessions_processed + excluded.sessions_processed`,
       )
-      .run(scanType, sessionTs, lastRunAt, sessionsProcessed);
+      .run(scanType, lastSessionTs, now, sessionsProcessed);
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */

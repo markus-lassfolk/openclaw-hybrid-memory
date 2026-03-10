@@ -1718,7 +1718,7 @@ function acquireScanSlot(
     logger.info?.(msg);
     return msg;
   }
-  if (lastRunAt != null && lastRunAt > 0 && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
+  if (lastRunAt !== undefined && lastRunAt !== 0 && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
     const hoursAgo = ((Date.now() - lastRunAt) / 3_600_000).toFixed(1);
     const msg = `Skipping ${scanType}: last run was ${hoursAgo}h ago (threshold: 23h). Use --full to override.`;
     logger.info?.(msg);
@@ -1776,7 +1776,7 @@ export async function runExtractProceduresForCli(
     );
     if (!opts.dryRun) {
       const lastSessionTs = filePaths ? getMaxMtime(filePaths) : undefined;
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
     }
     return result;
   } catch (err) {
@@ -1940,7 +1940,7 @@ export async function runExtractDirectivesForCli(
     const returnVal = { ...result, stored };
     if (!opts.dryRun) {
       const lastSessionTs = getMaxMtime(filePaths);
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
     }
     return returnVal;
   } finally {
@@ -2171,7 +2171,7 @@ export async function runExtractReinforcementForCli(
 
     if (!opts.dryRun) {
       const lastSessionTs = getMaxMtime(filePaths);
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
     }
     return result;
   } finally {
@@ -3202,7 +3202,7 @@ export async function runDistillForCli(
   if (filesToProcess.length === 0) {
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
     if (useWatermark && !opts.dryRun) {
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
+      factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
       clearScanLock(SCAN_TYPE);
     }
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: opts.dryRun };
@@ -3405,7 +3405,7 @@ export async function runDistillForCli(
   }
   if (!opts.dryRun) {
     const lastSessionTs = getMaxMtime(filesToProcess.map((f) => f.path));
-    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), filesToProcess.length, lastSessionTs);
+    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, filesToProcess.length);
   }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, dedupSkipped: skipped, dryRun: false };
   } finally {
@@ -3641,7 +3641,7 @@ export async function runSelfCorrectionRunForCli(
       capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-empty-report" });
     }
     if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
+      factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
       clearScanLock(SCAN_TYPE);
     }
     return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
