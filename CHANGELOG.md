@@ -14,6 +14,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.91] - 2026-03-09
+
+Incremental extraction, startup guards, nano-tier defaults, and schema fix (#288/#289).
+
+### Added
+
+- **Incremental extraction (#288):** `extract-procedures`, `extract-directives`, `extract-reinforcement`, `distill`, and `self-correction-run` now maintain a watermark (`scan_cursors` table in SQLite). On each run they process only sessions created after the last successful scan, making nightly jobs fast regardless of session history size. `--full` forces a full re-scan and bypasses the watermark; `--dry-run` never writes the cursor.
+
+- **Startup guards — 23-hour rate-limit (#289):** Each scan type checks the cursor's `lastRunAt` timestamp before acquiring the concurrency lock. If less than 23 hours have passed the job is skipped with a log message (`skipped: true`). Prevents runaway double-execution when OpenClaw retries a failed job.
+
+- **`scan_cursors` schema (#288):** New SQLite table (`scan_type TEXT PRIMARY KEY, last_session_ts INTEGER, last_run_at INTEGER, sessions_processed INTEGER`) created during DB init. Seeded with a migration guard so existing databases upgrade automatically.
+
+### Changed
+
+- **`extractionModelTier` default changed to `"nano"`:** `extract-reinforcement` now defaults to the nano-tier model (e.g. `gpt-4.1-nano`) when `distill.extractionModelTier` is unset. Previously it defaulted to `"heavy"`. Expert and Full presets set `extractionModelTier: "default"` to opt into the standard-tier model. This significantly reduces cost for most users.
+
+- **`weekly-extract-procedures` job model:** The cron job is now scheduled with `modelTier: "nano"` so the agent that orchestrates the extraction steps uses a cheap model. The LLM step inside `extract-reinforcement` is still controlled by `distill.extractionModelTier`.
+
+### Fixed
+
+- **Schema init order:** `scan_cursors` table is now created before any index is built, fixing a startup error on fresh installs.
+
+---
+
 ## [2026.3.90] - 2026-03-09
 
 Milestone A+B: future-date decay, episodic event log, local embeddings (Ollama/ONNX), multi-model RRF, contextual variants, query expansion, re-ranking, verification store, provenance tracing, document ingestion; real-time frustration detection and cross-agent learning (#263/#265); dependency bumps.
@@ -573,7 +597,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.90...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.91...HEAD
+[2026.3.91]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.91
 [2026.3.90]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.90
 [2026.02.271]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.271
 [2026.02.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.02.270

@@ -236,6 +236,9 @@ export class FactsDB {
 
     // ---- Feedback effectiveness table (#262) ----
     this.migrateFeedbackEffectivenessTable();
+
+    // ---- Scan cursors for incremental processing (#288) ----
+    this.migrateScanCursorsTable();
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -432,6 +435,48 @@ export class FactsDB {
         this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fe_measured ON feedback_effectiveness(measured_at)`);
       })();
     }
+  }
+
+  /** Create scan_cursors table for watermark-based incremental processing (#288). */
+  private migrateScanCursorsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS scan_cursors (
+        scan_type TEXT PRIMARY KEY,
+        last_session_ts INTEGER NOT NULL DEFAULT 0,
+        last_run_at INTEGER NOT NULL DEFAULT 0,
+        sessions_processed INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+  }
+
+  /** Return the cursor for the given scan type, or null if never run. */
+  getScanCursor(scanType: string): { lastSessionTs: number; lastRunAt: number; sessionsProcessed: number } | null {
+    const row = this.liveDb
+      .prepare(`SELECT last_session_ts, last_run_at, sessions_processed FROM scan_cursors WHERE scan_type = ?`)
+      .get(scanType) as { last_session_ts: number; last_run_at: number; sessions_processed: number } | undefined;
+    if (!row) return null;
+    return { lastSessionTs: row.last_session_ts, lastRunAt: row.last_run_at, sessionsProcessed: row.sessions_processed };
+  }
+
+  /**
+   * Upsert the cursor after a successful incremental scan.
+   * @param lastRunAt Scan completion timestamp (pass `Date.now()`). Used as the watermark for the
+   *   23-hour startup guard — it records *when we last scanned*, not the newest session we saw.
+   * @param lastSessionTs Timestamp of the newest session processed (file mtime). Used for tracking
+   *   the actual session watermark. Pass `lastRunAt` if no sessions were processed.
+   */
+  updateScanCursor(scanType: string, lastRunAt: number, sessionsProcessed: number, lastSessionTs?: number): void {
+    const sessionTs = lastSessionTs ?? lastRunAt;
+    this.liveDb
+      .prepare(
+        `INSERT INTO scan_cursors (scan_type, last_session_ts, last_run_at, sessions_processed)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(scan_type) DO UPDATE SET
+           last_session_ts = excluded.last_session_ts,
+           last_run_at = excluded.last_run_at,
+           sessions_processed = sessions_processed + excluded.sessions_processed`,
+      )
+      .run(scanType, sessionTs, lastRunAt, sessionsProcessed);
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */

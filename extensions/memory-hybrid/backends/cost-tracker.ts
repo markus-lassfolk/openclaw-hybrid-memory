@@ -123,6 +123,15 @@ export class CostTracker {
       CREATE INDEX IF NOT EXISTS idx_savings_log_feature ON llm_savings_log(feature);
       CREATE INDEX IF NOT EXISTS idx_savings_log_timestamp ON llm_savings_log(timestamp);
     `);
+    // Correct mis-prefixed model names (e.g. gateway sent openai/gemini-* → store as google/gemini-*)
+    try {
+      this.db.exec(`
+        UPDATE llm_cost_log SET model = 'google/' || substr(model, 8) WHERE model LIKE 'openai/gemini-%';
+        UPDATE llm_cost_log SET model = 'anthropic/' || substr(model, 8) WHERE model LIKE 'openai/claude-%';
+      `);
+    } catch {
+      // ignore
+    }
   }
 
   record(entry: CostEntry): void {

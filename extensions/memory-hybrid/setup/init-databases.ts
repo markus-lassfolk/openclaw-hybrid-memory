@@ -132,6 +132,16 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
+  /** Resolve env:VAR to process.env[VAR] so gateway-stored keys work when merged into llm.providers */
+  const resolveApiKey = (key: string | undefined): string | undefined => {
+    if (typeof key !== "string" || !key.trim()) return undefined;
+    const k = key.trim();
+    if (k.startsWith("env:")) {
+      const v = process.env[k.slice(4).trim()];
+      return v ?? undefined;
+    }
+    return k;
+  };
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
@@ -163,12 +173,43 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey! }));
   }
 
-  function resolveClient(model: string): { client: OpenAI; bareModel: string } {
+  /**
+   * Normalize bare model names (no "provider/" prefix) to "provider/model" so the correct API is used.
+   * OpenClaw and some configs use bare names (e.g. gemini-3.1-pro-preview); without the prefix we
+   * would route to the default OpenAI client and get 404.
+   */
+  function normalizeModelId(model: string): string {
     const trimmed = model.trim();
+    if (trimmed.includes("/")) return trimmed;
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith("gemini-")) return `google/${trimmed}`;
+    if (lower.startsWith("claude-")) return `anthropic/${trimmed}`;
+    if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${trimmed}`;
+    return trimmed;
+  }
+
+  /**
+   * Canonicalize model id for cost logging so pricing table lookup and reports use the correct provider.
+   * Gateways may pass e.g. openai/gemini-3.1-pro-preview; we store google/gemini-3.1-pro-preview.
+   */
+  function canonicalModelIdForCost(providerSlashModel: string): string {
+    const trimmed = providerSlashModel.trim();
+    const slashIdx = trimmed.indexOf("/");
+    const bare = slashIdx >= 0 ? trimmed.slice(slashIdx + 1) : trimmed;
+    const lower = bare.toLowerCase();
+    if (lower.startsWith("gemini-")) return `google/${bare}`;
+    if (lower.startsWith("claude-")) return `anthropic/${bare}`;
+    if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${bare}`;
+    return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
+  }
+
+  function resolveClient(model: string): { client: OpenAI; bareModel: string } {
+    const normalized = normalizeModelId(model);
+    const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
 
     if (slashIdx <= 0) {
-      // Bare model name — use default OpenAI client
+      // Still bare — use default OpenAI client
       return { client: defaultOpenAIClient(), bareModel: trimmed };
     }
 
@@ -177,14 +218,14 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
 
     if (prefix === "google") {
-      const apiKey = providerCfg?.apiKey ?? cfg.distill?.apiKey;
+      const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
       const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
       return { client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
     }
 
     if (prefix === "openai") {
-      const apiKey = providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey;
+      const apiKey = resolveApiKey(providerCfg?.apiKey ?? gatewayToken ?? cfg.embedding.apiKey);
       if (!apiKey) throw new UnconfiguredProviderError("openai", trimmed);
       const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
       const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
@@ -192,7 +233,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (prefix === "anthropic") {
-      const apiKey = providerCfg?.apiKey;
+      const apiKey = resolveApiKey(providerCfg?.apiKey);
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
       const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
@@ -208,7 +249,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
       // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
-      const apiKey = providerCfg.apiKey ?? "no-key";
+      const apiKey = resolveApiKey(providerCfg.apiKey) ?? "no-key";
       const baseURL = providerCfg.baseURL;
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
@@ -256,7 +297,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         return {
           completions: {
             create(body: Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1]) {
-              const model: string = (body as { model?: string }).model ?? "";
+              const rawModel: string = (body as { model?: string }).model ?? "";
+              const model = normalizeModelId(rawModel);
               const { client, bareModel } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
               const isOpenAI = prefix === "openai" || !model.includes("/");
@@ -268,8 +310,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
               // Fire-and-forget cost tracking — never blocks or modifies the returned promise
               if (costTracker) {
                 const feature = inferFeatureLabel(body as unknown as Record<string, unknown>, model);
-                // Normalize bare model names (no '/') to 'openai/model' for pricing table lookup
-                const normalizedModel = model.includes("/") ? model : `openai/${model.trim()}`;
+                // Canonicalize so mis-prefixed names (e.g. openai/gemini-*) are stored with correct provider for pricing
+                const normalizedModel = canonicalModelIdForCost(model.includes("/") ? model : `openai/${model.trim()}`);
                 void (Promise.resolve(promise) as Promise<unknown>).then(
                   (resp: unknown) => {
                     try {
@@ -379,6 +421,9 @@ export function initializeDatabases(
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
   // model selection when the user has already set up their models in openclaw.json.
+  // If the gateway list is heavy-only (e.g. only Opus), we prepend a cheap fallback so default/nano
+  // tasks don't all use the expensive model (see cost issue: hundreds of tasks running as Opus).
+  const RECOMMENDED_CHEAP_FALLBACK = ["openai/gpt-4.1-nano", "google/gemini-2.0-flash-lite", "anthropic/claude-3-5-haiku"];
   if (!cfg.llm) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
@@ -396,30 +441,43 @@ export function initializeDatabases(
 
       // Heuristic tier split based on model name keywords.
       // Nano:   nano, mini, haiku, lite, turbo-mini  — ultra-cheap for classify/HyDE/summarize
-      // Heavy:  pro, opus, o3, o1, large, ultra       — capable/expensive models
+      // Heavy:  pro, opus, o3, o1, large, ultra, gpt-5  — capable/expensive models (incl. GPT-5.4, Codex)
       // Light:  flash, small                           — fast/cheap (but not nano-cheap)
-      // Medium: everything else (sonnet, gpt-4o, gpt-5, etc.)
+      // Medium: everything else (sonnet, gpt-4o, etc.)
       const isNano  = (m: string) => /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isHeavy = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy/.test((m.split("/").pop() ?? m).toLowerCase());
+      const isHeavy = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase());
       const isLight = (m: string) => /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
       const nano    = uniqueModels.filter(m => isNano(m) && !isHeavy(m));
       const heavy   = uniqueModels.filter(m => isHeavy(m) && !isNano(m));
       const light   = uniqueModels.filter(m => isLight(m) && !isNano(m) && !isHeavy(m));
       const medium  = uniqueModels.filter(m => !isNano(m) && !isLight(m) && !isHeavy(m));
 
-      // default tier: light first, then medium, then heavy as fallbacks
-      const defaultTier = [...light, ...medium, ...heavy];
-      // heavy tier: heavy first (capable), then medium, then light as fallbacks
+      // default tier: agent order (primary then fallbacks) so reflection/general match what you set in openclaw.json
+      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavy(m));
+      let defaultTier = [...uniqueModels];
+      if (defaultIsHeavyOnly) {
+        defaultTier = [...RECOMMENDED_CHEAP_FALLBACK, ...defaultTier];
+        api.logger.info?.(`memory-hybrid: agents.defaults.model is heavy-only; prepending cheap fallback for default tier so maintenance tasks use a cheaper model first. Set llm.default / llm.nano explicitly in plugin config to override.`);
+      }
+      // heavy tier: capable first (heavy → medium → light) for distill/self-correction
       const heavyTier = [...heavy, ...medium, ...light];
+
+      // nano: cheap first — never use Opus/heavy for classify/summarize. Use nano models if present; else when heavy-only use cheap fallback; else use light then medium from agent list.
+      const nanoList = nano.length > 0
+        ? [...nano, ...light, ...medium]
+        : defaultIsHeavyOnly
+          ? RECOMMENDED_CHEAP_FALLBACK
+          : light.length > 0 || medium.length > 0
+            ? [...light, ...medium]
+            : [];
 
       cfg.llm = {
         default: defaultTier.length > 0 ? defaultTier : uniqueModels,
         heavy: heavyTier.length > 0 ? heavyTier : uniqueModels,
-        // nano tier: only set when nano/mini models exist in the gateway list
-        ...(nano.length > 0 ? { nano: [...nano, ...light, ...medium] } : {}),
+        ...(nanoList.length > 0 ? { nano: nanoList } : {}),
         _source: "gateway",
       };
-      api.logger.info?.(`memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.join(", ")}${nano.length > 0 ? `; nano: ${nano.join(", ")}` : ""})`);
+      api.logger.info?.(`memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.slice(0, 3).join(", ")}${cfg.llm.default.length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`);
     }
   }
   // CostTracker — created early so proxy can instrument every chat.completions.create call (Issue #270).
@@ -430,6 +488,77 @@ export function initializeDatabases(
     : null;
   if (costTracker) {
     api.logger.info("memory-hybrid: LLM cost tracker initialized");
+  }
+
+  // Merge gateway provider keys into plugin llm.providers so the plugin can use all keys the gateway has
+  // (e.g. Minimax, Anthropic, etc.) without duplicating them in plugin config.
+  const gwConfig = api.config as Record<string, unknown> | undefined;
+  const gwProviders = (gwConfig?.models as Record<string, unknown> | undefined)?.providers
+    ?? (gwConfig?.llm as Record<string, unknown> | undefined)?.providers;
+  const mergedProviderNames: string[] = [];
+  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
+  const plm = cfg.llm as Record<string, unknown>;
+  if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
+  const prov = plm.providers as Record<string, Record<string, unknown>>;
+
+  if (gwProviders && typeof gwProviders === "object" && !Array.isArray(gwProviders)) {
+    for (const [name, gw] of Object.entries(gwProviders)) {
+      if (!name || !gw || typeof gw !== "object") continue;
+      const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
+      if (typeof rawKey !== "string" || !rawKey.trim()) continue;
+      if (!prov[name]) {
+        prov[name] = {
+          apiKey: rawKey.trim(),
+          baseURL: (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
+        };
+        mergedProviderNames.push(name);
+        api.logger.info?.(`memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`);
+      }
+    }
+  }
+
+  // If Anthropic is in tier lists (e.g. from agents.defaults.model) but not yet in providers, use ANTHROPIC_API_KEY so verify --test-llm can test it.
+  const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+  const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
+  const hasAnthropicModel = (list: string[]) => list.some((m) => m.startsWith("anthropic/") || m.startsWith("claude-"));
+  if (!prov.anthropic && (hasAnthropicModel(defaultList) || hasAnthropicModel(heavyList))) {
+    const envKey = typeof process.env.ANTHROPIC_API_KEY === "string" ? process.env.ANTHROPIC_API_KEY.trim() : "";
+    if (envKey.length >= 10) {
+      prov.anthropic = { apiKey: envKey };
+      mergedProviderNames.push("anthropic");
+      api.logger.info?.("memory-hybrid: using ANTHROPIC_API_KEY for llm.providers.anthropic (verify --test-llm will test Anthropic models)");
+    }
+  }
+
+  // If we merged providers, ensure at least one model from each is in the tier lists so they get tested and used as fallbacks.
+  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google"));
+  if (cfg.llm && mergedProviderNames.length > 0) {
+    const defaultList = Array.isArray(cfg.llm.default) ? [...cfg.llm.default] : [];
+    const heavyList = Array.isArray(cfg.llm.heavy) ? [...cfg.llm.heavy] : [];
+    const knownDefault: Record<string, string> = {
+      anthropic: "anthropic/claude-sonnet-4-6",
+      openai: "openai/gpt-4.1-mini",
+      google: "google/gemini-2.5-flash",
+    };
+    let appended = false;
+    for (const name of mergedProviderNames) {
+      if (hasModelFrom(defaultList, name) && hasModelFrom(heavyList, name)) continue;
+      let defaultModel: string | null = knownDefault[name] ?? null;
+      if (!defaultModel && gwProviders && typeof (gwProviders as Record<string, unknown>)[name] === "object") {
+        const gw = (gwProviders as Record<string, unknown>)[name] as Record<string, unknown>;
+        const gwModel = typeof gw.defaultModel === "string" ? gw.defaultModel : typeof gw.model === "string" ? gw.model : null;
+        if (gwModel?.trim()) defaultModel = `${name}/${gwModel.trim()}`;
+      }
+      if (!defaultModel) continue;
+      if (!hasModelFrom(defaultList, name)) { defaultList.push(defaultModel); appended = true; }
+      const heavyModel = name === "anthropic" ? "anthropic/claude-opus-4-6" : defaultModel;
+      if (!hasModelFrom(heavyList, name)) { heavyList.push(heavyModel); appended = true; }
+    }
+    if (appended) {
+      (cfg.llm as Record<string, unknown>).default = defaultList;
+      (cfg.llm as Record<string, unknown>).heavy = heavyList;
+      api.logger.info?.(`memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.`);
+    }
   }
 
   // Chat/LLM client: multi-provider proxy that routes each model to the correct API.

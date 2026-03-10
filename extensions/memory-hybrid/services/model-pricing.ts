@@ -22,7 +22,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "openai/gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.60 },
   "openai/o3": { inputPer1M: 2.00, outputPer1M: 8.00 },
   "openai/o3-mini": { inputPer1M: 1.10, outputPer1M: 4.40 },
-  "openai/gpt-5.2": { inputPer1M: 2.00, outputPer1M: 8.00 },
+  "openai/gpt-5.4": { inputPer1M: 2.00, outputPer1M: 8.00 },
   // Google
   "google/gemini-2.0-flash-lite": { inputPer1M: 0.075, outputPer1M: 0.30 },
   "google/gemini-2.0-flash": { inputPer1M: 0.10, outputPer1M: 0.40 },

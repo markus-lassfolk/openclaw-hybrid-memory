@@ -93,15 +93,15 @@ import { getModeCostEstimates } from "../services/model-pricing.js";
 // modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
-const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "default" | "heavy" }> = [
+const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy" }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
   // Daily 02:30 | self-correction-analysis | self-correction-run
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true },
-  // Sunday 04:00 | weekly-extract-procedures | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "default", enabled: true },
+  // Sunday 04:00 | weekly-extract-procedures (nano = background model, avoids locking main AI)
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "nano", enabled: true },
   // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
   // Saturday 04:00 | weekly-deep-maintenance | compact → scope promote
@@ -115,12 +115,14 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "defa
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true },
 ];
 
-/** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier). */
-function resolveCronJob(def: Record<string, unknown> & { modelTier?: "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
-  const { modelTier, ...rest } = def;
+/** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier).
+ * Strips the top-level `channel` field (maintenance jobs don't need user delivery) and sets delivery.mode = "none"
+ * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs. */
+function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
+  const { modelTier, channel: _channel, ...rest } = def;
   const tier = modelTier ?? "default";
   const model = getDefaultCronModel(pluginConfig, tier);
-  return { ...rest, model };
+  return { ...rest, model, delivery: { mode: "none" as const } };
 }
 
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
@@ -200,6 +202,13 @@ function ensureMaintenanceCronJobs(
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+        // Fix delivery: "announce" + channel "system" or "last" requires WhatsApp target (E.164); maintenance jobs don't need delivery.
+        const d = existing.delivery as { mode?: string; channel?: string } | undefined;
+        if (d && d.mode === "announce" && (d.channel === "system" || d.channel === "last")) {
+          existing.delivery = { mode: "none" };
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
         }
@@ -947,13 +956,37 @@ export async function runVerifyForCli(
   }
 
   const cronCfgForVerify = getCronModelConfig(cfg);
-  const defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
-  const heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
+  let defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
+  let heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
   const providersWithKeys = getProvidersWithKeys(cronCfgForVerify);
   const llmSource = cfg.llm?._source === "gateway" ? " (auto from agents.defaults.model)" : cfg.llm ? " (from plugin config)" : "";
   const nanoOrder = getLLMModelPreference(cronCfgForVerify, "nano");
   const hasExplicitNano = Array.isArray(cfg.llm?.nano) && (cfg.llm.nano as string[]).length > 0;
   const nanoSameAsDefault = nanoOrder[0] === defaultOrder[0];
+
+  // Build effective tier lists: append one model per provider that has a key but no model in config tiers
+  // (so verify shows and tests Anthropic, Minimax, etc. when keys come from gateway merge)
+  const hasModelFrom = (list: string[], prefix: string) =>
+    list.some((m) => m.startsWith(`${prefix}/`) || (prefix === "anthropic" && m.startsWith("claude-")) || (prefix === "google" && m.startsWith("gemini-")));
+  const apiConfigForVerify = ctx.api?.config as Record<string, unknown> | undefined;
+  const gwProv = (apiConfigForVerify?.models as Record<string, unknown> | undefined)?.providers
+    ?? (apiConfigForVerify?.llm as Record<string, unknown> | undefined)?.providers;
+  const gwProvRecord = (gwProv && typeof gwProv === "object" && !Array.isArray(gwProv)) ? gwProv as Record<string, Record<string, unknown>> : undefined;
+  const knownDefault: Record<string, string> = { anthropic: "anthropic/claude-sonnet-4-6", openai: "openai/gpt-4.1-mini", google: "google/gemini-2.5-flash" };
+  for (const p of providersWithKeys) {
+    if (hasModelFrom(defaultOrder, p) && hasModelFrom(heavyOrder, p)) continue;
+    let model: string | null = knownDefault[p] ?? null;
+    if (!model && gwProvRecord && gwProvRecord[p] && typeof gwProvRecord[p] === "object") {
+      const g = gwProvRecord[p];
+      const gm = typeof g.defaultModel === "string" ? g.defaultModel : typeof g.model === "string" ? g.model : null;
+      if (gm?.trim()) model = `${p}/${gm.trim()}`;
+    }
+    if (!model) continue;
+    if (!hasModelFrom(defaultOrder, p)) defaultOrder = [...defaultOrder, model];
+    const heavyModel = p === "anthropic" ? "anthropic/claude-opus-4-6" : model;
+    if (!hasModelFrom(heavyOrder, p)) heavyOrder = [...heavyOrder, heavyModel];
+  }
+
   // Include providers that appear in failover lists (e.g. anthropic when keys are in gateway)
   const providersInFailover = new Set<string>();
   for (const model of [...nanoOrder, ...defaultOrder, ...heavyOrder]) {
@@ -969,6 +1002,40 @@ export async function runVerifyForCli(
   log(`  default tier (reflection, general): ${defaultOrder.join(" → ")}${llmSource}`);
   log(`  heavy tier (distill, self-correction): ${heavyOrder.join(" → ")}${llmSource}`);
   log(`  providers with keys: ${allProviders.length ? allProviders.join(", ") : "none"}`);
+  // Hint when a provider has a key but no models in the tier lists (e.g. Anthropic key but no Claude/Opus in llm tiers)
+  const inferProvider = (m: string): string => {
+    const t = m.trim();
+    if (t.includes("/")) return t.split("/")[0]!.trim().toLowerCase();
+    const lower = t.toLowerCase();
+    if (lower.startsWith("gemini-")) return "google";
+    if (lower.startsWith("claude-")) return "anthropic";
+    if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return "openai";
+    return "";
+  };
+  const providersInTiers = new Set<string>();
+  for (const model of [...nanoOrder, ...defaultOrder, ...heavyOrder]) {
+    const p = inferProvider(model);
+    if (p) providersInTiers.add(p);
+  }
+  const knownPrefixes: Record<string, string> = { google: "Google", openai: "OpenAI", anthropic: "Anthropic" };
+  for (const p of providersWithKeys) {
+    if (!providersInTiers.has(p)) {
+      const name = knownPrefixes[p] ?? p;
+      const example = p === "anthropic" ? "anthropic/claude-opus-4-6" : p === "google" ? "google/gemini-3.1-pro-preview" : `${p}/<model>`;
+      log(`  ℹ️  You have an API key for ${name} but no ${name} models in llm tiers — add e.g. ${example} to llm.default or llm.heavy to use and test it.`);
+    }
+  }
+  // Gateway providers (for reference): plugin only uses providers with keys in plugin config
+  const apiConfig = ctx.api?.config as Record<string, unknown> | undefined;
+  const gatewayProviders = apiConfig?.models && typeof apiConfig.models === "object" && (apiConfig.models as Record<string, unknown>).providers && typeof (apiConfig.models as Record<string, unknown>).providers === "object"
+    ? Object.keys((apiConfig.models as Record<string, unknown>).providers as Record<string, unknown>).filter(Boolean).sort()
+    : [];
+  if (gatewayProviders.length > 0) {
+    const onlyInGateway = gatewayProviders.filter((g) => !allProviders.includes(g));
+    if (onlyInGateway.length > 0) {
+      log(`  Gateway also has providers: ${onlyInGateway.join(", ")} (plugin uses only providers with keys in plugin config; add llm.providers.<name> and <name>/model to llm tiers to use them here).`);
+    }
+  }
   if (defaultOrder.length > 1 || heavyOrder.length > 1) {
     log(`  (if a model fails, the next in the list is tried)`);
   }
@@ -1003,7 +1070,15 @@ export async function runVerifyForCli(
     const TEST_LLM_TIMEOUT_MS = 15_000;
     let anyUnconfigured = false;
     log("\n  LLM reachability (--test-llm):");
+    const isNonChatModel = (m: string) => {
+      const bare = m.includes("/") ? m.split("/")[1] ?? m : m;
+      return bare.toLowerCase().includes("-codex");
+    };
     for (const model of allModels) {
+      if (isNonChatModel(model)) {
+        log(`    ${model}: ${WARN}skipped — Codex/agentic models use a different API (not chat/completions)`);
+        continue;
+      }
       try {
         await chatComplete({
           model,
@@ -1025,8 +1100,8 @@ export async function runVerifyForCli(
       }
     }
     if (anyUnconfigured) {
-      log(`  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config.`);
-      log(`    Example: llm.providers.anthropic.apiKey = "sk-ant-..." (and optionally .baseURL for the endpoint).`);
+      log(`  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config, or set env vars.`);
+      log(`    Anthropic: llm.providers.anthropic.apiKey in config, or ANTHROPIC_API_KEY in the environment.`);
     }
   }
 
@@ -1066,7 +1141,7 @@ export async function runVerifyForCli(
     log(`  ${est.mode.padEnd(10)}: ~$${low}-${high}/mo  (${est.description})`);
   }
   log(`  ℹ️  Estimates assume ~100 conversations/month with nano-tier models.`);
-  log(`     Heavy models (Opus, GPT-5.2) for distill/self-correction increase costs 5-10×.`);
+  log(`     Heavy models (Opus, GPT-5.4) for distill/self-correction increase costs 5-10×.`);
 
   log("\n───── Ingestion & Distillation ─────");
   if (cfg.ingest) {
@@ -1077,6 +1152,9 @@ export async function runVerifyForCli(
   if (cfg.distill) {
     log(`  distill.extractDirectives: ${bool(cfg.distill.extractDirectives !== false)}`);
     log(`  distill.extractReinforcement: ${bool(cfg.distill.extractReinforcement !== false)}`);
+    if (cfg.distill.extractionModelTier) {
+      log(`  distill.extractionModelTier: ${cfg.distill.extractionModelTier}`);
+    }
   } else {
     log(`  distill: ${bool(false)}`);
   }
@@ -1567,13 +1645,22 @@ export function runRecordDistillForCli(ctx: HandlerContext): RecordDistillResult
   }
 }
 
+/** In-memory concurrency lock: prevents two simultaneous scans of the same type. */
+const SCAN_IN_PROGRESS = new Map<string, boolean>();
+
+/** 23-hour threshold for startup guard (seconds). */
+const SCAN_MIN_INTERVAL_MS = 23 * 60 * 60 * 1000;
+
 /**
- * Returns session .jsonl file paths modified within the last `days` days.
+ * Returns session .jsonl file paths modified within the last `days` days,
+ * or — when `sinceTimestamp` is provided — modified strictly after that epoch-ms.
  * Shared by procedure/directive/reinforcement extraction.
  */
-function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
+function getSessionFilePathsSince(sessionDir: string, days: number, sinceTimestamp?: number): string[] {
   if (!existsSync(sessionDir)) return [];
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const cutoff = sinceTimestamp !== undefined
+    ? sinceTimestamp
+    : Date.now() - days * 24 * 60 * 60 * 1000;
   try {
     const files = readdirSync(sessionDir);
     return files
@@ -1581,7 +1668,7 @@ function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
       .map((f) => join(sessionDir, f))
       .filter((p) => {
         try {
-          return statSync(p).mtimeMs >= cutoff;
+          return statSync(p).mtimeMs > cutoff;
         } catch (err) {
           capturePluginError(err as Error, {
             operation: 'stat-check',
@@ -1598,23 +1685,85 @@ function getSessionFilePathsSince(sessionDir: string, days: number): string[] {
 }
 
 /**
+ * Returns the maximum mtime (in epoch-ms) of the given file paths, or undefined if none exist.
+ * Used to track the newest session timestamp for scan cursors.
+ */
+function getMaxMtime(filePaths: string[]): number | undefined {
+  let maxMtime: number | undefined;
+  for (const p of filePaths) {
+    try {
+      const mtime = statSync(p).mtimeMs;
+      if (maxMtime === undefined || mtime > maxMtime) {
+        maxMtime = mtime;
+      }
+    } catch (err) {
+      // Ignore files that can't be stat'd
+    }
+  }
+  return maxMtime;
+}
+
+/**
+ * Apply the 23h startup guard and concurrency lock for a scan type.
+ * Returns a skip reason string if the scan should be skipped, or null if it can proceed.
+ * If it can proceed, marks the scan as in-progress (caller must call clearScanLock when done).
+ */
+function acquireScanSlot(
+  scanType: string,
+  lastRunAt: number | undefined,
+  logger: { info?: (s: string) => void },
+): string | null {
+  if (SCAN_IN_PROGRESS.get(scanType)) {
+    const msg = `Skipping ${scanType}: already running`;
+    logger.info?.(msg);
+    return msg;
+  }
+  if (lastRunAt && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
+    const hoursAgo = ((Date.now() - lastRunAt) / 3_600_000).toFixed(1);
+    const msg = `Skipping ${scanType}: last run was ${hoursAgo}h ago (threshold: 23h). Use --full to override.`;
+    logger.info?.(msg);
+    return msg;
+  }
+  SCAN_IN_PROGRESS.set(scanType, true);
+  return null;
+}
+
+function clearScanLock(scanType: string): void {
+  SCAN_IN_PROGRESS.delete(scanType);
+}
+
+/**
  * Extract procedures from sessions
  */
 export async function runExtractProceduresForCli(
   ctx: HandlerContext,
-  opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean },
+  opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean; full?: boolean },
 ): Promise<ExtractProceduresResult> {
   const { factsDb, cfg, logger } = ctx;
+  const SCAN_TYPE = "extract-procedures";
   if (cfg.procedures?.enabled === false) {
     return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
   }
   const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Startup guard + concurrency lock (skip when not full mode)
+  if (!opts.full && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: false, skipped: true };
+  }
+
   let filePaths: string[] | undefined;
-  if (opts.days != null && opts.days > 0) {
+  if (!opts.full && cursor) {
+    // Incremental: only sessions modified after the last run
+    filePaths = getSessionFilePathsSince(sessionDir, opts.days ?? 7, cursor.lastRunAt);
+    logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+  } else if (opts.days != null && opts.days > 0) {
     filePaths = getSessionFilePathsSince(sessionDir, opts.days);
   }
+
   try {
-    return await extractProceduresFromSessions(
+    const result = await extractProceduresFromSessions(
       factsDb,
       {
         sessionDir: filePaths ? undefined : sessionDir,
@@ -1625,9 +1774,16 @@ export async function runExtractProceduresForCli(
       },
       { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
     );
+    if (!opts.dryRun) {
+      const lastSessionTs = filePaths ? getMaxMtime(filePaths) : undefined;
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
+    }
+    return result;
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractProceduresForCli" });
     throw err;
+  } finally {
+    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }
 
@@ -1717,55 +1873,79 @@ export async function runSkillsSuggestForCli(
  */
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
-  opts: { days?: number; verbose?: boolean; dryRun?: boolean },
+  opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
 ): Promise<DirectiveExtractResult & { stored?: number }> {
-  const { factsDb, cfg } = ctx;
+  const { factsDb, cfg, logger } = ctx;
+  const SCAN_TYPE = "extract-directives";
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
-  const filePaths = getSessionFilePathsSince(sessionDir, days);
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
-  const directiveRegex = getDirectiveSignalRegex();
-  const result = runDirectiveExtract({ filePaths, directiveRegex });
-
-  if (opts.verbose) {
-    for (const incident of result.incidents) {
-      console.log(`[${incident.sessionFile}] ${incident.categories.join(", ")}: ${incident.extractedRule}`);
-    }
+  // Startup guard + concurrency lock (skip when not full mode)
+  if (!opts.full && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { incidents: [], sessionsScanned: 0, stored: 0, skipped: true } as DirectiveExtractResult & { stored?: number; skipped?: boolean };
   }
 
-  // Store directives as facts if not dry-run
-  let stored = 0;
-  if (!opts.dryRun) {
-    for (const incident of result.incidents) {
-      try {
-        if (factsDb.hasDuplicate(incident.extractedRule)) continue;
-        const category = incident.categories.includes("preference") ? "preference" :
-                        incident.categories.includes("absolute_rule") ? "rule" :
-                        incident.categories.includes("conditional_rule") ? "rule" :
-                        incident.categories.includes("warning") ? "rule" :
-                        incident.categories.includes("future_behavior") ? "rule" :
-                        incident.categories.includes("procedural") ? "pattern" :
-                        incident.categories.includes("correction") ? "decision" :
-                        incident.categories.includes("implicit_correction") ? "decision" :
-                        incident.categories.includes("explicit_memory") ? "fact" : "other";
-        factsDb.store({
-          text: incident.extractedRule,
-          category: category as MemoryCategory,
-          importance: 0.8,
-          entity: null,
-          key: null,
-          value: null,
-          source: `directive:${incident.sessionFile}`,
-          confidence: incident.confidence,
-        });
-        stored++;
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
+  try {
+    let filePaths: string[];
+    if (!opts.full && cursor) {
+      filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
+      logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+    } else {
+      filePaths = getSessionFilePathsSince(sessionDir, days);
+    }
+
+    const directiveRegex = getDirectiveSignalRegex();
+    const result = runDirectiveExtract({ filePaths, directiveRegex });
+
+    if (opts.verbose) {
+      for (const incident of result.incidents) {
+        console.log(`[${incident.sessionFile}] ${incident.categories.join(", ")}: ${incident.extractedRule}`);
       }
     }
-  }
 
-  return { ...result, stored };
+    // Store directives as facts if not dry-run
+    let stored = 0;
+    if (!opts.dryRun) {
+      for (const incident of result.incidents) {
+        try {
+          if (factsDb.hasDuplicate(incident.extractedRule)) continue;
+          const category = incident.categories.includes("preference") ? "preference" :
+                          incident.categories.includes("absolute_rule") ? "rule" :
+                          incident.categories.includes("conditional_rule") ? "rule" :
+                          incident.categories.includes("warning") ? "rule" :
+                          incident.categories.includes("future_behavior") ? "rule" :
+                          incident.categories.includes("procedural") ? "pattern" :
+                          incident.categories.includes("correction") ? "decision" :
+                          incident.categories.includes("implicit_correction") ? "decision" :
+                          incident.categories.includes("explicit_memory") ? "fact" : "other";
+          factsDb.store({
+            text: incident.extractedRule,
+            category: category as MemoryCategory,
+            importance: 0.8,
+            entity: null,
+            key: null,
+            value: null,
+            source: `directive:${incident.sessionFile}`,
+            confidence: incident.confidence,
+          });
+          stored++;
+        } catch (err) {
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
+        }
+      }
+    }
+
+    const returnVal = { ...result, stored };
+    if (!opts.dryRun) {
+      const lastSessionTs = getMaxMtime(filePaths);
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
+    }
+    return returnVal;
+  } finally {
+    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
+  }
 }
 
 /**
@@ -1773,13 +1953,29 @@ export async function runExtractDirectivesForCli(
  */
 export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
-  opts: { days?: number; verbose?: boolean; dryRun?: boolean; workspace?: string },
+  opts: { days?: number; verbose?: boolean; dryRun?: boolean; workspace?: string; full?: boolean },
 ): Promise<ReinforcementExtractResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb, logger } = ctx;
+  const SCAN_TYPE = "extract-reinforcement";
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
-  const filePaths = getSessionFilePathsSince(sessionDir, days);
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Startup guard + concurrency lock
+  if (!opts.full && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { incidents: [], sessionsScanned: 0, skipped: true } as ReinforcementExtractResult & { skipped?: boolean };
+  }
+
+  try {
+    let filePaths: string[];
+    if (!opts.full && cursor) {
+      filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastRunAt);
+      logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
+    } else {
+      filePaths = getSessionFilePathsSince(sessionDir, days);
+    }
+    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
 
   const reinforcementRegex = getReinforcementSignalRegex();
   const result = runReinforcementExtract({ filePaths, reinforcementRegex });
@@ -1807,9 +2003,11 @@ export async function runExtractReinforcementForCli(
       const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
         incidents_json: JSON.stringify(result.incidents),
       });
-      const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
-      const model = heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
-      const fallbackModels = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+      const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+      const cronCfg = getCronModelConfig(cfg);
+      const tierPref = getLLMModelPreference(cronCfg, extractionTier);
+      const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
+      const fallbackModels = tierPref.length > 1 ? tierPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
       const content = await chatCompleteWithRetry({
         model,
         content: prompt,
@@ -1971,7 +2169,14 @@ export async function runExtractReinforcementForCli(
     }
   }
 
-  return result;
+    if (!opts.dryRun) {
+      const lastSessionTs = getMaxMtime(filePaths);
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), result.sessionsScanned, lastSessionTs);
+    }
+    return result;
+  } finally {
+    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
+  }
 }
 
 /**
@@ -2533,16 +2738,19 @@ export async function runBackfillForCli(
 }
 
 /**
- * Gather session files from agents directory
+ * Gather session files from agents directory.
+ * When `sinceTimestampMs` is provided (watermark mode), returns only files with mtime > sinceTimestampMs.
  */
-function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string }): Array<{ path: string; mtime: number }> {
+function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string; sinceTimestampMs?: number }): Array<{ path: string; mtime: number }> {
   const openclawDir = join(homedir(), ".openclaw");
   const agentsDir = join(openclawDir, "agents");
   if (!existsSync(agentsDir)) return [];
   const cutoffMs =
-    opts.since
-      ? new Date(opts.since).getTime()
-      : Date.now() - (opts.all ? 90 : (opts.days ?? 3)) * 24 * 60 * 60 * 1000;
+    opts.sinceTimestampMs !== undefined
+      ? opts.sinceTimestampMs
+      : opts.since
+        ? new Date(opts.since).getTime()
+        : Date.now() - (opts.all ? 90 : (opts.days ?? 3)) * 24 * 60 * 60 * 1000;
   const out: Array<{ path: string; mtime: number }> = [];
   try {
     for (const agentName of readdirSync(agentsDir, { withFileTypes: true })) {
@@ -2554,7 +2762,7 @@ function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string
         const fp = join(sessionsDir, f.name);
         try {
           const stat = statSync(fp);
-          if (stat.mtimeMs >= cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
+          if (stat.mtimeMs > cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
         } catch (err) {
           capturePluginError(err as Error, { subsystem: "cli", operation: "gatherSessionFiles:stat", filePath: fp });
         }
@@ -2707,8 +2915,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   const truncatedBlock = userMessagesBlock.length > maxChars ? userMessagesBlock.slice(0, maxChars) + "\n[truncated...]" : userMessagesBlock;
   const prompt = fillPrompt(loadPrompt("analyze-feedback-phrases"), { user_messages: truncatedBlock });
   const cronCfg = getCronModelConfig(cfg);
-  const heavyPref = getLLMModelPreference(cronCfg, "heavy");
-  const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(cronCfg, "heavy");
+  const defaultPref = getLLMModelPreference(cronCfg, "default");
+  const model = opts.model ?? defaultPref[0] ?? getDefaultCronModel(cronCfg, "default");
   const { spawn } = await import("node:child_process");
   const { tmpdir: osTmp } = await import("node:os");
   const promptPath = join(osTmp(), `analyze-feedback-phrases-${Date.now()}.txt`);
@@ -2965,19 +3173,38 @@ export async function runIngestFilesForCli(
  */
 export async function runDistillForCli(
   ctx: HandlerContext,
-  opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number },
+  opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number; full?: boolean },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb } = ctx;
-  const sessionFiles = gatherSessionFiles({
-    all: opts.all,
-    days: opts.days ?? (opts.all ? 90 : 3),
-    since: opts.since,
-  });
+  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, logger } = ctx;
+  const SCAN_TYPE = "distill";
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Startup guard + concurrency lock (skip when --all/--full/--since overrides watermark)
+  const useWatermark = !opts.full && !opts.all && !opts.since;
+  if (useWatermark && !opts.dryRun) {
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: false };
+  }
+
+  try {
+  const gatherOpts = useWatermark && cursor
+    ? { sinceTimestampMs: cursor.lastRunAt }
+    : { all: opts.all, days: opts.days ?? (opts.all ? 90 : 3), since: opts.since };
+
+  if (useWatermark && cursor) {
+    logger.info?.(`memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastRunAt).toISOString()})`);
+  }
+
+  const sessionFiles = gatherSessionFiles(gatherOpts);
   const maxSessions = opts.maxSessions ?? 0;
   const filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
   if (filesToProcess.length === 0) {
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
+    if (useWatermark && !opts.dryRun) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
+      clearScanLock(SCAN_TYPE);
+    }
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, skipped: 0, dryRun: opts.dryRun };
   }
   const cronCfgDistill = getCronModelConfig(cfg);
@@ -3176,7 +3403,14 @@ export async function runDistillForCli(
     sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
     capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
   }
+  if (!opts.dryRun) {
+    const lastSessionTs = getMaxMtime(filesToProcess.map((f) => f.path));
+    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), filesToProcess.length, lastSessionTs);
+  }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, skipped, dryRun: false };
+  } finally {
+    if (useWatermark && !opts.dryRun) clearScanLock(SCAN_TYPE);
+  }
 }
 
 /**
@@ -3361,9 +3595,23 @@ export async function runSelfCorrectionRunForCli(
     model?: string;
     approve?: boolean;
     applyTools?: boolean;
+    full?: boolean;
   },
 ): Promise<SelfCorrectionRunResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, logger, proposalsDb } = ctx;
+  const SCAN_TYPE = "self-correction-run";
+
+  // Startup guard + concurrency lock (skip if already ran within 23h and not forced)
+  // Only apply when no explicit incidents/extractPath provided (i.e. fresh scan)
+  if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) {
+    const cursor = factsDb.getScanCursor(SCAN_TYPE);
+    const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
+    if (skip) {
+      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, skipped: true };
+    }
+  }
+
+  try {
   const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
   const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
   const reportDir = join(workspaceRoot, "memory", "reports");
@@ -3392,6 +3640,10 @@ export async function runSelfCorrectionRunForCli(
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-empty-report" });
     }
+    if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), 0);
+      clearScanLock(SCAN_TYPE);
+    }
     return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
   }
   const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
@@ -3415,7 +3667,7 @@ export async function runSelfCorrectionRunForCli(
       const { tmpdir: osTmp } = await import("node:os");
       const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
       writeFileSync(promptPath, prompt, "utf-8");
-      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "heavy"));
+      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default"));
       const r = spawnSync(
         "openclaw",
         ["sessions", "spawn", "--model", spawnModel, "--message", "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.", "--attach", promptPath],
@@ -3605,6 +3857,10 @@ export async function runSelfCorrectionRunForCli(
     });
   }
 
+  if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
+    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
+  }
+
   return {
     incidentsFound: incidents.length,
     analysed: analysed.length,
@@ -3614,6 +3870,9 @@ export async function runSelfCorrectionRunForCli(
     toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
     toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
   };
+  } finally {
+    if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);
+  }
 }
 
 /**
@@ -4036,7 +4295,19 @@ export function runConfigSetForCli(
     }
     return { ok: true, configPath, message: `Set verbosity = "${value}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
   }
-  if (!setNested(out.config, k, value)) {
+  // Enum-like keys: normalize value to lowercase so "Nano" → "nano" for schema validation
+  const enumKeys: Record<string, string[]> = {
+    "distill.extractionModelTier": ["nano", "default", "heavy"],
+  };
+  let valueToSet: unknown = value;
+  if (enumKeys[k]) {
+    const normalized = String(value).trim().toLowerCase();
+    if (!enumKeys[k].includes(normalized)) {
+      return { ok: false, error: `Invalid ${k}: "${value}". Use one of: ${enumKeys[k].join(", ")}` };
+    }
+    valueToSet = normalized;
+  }
+  if (!setNested(out.config, k, valueToSet)) {
     return { ok: false, error: `Invalid config key: ${key}` };
   }
   const written = getNested(out.config, k);
@@ -4318,9 +4589,9 @@ export async function runExtractImplicitFeedbackForCli(
             if (implicitCfg.trajectoryLLMAnalysis) {
               try {
                 const prompt = loadPrompt("trajectory-analyze");
-                const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
-                const model = heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
-                const fallbackModels = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+                const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+                const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+                const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
                 const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
                   const userMessage = opts.messages.find((m) => m.role === "user");
                   if (!userMessage) throw new Error("No user message found");

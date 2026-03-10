@@ -115,6 +115,7 @@ export type ManageContext = {
     model?: string;
     approve?: boolean;
     applyTools?: boolean;
+    full?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
   runExport: (opts: {
     outputPath: string;
@@ -1504,6 +1505,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--model <m>", "LLM model (default from autoClassify config)")
     .option("--approve", "Auto-approve all corrections (skip review)")
     .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
+    .option("--full", "Force full re-scan (bypass 23-hour startup guard)")
     .action(withExit(async (opts?: {
       extractPath?: string;
       workspace?: string;
@@ -1511,15 +1513,17 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       model?: string;
       approve?: boolean;
       applyTools?: boolean;
+      full?: boolean;
     }) => {
       const extractPath = opts?.extractPath;
       const workspace = opts?.workspace;
       const dryRun = !!opts?.dryRun;
       const model = opts?.model ?? ctx.autoClassifyConfig.model;
       const approve = !!opts?.approve;
+      const full = !!opts?.full;
       let res;
       try {
-        res = await runSelfCorrectionRun({ extractPath, workspace, dryRun, model, approve, applyTools: opts?.applyTools });
+        res = await runSelfCorrectionRun({ extractPath, workspace, dryRun, model, approve, applyTools: opts?.applyTools, full });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "self-correction-run" });
         throw err;

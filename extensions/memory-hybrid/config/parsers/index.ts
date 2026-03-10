@@ -413,6 +413,10 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
           reinforcementPromotionThreshold: typeof distillRaw.reinforcementPromotionThreshold === "number" && distillRaw.reinforcementPromotionThreshold >= 1
             ? Math.floor(distillRaw.reinforcementPromotionThreshold)
             : 2,
+          extractionModelTier: (() => {
+            const v = typeof distillRaw.extractionModelTier === "string" ? distillRaw.extractionModelTier.trim().toLowerCase() : "";
+            return (v === "nano" || v === "default" || v === "heavy") ? (v as "nano" | "default" | "heavy") : undefined;
+          })(),
         }
       : undefined;
 

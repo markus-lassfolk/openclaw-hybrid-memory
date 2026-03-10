@@ -55,6 +55,7 @@ export type ExtractProceduresResult = {
   positiveCount: number;
   negativeCount: number;
   dryRun: boolean;
+  skipped?: boolean;
 };
 
 export type GenerateAutoSkillsResult = {
@@ -86,6 +87,7 @@ export type SelfCorrectionRunResult = {
   toolsSuggestions?: string[];
   toolsApplied?: number;
   error?: string;
+  skipped?: boolean;
 };
 
 export type AnalyzeFeedbackPhrasesResult = {

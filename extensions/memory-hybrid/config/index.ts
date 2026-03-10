@@ -29,10 +29,13 @@ export const hybridConfigSchema = {
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
 
+const OPENAI_NANO_CRON_MODEL = "openai/gpt-4.1-nano";
 const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-4.1-mini";
-const OPENAI_HEAVY_CRON_MODEL = "openai/gpt-5.2";
+const OPENAI_HEAVY_CRON_MODEL = "openai/gpt-5.4";
+const GEMINI_NANO_MODEL = "google/gemini-2.0-flash-lite";
 const GEMINI_DEFAULT_MODEL = "google/gemini-2.5-flash";
 const GEMINI_HEAVY_MODEL = "google/gemini-3.1-pro-preview";
+const CLAUDE_NANO_MODEL = "anthropic/claude-haiku-4-5-20251001";
 const CLAUDE_DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 const CLAUDE_HEAVY_MODEL = "anthropic/claude-opus-4-6";
 
@@ -45,21 +48,33 @@ function getDefaultCronModelLegacy(
   pluginConfig: CronModelConfig | undefined,
   tier: CronModelTier,
 ): string {
-  if (!pluginConfig) return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
+  if (!pluginConfig) {
+    if (tier === "heavy") return OPENAI_HEAVY_CRON_MODEL;
+    if (tier === "nano") return OPENAI_NANO_CRON_MODEL;
+    return OPENAI_DEFAULT_CRON_MODEL;
+  }
   if (hasKey(pluginConfig.distill?.apiKey)) {
     const defaultModel = pluginConfig.distill?.defaultModel?.trim();
-    if (defaultModel) return defaultModel;
-    return tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL;
+    if (defaultModel) return tier === "nano" ? GEMINI_NANO_MODEL : defaultModel;
+    if (tier === "heavy") return GEMINI_HEAVY_MODEL;
+    if (tier === "nano") return GEMINI_NANO_MODEL;
+    return GEMINI_DEFAULT_MODEL;
   }
   if (hasKey(pluginConfig.claude?.apiKey)) {
     const defaultModel = pluginConfig.claude?.defaultModel?.trim();
     if (defaultModel) return defaultModel;
-    return tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL;
+    if (tier === "heavy") return CLAUDE_HEAVY_MODEL;
+    if (tier === "nano") return CLAUDE_NANO_MODEL;
+    return CLAUDE_DEFAULT_MODEL;
   }
   if (hasKey(pluginConfig.embedding?.apiKey)) {
-    return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
+    if (tier === "heavy") return OPENAI_HEAVY_CRON_MODEL;
+    if (tier === "nano") return OPENAI_NANO_CRON_MODEL;
+    return OPENAI_DEFAULT_CRON_MODEL;
   }
-  return tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL;
+  if (tier === "heavy") return OPENAI_HEAVY_CRON_MODEL;
+  if (tier === "nano") return OPENAI_NANO_CRON_MODEL;
+  return OPENAI_DEFAULT_CRON_MODEL;
 }
 
 /**
@@ -71,19 +86,24 @@ function getDefaultPreferredModelList(
   tier: CronModelTier,
 ): string[] {
   if (!pluginConfig) {
-    return [tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL];
+    if (tier === "heavy") return [OPENAI_HEAVY_CRON_MODEL];
+    if (tier === "nano") return [OPENAI_NANO_CRON_MODEL];
+    return [OPENAI_DEFAULT_CRON_MODEL];
   }
   const list: string[] = [];
   if (hasKey(pluginConfig.distill?.apiKey)) {
     const m = pluginConfig.distill?.defaultModel?.trim();
-    list.push(m || (tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL));
+    if (tier === "nano") list.push(GEMINI_NANO_MODEL);
+    else list.push(m || (tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL));
   }
   if (hasKey(pluginConfig.embedding?.apiKey)) {
-    list.push(tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
+    if (tier === "nano") list.push(OPENAI_NANO_CRON_MODEL);
+    else list.push(tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
   }
   if (hasKey(pluginConfig.claude?.apiKey)) {
     const m = pluginConfig.claude?.defaultModel?.trim();
-    list.push(m || (tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL));
+    if (tier === "nano") list.push(CLAUDE_NANO_MODEL);
+    else list.push(m || (tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL));
   }
   if (list.length === 0) {
     list.push(getDefaultCronModelLegacy(pluginConfig, tier));
