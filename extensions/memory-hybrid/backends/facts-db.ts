@@ -457,8 +457,7 @@ export class FactsDB {
     if (!row) return null;
     return {
       lastSessionTs: row.last_session_ts,
-      // Expose the session watermark as `lastRunAt` for callers that use it for incremental filtering.
-      lastRunAt: row.last_session_ts,
+      lastRunAt: row.last_run_at,
       sessionsProcessed: row.sessions_processed,
     };
   }
