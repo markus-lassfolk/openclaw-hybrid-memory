@@ -59,6 +59,67 @@ function isLongContextModel(model: string): boolean {
 /** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
 const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
 
+/**
+ * Unified 404 detection helper.
+ * Checks the HTTP status code property first (reliable), then falls back to
+ * targeted message pattern matching. Only matches "model not found" scenarios,
+ * NOT generic "file not found" or "module not found" errors.
+ */
+function is404Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    // OpenAI SDK sets .status directly
+    const status = (err as { status?: unknown }).status;
+    if (status === 404) return true;
+  }
+  if (err instanceof Error) {
+    // Match HTTP 404 patterns specifically — avoid false positives from
+    // "file not found" or "module not found" strings in non-HTTP errors.
+    return /\bHTTP\s+404\b|\b404\b.*not\s+found|model.*not\s+found|not\s+found.*model/i.test(err.message)
+      // Also match bare numeric 404 in error messages (e.g. "404 Not Found" from HTTP responses)
+      || /^\b404\b/.test(err.message.trim())
+      // OpenAI SDK formats: "404 Model not found" or "Error code: 404"
+      || /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message);
+  }
+  return false;
+}
+
+/**
+ * Unified 5xx / internal server error detection helper.
+ * Checks HTTP status code property first, then uses conservative message patterns.
+ * Avoids false positives from non-HTTP "internal error" messages (e.g. JavaScript errors).
+ */
+function is500Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === "number" && status >= 500 && status < 600) return true;
+  }
+  if (err instanceof Error) {
+    // Only match HTTP 5xx patterns — not generic "internal error" from JS
+    return /\b5\d{2}\b|internal\s+server\s+error/i.test(err.message);
+  }
+  return false;
+}
+
+/**
+ * Try to parse a Retry-After delay (in ms) from an API error.
+ * Returns undefined when the header is absent or unparseable.
+ */
+function parseRetryAfterMs(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  // OpenAI SDK exposes headers on the error response
+  const headers = (err as { response?: { headers?: Record<string, string> }; headers?: Record<string, string> })
+    .response?.headers ?? (err as { headers?: Record<string, string> }).headers;
+  if (!headers) return undefined;
+  const raw = headers["retry-after"] ?? headers["Retry-After"];
+  if (!raw) return undefined;
+  // Retry-After can be either a delay-seconds integer or an HTTP-date
+  const secs = parseInt(raw, 10);
+  if (!isNaN(secs) && secs > 0) return secs * 1000;
+  const date = Date.parse(raw);
+  if (!isNaN(date)) return Math.max(0, date - Date.now());
+  return undefined;
+}
+
 export async function chatComplete(opts: {
   model: string;
   content: string;
@@ -116,9 +177,9 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
-      msg.includes("internal server error");  // #302: OpenAI SDK InternalServerError has no numeric prefix
+      is500Like(err);  // #302: OpenAI SDK InternalServerError has no numeric prefix
     const isConfigError = err instanceof UnconfiguredProviderError ||
-      /\b404\b/.test(msg);  // #303: model not found = wrong model name in config, not a bug
+      is404Like(err);  // #303: model not found = wrong model name in config, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -182,20 +243,21 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
-      if (/\b404\b/.test(lastError.message)) {
+      if (is404Like(lastError)) {
         const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
         console.warn(`memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`);
         throw lastError;
       }
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
-      // Timeouts: only retry once, then throw so chatCompleteWithRetry can try next model
+      // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
+      // (attempt is 0-based: attempt >= 1 means we've already retried once.)
       const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
       if (isTimeout && attempt >= 1) {
         throw lastError;
       }
-      // 500 / internal server error: only retry once
-      const is500 = /\b500\b|internal server error/i.test(lastError.message);
-      if (is500 && attempt >= 1) {
+      // 5xx / internal server error: only retry once
+      const isServerError = is500Like(lastError);
+      if (isServerError && attempt >= 1) {
         throw lastError;
       }
       if (attempt === maxRetries || opts?.signal?.aborted) {
@@ -209,7 +271,7 @@ export async function withLLMRetry<T>(
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
-          is500 ||  // #302: 500 server errors are transient
+          isServerError ||  // #302: 5xx server errors are transient
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
@@ -218,7 +280,6 @@ export async function withLLMRetry<T>(
           fullMsg.includes("timed out") ||
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
-          causeMsg.includes("internal server error") ||  // #302: OpenAI SDK InternalServerError format
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
           /\b405\s+method\s+not\s+allowed/i.test(fullMsg);
         if (!isTransient) {
@@ -230,10 +291,11 @@ export async function withLLMRetry<T>(
         }
         throw retryError;
       }
-      // 429: use longer exponential backoff (2s → 4s → 8s) to respect rate limits
+      // 429: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
       let delay: number;
       if (is429) {
-        delay = Math.pow(2, attempt + 1) * 1000;
+        const retryAfterMs = parseRetryAfterMs(err);
+        delay = retryAfterMs ?? Math.pow(2, attempt + 1) * 1000;
         console.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
       } else {
         delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
@@ -308,8 +370,8 @@ export async function chatCompleteWithRetry(opts: {
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
       const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
-      const is404 = /\b404\b/.test(lastError.message);
-      const is500 = /\b500\b|internal server error/i.test(lastError.message);  // #302
+      const is404 = is404Like(lastError);
+      const is500 = is500Like(lastError);  // #302
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
@@ -327,8 +389,8 @@ export async function chatCompleteWithRetry(opts: {
   }
 
   const finalError = lastError ?? new Error("All models failed");
-  const finalIs500 = /\b500\b|internal server error/i.test(finalError.message);
-  const finalIs404 = /\b404\b/.test(finalError.message);
+  const finalIs500 = is500Like(finalError);
+  const finalIs404 = is404Like(finalError);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).

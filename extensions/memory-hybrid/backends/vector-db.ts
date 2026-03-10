@@ -10,6 +10,18 @@ import { capturePluginError } from "../services/error-reporter.js";
 
 const LANCE_TABLE = "memories";
 
+/**
+ * Module-level optimization guard keyed by dbPath.
+ * Prevents concurrent optimize() calls on the same LanceDB table from multiple VectorDB instances
+ * (e.g. when the plugin restarts and a new instance is created before the old one finishes optimizing).
+ * NOTE: storeCount is per-instance and resets on restart — this is intentional; the worst case is
+ * a redundant optimization on the next store cycle after restart (benign).
+ */
+const _optimizingByPath = new Map<string, boolean>();
+/** Module-level consecutive optimize-failure counter keyed by dbPath. */
+const _optimizeFailuresByPath = new Map<string, number>();
+const _OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
+
 export type VectorDBLogger = { warn: (msg: string) => void };
 
 export class VectorDB {
@@ -20,7 +32,6 @@ export class VectorDB {
   private sessionCount = 0;
   private logger: VectorDBLogger | null = null;
   private storeCount = 0;
-  private optimizeInProgress = false;
   private optimizePromise: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
@@ -226,11 +237,26 @@ export class VectorDB {
       const id = entry.id ?? randomUUID();
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
       this.storeCount++;
-      if (!this.optimizeInProgress && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
+      if (!_optimizingByPath.get(this.dbPath) && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
+        _optimizingByPath.set(this.dbPath, true);
         this.storeCount = 0;
         // Fire-and-forget; don't block the store operation
         this.optimize(24 * 60 * 60 * 1000)
-          .catch(err => this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`));
+          .then(() => {
+            _optimizeFailuresByPath.delete(this.dbPath);
+          })
+          .catch(err => {
+            const failures = (_optimizeFailuresByPath.get(this.dbPath) ?? 0) + 1;
+            _optimizeFailuresByPath.set(this.dbPath, failures);
+            if (failures >= _OPTIMIZE_FAILURE_WARN_THRESHOLD) {
+              this.logWarn(
+                `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row — ` +
+                `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
+              );
+            } else {
+              this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`);
+            }
+          });
       }
       return id;
     } catch (err) {
@@ -256,12 +282,12 @@ export class VectorDB {
     if (this.optimizePromise) {
       await this.optimizePromise;
     }
-    // Check again after awaiting in case another optimize started
-    if (this.optimizeInProgress) {
+    // Check again after awaiting in case another optimize started, globally this time
+    if (_optimizingByPath.get(this.dbPath)) {
       this.logWarn("memory-hybrid: optimize() called while another optimize is in progress; skipping to prevent concurrent table operations");
       return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     }
-    this.optimizeInProgress = true;
+    _optimizingByPath.set(this.dbPath, true);
     let promiseRef: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
     const optimizePromise = (async () => {
       try {
@@ -274,7 +300,7 @@ export class VectorDB {
           freedBytes: stats.prune?.bytesRemoved ?? 0,
         };
       } finally {
-        this.optimizeInProgress = false;
+        _optimizingByPath.set(this.dbPath, false);
         if (this.optimizePromise === promiseRef) {
           this.optimizePromise = null;
         }
