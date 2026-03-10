@@ -17,6 +17,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import { toFloat32Array } from "../services/embedding-registry.js";
 import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
@@ -1119,12 +1120,18 @@ export function registerMemoryTools(
         try {
           vector = await embeddings.embed(textToStore);
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "embeddings",
-            operation: "store-embed",
-            phase: "runtime",
-          });
-          api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          if (err instanceof AllEmbeddingProvidersFailed) {
+            // Graceful degradation: store the fact without a vector.
+            // The fact is still findable by structured/keyword search.
+            api.logger.warn("memory-hybrid: Stored fact without embeddings — all providers unavailable");
+          } else {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "embeddings",
+              operation: "store-embed",
+              phase: "runtime",
+            });
+            api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+          }
         }
 
         // Classify the operation before storing (use embedding similarity)

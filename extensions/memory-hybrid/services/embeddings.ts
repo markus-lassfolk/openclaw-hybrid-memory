@@ -13,6 +13,19 @@ import { pipeline } from "node:stream/promises";
 import { capturePluginError } from "./error-reporter.js";
 import { withLLMRetry } from "./chat.js";
 
+/**
+ * Thrown by ChainEmbeddingProvider when every provider in the chain has failed.
+ * Callers should catch this and degrade gracefully (e.g. store without a vector)
+ * rather than reporting to error monitoring, since this is expected when all
+ * configured embedding backends are temporarily unavailable.
+ */
+export class AllEmbeddingProvidersFailed extends Error {
+  constructor() {
+    super("All embedding providers in the chain failed.");
+    this.name = "AllEmbeddingProvidersFailed";
+  }
+}
+
 /** Full embedding provider interface — implementations must expose these. */
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
@@ -955,18 +968,25 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       try {
         return await this.providers[this.activeIndex].embed(text);
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "embeddings",
-          operation: "chain-failover",
-          phase: "embed",
-        });
+        // Only capture individual provider failures when there are remaining fallbacks.
+        // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
+        const isLast = this.activeIndex + 1 >= this.providers.length;
+        if (!isLast) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "chain-failover",
+            phase: "embed",
+          });
+        }
         this.activeIndex++;
         if (this.activeIndex < this.providers.length) {
           this.modelName = this.providers[this.activeIndex].modelName;
         }
       }
     }
-    throw new Error("All embedding providers in the chain failed.");
+    // All providers exhausted — throw a typed error so callers can degrade gracefully
+    // without reporting noise to error monitoring.
+    throw new AllEmbeddingProvidersFailed();
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -974,18 +994,21 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       try {
         return await this.providers[this.activeIndex].embedBatch(texts);
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "embeddings",
-          operation: "chain-failover",
-          phase: "embedBatch",
-        });
+        const isLast = this.activeIndex + 1 >= this.providers.length;
+        if (!isLast) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "chain-failover",
+            phase: "embedBatch",
+          });
+        }
         this.activeIndex++;
         if (this.activeIndex < this.providers.length) {
           this.modelName = this.providers[this.activeIndex].modelName;
         }
       }
     }
-    throw new Error("All embedding providers in the chain failed.");
+    throw new AllEmbeddingProvidersFailed();
   }
 }
 
