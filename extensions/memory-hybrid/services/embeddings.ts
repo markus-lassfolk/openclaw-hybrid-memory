@@ -699,6 +699,12 @@ export class Embeddings implements EmbeddingProvider {
   }
 }
 
+// Module-level circuit breaker state for Ollama connection failures.
+let ollamaFailCount = 0;
+let ollamaDisabledUntil = 0;
+const OLLAMA_MAX_FAILS = 3;
+const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Ollama-based embedding provider.
  * Calls Ollama REST API (POST /api/embed) — no external API key required.
@@ -733,6 +739,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   private static readonly MAX_INPUT_CHARS = 8000;
 
   async embedBatch(texts: string[]): Promise<number[][]> {
+    // Circuit breaker: skip Ollama entirely during cooldown period
+    if (Date.now() < ollamaDisabledUntil) {
+      throw new Error(`Ollama circuit breaker open — disabled until ${new Date(ollamaDisabledUntil).toISOString()}`);
+    }
+
     const allResults: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize).map((t) => {
@@ -752,6 +763,14 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
           body: JSON.stringify({ model: this.modelName, input: batch }),
         });
       } catch (err) {
+        // Connection failure — update circuit breaker state
+        ollamaFailCount++;
+        if (ollamaFailCount >= OLLAMA_MAX_FAILS) {
+          ollamaDisabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
+          console.warn(
+            `memory-hybrid: Ollama circuit breaker open — disabling for 5min after ${ollamaFailCount} failures`,
+          );
+        }
         throw new Error(`Ollama connection failed (${this.endpoint}): ${err}`);
       }
       if (!resp.ok) {
@@ -770,6 +789,8 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       }
       allResults.push(...data.embeddings);
     }
+    // Successful call — reset circuit breaker
+    ollamaFailCount = 0;
     return allResults;
   }
 }
