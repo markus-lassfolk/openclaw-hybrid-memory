@@ -218,6 +218,10 @@ export class VectorDB {
   }): Promise<string> {
     try {
       await this.ensureInitialized();
+      // Wait for any in-progress optimization to complete before writing
+      while (this.optimizeInProgress) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
       const id = entry.id ?? randomUUID();
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
       this.storeCount++;

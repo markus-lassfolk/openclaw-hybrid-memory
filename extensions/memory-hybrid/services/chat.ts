@@ -194,7 +194,7 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       // 500 / internal server error: only retry once
-      const is500 = /\b500\b|internal server error|internal error/i.test(lastError.message);
+      const is500 = /\b500\b|internal server error/i.test(lastError.message);
       if (is500 && attempt >= 1) {
         throw lastError;
       }
@@ -327,7 +327,7 @@ export async function chatCompleteWithRetry(opts: {
   }
 
   const finalError = lastError ?? new Error("All models failed");
-  const finalIs500 = /\b500\b|internal server error|internal error/i.test(finalError.message);
+  const finalIs500 = /\b500\b|internal server error/i.test(finalError.message);
   const finalIs404 = /\b404\b/.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
@@ -341,6 +341,19 @@ export async function chatCompleteWithRetry(opts: {
       `Memory features (HyDE search, classification, distillation) are degraded. ` +
       `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`
     );
+  } else if (unconfiguredCount > 0) {
+    // Some models were unconfigured — warn user even if final error was 500/404
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: Some LLM provider keys are missing. ` +
+      `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`
+    );
+    if (!finalIs500) {
+      capturePluginError(finalError, {
+        subsystem: "chat",
+        operation: "chatCompleteWithRetry",
+        phase: "fallback-exhausted",
+      });
+    }
   } else if (finalIs500) {
     // #302: 500 server errors are transient — don't report to GlitchTip; request will be retried naturally
   } else if (finalIs404) {
