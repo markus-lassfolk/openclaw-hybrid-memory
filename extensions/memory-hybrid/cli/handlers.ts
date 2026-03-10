@@ -93,35 +93,68 @@ import { getModeCostEstimates } from "../services/model-pricing.js";
 // modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
-const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy" }> = [
+
+/**
+ * Minimum run interval guard (in milliseconds) for each job frequency tier.
+ * When the cron runner triggers a job (e.g. on gateway restart), the agent-level
+ * guard in the message prefix causes it to skip if it already ran within this interval.
+ * This prevents expensive re-runs caused by gateway restarts (issue #304).
+ */
+const MIN_INTERVAL_MS: Record<string, number> = {
+  daily: 20 * 60 * 60 * 1000,    // 20 hours (daily jobs)
+  weekly: 5 * 24 * 60 * 60 * 1000, // 5 days (weekly jobs)
+  monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
+};
+
+/**
+ * Build a guard prefix for cron job messages that checks a state file to prevent
+ * re-runs within a minimum interval. The agent reads the timestamp file, compares
+ * against the current time, and skips if the job ran too recently.
+ */
+function buildGuardPrefix(jobName: string, minIntervalMs: number): string {
+  const hours = Math.round(minIntervalMs / (60 * 60 * 1000));
+  const stateFile = `/tmp/hybrid-mem-guard-${jobName}.txt`;
+  return `GUARD CHECK (issue #304): Before running, execute: cat ${stateFile} 2>/dev/null. ` +
+    `If the file contains a Unix timestamp and (current time - that timestamp) < ${hours} hours (${minIntervalMs}ms), ` +
+    `reply "Skipped: ${jobName} already ran within ${hours}h guard window" and do NOT run the commands below. ` +
+    `Otherwise, proceed and AFTER successful completion write the current Unix timestamp: date +%s > ${stateFile}\n\n`;
+}
+
+const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
   // Daily 02:30 | self-correction-analysis | self-correction-run
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
   // Sunday 04:00 | weekly-extract-procedures (nano = background model, avoids locking main AI)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "nano", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "nano", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
   // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem vectordb-optimize\n3. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem vectordb-optimize\n3. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.monthly },
   // Daily 02:45 | nightly-dream-cycle | dream-cycle (prune → consolidate → reflect)
   // Default schedule; overridden by cfg.nightlyCycle.schedule during install/verify/upgrade.
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
 ];
 
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier).
  * Strips the top-level `channel` field (maintenance jobs don't need user delivery) and sets delivery.mode = "none"
- * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs. */
-function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy" }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
-  const { modelTier, channel: _channel, ...rest } = def;
+ * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs.
+ * If the def has minIntervalMs, prepends a guard prefix to the message to prevent re-runs on gateway restart (#304). */
+function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
+  const { modelTier, channel: _channel, minIntervalMs, ...rest } = def;
   const tier = modelTier ?? "default";
   const model = getDefaultCronModel(pluginConfig, tier);
+  // Prepend guard prefix to message if minIntervalMs is set (issue #304)
+  if (minIntervalMs && typeof rest.message === "string") {
+    const jobName = (typeof rest.name === "string" ? rest.name : "unknown").replace(/\s+/g, "-");
+    rest.message = buildGuardPrefix(jobName, minIntervalMs) + rest.message;
+  }
   return { ...rest, model, delivery: { mode: "none" as const } };
 }
 
@@ -211,6 +244,23 @@ function ensureMaintenanceCronJobs(
           existing.delivery = { mode: "none" };
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
+        }
+        // Issue #304: Add guard prefix to existing job messages to prevent re-runs on gateway restart.
+        // Only update if the message doesn't already have the guard prefix.
+        // The on-disk format uses payload.message (agentTurn jobs), but older entries may use top-level message.
+        if (def.minIntervalMs) {
+          const jobSlug = name.replace(/\s+/g, "-");
+          const guard = buildGuardPrefix(jobSlug, def.minIntervalMs as number);
+          const payload = existing.payload as { message?: string; kind?: string } | undefined;
+          if (payload && typeof payload.message === "string" && !payload.message.includes("GUARD CHECK")) {
+            payload.message = guard + payload.message;
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          } else if (typeof existing.message === "string" && !existing.message.includes("GUARD CHECK")) {
+            existing.message = guard + existing.message;
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          }
         }
       }
       if (reEnableDisabled && existing.enabled === false) {
