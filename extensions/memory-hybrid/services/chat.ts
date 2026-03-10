@@ -95,7 +95,7 @@ function is500Like(err: unknown): boolean {
   }
   if (err instanceof Error) {
     // Only match HTTP 5xx patterns — not generic "internal error" from JS
-    return /\b5\d{2}\b|internal\s+server\s+error/i.test(err.message);
+    return /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(err.message);
   }
   return false;
 }

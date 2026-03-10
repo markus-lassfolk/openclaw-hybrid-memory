@@ -238,7 +238,6 @@ export class VectorDB {
       await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
       this.storeCount++;
       if (!_optimizingByPath.get(this.dbPath) && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
-        _optimizingByPath.set(this.dbPath, true);
         this.storeCount = 0;
         // Fire-and-forget; don't block the store operation
         this.optimize(24 * 60 * 60 * 1000)
