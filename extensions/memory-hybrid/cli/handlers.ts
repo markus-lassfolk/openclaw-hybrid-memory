@@ -87,6 +87,7 @@ import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore, generateMonthlyReport } from "../services/tool-effectiveness.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
+import { buildGuardPrefix } from "../services/cron-guard.js";
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
@@ -98,7 +99,7 @@ const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
  * Minimum run interval guard (in milliseconds) for each job frequency tier.
  * When the cron runner triggers a job (e.g. on gateway restart), the agent-level
  * guard in the message prefix causes it to skip if it already ran within this interval.
- * This prevents expensive re-runs caused by gateway restarts (issue #304).
+ * Guard files are stored persistently in ~/.openclaw/cron/guard/ (issue #305).
  */
 const MIN_INTERVAL_MS: Record<string, number> = {
   daily: 20 * 60 * 60 * 1000,    // 20 hours (daily jobs)
@@ -106,19 +107,7 @@ const MIN_INTERVAL_MS: Record<string, number> = {
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
 };
 
-/**
- * Build a guard prefix for cron job messages that checks a state file to prevent
- * re-runs within a minimum interval. The agent reads the timestamp file, compares
- * against the current time, and skips if the job ran too recently.
- */
-function buildGuardPrefix(jobName: string, minIntervalMs: number): string {
-  const hours = Math.round(minIntervalMs / (60 * 60 * 1000));
-  const stateFile = `/tmp/hybrid-mem-guard-${jobName}.txt`;
-  return `GUARD CHECK (issue #304): Before running, execute: cat ${stateFile} 2>/dev/null. ` +
-    `If the file contains a Unix timestamp and (current time - that timestamp) < ${hours} hours (${minIntervalMs}ms), ` +
-    `reply "Skipped: ${jobName} already ran within ${hours}h guard window" and do NOT run the commands below. ` +
-    `Otherwise, proceed and AFTER successful completion write the current Unix timestamp: date +%s > ${stateFile}\n\n`;
-}
+// buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
 const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
@@ -246,20 +235,42 @@ function ensureMaintenanceCronJobs(
           if (!normalized.includes(name)) normalized.push(name);
         }
         // Issue #304: Add guard prefix to existing job messages to prevent re-runs on gateway restart.
-        // Only update if the message doesn't already have the guard prefix.
+        // Issue #304: Add guard prefix if missing.
+        // Issue #305: Also migrate old /tmp/ guard paths to persistent ~/.openclaw/cron/guard/ paths.
         // The on-disk format uses payload.message (agentTurn jobs), but older entries may use top-level message.
         if (def.minIntervalMs) {
           const jobSlug = name.replace(/\s+/g, "-");
           const guard = buildGuardPrefix(jobSlug, def.minIntervalMs as number);
+          const oldTmpPath = `/tmp/hybrid-mem-guard-${jobSlug}`;
           const payload = existing.payload as { message?: string; kind?: string } | undefined;
-          if (payload && typeof payload.message === "string" && !payload.message.includes("GUARD CHECK")) {
-            payload.message = guard + payload.message;
-            jobsChanged = true;
-            if (!normalized.includes(name)) normalized.push(name);
-          } else if (typeof existing.message === "string" && !existing.message.includes("GUARD CHECK")) {
-            existing.message = guard + existing.message;
-            jobsChanged = true;
-            if (!normalized.includes(name)) normalized.push(name);
+          if (payload && typeof payload.message === "string") {
+            if (!payload.message.includes("GUARD CHECK")) {
+              // Add guard prefix if missing (issue #304)
+              payload.message = guard + payload.message;
+              jobsChanged = true;
+              if (!normalized.includes(name)) normalized.push(name);
+            } else if (payload.message.includes(oldTmpPath)) {
+              // Migrate old /tmp/ guard path to persistent path (issue #305)
+              const doubleLf = payload.message.indexOf("\n\n");
+              if (doubleLf >= 0) {
+                payload.message = guard + payload.message.slice(doubleLf + 2);
+                jobsChanged = true;
+                if (!normalized.includes(name)) normalized.push(name);
+              }
+            }
+          } else if (typeof existing.message === "string") {
+            if (!existing.message.includes("GUARD CHECK")) {
+              existing.message = guard + existing.message;
+              jobsChanged = true;
+              if (!normalized.includes(name)) normalized.push(name);
+            } else if (existing.message.includes(oldTmpPath)) {
+              const doubleLf = existing.message.indexOf("\n\n");
+              if (doubleLf >= 0) {
+                existing.message = guard + existing.message.slice(doubleLf + 2);
+                jobsChanged = true;
+                if (!normalized.includes(name)) normalized.push(name);
+              }
+            }
           }
         }
       }

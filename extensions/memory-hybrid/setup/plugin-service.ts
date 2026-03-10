@@ -19,6 +19,7 @@ import {
   capturePluginError,
 } from "../services/error-reporter.js";
 import { walRemove } from "../services/wal-helpers.js";
+import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
 import { runPassiveObserver } from "../services/passive-observer.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
@@ -222,6 +223,14 @@ export function createPluginService(ctx: PluginServiceContext) {
             });
           }
         }
+      }
+
+      // Issue #305: Sync cron job lastRunAtMs from persistent guard files so the cron
+      // runner does not immediately re-fire jobs whose state was lost on restart/reboot.
+      try {
+        syncCronLastRunFromGuards(api.logger);
+      } catch (err) {
+        api.logger.warn?.(`memory-hybrid: cron guard sync failed (non-fatal): ${err}`);
       }
 
       // Periodic prune timer
