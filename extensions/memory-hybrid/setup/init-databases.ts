@@ -544,8 +544,8 @@ export function initializeDatabases(
     for (const name of mergedProviderNames) {
       if (hasModelFrom(defaultList, name) && hasModelFrom(heavyList, name)) continue;
       let defaultModel: string | null = knownDefault[name] ?? null;
-      if (!defaultModel && gwProviders && typeof gwProviders[name] === "object") {
-        const gw = gwProviders[name] as Record<string, unknown>;
+      if (!defaultModel && gwProviders && typeof (gwProviders as Record<string, unknown>)[name] === "object") {
+        const gw = (gwProviders as Record<string, unknown>)[name] as Record<string, unknown>;
         const gwModel = typeof gw.defaultModel === "string" ? gw.defaultModel : typeof gw.model === "string" ? gw.model : null;
         if (gwModel?.trim()) defaultModel = `${name}/${gwModel.trim()}`;
       }
