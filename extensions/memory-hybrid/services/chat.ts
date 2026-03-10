@@ -179,7 +179,23 @@ export async function withLLMRetry<T>(
       if (/\b401\b|unauthorized/i.test(lastError.message)) {
         throw lastError;
       }
+      // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
+      if (/\b404\b|not found/i.test(lastError.message)) {
+        const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
+        console.warn(`memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`);
+        throw lastError;
+      }
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
+      // Timeouts: only retry once, then throw so chatCompleteWithRetry can try next model
+      const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
+      if (isTimeout && attempt >= 1) {
+        throw lastError;
+      }
+      // 500 / internal server error: only retry once
+      const is500 = /\b500\b|internal server error|internal error/i.test(lastError.message);
+      if (is500 && attempt >= 1) {
+        throw lastError;
+      }
       if (attempt === maxRetries || opts?.signal?.aborted) {
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
@@ -287,10 +303,15 @@ export async function chatCompleteWithRetry(opts: {
       const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
+      const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
+      const is404 = /\b404\b|not found/i.test(lastError.message);
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
-          const reason = is429 ? "rate limited (429)" : "failed after retries";
+          const reason = is429 ? "rate limited (429)"
+            : isTimeout ? "timed out"
+            : is404 ? "model not found (404)"
+            : "failed after retries";
           console.warn(
             `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
           );
