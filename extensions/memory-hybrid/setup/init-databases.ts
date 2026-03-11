@@ -182,7 +182,14 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   };
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  // Resolve gateway auth token: prefer cfg.gateway.auth.token (SecretRef) over env var fallback.
+  // The parser stores the resolved value as non-enumerable _resolvedToken so it never appears in
+  // JSON dumps while remaining accessible here at runtime.
+  const gatewayAuthResolved = (cfg.gateway?.auth as Record<string, unknown> | undefined)?._resolvedToken as string | undefined;
+  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
+  if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
+    api.logger.warn?.(`memory-hybrid: gateway.auth.token is set but could not be resolved (SecretRef "${cfg.gateway.auth.token}" returned empty); falling back to OPENCLAW_GATEWAY_TOKEN env var.`);
+  }
   const gatewayBaseUrl = gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535
     ? `http://127.0.0.1:${gatewayPort}/v1`
     : undefined;
@@ -190,7 +197,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`);
   }
   if (gatewayBaseUrl && !gatewayToken) {
-    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but OPENCLAW_GATEWAY_TOKEN is missing; gateway calls may fail if the gateway requires auth.");
+    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but no gateway auth token found; set gateway.auth.token (SecretRef) in plugin config or OPENCLAW_GATEWAY_TOKEN env var. Gateway calls may fail if auth is required.");
   }
 
   function getOrCreate(key: string, factory: () => OpenAI): OpenAI {

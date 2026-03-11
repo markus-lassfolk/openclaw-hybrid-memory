@@ -16,6 +16,7 @@ import {
   parseActiveTaskConfig,
   parseSelfCorrectionConfig,
   parseLLMConfig,
+  parseGatewayConfig,
 } from "./core.js";
 import {
   parseAutoClassifyConfig,
@@ -494,6 +495,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     costTracking: parseCostTrackingConfig(cfg),
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
+    gateway: parseGatewayConfig(cfg),
   };
 }
 
