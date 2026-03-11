@@ -227,7 +227,7 @@ describe("MiniMax provider routing — direct API key", () => {
     // resolveClient throws synchronously for unconfigured providers,
     // so we test with a sync toThrow matcher (not rejects)
     expect(() =>
-      ctx.openai.chat.completions.create({
+      ctx!.openai.chat.completions.create({
         model: "minimax/MiniMax-M2.5",
         messages: [{ role: "user", content: "hello" }],
       }),
