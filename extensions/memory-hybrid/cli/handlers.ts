@@ -1983,19 +1983,22 @@ export async function runExtractDirectivesForCli(
     }
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
+    // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
+    // that skipped sessions still advance the watermark and are not re-triaged on every run.
+    let extractionPaths = filePaths;
     const pfCfgDir = buildPreFilterConfig(cfg);
     if (pfCfgDir.enabled && filePaths.length > 0) {
       const pfResult = await preFilterSessions(filePaths, pfCfgDir);
       if (!pfResult.ollamaUnavailable) {
         logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
-        filePaths = pfResult.kept;
+        extractionPaths = pfResult.kept;
       } else {
         logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
       }
     }
 
     const directiveRegex = getDirectiveSignalRegex();
-    const result = runDirectiveExtract({ filePaths, directiveRegex });
+    const result = runDirectiveExtract({ filePaths: extractionPaths, directiveRegex });
 
     if (opts.verbose) {
       for (const incident of result.incidents) {
@@ -2076,19 +2079,22 @@ export async function runExtractReinforcementForCli(
     const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
+    // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
+    // that skipped sessions still advance the watermark and are not re-triaged on every run.
+    let extractionPaths = filePaths;
     const pfCfgReinf = buildPreFilterConfig(cfg);
     if (pfCfgReinf.enabled && filePaths.length > 0) {
       const pfResult = await preFilterSessions(filePaths, pfCfgReinf);
       if (!pfResult.ollamaUnavailable) {
         logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
-        filePaths = pfResult.kept;
+        extractionPaths = pfResult.kept;
       } else {
         logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
       }
     }
 
   const reinforcementRegex = getReinforcementSignalRegex();
-  const result = runReinforcementExtract({ filePaths, reinforcementRegex });
+  const result = runReinforcementExtract({ filePaths: extractionPaths, reinforcementRegex });
 
   if (opts.verbose) {
     for (const incident of result.incidents) {
@@ -3319,10 +3325,12 @@ export async function runDistillForCli(
   }
 
   // Two-tier pre-filter: use local Ollama to triage sessions before cloud LLM (Issue #290).
+  // allCandidatePaths captures the full candidate set BEFORE pre-filtering so the cursor
+  // watermark always advances past skipped sessions, preventing infinite re-processing loops.
+  const allCandidatePaths = filesToProcess.map((f) => f.path);
   const pfCfg = buildPreFilterConfig(cfg);
   if (pfCfg.enabled && filesToProcess.length > 0) {
-    const paths = filesToProcess.map((f) => f.path);
-    const pfResult = await preFilterSessions(paths, pfCfg);
+    const pfResult = await preFilterSessions(allCandidatePaths, pfCfg);
     if (!pfResult.ollamaUnavailable) {
       const keptSet = new Set(pfResult.kept);
       const originalCount = filesToProcess.length;
@@ -3532,8 +3540,9 @@ export async function runDistillForCli(
     capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
   }
   if (!opts.dryRun) {
-    const lastSessionTs = getMaxMtime(filesToProcess.map((f) => f.path));
-    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, filesToProcess.length);
+    // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
+    const lastSessionTs = getMaxMtime(allCandidatePaths);
+    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
   }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, dedupSkipped: skipped, dryRun: false };
   } finally {
@@ -3769,6 +3778,7 @@ export async function runSelfCorrectionRunForCli(
           scFilePaths = pfResult.kept;
         } else {
           logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+          scFilePaths = allPaths; // avoid redundant gatherSessionFiles inside runSelfCorrectionExtractForCli
         }
       }
     }

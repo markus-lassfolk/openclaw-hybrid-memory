@@ -8,12 +8,13 @@
  *
  * If Ollama is unavailable, all sessions pass through (safe fallback).
  *
- * For Qwen3 / thinking models: append "/no_think" to the model name in config
- * to disable chain-of-thought and get faster, shorter responses.
+ * For Qwen3 / thinking models: append "/no_think" suffix to the model name in config
+ * (e.g. "qwen3:8b/no_think") to disable chain-of-thought and get faster, shorter responses.
  */
 
 import OpenAI from "openai";
-import { readFileSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -23,8 +24,8 @@ export type PreFilterConfig = {
   enabled: boolean;
   /**
    * Ollama model name (without "ollama/" prefix), e.g. "qwen3:8b".
-   * For thinking models like Qwen3, append ":no_think" variant or use a non-thinking
-   * variant to avoid large thinking token budgets.
+   * For Qwen3 thinking models, append the "/no_think" suffix (e.g. "qwen3:8b/no_think")
+   * to disable chain-of-thought and avoid exhausting the token budget inside <think> blocks.
    */
   model: string;
   /** Ollama base URL (default: http://localhost:11434). */
@@ -98,14 +99,19 @@ function createOllamaClient(endpoint: string): OpenAI {
  * Extract a sample of user messages from a session JSONL file for triage.
  * Only user messages are extracted (they contain the actionable signals).
  * Skips known non-actionable messages (heartbeat, cron, etc.).
+ *
+ * Uses a readline stream to avoid loading the entire file into memory —
+ * safe for large or runaway session files, with early exit once maxChars is reached.
  */
-export function extractSessionSample(filePath: string, maxChars: number): string {
+export async function extractSessionSample(filePath: string, maxChars: number): Promise<string> {
+  const parts: string[] = [];
+  let totalChars = 0;
   try {
-    const lines = readFileSync(filePath, "utf-8").split("\n");
-    const parts: string[] = [];
-    let totalChars = 0;
-
-    for (const line of lines) {
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf-8" }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of rl) {
       if (totalChars >= maxChars) break;
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -145,10 +151,10 @@ export function extractSessionSample(filePath: string, maxChars: number): string
         // skip malformed lines
       }
     }
-    return parts.join("\n").slice(0, maxChars);
   } catch {
     return "";
   }
+  return parts.join("\n").slice(0, maxChars);
 }
 
 /**
@@ -168,28 +174,40 @@ async function classifySession(
     model,
     content: prompt,
     temperature: 0,
-    maxTokens: 256, // enough for thinking-model preamble + YES/NO
+    maxTokens: 512, // extra budget for thinking-model <think> preamble before YES/NO
     openai: ollamaClient,
     timeoutMs: 20_000,
   });
 
   // Search the full response for YES/NO — handles thinking models that
   // emit <think>...</think> before the final answer.
+  // Use word-boundary matching to avoid false positives from substrings like
+  // "UNKNOWN", "CANNOT", "NOTICE", "NOTABLE" matching "NO".
   const upper = response.toUpperCase();
-  if (upper.includes("YES")) return true;
-  if (upper.includes("NO")) return false;
+  if (/\bYES\b/.test(upper)) return true;
+  if (/\bNO\b/.test(upper)) return false;
 
   // Ambiguous response — conservative: treat as interesting
   return true;
 }
 
 /**
- * Determine whether a chatComplete error is a connection-level failure
- * (Ollama unavailable) vs a transient/model error.
+ * Determine whether a chatComplete error is a fatal Ollama-level failure that
+ * should short-circuit the entire batch (avoid thousands of failing requests).
+ * Covers both connection errors (Ollama down) and HTTP 404/5xx (model not found
+ * or server error) — all of which indicate Ollama cannot serve the request.
  */
 function isConnectionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up/i.test(msg);
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up/i.test(msg)) {
+    return true;
+  }
+  // HTTP 404 (model not found) or 5xx (server error) should also abort the batch.
+  if (err !== null && typeof err === "object" && "status" in err) {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === "number" && (status === 404 || status >= 500)) return true;
+  }
+  return false;
 }
 
 /**
@@ -224,7 +242,7 @@ export async function preFilterSessions(
       continue;
     }
 
-    const sample = extractSessionSample(filePath, config.maxCharsPerSession);
+    const sample = await extractSessionSample(filePath, config.maxCharsPerSession);
     if (!sample.trim()) {
       // No actionable user messages found — skip this session
       skipped.push(filePath);

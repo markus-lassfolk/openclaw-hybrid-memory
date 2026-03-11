@@ -37,7 +37,7 @@ describe("extractSessionSample", () => {
     try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
   });
 
-  it("extracts user messages from session JSONL", () => {
+  it("extracts user messages from session JSONL", async () => {
     const path = join(tmpDir, "session.jsonl");
     writeFileSync(path, [
       msg("user", "Remember that I prefer dark mode"),
@@ -45,30 +45,30 @@ describe("extractSessionSample", () => {
       msg("user", "And always use TypeScript"),
     ].join("\n"), "utf-8");
 
-    const sample = extractSessionSample(path, 2000);
+    const sample = await extractSessionSample(path, 2000);
     expect(sample).toContain("Remember that I prefer dark mode");
     expect(sample).toContain("And always use TypeScript");
     // assistant messages should NOT be included
     expect(sample).not.toContain("Got it.");
   });
 
-  it("returns empty string for non-existent file", () => {
-    const sample = extractSessionSample(join(tmpDir, "nonexistent.jsonl"), 2000);
+  it("returns empty string for non-existent file", async () => {
+    const sample = await extractSessionSample(join(tmpDir, "nonexistent.jsonl"), 2000);
     expect(sample).toBe("");
   });
 
-  it("skips heartbeat user messages", () => {
+  it("skips heartbeat user messages", async () => {
     const path = join(tmpDir, "session.jsonl");
     writeFileSync(path, [
       msg("user", "HEARTBEAT — please confirm active"),
       msg("assistant", "HEARTBEAT_OK"),
     ].join("\n"), "utf-8");
 
-    const sample = extractSessionSample(path, 2000);
+    const sample = await extractSessionSample(path, 2000);
     expect(sample.trim()).toBe("");
   });
 
-  it("respects maxChars limit", () => {
+  it("respects maxChars limit", async () => {
     const path = join(tmpDir, "session.jsonl");
     const longText = "A".repeat(500);
     writeFileSync(path, [
@@ -77,18 +77,18 @@ describe("extractSessionSample", () => {
       msg("user", longText),
     ].join("\n"), "utf-8");
 
-    const sample = extractSessionSample(path, 600);
+    const sample = await extractSessionSample(path, 600);
     expect(sample.length).toBeLessThanOrEqual(600);
   });
 
-  it("returns empty for session with only short messages", () => {
+  it("returns empty for session with only short messages", async () => {
     const path = join(tmpDir, "session.jsonl");
     writeFileSync(path, [
       msg("user", "ok"),  // < 10 chars
       msg("user", "yes"),
     ].join("\n"), "utf-8");
 
-    const sample = extractSessionSample(path, 2000);
+    const sample = await extractSessionSample(path, 2000);
     expect(sample.trim()).toBe("");
   });
 });
@@ -282,6 +282,28 @@ describe("preFilterSessions", () => {
     expect(result.kept).toEqual([paths[0], paths[2]]);
     expect(result.skipped).toEqual([paths[1]]);
     expect(result.ollamaUnavailable).toBe(false);
+  });
+
+  it("does not misclassify 'UNKNOWN' substring as NO response (word-boundary)", async () => {
+    const path = join(tmpDir, "session.jsonl");
+    writeFileSync(path, msg("user", "From now on always use TypeScript for everything"), "utf-8");
+
+    const mockClient = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "UNKNOWN" } }],
+          }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const result = await preFilterSessions([path], defaultConfig, { ollamaClient: mockClient });
+
+    // "UNKNOWN" does not contain a standalone word "NO", so it should be treated as
+    // ambiguous (conservative: keep the session)
+    expect(result.kept).toContain(path);
+    expect(result.skipped).not.toContain(path);
   });
 
   it("handles Qwen3 thinking-model YES response embedded in think tags", async () => {
