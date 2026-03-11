@@ -392,7 +392,7 @@ The `distill` block (with `apiKey` for a Google key and `defaultModel`) is still
 }
 ```
 
-The `distill.apiKey` is still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set.
+The `distill.apiKey` is still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set. It also serves as the Google embedding key when `embedding.provider` is `google`. Accepts a plain key string or any **SecretRef** format: `"env:VAR_NAME"`, `"file:/path/to/file"`, or `"${VAR_NAME}"`.
 
 ---
 
