@@ -267,8 +267,8 @@ function collectCostStats(ctx: DashboardContext): CostStats {
       .prepare(
         `SELECT feature,
                 COUNT(*) AS calls,
-                SUM(input_tokens) AS inputTokens,
-                SUM(output_tokens) AS outputTokens,
+                COALESCE(SUM(input_tokens), 0) AS inputTokens,
+                COALESCE(SUM(output_tokens), 0) AS outputTokens,
                 COALESCE(SUM(estimated_cost_usd), 0) AS estimatedCostUsd
          FROM llm_cost_log
          WHERE timestamp >= ?
@@ -459,7 +459,7 @@ function renderTaskQueue(tq) {
     const c = tq.current;
     html += \`<div class="task-row">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div class="task-title">\${escHtml(c.title || c.issue || 'Current Task')}</div>
+        <div class="task-title">\${escHtml(c.title || (c.issue != null ? '#' + c.issue : 'Current Task'))}</div>
         \${badge(c.status)}
       </div>
       <div class="task-meta">\${c.branch ? '#' + escHtml(c.branch) + ' · ' : ''}\${fmtDate(c.started)}</div>
