@@ -8,7 +8,7 @@
  * Issue #236
  */
 
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -358,6 +358,14 @@ function tryExecSync(cmd: string): string | null {
   }
 }
 
+function tryExecFileSync(file: string, args: string[]): string | null {
+  try {
+    return execFileSync(file, args, { encoding: "utf-8", timeout: 15_000 }).trim();
+  } catch {
+    return null;
+  }
+}
+
 function parseGhJson<T>(output: string | null): T[] {
   if (!output) return [];
   try {
@@ -383,33 +391,58 @@ export async function sweepGitHub(
     }
 
     // Check if gh CLI is available
-    const ghCheck = tryExecSync("gh --version");
+    const ghCheck = tryExecFileSync("gh", ["--version"]);
     if (!ghCheck) {
       result.error = "gh CLI not available";
       return result;
     }
 
-    const repoFlag = cfg.repo ? ` --repo ${cfg.repo}` : "";
+    const repoArgs = cfg.repo ? ["--repo", cfg.repo] : [];
 
     // Open PRs
-    const prOutput = tryExecSync(
-      `gh pr list${repoFlag} --state open --limit 20 --json number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt`,
-    );
+    const prOutput = tryExecFileSync("gh", [
+      "pr",
+      "list",
+      ...repoArgs,
+      "--state",
+      "open",
+      "--limit",
+      "20",
+      "--json",
+      "number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt",
+    ]);
     const openPrs = parseGhJson<GitHubPR>(prOutput);
 
     // Review requests (PRs where we are requested reviewer)
     let reviewRequests: GitHubPR[] = [];
     if (cfg.includeReviewRequests !== false) {
-      const rrOutput = tryExecSync(
-        `gh pr list${repoFlag} --state open --review-requested @me --limit 20 --json number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt`,
-      );
+      const rrOutput = tryExecFileSync("gh", [
+        "pr",
+        "list",
+        ...repoArgs,
+        "--state",
+        "open",
+        "--review-requested",
+        "@me",
+        "--limit",
+        "20",
+        "--json",
+        "number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt",
+      ]);
       reviewRequests = parseGhJson<GitHubPR>(rrOutput);
     }
 
     // CI failures on open PRs
     const ciFailures: Array<{ pr: number; title: string; url: string }> = [];
     for (const pr of openPrs.slice(0, 5)) {
-      const ciOutput = tryExecSync(`gh pr checks${repoFlag} ${pr.number} --json name,state 2>/dev/null`);
+      const ciOutput = tryExecFileSync("gh", [
+        "pr",
+        "checks",
+        ...repoArgs,
+        String(pr.number),
+        "--json",
+        "name,state",
+      ]);
       if (ciOutput) {
         try {
           const checks = JSON.parse(ciOutput) as Array<{ name: string; state: string }>;
@@ -425,9 +458,17 @@ export async function sweepGitHub(
     // Stale issues
     const staleIssueDays = cfg.staleIssueDays ?? 7;
     const staleCutoff = new Date(Date.now() - staleIssueDays * 24 * 3600 * 1000).toISOString();
-    const issueOutput = tryExecSync(
-      `gh issue list${repoFlag} --state open --limit 30 --json number,title,state,url,updatedAt`,
-    );
+    const issueOutput = tryExecFileSync("gh", [
+      "issue",
+      "list",
+      ...repoArgs,
+      "--state",
+      "open",
+      "--limit",
+      "30",
+      "--json",
+      "number,title,state,url,updatedAt",
+    ]);
     const allIssues = parseGhJson<GitHubIssue>(issueOutput);
     const staleIssues = allIssues.filter(
       (i) => i.updatedAt !== undefined && i.updatedAt < staleCutoff,

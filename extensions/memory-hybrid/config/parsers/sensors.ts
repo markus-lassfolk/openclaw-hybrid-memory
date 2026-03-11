@@ -93,6 +93,9 @@ export function parseSensorSweepConfig(cfg: Record<string, unknown>): SensorSwee
   const github: GitHubSensorConfig = {
     enabled: parseSourceEnabled(githubRaw, enabled),
     importance: parseImportance(githubRaw) ?? 0.7,
+    repo: typeof githubRaw?.repo === "string" && githubRaw.repo.trim().length > 0
+      ? githubRaw.repo.trim()
+      : undefined,
     includeReviewRequests: githubRaw?.includeReviewRequests !== false,
     staleIssueDays:
       typeof githubRaw?.staleIssueDays === "number" && githubRaw.staleIssueDays >= 1
