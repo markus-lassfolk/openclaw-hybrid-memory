@@ -6,7 +6,7 @@
  * avg confidence, link density, storage size, and timestamps.
  */
 
-import { statSync, readdirSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -15,6 +15,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
+import { getDirSizeSync } from "../utils/fs.js";
 
 export interface HealthPluginContext {
   factsDb: FactsDB;
@@ -47,28 +48,6 @@ export interface HealthReport {
     total: number;
   };
   generatedAt: string;
-}
-
-function getDirSize(dirPath: string): number {
-  try {
-    const entries = readdirSync(dirPath, { withFileTypes: true });
-    let total = 0;
-    for (const entry of entries) {
-      const fullPath = join(dirPath, entry.name);
-      if (entry.isFile()) {
-        try {
-          total += statSync(fullPath).size;
-        } catch {
-          // skip unreadable files
-        }
-      } else if (entry.isDirectory()) {
-        total += getDirSize(fullPath);
-      }
-    }
-    return total;
-  } catch {
-    return 0;
-  }
 }
 
 function getFileSize(filePath: string): number {
@@ -257,7 +236,7 @@ export function buildHealthReport(
   const sqliteWalSize = getFileSize(resolvedSqlitePath + "-wal");
   const sqliteShmSize = getFileSize(resolvedSqlitePath + "-shm");
   const totalSqliteSize = sqliteSize + sqliteWalSize + sqliteShmSize;
-  const lanceSize = getDirSize(resolvedLancePath);
+  const lanceSize = getDirSizeSync(resolvedLancePath);
 
   return {
     totalFacts,

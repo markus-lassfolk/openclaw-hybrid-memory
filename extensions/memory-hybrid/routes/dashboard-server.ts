@@ -10,13 +10,13 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { getDirSize } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
 
@@ -116,22 +116,6 @@ export interface DashboardStatus {
 // ---------------------------------------------------------------------------
 // Data collection helpers
 // ---------------------------------------------------------------------------
-
-async function getDirSize(dirPath: string): Promise<number> {
-  try {
-    const entries = await readdir(dirPath, { withFileTypes: true });
-    let total = 0;
-    for (const entry of entries) {
-      const fullPath = join(dirPath, entry.name);
-      if (entry.isFile()) {
-        try { total += (await stat(fullPath)).size; } catch { /* skip */ }
-      } else if (entry.isDirectory()) {
-        total += await getDirSize(fullPath);
-      }
-    }
-    return total;
-  } catch { return 0; }
-}
 
 /** Cached LanceDB dir size keyed by resolved path to avoid repeated traversal on every poll */
 const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
@@ -329,7 +313,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
 // HTML dashboard
 // ---------------------------------------------------------------------------
 
-function getDashboardHtml(port: number): string {
+function getDashboardHtml(): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -627,7 +611,7 @@ export interface DashboardServer {
 }
 
 export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
-  const html = getDashboardHtml(port);
+  const html = getDashboardHtml();
 
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
