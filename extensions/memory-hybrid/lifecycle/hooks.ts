@@ -1772,8 +1772,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     if (ctx.cfg.frustrationDetection?.enabled === false) return;
     const fCfg = ctx.cfg.frustrationDetection;
 
-    // Capture each incoming user turn — skipped in silent mode (Issue #317)
-    if (ctx.cfg.verbosity !== "silent") api.on("before_agent_start", async (event: unknown) => {
+    // Capture each incoming user turn.
+    // The handler always registers so frustration state and implicit_signals DB writes
+    // continue in silent mode; the inner guard below suppresses prependContext injection.
+    api.on("before_agent_start", async (event: unknown) => {
       const e = event as { prompt?: string; messages?: Array<{ role?: string; content?: unknown }>; agentId?: string; session?: { agentId?: string } };
       const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
 
