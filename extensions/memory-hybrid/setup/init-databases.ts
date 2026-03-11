@@ -14,6 +14,7 @@ import { createEmbeddingProvider, type EmbeddingProvider } from "../services/emb
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
 import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig, type ResolvedGatewayAuthConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
@@ -254,19 +255,8 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
-  /**
-   * Returns true when the auth order for a provider includes at least one OAuth/token profile
-   * (i.e. not just the plain API-key profile). Used to decide whether to route through the gateway.
-   * API-key-only profiles end with ':api' or ':default' (e.g. 'anthropic:api', 'google:default').
-   */
-  function hasOAuthProfiles(order: string[] | undefined, provider: string): boolean {
-    if (!order || order.length === 0) return false;
-    const apiOnlyPatterns = [`${provider}:api`, `${provider}:default`];
-    return order.some((p) => !apiOnlyPatterns.includes(p));
-  }
-
   /** The configured auth.order map from plugin config (issue #311). */
-  const authOrder = (cfg.auth as { order?: Record<string, string[]> } | undefined)?.order;
+  const authOrder = cfg.auth?.order;
 
   function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string; useFullModel?: boolean } {
     const normalized = normalizeModelId(model);
@@ -282,16 +272,23 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const bareModel = trimmed.slice(slashIdx + 1);
     const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
 
+    // Generic OAuth → gateway routing for any provider.
+    // If OAuth profiles are configured for a provider and the local gateway is available,
+    // route through the gateway so it can resolve the OAuth token before falling back to an API key.
+    // This ensures auth.order behaves consistently across all providers (google, anthropic, minimax, etc.).
+    if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) {
+      return {
+        client: getOrCreate(
+          `gateway:oauth:${gatewayBaseUrl}:${prefix}`,
+          () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl }),
+        ),
+        bareModel,
+        // The gateway expects the full "provider/model" identifier.
+        useFullModel: true,
+      };
+    }
+
     if (prefix === "google") {
-      // When OAuth profiles are configured for google AND gateway is available, route through gateway
-      // so the gateway can resolve the OAuth token (e.g. google-gemini-cli) before falling back to API key.
-      if (hasOAuthProfiles(authOrder?.['google'], 'google') && gatewayBaseUrl && gatewayToken) {
-        return {
-          client: getOrCreate(`gateway:oauth:${gatewayBaseUrl}`, () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl })),
-          bareModel,
-          useFullModel: true, // gateway expects full "google/model" name, not bare model
-        };
-      }
       const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey)
         ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
@@ -318,15 +315,6 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (prefix === "anthropic") {
-      // When OAuth profiles are configured for anthropic AND gateway is available, route through gateway
-      // so the gateway can resolve the OAuth token (e.g. anthropic:claude-cli) before falling back to API key.
-      if (hasOAuthProfiles(authOrder?.['anthropic'], 'anthropic') && gatewayBaseUrl && gatewayToken) {
-        return {
-          client: getOrCreate(`gateway:oauth:${gatewayBaseUrl}`, () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl })),
-          bareModel,
-          useFullModel: true, // gateway expects full "anthropic/model" name, not bare model
-        };
-      }
       const apiKey = resolveApiKey(providerCfg?.apiKey)
         ?? (process.env.ANTHROPIC_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);

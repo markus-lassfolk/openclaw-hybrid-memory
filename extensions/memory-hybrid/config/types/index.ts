@@ -328,8 +328,9 @@ export type AuthOrderConfig = {
    * Per-provider ordered list of auth profile IDs.
    * First eligible profile wins; falls through on missing/expired OAuth token.
    * Keys are provider prefixes (e.g. "anthropic", "openai", "google").
+   * Always populated when an AuthOrderConfig is present (parseAuthConfig never returns {}).
    */
-  order?: Record<string, string[]>;
+  order: Record<string, string[]>;
 };
 
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */

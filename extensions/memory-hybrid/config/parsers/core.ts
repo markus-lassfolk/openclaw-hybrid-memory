@@ -285,13 +285,14 @@ export function parseAuthConfig(cfg: Record<string, unknown>): AuthOrderConfig |
   if (!orderRaw || typeof orderRaw !== "object" || Array.isArray(orderRaw)) return undefined;
   const order: Record<string, string[]> = {};
   for (const [provider, profiles] of Object.entries(orderRaw as Record<string, unknown>)) {
-    if (!provider || typeof provider !== "string") continue;
+    const trimmedProvider = provider.trim();
+    if (trimmedProvider.length === 0) continue;
     if (!Array.isArray(profiles)) continue;
     const validProfiles = profiles
       .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-      .map((p) => p.trim());
+      .map((p) => p.trim().toLowerCase());
     if (validProfiles.length > 0) {
-      order[provider.toLowerCase()] = validProfiles;
+      order[trimmedProvider.toLowerCase()] = validProfiles;
     }
   }
   return Object.keys(order).length > 0 ? { order } : undefined;

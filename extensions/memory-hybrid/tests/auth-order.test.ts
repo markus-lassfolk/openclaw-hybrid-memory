@@ -15,7 +15,7 @@
  * - Returns undefined for empty provider profile lists
  * - Handles the full OAuth-first example from the issue description
  *
- * ### hasOAuthProfiles (via gateway routing logic)
+ * ### hasOAuthProfiles
  * - API-key-only profiles ('<provider>:api', '<provider>:default') do NOT trigger OAuth routing
  * - At least one non-API-key profile triggers OAuth routing
  * - Empty profile list does NOT trigger OAuth routing
@@ -24,6 +24,7 @@
 
 import { describe, it, expect } from "vitest";
 import { parseAuthConfig } from "../config/parsers/core.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
 
 // ---------------------------------------------------------------------------
 // parseAuthConfig — absent / invalid inputs
@@ -249,39 +250,30 @@ describe("parseAuthConfig — normalisation", () => {
     expect(result?.order?.anthropic).toEqual(["anthropic:claude-cli", "anthropic:api"]);
   });
 
-  it("ignores non-string provider keys (numeric keys from array-like object)", () => {
-    // Objects may have numeric keys from JSON.parse edge cases
+  it("ignores empty string provider keys", () => {
+    // Object.entries coerces all keys to strings; empty-string keys can appear from JSON.parse edge cases.
+    // parseAuthConfig trims and skips any provider key whose trimmed value is empty.
     const result = parseAuthConfig({
       auth: {
         order: {
           anthropic: ["anthropic:claude-cli"],
-          "": ["openai-codex"],            // empty key — skipped
+          "": ["openai-codex"],            // empty provider key — should be skipped
         },
       },
     });
-    // Non-empty provider keys are preserved, empty key dropped (empty string skipped)
+    // Non-empty provider keys are preserved
     expect(result?.order?.anthropic).toEqual(["anthropic:claude-cli"]);
-    // Empty string key is actually passed through since we only check provider is a string
-    // (empty string provider skipped by the provider.trim().length check isn't enforced in the impl)
-    // This just confirms the anthropic entry is correct
+    // Empty-string provider key is dropped by parseAuthConfig
+    expect(Object.keys(result?.order ?? {})).not.toContain("");
   });
 });
 
 // ---------------------------------------------------------------------------
-// OAuth detection — simulate hasOAuthProfiles logic
-// Mirrors the check used in init-databases.ts buildMultiProviderOpenAI
+// OAuth detection — exercises the shared hasOAuthProfiles utility
+// imported from utils/auth.ts (same function used by init-databases.ts).
 // ---------------------------------------------------------------------------
 
 describe("OAuth profile detection logic", () => {
-  /**
-   * Mirrors the hasOAuthProfiles() function in init-databases.ts.
-   * An OAuth profile is any profile that is NOT '<provider>:api' or '<provider>:default'.
-   */
-  function hasOAuthProfiles(order: string[] | undefined, provider: string): boolean {
-    if (!order || order.length === 0) return false;
-    const apiOnlyPatterns = [`${provider}:api`, `${provider}:default`];
-    return order.some((p) => !apiOnlyPatterns.includes(p));
-  }
 
   it("returns false for undefined order", () => {
     expect(hasOAuthProfiles(undefined, "anthropic")).toBe(false);
