@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 import { EventBus, computeFingerprint } from "../backends/event-bus.js";
 
 let tmpDir: string;
@@ -176,6 +177,12 @@ describe("EventBus.updateStatus", () => {
       expect(events.some((e) => e.id === id)).toBe(true);
     }
   });
+
+  it("throws when called with a non-existent id", () => {
+    expect(() => bus.updateStatus(999999, "processed")).toThrow(
+      "EventBus: no event found with id 999999",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -196,13 +203,18 @@ describe("EventBus.dedup", () => {
 
   it("returns false when matching fingerprint is older than cooldown", () => {
     const fp = computeFingerprint("sensor.garmin:entity:summary:bucket");
-    // Insert an event with a created_at far in the past by directly manipulating
-    // through a second DB connection isn't feasible easily, so we verify the
-    // logic by using cooldownHours = 0 (effectively: any event matches).
     bus.appendEvent("sensor.garmin", "garmin", {}, 0.5, fp);
-    // With cooldownHours = 0, the window is the past 0 hours — event was inserted
-    // just now which is at or after the cutoff, so it will be found.
-    expect(bus.dedup(fp, 0)).toBe(false); // cutoff == now, event just inserted is NOT >= now
+
+    // Back-date the row to 2 hours ago via a second DB connection so it is
+    // deterministically outside a 1-hour cooldown window.
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+    const db2 = new Database(join(tmpDir, "event-bus.db"));
+    db2.prepare("UPDATE memory_events SET created_at = ? WHERE fingerprint = ?")
+      .run(twoHoursAgo, fp);
+    db2.close();
+
+    // Event is 2 h old but cooldown is 1 h → should NOT be treated as a duplicate
+    expect(bus.dedup(fp, 1)).toBe(false);
   });
 
   it("returns false for a different fingerprint", () => {
@@ -225,24 +237,45 @@ describe("EventBus.dedup", () => {
 // ---------------------------------------------------------------------------
 
 describe("EventBus.pruneArchived", () => {
-  it("deletes archived events older than N days and returns count", () => {
+  it("deletes archived events older than N days and returns correct count", () => {
     const id1 = bus.appendEvent("sensor.test", "test", {});
     const id2 = bus.appendEvent("sensor.test", "test", {});
     bus.updateStatus(id1, "archived");
     bus.updateStatus(id2, "archived");
 
-    // Manually age the rows — we need to update created_at directly since SQLite
-    // uses server-side datetime('now'). We can do this via the public interface
-    // by verifying that fresh archived events are NOT pruned (they're within 30 days).
+    // Back-date both rows to be well in the past via a second DB connection
+    const db2 = new Database(join(tmpDir, "event-bus.db"));
+    db2.prepare("UPDATE memory_events SET created_at = '2000-01-01T00:00:00.000Z'").run();
+    db2.close();
+
+    // Prune with 1-day cutoff — both archived rows are far older than that
+    const count = bus.pruneArchived(1);
+    expect(count).toBe(2);
+    expect(bus.queryEvents({ status: "archived" })).toHaveLength(0);
+  });
+
+  it("does not prune archived events that are still within the retention window", () => {
+    const id1 = bus.appendEvent("sensor.test", "test", {});
+    const id2 = bus.appendEvent("sensor.test", "test", {});
+    bus.updateStatus(id1, "archived");
+    bus.updateStatus(id2, "archived");
+
+    // Events were just created — they are within the 30-day window
     const count = bus.pruneArchived(30);
-    expect(count).toBe(0); // events just created, not older than 30 days
+    expect(count).toBe(0);
+    expect(bus.queryEvents({ status: "archived" })).toHaveLength(2);
   });
 
   it("does not delete non-archived events", () => {
     const id = bus.appendEvent("sensor.test", "test", {});
     bus.updateStatus(id, "processed");
 
-    const count = bus.pruneArchived(0);
+    // Back-date to make it look ancient — still not archived so must survive
+    const db2 = new Database(join(tmpDir, "event-bus.db"));
+    db2.prepare("UPDATE memory_events SET created_at = '2000-01-01T00:00:00.000Z'").run();
+    db2.close();
+
+    const count = bus.pruneArchived(1);
     expect(count).toBe(0);
     expect(bus.queryEvents({ status: "processed" }).some((e) => e.id === id)).toBe(true);
   });

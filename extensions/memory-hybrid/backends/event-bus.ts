@@ -62,8 +62,9 @@ export class EventBus {
         event_type TEXT NOT NULL,
         source TEXT NOT NULL,
         payload TEXT NOT NULL,
-        importance REAL DEFAULT 0.5,
-        status TEXT DEFAULT 'raw',
+        importance REAL NOT NULL DEFAULT 0.5 CHECK(importance >= 0.0 AND importance <= 1.0),
+        status TEXT NOT NULL DEFAULT 'raw'
+          CHECK(status IN ('raw','processed','surfaced','pushed','archived')),
         created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         processed_at TEXT,
         fingerprint TEXT
@@ -97,6 +98,9 @@ export class EventBus {
     importance = 0.5,
     fingerprint?: string,
   ): number {
+    if (importance < 0 || importance > 1) {
+      throw new RangeError(`EventBus: importance must be between 0 and 1, got ${importance}`);
+    }
     const result = this.liveDb
       .prepare(
         `INSERT INTO memory_events (event_type, source, payload, importance, fingerprint)
@@ -137,14 +141,18 @@ export class EventBus {
 
   /**
    * Update the status of an event. Sets processed_at when transitioning away from 'raw'.
+   * Throws if no event with the given id exists.
    */
   updateStatus(id: number, newStatus: EventStatus): void {
     const processedAt = newStatus !== "raw" ? new Date().toISOString() : null;
-    this.liveDb
+    const result = this.liveDb
       .prepare(
         `UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?`,
       )
       .run(newStatus, processedAt, id);
+    if (result.changes === 0) {
+      throw new Error(`EventBus: no event found with id ${id}`);
+    }
   }
 
   /**
