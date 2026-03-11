@@ -118,6 +118,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | crossAgentLearning | — | — | ✓ | ✓ |
 | reranking | — | — | ✓ | ✓ |
 | contextualVariants | — | — | ✓ | ✓ |
+| **Verbosity level** | quiet | normal | normal | verbose |
 
 **Notes:**
 

@@ -277,13 +277,16 @@ export type ConfigMode = "essential" | "normal" | "expert" | "full";
 
 /**
  * Output verbosity level for CLI commands and tool responses.
+ * - silent: no unsolicited output — suppresses capability hints, relevant-memories,
+ *   relevant-procedures, and credential-hint blocks. Memory tools remain fully functional.
+ *   Ideal for users who want the plugin to work silently in the background.
  * - quiet: minimal output — counts/totals only, no decorative headers or config echo.
  *   Ideal for scripted/cron use and low-noise deployments (default for essential mode).
  * - normal: current default behaviour — balanced output with key details.
  * - verbose: extra detail — full breakdowns, all fields, config summaries.
  *   Ideal for debugging and interactive sessions (default for full mode).
  */
-export type VerbosityLevel = "quiet" | "normal" | "verbose";
+export type VerbosityLevel = "silent" | "quiet" | "normal" | "verbose";
 
 export type MemoryCategory = string;
 
