@@ -44,6 +44,7 @@ import {
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
+  isCompactVerbosity,
 } from "../config.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
@@ -1522,7 +1523,7 @@ export function registerMemoryTools(
         const totalLinked = autoLinked + entityAutoLinked;
         const verbosity = cfg.verbosity ?? "normal";
         let storedMsg: string;
-        if (verbosity === "quiet") {
+        if (isCompactVerbosity(verbosity)) {
           // Quiet: only report the ID and any warnings (contradictions are important)
           storedMsg = `Stored: ${entry.id}` +
             (contradictions.length > 0 ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})` : "");

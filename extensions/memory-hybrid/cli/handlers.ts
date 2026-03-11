@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, type CronModelConfig } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, isCompactVerbosity, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
@@ -75,6 +75,7 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 import { capProposalConfidence } from "./proposals.js";
 import { relativeTime } from "./shared.js";
 import {
@@ -88,6 +89,26 @@ import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectiven
 import type { CostTracker } from "../backends/cost-tracker.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
+import { preFilterSessions, type PreFilterConfig } from "../services/session-pre-filter.js";
+
+/**
+ * Build a PreFilterConfig from the plugin config.
+ * Resolves the Ollama endpoint from extraction.preFilter.endpoint,
+ * then llm.providers.ollama.baseURL, then the default localhost URL.
+ */
+function buildPreFilterConfig(cfg: HybridMemoryConfig): PreFilterConfig {
+  const pf = cfg.extraction?.preFilter;
+  const ollamaEndpoint =
+    pf?.endpoint ??
+    cfg.llm?.providers?.ollama?.baseURL ??
+    "http://localhost:11434";
+  return {
+    enabled: pf?.enabled === true,
+    model: pf?.model ?? "qwen3:8b",
+    endpoint: ollamaEndpoint,
+    maxCharsPerSession: pf?.maxCharsPerSession ?? 2000,
+  };
+}
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
@@ -729,7 +750,7 @@ export async function runVerifyForCli(
   const verbosity = cfg.verbosity ?? "normal";
   // In quiet mode: suppress ✅ / [OK] lines and section headers (─────); only pass through failures and summaries.
   const rawLog = sink.log;
-  const log: typeof rawLog = verbosity === "quiet"
+  const log: typeof rawLog = isCompactVerbosity(verbosity)
     ? (msg: string) => {
         // Suppress lines that are purely informational OK messages, section headers, and indented feature status lines
         const trimmed = msg.trimStart();
@@ -1102,9 +1123,7 @@ export async function runVerifyForCli(
   }
 
   // Cost advisory
-  const isHeavyModel = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy/.test((m.split("/").pop() ?? m).toLowerCase());
-  const isNanoModel  = (m: string) => /nano|\bmini\b|haiku|\blite\b/.test((m.split("/").pop() ?? m).toLowerCase());
-  const isLightModel = (m: string) => isNanoModel(m) || /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
+  const isLightOrNano = (m: string) => isNanoModel(m) || isLightModel(m);
   const nanoPrimary = nanoOrder[0];
   const defaultPrimary = defaultOrder[0];
   const nanoIsHeavy = nanoPrimary ? isHeavyModel(nanoPrimary) : false;
@@ -1117,7 +1136,7 @@ export async function runVerifyForCli(
     log(`     will use ${nanoPrimary} (a heavy model) for short, cheap tasks. This may increase costs.`);
     log(`     Fix: add llm.nano in plugin config, or set autoClassify.model and queryExpansion.model`);
     log(`     explicitly. Good options: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*`);
-  } else if (!hasNanoModel && !hasExplicitClassifyOverride && defaultPrimary && !isLightModel(defaultPrimary)) {
+  } else if (!hasNanoModel && !hasExplicitClassifyOverride && defaultPrimary && !isLightOrNano(defaultPrimary)) {
     log(`  ℹ️  Nano tier uses ${nanoPrimary ?? "default"}. For lower cost on classify/query-expansion/summarize,`);
     log(`     add llm.nano: ["openai/gpt-4.1-nano"] (OpenAI) or other nano/mini model to plugin config.`);
   }
@@ -1963,8 +1982,23 @@ export async function runExtractDirectivesForCli(
       filePaths = getSessionFilePathsSince(sessionDir, days);
     }
 
+    // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
+    // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
+    // that skipped sessions still advance the watermark and are not re-triaged on every run.
+    let extractionPaths = filePaths;
+    const pfCfgDir = buildPreFilterConfig(cfg);
+    if (pfCfgDir.enabled && filePaths.length > 0) {
+      const pfResult = await preFilterSessions(filePaths, pfCfgDir);
+      if (!pfResult.ollamaUnavailable) {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
+        extractionPaths = pfResult.kept;
+      } else {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+      }
+    }
+
     const directiveRegex = getDirectiveSignalRegex();
-    const result = runDirectiveExtract({ filePaths, directiveRegex });
+    const result = runDirectiveExtract({ filePaths: extractionPaths, directiveRegex });
 
     if (opts.verbose) {
       for (const incident of result.incidents) {
@@ -2044,8 +2078,23 @@ export async function runExtractReinforcementForCli(
     }
     const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
 
+    // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
+    // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
+    // that skipped sessions still advance the watermark and are not re-triaged on every run.
+    let extractionPaths = filePaths;
+    const pfCfgReinf = buildPreFilterConfig(cfg);
+    if (pfCfgReinf.enabled && filePaths.length > 0) {
+      const pfResult = await preFilterSessions(filePaths, pfCfgReinf);
+      if (!pfResult.ollamaUnavailable) {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
+        extractionPaths = pfResult.kept;
+      } else {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+      }
+    }
+
   const reinforcementRegex = getReinforcementSignalRegex();
-  const result = runReinforcementExtract({ filePaths, reinforcementRegex });
+  const result = runReinforcementExtract({ filePaths: extractionPaths, reinforcementRegex });
 
   if (opts.verbose) {
     for (const incident of result.incidents) {
@@ -3265,7 +3314,7 @@ export async function runDistillForCli(
 
   const sessionFiles = gatherSessionFiles(gatherOpts);
   const maxSessions = opts.maxSessions ?? 0;
-  const filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
+  let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
   if (filesToProcess.length === 0) {
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
     if (useWatermark && !opts.dryRun) {
@@ -3274,6 +3323,26 @@ export async function runDistillForCli(
     }
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: opts.dryRun };
   }
+
+  // Two-tier pre-filter: use local Ollama to triage sessions before cloud LLM (Issue #290).
+  // allCandidatePaths captures the full candidate set BEFORE pre-filtering so the cursor
+  // watermark always advances past skipped sessions, preventing infinite re-processing loops.
+  const allCandidatePaths = filesToProcess.map((f) => f.path);
+  const pfCfg = buildPreFilterConfig(cfg);
+  if (pfCfg.enabled && filesToProcess.length > 0) {
+    const pfResult = await preFilterSessions(allCandidatePaths, pfCfg);
+    if (!pfResult.ollamaUnavailable) {
+      const keptSet = new Set(pfResult.kept);
+      const originalCount = filesToProcess.length;
+      filesToProcess = filesToProcess.filter((f) => keptSet.has(f.path));
+      sink.log(
+        `memory-hybrid: distill pre-filter: ${filesToProcess.length}/${originalCount} sessions flagged as interesting (${pfResult.skipped.length} skipped by local model)`,
+      );
+    } else {
+      sink.log("memory-hybrid: distill pre-filter: Ollama unavailable — processing all sessions");
+    }
+  }
+
   const cronCfgDistill = getCronModelConfig(cfg);
   const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
   const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? getDefaultCronModel(cronCfgDistill, "heavy");
@@ -3471,8 +3540,9 @@ export async function runDistillForCli(
     capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
   }
   if (!opts.dryRun) {
-    const lastSessionTs = getMaxMtime(filesToProcess.map((f) => f.path));
-    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, filesToProcess.length);
+    // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
+    const lastSessionTs = getMaxMtime(allCandidatePaths);
+    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
   }
   return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, dedupSkipped: skipped, dryRun: false };
   } finally {
@@ -3620,12 +3690,11 @@ export function runSelfCorrectionExtractForCli(
   opts: {
     days?: number;
     outputPath?: string;
+    /** Pre-filtered session file paths. When provided, skips gatherSessionFiles(). */
+    filePaths?: string[];
   },
 ): SelfCorrectionExtractResult {
-  const sessionFiles = gatherSessionFiles({
-    days: opts.days ?? 3,
-  });
-  const filePaths = sessionFiles.map((f) => f.path);
+  const filePaths = opts.filePaths ?? gatherSessionFiles({ days: opts.days ?? 3 }).map((f) => f.path);
   if (filePaths.length === 0) {
     return { incidents: [], sessionsScanned: 0 };
   }
@@ -3696,7 +3765,24 @@ export async function runSelfCorrectionRunForCli(
       return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, error: String(e) };
     }
   } else {
-    const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3 });
+    // Two-tier pre-filter: use local Ollama to triage sessions before extraction (Issue #290).
+    let scFilePaths: string[] | undefined;
+    const pfCfgSC = buildPreFilterConfig(cfg);
+    if (pfCfgSC.enabled) {
+      const sessionFiles = gatherSessionFiles({ days: 3 });
+      const allPaths = sessionFiles.map((f) => f.path);
+      if (allPaths.length > 0) {
+        const pfResult = await preFilterSessions(allPaths, pfCfgSC);
+        if (!pfResult.ollamaUnavailable) {
+          logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${allPaths.length} sessions flagged as interesting`);
+          scFilePaths = pfResult.kept;
+        } else {
+          logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+          scFilePaths = allPaths; // avoid redundant gatherSessionFiles inside runSelfCorrectionExtractForCli
+        }
+      }
+    }
+    const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3, filePaths: scFilePaths });
     incidents = extractResult.incidents;
   }
   if (incidents.length === 0) {
@@ -4342,7 +4428,7 @@ export function runConfigSetForCli(
   }
   // verbosity: must be one of the valid levels
   if (k === "verbosity") {
-    const validVerbosity = ["quiet", "normal", "verbose"];
+    const validVerbosity = ["silent", "quiet", "normal", "verbose"];
     if (!validVerbosity.includes(value)) {
       return { ok: false, error: `Invalid verbosity: "${value}". Use one of: ${validVerbosity.join(", ")}` };
     }
@@ -4890,7 +4976,7 @@ export function runCostReportForCli(
   const days = opts.days ?? 7;
   const verbosity = ctx.cfg.verbosity ?? "normal";
   // quiet: only totals (compact layout); normal/verbose: full per-feature breakdown with savings
-  const compact = opts.format === "compact" || verbosity === "quiet";
+  const compact = opts.format === "compact" || isCompactVerbosity(verbosity);
 
   // --modes: show config-mode cost estimate table (no live data needed)
   if (opts.modes) {

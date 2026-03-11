@@ -461,7 +461,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       }
     });
 
-    if (ctx.cfg.autoRecall.enabled) {
+    // Silent mode suppresses auto-recall unsolicited context injection (Issue #317).
+    // See also: authFailure recall guard (~L1552), credential auto-detect guards (~L1711, ~L2208),
+    // active-task injection guard (~L1336), and capability-hints guard in register-hooks.ts.
+    if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent") {
       api.on("before_agent_start", async (event: unknown) => {
         const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
 
@@ -1332,7 +1335,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Active task working memory injection — if ACTIVE-TASK.md exists with non-Done tasks,
     // inject a compact summary into the system prompt so the agent knows what was in flight.
     // When staleWarning.enabled, also surface stale-task warnings and subagent hints.
-    if (ctx.cfg.activeTask.enabled) {
+    // Skipped in silent mode to avoid all unsolicited prompt injections (Issue #317).
+    if (ctx.cfg.activeTask.enabled && ctx.cfg.verbosity !== "silent") {
       api.on("before_agent_start", async () => {
         try {
           const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
@@ -1547,7 +1551,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
 
     // Auto-recall on authentication failures (reactive memory trigger)
-    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
+    // Silent mode suppresses credential-hint injection (Issue #317).
+    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled && ctx.cfg.verbosity !== "silent") {
       // Compile custom patterns once at handler registration time
       const customPatterns: AuthFailurePattern[] = [];
       for (const p of ctx.cfg.autoRecall.authFailure.patterns) {
@@ -1704,8 +1709,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    // Credential auto-detect: when patterns found in conversation, persist hint for next turn
-    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect) {
+    // Credential auto-detect: when patterns found in conversation, persist hint for next turn.
+    // Silent mode suppresses credential-hint injection (Issue #317).
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
       const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
       const PENDING_TTL_MS = 5 * 60 * 1000; // 5 min
 
@@ -1766,7 +1772,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     if (ctx.cfg.frustrationDetection?.enabled === false) return;
     const fCfg = ctx.cfg.frustrationDetection;
 
-    // Capture each incoming user turn
+    // Capture each incoming user turn.
+    // The handler always registers so frustration state and implicit_signals DB writes
+    // continue in silent mode; the inner guard below suppresses prependContext injection.
     api.on("before_agent_start", async (event: unknown) => {
       const e = event as { prompt?: string; messages?: Array<{ role?: string; content?: unknown }>; agentId?: string; session?: { agentId?: string } };
       const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
@@ -1827,6 +1835,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             });
           }
         }
+
+        // Silent mode suppresses frustration-signal and tool-hint injection (Issue #317).
+        if (ctx.cfg.verbosity === "silent") return;
 
         // Build hint and inject if above threshold
         const hint = buildFrustrationHint(frustrationResult, fCfg);
@@ -2201,8 +2212,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    // Credential auto-detect: when patterns found in conversation, persist hint for next turn
-    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect) {
+    // Credential auto-detect: when patterns found in conversation, persist hint for next turn.
+    // Skipped in silent mode — the before_agent_start reader is already gated, so writing
+    // credentials-pending.json would be wasted I/O that is never consumed.
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
       const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
 
       api.on("agent_end", async (event: unknown) => {

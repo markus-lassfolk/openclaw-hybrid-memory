@@ -28,6 +28,19 @@ describe("getModelPricing", () => {
     expect(getModelPricing("")).toBeNull();
   });
 
+  it("returns $0 for ollama/* models (local inference, no API cost)", () => {
+    const p = getModelPricing("ollama/qwen3:8b");
+    expect(p).not.toBeNull();
+    expect(p!.inputPer1M).toBe(0);
+    expect(p!.outputPer1M).toBe(0);
+  });
+
+  it("returns $0 for any ollama/* model regardless of model name", () => {
+    expect(getModelPricing("ollama/llama3:8b")).toEqual({ inputPer1M: 0, outputPer1M: 0 });
+    expect(getModelPricing("ollama/mistral:7b")).toEqual({ inputPer1M: 0, outputPer1M: 0 });
+    expect(getModelPricing("OLLAMA/Qwen3:8b")).toEqual({ inputPer1M: 0, outputPer1M: 0 });
+  });
+
   it("matches case-insensitively", () => {
     const p = getModelPricing("OpenAI/GPT-4.1-NANO");
     expect(p).not.toBeNull();
@@ -51,6 +64,11 @@ describe("estimateCost", () => {
 
   it("returns null for unknown model", () => {
     expect(estimateCost("unknown/model", 1000, 200)).toBeNull();
+  });
+
+  it("returns 0 cost for ollama models regardless of token counts", () => {
+    expect(estimateCost("ollama/qwen3:8b", 1_000_000, 1_000_000)).toBe(0);
+    expect(estimateCost("ollama/llama3:8b", 100_000, 50_000)).toBe(0);
   });
 
   it("handles zero tokens", () => {
