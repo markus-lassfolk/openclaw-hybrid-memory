@@ -123,6 +123,7 @@ export interface DashboardStatus {
 
 /** Cached LanceDB dir size keyed by resolved path to avoid repeated traversal on every poll */
 const _lanceSizeCache = new Map<string, { size: number; ts: number }>()
+const _lanceInFlight = new Map<string, Promise<number>>()
 const LANCE_CACHE_TTL_MS = 300_000 // 5 minutes
 
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
@@ -148,12 +149,20 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize
 
   // Use cached LanceDB size to avoid blocking on large directory traversals
-  const now = Date.now()
   const cachedEntry = _lanceSizeCache.get(ctx.resolvedLancePath)
+  const now = Date.now()
   if (!cachedEntry || now - cachedEntry.ts > LANCE_CACHE_TTL_MS) {
+    let inFlightPromise = _lanceInFlight.get(ctx.resolvedLancePath)
+    if (!inFlightPromise) {
+      inFlightPromise = getDirSize(ctx.resolvedLancePath).finally(() => {
+        _lanceInFlight.delete(ctx.resolvedLancePath)
+      })
+      _lanceInFlight.set(ctx.resolvedLancePath, inFlightPromise)
+    }
+    const size = await inFlightPromise
     _lanceSizeCache.set(ctx.resolvedLancePath, {
-      size: await getDirSize(ctx.resolvedLancePath),
-      ts: now,
+      size,
+      ts: Date.now(),
     })
   }
   const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)!.size
@@ -247,8 +256,11 @@ async function collectForgeState(): Promise<ForgeTaskItem[]> {
   const forgeDir = join(homedir(), '.openclaw', 'workspace', 'state', 'forge')
   if (!existsSync(forgeDir)) return []
   try {
-    const files = (await readdir(forgeDir)).filter((f) => f.endsWith('.json'))
-    // Limit to the 20 most recently modified files to avoid unbounded async reads
+    const files = (await readdir(forgeDir))
+      .filter((f) => f.endsWith('.json'))
+      .sort()
+      .reverse()
+      .slice(0, 50)
     const withMtime = (
       await Promise.all(
         files.map(async (f) => {
