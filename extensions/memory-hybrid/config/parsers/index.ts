@@ -265,15 +265,23 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         resolvedApiKey = resolved;
       }
     } else if (rawKey.length >= 10) {
-      const resolved = resolveEnvVars(rawKey);
-      if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
+      try {
+        const resolved = resolveEnvVars(rawKey);
+        if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
+          console.warn(
+            `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
+            "Fallback to OpenAI embeddings will be disabled. " +
+            `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+          );
+        } else {
+          resolvedApiKey = resolved;
+        }
+      } catch {
         console.warn(
-          `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
+          "Warning: embedding.apiKey fallback contains unresolved environment variable references. " +
           "Fallback to OpenAI embeddings will be disabled. " +
-          `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+          'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.',
         );
-      } else {
-        resolvedApiKey = resolved;
       }
     }
   }
