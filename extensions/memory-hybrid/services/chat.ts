@@ -283,14 +283,13 @@ export async function withLLMRetry<T>(
           lastError,
           attempt + 1,
         );
-        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429)
-        // or a non-retryable config error (404 = wrong model name, won't be fixed by retrying).
+        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429).
+        // Note: 404 errors never reach this branch — they exit early via the dedicated is404Like() check above.
         const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
           isServerError ||  // #302: 5xx server errors are transient
-          is404Like(lastError) ||  // #329: 404 = model not found — config issue, not a bug
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||

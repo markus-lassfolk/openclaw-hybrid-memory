@@ -252,7 +252,8 @@ describe("withLLMRetry", () => {
     expect(fn).toHaveBeenCalledTimes(4);
   });
 
-  it("#329: does not retry Google API 404 (model not found for API version)", async () => {
+  it("#329: does not retry Google API 404 (model not found for API version), capturePluginError not called", async () => {
+    vi.clearAllMocks();
     const googleError = Object.assign(
       new Error("404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings."),
       { status: 404 },
@@ -261,6 +262,8 @@ describe("withLLMRetry", () => {
     await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models/text-embedding-004");
     // Should only be called once — no retry for 404
     expect(fn).toHaveBeenCalledTimes(1);
+    // 404 exits early before the final-failure branch — GlitchTip must not be called
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 
   it("#329: does not retry Google API 404 without status property (message-only detection)", async () => {
@@ -279,16 +282,18 @@ describe("withLLMRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("#329: does not report 404 to GlitchTip even when all retries exhausted", async () => {
+  it("#329: 404 exits early (before final-failure branch) — capturePluginError not called", async () => {
     vi.clearAllMocks();
-    // When is404Like fails to catch early (belt-and-suspenders: isTransient check)
-    // We test with a realistic Google error that has status=404
+    // 404 errors are detected by the dedicated is404Like() check before any retry attempt,
+    // so they never reach the final-failure LLMRetryError branch where capturePluginError runs.
     const googleError = Object.assign(
       new Error("404 models/text-embedding-004 is not found for API version v1beta"),
       { status: 404 },
     );
     const fn = vi.fn().mockRejectedValue(googleError);
-    await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow();
+    // Throws the raw 404 error (not an LLMRetryError), called exactly once — exits before retry loop
+    await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models");
+    expect(fn).toHaveBeenCalledTimes(1);
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });
