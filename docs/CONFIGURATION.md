@@ -48,7 +48,7 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-h
 
 **memory-core** stays `enabled: true` alongside memory-hybrid: it provides file-based tools independently of the slot.
 
-**API key:** Inline the key if non-interactive shells don't load your env. Editing the config file directly is more reliable than using `config.patch`.
+**API key:** Supports three formats: a literal string (`"sk-..."`), an environment variable template (`"${OPENAI_API_KEY}"`), or a SecretRef (`"env:OPENAI_API_KEY"` or `"file:/path/to/key"`). The SecretRef format is resolved at config load — if the referenced variable or file is unset, the plugin throws a clear error rather than passing the literal string to the API. Editing the config file directly is more reliable than using `config.patch`.
 
 **Embedding provider:** Set `embedding.provider` to choose your embedding backend. Options: `"openai"` (default, requires API key), `"ollama"` (local, no key), `"onnx"` (local, no key, requires `onnxruntime-node`), `"google"` (Gemini API, requires `llm.providers.google.apiKey`). Use `embedding.preferredProviders` for ordered failover (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full examples.
 
