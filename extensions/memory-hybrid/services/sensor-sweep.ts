@@ -13,7 +13,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { EventBus, computeFingerprint } from "../backends/event-bus.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { capturePluginError } from "./error-reporter.js";
 import type {
   SensorSweepConfig,
   HomeAssistantSensorConfig,
