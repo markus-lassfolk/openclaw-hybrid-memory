@@ -777,6 +777,7 @@ export async function sweepYarbo(
     for (const entity of entities) {
       fingerprintPayload[entity.entity_id] = {
         state: entity.state,
+        error_count: entity.attributes["error_count"] ?? 0,
       };
     }
 
