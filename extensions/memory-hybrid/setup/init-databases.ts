@@ -534,7 +534,7 @@ export function initializeDatabases(
       // Medium: everything else (sonnet, gpt-4o, etc.)
       // All ollama/* models are nano-tier (local = free, no API cost)
       const isNano  = (m: string) => m.split("/")[0]?.toLowerCase() === "ollama" || /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isHeavy = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase());
+      const isHeavy = (m: string) => m.split("/")[0]?.toLowerCase() !== "ollama" && /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase());
       const isLight = (m: string) => /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
       const nano    = uniqueModels.filter(m => isNano(m) && !isHeavy(m));
       const heavy   = uniqueModels.filter(m => isHeavy(m) && !isNano(m));
