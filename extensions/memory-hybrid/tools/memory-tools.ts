@@ -1518,7 +1518,7 @@ export function registerMemoryTools(
         const totalLinked = autoLinked + entityAutoLinked;
         const verbosity = cfg.verbosity ?? "normal";
         let storedMsg: string;
-        if (verbosity === "quiet") {
+        if (verbosity === "quiet" || verbosity === "silent") {
           // Quiet: only report the ID and any warnings (contradictions are important)
           storedMsg = `Stored: ${entry.id}` +
             (contradictions.length > 0 ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})` : "");

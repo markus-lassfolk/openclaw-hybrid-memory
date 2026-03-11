@@ -188,7 +188,7 @@ export function registerUtilityTools(
 
         const verbosity = cfg.verbosity ?? "normal";
         let text: string;
-        if (verbosity === "quiet") {
+        if (verbosity === "quiet" || verbosity === "silent") {
           // Quiet: compact one-liner — statsBreakdown and countExpired are still computed above
           // and included in the `details` field for programmatic consumers; they're intentionally
           // omitted from the human-readable text to reduce noise in quiet sessions.
@@ -255,7 +255,7 @@ export function registerUtilityTools(
           );
           const verbosity = cfg.verbosity ?? "normal";
           let reflectText: string;
-          if (verbosity === "quiet") {
+          if (verbosity === "quiet" || verbosity === "silent") {
             reflectText = `Reflected: ${result.patternsStored} patterns stored.`;
           } else if (verbosity === "verbose") {
             reflectText = `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days, model: ${defaultModel}).`;

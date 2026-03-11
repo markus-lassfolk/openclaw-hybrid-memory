@@ -66,7 +66,7 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
 
         try {
           const issue = issueStore.create({ title, symptoms, severity, tags });
-          const createText = verbosity === "quiet"
+          const createText = verbosity === "quiet" || verbosity === "silent"
             ? `Issue: ${issue.id}.`
             : `Created issue "${issue.title}" [${issue.id}] (status: ${issue.status}, severity: ${issue.severity})`;
           return {
@@ -137,7 +137,7 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
             issue = issueStore.update(id, { rootCause, fix, rollback, symptoms });
           }
 
-          const updateText = verbosity === "quiet"
+          const updateText = verbosity === "quiet" || verbosity === "silent"
             ? `Issue ${issue.id}: ${issue.status}.`
             : `Updated issue "${issue.title}" [${issue.id}] (status: ${issue.status})`;
           return {

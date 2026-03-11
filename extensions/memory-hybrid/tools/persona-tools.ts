@@ -312,7 +312,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         }
 
         const verbosity = cfg.verbosity ?? "normal";
-        if (verbosity === "quiet") {
+        if (verbosity === "quiet" || verbosity === "silent") {
           // Quiet: ID and status only — no verbose details
           return {
             content: [
@@ -357,7 +357,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         // Quiet mode: suppress freshly-created pending proposals (< 24h old) to reduce noise,
         // but keep all non-pending proposals (approved/rejected/applied/wont-fix) visible.
         // Only apply quiet filter when no explicit status was provided by the user
-        if (verbosity === "quiet" && !status) {
+        if ((verbosity === "quiet" || verbosity === "silent") && !status) {
           const oneDayAgo = Math.floor(Date.now() / 1000) - SECONDS_PER_DAY;
           proposals = proposals.filter(
             (p) => p.status !== "pending" || p.createdAt < oneDayAgo,
@@ -369,7 +369,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             content: [
               {
                 type: "text",
-                text: verbosity === "quiet"
+                text: verbosity === "quiet" || verbosity === "silent"
                   ? "No pending proposals awaiting review."
                   : "No proposals found matching filters.",
               },
@@ -381,7 +381,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         const lines = proposals.map((p) => {
           const age = Math.floor((Date.now() / 1000 - p.createdAt) / SECONDS_PER_DAY);
           const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / SECONDS_PER_DAY) : null;
-          if (verbosity === "quiet") {
+          if (verbosity === "quiet" || verbosity === "silent") {
             // Compact: one line per proposal with just the actionable info
             const expireStr = expires !== null ? ` (expires ${expires}d)` : "";
             return `[${p.status.toUpperCase()}] ${p.id} — ${p.title}${expireStr}`;
@@ -390,7 +390,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         });
 
         const pendingCount = proposals.filter(p => p.status === "pending").length;
-        const summaryText = verbosity === "quiet"
+        const summaryText = verbosity === "quiet" || verbosity === "silent"
           ? (pendingCount > 0
               ? `${proposals.length} proposal(s) (${pendingCount} awaiting review):\n${lines.join("\n")}`
               : `${proposals.length} proposal(s):\n${lines.join("\n")}`)
