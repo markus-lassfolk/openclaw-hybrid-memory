@@ -298,15 +298,12 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, eventBus, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
-    if (eventBus) {
-      try { eventBus.close(); } catch { /* ignore */ }
-      eventBus = null;
-    }
+    eventBus = null;
 
     issueStore = null;
     workflowStore = null;
