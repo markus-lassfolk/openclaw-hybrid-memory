@@ -278,6 +278,50 @@ describe("hybridConfigSchema.parse", () => {
     }
   });
 
+  // Finding 1: resolved SecretRef value is re-validated for placeholder/length
+  it("throws when embedding.apiKey SecretRef resolves to a placeholder value", () => {
+    vi.stubEnv("TEST_EMBED_PLACEHOLDER_333", "YOUR_OPENAI_API_KEY");
+    try {
+      expect(() =>
+        hybridConfigSchema.parse({
+          embedding: { provider: "openai", apiKey: "env:TEST_EMBED_PLACEHOLDER_333", model: "text-embedding-3-small" },
+        }),
+      ).toThrow(/missing or a placeholder/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 2: short env var names (raw string < 10 chars) must not be blocked by the raw-length check
+  it("accepts env: SecretRef with a short env var name (raw string < 10 chars)", () => {
+    vi.stubEnv("KEY", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "openai", apiKey: "env:KEY", model: "text-embedding-3-small" },
+      });
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
+  it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
+    delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "ollama", model: "nomic-embed-text", apiKey: "env:TEST_EMBED_FALLBACK_UNSET_333" },
+      });
+      // Should not throw — fallback apiKey is optional
+      expect(result.embedding.apiKey).toBeUndefined();
+      // Should have warned about the unresolvable SecretRef
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/could not be resolved/));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("throws on null/array/string config", () => {
     expect(() => hybridConfigSchema.parse(null)).toThrow();
     expect(() => hybridConfigSchema.parse([])).toThrow();

@@ -224,6 +224,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     }
     const rawKey = (embedding.apiKey as string).trim();
     // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
+    let resolvedKey: string;
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
       const resolved = resolveSecretRef(rawKey);
       if (!resolved) {
@@ -232,18 +233,33 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
           : `file '${rawKey.slice(5)}'`;
         throw new Error(`embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`);
       }
-      resolvedApiKey = resolved;
+      resolvedKey = resolved;
     } else {
-      if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
-        throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
-      }
-      resolvedApiKey = resolveEnvVars(rawKey);
+      resolvedKey = resolveEnvVars(rawKey);
     }
+    // Validate the resolved key — catches placeholders/short values originating from SecretRefs too.
+    if (resolvedKey.length < 10 || resolvedKey === "YOUR_OPENAI_API_KEY" || resolvedKey === "<OPENAI_API_KEY>") {
+      throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
+    }
+    resolvedApiKey = resolvedKey;
   } else if (embedding && typeof embedding.apiKey === "string") {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
     const rawKey = (embedding.apiKey as string).trim();
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
-      resolvedApiKey = resolveSecretRef(rawKey) ?? undefined;
+      const resolved = resolveSecretRef(rawKey);
+      if (!resolved) {
+        const refDesc = rawKey.startsWith("env:")
+          ? `environment variable '${rawKey.slice(4)}'`
+          : `file '${rawKey.slice(5)}'`;
+        // Do not throw — this apiKey is optional fallback; warn so the misconfiguration is diagnosable.
+        console.warn(
+          `Warning: embedding.apiKey fallback references ${refDesc} which could not be resolved. ` +
+          "Fallback to OpenAI embeddings will be disabled. " +
+          `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.`,
+        );
+      } else {
+        resolvedApiKey = resolved;
+      }
     } else if (rawKey.length >= 10) {
       resolvedApiKey = resolveEnvVars(rawKey);
     }
