@@ -79,6 +79,9 @@
     "typescript-eslint": "^8.0.0",
     "vitest": "^4.0.18"
   },
+  "overrides": {
+    "@hono/node-server": ">=1.19.10"
+  },
   "engines": {
     "node": ">=20.0.0"
   },
