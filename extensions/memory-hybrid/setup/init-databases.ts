@@ -563,6 +563,9 @@ export function initializeDatabases(
 
       cfg.llm = {
         ...(cfg.llm?.localAutoStart ? { localAutoStart: cfg.llm.localAutoStart } : {}),
+        ...(cfg.llm?.providers ? { providers: cfg.llm.providers } : {}),
+        ...(cfg.llm?.fallbackToDefault !== undefined ? { fallbackToDefault: cfg.llm.fallbackToDefault } : {}),
+        ...(cfg.llm?.fallbackModel ? { fallbackModel: cfg.llm.fallbackModel } : {}),
         default: defaultTier.length > 0 ? defaultTier : uniqueModels,
         heavy: heavyTier.length > 0 ? heavyTier : uniqueModels,
         ...(nanoList.length > 0 ? { nano: nanoList } : {}),
