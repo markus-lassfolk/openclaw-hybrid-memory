@@ -54,6 +54,7 @@ import { detectFutureDate } from "../utils/date-detector.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
+import { UUID_REGEX } from "../utils/constants.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -1658,94 +1659,93 @@ export function registerMemoryTools(
           };
 
           if (memoryId) {
-          // Support prefix matching: if the ID looks truncated (not a full UUID),
-          // try to resolve the full ID via prefix search
-          let resolvedId = memoryId;
-          if (memoryId.length < 36 && !memoryId.includes("-")) {
-            const prefixResult = factsDb.findByIdPrefix(memoryId);
-            if (prefixResult && "ambiguous" in prefixResult) {
-              const countText = prefixResult.count >= 3 ? `${prefixResult.count}+` : `${prefixResult.count}`;
+            // Support prefix matching: if the ID looks truncated (not a full UUID),
+            // try to resolve the full ID via prefix search
+            let resolvedId = memoryId;
+            if (memoryId.length < 36 && !memoryId.includes("-")) {
+              const prefixResult = factsDb.findByIdPrefix(memoryId);
+              if (prefixResult && "ambiguous" in prefixResult) {
+                const countText = prefixResult.count >= 3 ? `${prefixResult.count}+` : `${prefixResult.count}`;
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Prefix "${memoryId}" is ambiguous (matches ${countText} facts). Use the full UUID from memory_recall.`,
+                    },
+                  ],
+                  details: { action: "ambiguous", prefix: memoryId, matchCount: prefixResult.count },
+                };
+              }
+              if (prefixResult && "id" in prefixResult) {
+                resolvedId = prefixResult.id;
+              }
+            }
+
+            // Validate that resolvedId is a proper UUID before attempting deletion.
+            // LLMs sometimes pass memory text content as the ID instead of the UUID.
+            if (!UUID_REGEX.test(resolvedId)) {
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Prefix "${memoryId}" is ambiguous (matches ${countText} facts). Use the full UUID from memory_recall.`,
+                    text: `"${memoryId}" is not a valid memory ID. Use memory_recall to find the memory and get its UUID, then pass the UUID to memory_forget.`,
                   },
                 ],
-                details: { action: "ambiguous", prefix: memoryId, matchCount: prefixResult.count },
+                details: { action: "invalid_id", originalId: memoryId },
               };
             }
-            if (prefixResult && "id" in prefixResult) {
-              resolvedId = prefixResult.id;
+
+            const sqlDeleted = factsDb.delete(resolvedId);
+            let lanceDeleted = false;
+            let lanceError: string | null = null;
+            try {
+              lanceDeleted = await vectorDb.delete(resolvedId);
+            } catch (err) {
+              lanceError = err instanceof Error ? err.message : String(err);
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "vector",
+                operation: "forget-delete",
+                phase: "runtime",
+                backend: "lancedb",
+              });
+              api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
             }
-          }
+            aliasDb?.deleteByFactId(resolvedId);
 
-          // Validate that resolvedId is a proper UUID before attempting deletion.
-          // LLMs sometimes pass memory text content as the ID instead of the UUID.
-          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-          if (!uuidRegex.test(resolvedId)) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `"${memoryId}" is not a valid memory ID. Use memory_recall to find the memory and get its UUID, then pass the UUID to memory_forget.`,
-                },
-              ],
-              details: { action: "invalid_id", originalId: memoryId },
-            };
-          }
-
-          const sqlDeleted = factsDb.delete(resolvedId);
-          let lanceDeleted = false;
-          let lanceError: string | null = null;
-          try {
-            lanceDeleted = await vectorDb.delete(resolvedId);
-          } catch (err) {
-            lanceError = err instanceof Error ? err.message : String(err);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "vector",
-              operation: "forget-delete",
-              phase: "runtime",
-              backend: "lancedb",
-            });
-            api.logger.warn(`memory-hybrid: LanceDB delete during tool failed: ${err}`);
-          }
-          aliasDb?.deleteByFactId(resolvedId);
-
-          if (!sqlDeleted && !lanceDeleted) {
-            if (lanceError) {
+            if (!sqlDeleted && !lanceDeleted) {
+              if (lanceError) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Deletion failed for "${memoryId}": SQLite not found, LanceDB error: ${lanceError}`,
+                    },
+                  ],
+                  details: { action: "error", originalId: memoryId, resolvedId, error: lanceError },
+                };
+              }
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Deletion failed for "${memoryId}": SQLite not found, LanceDB error: ${lanceError}`,
+                    text: `Failed to delete memory "${memoryId}" — not found in either backend. Use the full UUID from memory_recall.`,
                   },
                 ],
-                details: { action: "error", originalId: memoryId, resolvedId, error: lanceError },
+                details: { action: "not_found", originalId: memoryId, resolvedId },
               };
             }
+
+            const resolveNote = resolvedId !== memoryId ? ` (resolved from prefix "${memoryId}")` : "";
             return {
               content: [
                 {
                   type: "text",
-                  text: `Failed to delete memory "${memoryId}" — not found in either backend. Use the full UUID from memory_recall.`,
+                  text: `Memory ${resolvedId} forgotten${resolveNote} (sqlite: ${sqlDeleted}, lance: ${lanceDeleted}).`,
                 },
               ],
-              details: { action: "not_found", originalId: memoryId, resolvedId },
+              details: { action: "deleted", originalId: memoryId, resolvedId },
             };
           }
-
-          const resolveNote = resolvedId !== memoryId ? ` (resolved from prefix "${memoryId}")` : "";
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Memory ${resolvedId} forgotten${resolveNote} (sqlite: ${sqlDeleted}, lance: ${lanceDeleted}).`,
-              },
-            ],
-            details: { action: "deleted", originalId: memoryId, resolvedId },
-          };
-        }
 
         if (query) {
           const sqlResults = factsDb.search(query, 5);
