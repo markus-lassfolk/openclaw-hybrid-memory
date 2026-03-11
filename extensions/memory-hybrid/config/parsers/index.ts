@@ -257,6 +257,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
           "Fallback to OpenAI embeddings will be disabled. " +
           `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.`,
         );
+      } else if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
+        console.warn(
+          `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
+          "Fallback to OpenAI embeddings will be disabled. " +
+          `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+        );
       } else {
         resolvedApiKey = resolved;
       }
