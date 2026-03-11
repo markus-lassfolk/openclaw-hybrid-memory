@@ -55,6 +55,28 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 
 ---
 
+## Verbosity level (silent mode)
+
+The plugin supports four verbosity levels for CLI commands and tool output, configured via `verbosity`.
+
+```json
+{
+  "verbosity": "silent"
+}
+```
+
+- **`silent`**: Suppresses all unsolicited context blocks injected into prompts (e.g. capability hints, `<relevant-memories>`, `<relevant-procedures>`, and credential-hint blocks). Memory tools (`memory_store`, `memory_recall`, etc.) remain fully functional. Ideal for users who want the plugin to work entirely in the background without cluttering the context window.
+- **`quiet`**: Minimal output. For CLI commands, shows only counts/totals without decorative headers. (Default for `essential` mode).
+- **`normal`**: Balanced output with key details. (Default for `normal` and `expert` modes).
+- **`verbose`**: Extra detail. Full breakdowns, all fields, and config summaries. Ideal for debugging. (Default for `full` mode).
+
+You can change this on the fly using the CLI:
+
+```bash
+openclaw hybrid-mem config set verbosity silent
+```
+
+
 ## Auto-capture and auto-recall
 
 `captureMaxChars` (default 5000): messages longer than this are not captured; stored text is truncated to this length.
