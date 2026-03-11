@@ -400,7 +400,8 @@ export async function sweepGitHub(
   const result: SensorSweepResult = { sensor: "github", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const bucketHour = new Date().toISOString().slice(0, 13);
-    const fp = computeFingerprint(`sensor.github:${bucketHour}`);
+    const repo = cfg.repo ?? "";
+    const fp = computeFingerprint(`sensor.github:${repo}:${bucketHour}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
