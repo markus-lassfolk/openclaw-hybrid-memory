@@ -691,12 +691,32 @@ export function initializeDatabases(
     let appended = false;
     for (const name of mergedProviderNames) {
       if (hasModelFrom(defaultList, name) && hasModelFrom(heavyList, name)) continue;
-      let defaultModel: string | null = knownDefault[name] ?? null;
-      if (!defaultModel && gwProviders && typeof (gwProviders as Record<string, unknown>)[name] === "object") {
+      // Prefer the actual model IDs from gateway config over the hardcoded knownDefault fallback.
+      // This ensures that if the gateway has e.g. minimax.models: ["MiniMax-M2.5"], we use that
+      // instead of the hardcoded "MiniMax-Text-01".
+      let defaultModel: string | null = null;
+      if (gwProviders && typeof (gwProviders as Record<string, unknown>)[name] === "object") {
         const gw = (gwProviders as Record<string, unknown>)[name] as Record<string, unknown>;
-        const gwModel = typeof gw.defaultModel === "string" ? gw.defaultModel : typeof gw.model === "string" ? gw.model : null;
-        if (gwModel?.trim()) defaultModel = `${name}/${gwModel.trim()}`;
+        // Check models[] array first (take the first listed model)
+        if (Array.isArray(gw.models) && gw.models.length > 0) {
+          const first = gw.models[0];
+          const modelId =
+            typeof first === "string"
+              ? first.trim()
+              : typeof first === "object" && first !== null
+              ? String((first as Record<string, unknown>).id ?? (first as Record<string, unknown>).name ?? "").trim()
+              : "";
+          if (modelId) defaultModel = `${name}/${modelId}`;
+        }
+        // Fall back to singular defaultModel or model field
+        if (!defaultModel) {
+          const gwModel =
+            typeof gw.defaultModel === "string" ? gw.defaultModel : typeof gw.model === "string" ? gw.model : null;
+          if (gwModel?.trim()) defaultModel = `${name}/${gwModel.trim()}`;
+        }
       }
+      // Final fallback: use hardcoded knownDefault for well-known providers
+      if (!defaultModel) defaultModel = knownDefault[name] ?? null;
       if (!defaultModel) continue;
       if (!hasModelFrom(defaultList, name)) { defaultList.push(defaultModel); appended = true; }
       const heavyModel = name === "anthropic" ? "anthropic/claude-opus-4-6" : defaultModel;

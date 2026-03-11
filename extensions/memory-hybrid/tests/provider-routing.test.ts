@@ -410,6 +410,35 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(heavyList).toContain("minimax/MiniMax-Text-01");
   });
 
+  it("appends minimax/MiniMax-M2.5 when gateway models array specifies MiniMax-M2.5 (issue #375)", () => {
+    // When the gateway provider config has minimax.models: ["MiniMax-M2.5"], the plugin must
+    // read that model ID from the config instead of falling back to the hardcoded MiniMax-Text-01.
+    const cfg = getTestConfig(tmpDir);
+    cfg.llm = {
+      default: ["openai/gpt-4.1-mini"],
+      heavy: ["openai/gpt-4o"],
+    } as typeof cfg.llm;
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            minimax: { apiKey: "sk-cp-gw-m2-5-test", models: ["MiniMax-M2.5"] },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
+    expect(defaultList).toContain("minimax/MiniMax-M2.5");
+    expect(heavyList).toContain("minimax/MiniMax-M2.5");
+    expect(defaultList).not.toContain("minimax/MiniMax-Text-01");
+    expect(heavyList).not.toContain("minimax/MiniMax-Text-01");
+  });
+
   it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
     // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
     // converts to minimax/MiniMax-M2.5 when routing), hasModelFrom should detect the minimax
