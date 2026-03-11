@@ -248,14 +248,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
       const resolved = resolveSecretRef(rawKey);
       if (!resolved) {
-        const refDesc = rawKey.startsWith("env:")
-          ? `environment variable '${rawKey.slice(4)}'`
-          : `file '${rawKey.slice(5)}'`;
         // Do not throw — this apiKey is optional fallback; warn so the misconfiguration is diagnosable.
+        // Intentionally omit the SecretRef path from the message to avoid clear-text logging (CWE-312).
         console.warn(
-          `Warning: embedding.apiKey fallback references ${refDesc} which could not be resolved. ` +
+          "Warning: embedding.apiKey fallback SecretRef could not be resolved. " +
           "Fallback to OpenAI embeddings will be disabled. " +
-          `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.`,
+          'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.',
         );
       } else if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
         console.warn(
