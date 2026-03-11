@@ -544,7 +544,7 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `apiKey` | (none) | Legacy Google API key. Still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set. |
+| `apiKey` | (none) | Legacy Google API key. Still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set. Accepts a plain key or SecretRef (`"env:VAR"`, `"file:/path"`, `"${VAR}"`). |
 | `defaultModel` | — | Model used when `openclaw hybrid-mem distill --model` is not specified and `llm` is not set. |
 
 **Batch size:** Long-context models (model name containing `gemini`) use larger batches (500k tokens); others default to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.

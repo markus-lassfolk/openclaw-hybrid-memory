@@ -103,7 +103,10 @@ This means a freshly installed plugin works with whatever models you have config
 ## Provider API keys
 
 Each provider in `llm.providers` can have:
-- `apiKey` — the API key for that provider
+- `apiKey` — the API key for that provider. Accepts a plain key string or any **SecretRef** format:
+  - `"env:VAR_NAME"` — read from environment variable `VAR_NAME`
+  - `"file:/path/to/file"` — read from a file (whitespace-trimmed)
+  - `"${VAR_NAME}"` — template syntax resolved from environment variables
 - `baseURL` — the OpenAI-compatible base URL (only needed for providers without built-in defaults)
 
 ### Built-in providers (no `baseURL` needed)
