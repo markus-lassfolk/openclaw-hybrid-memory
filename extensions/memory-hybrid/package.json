@@ -35,6 +35,9 @@
     "lancedb",
     "embeddings"
   ],
+  "peerDependencies": {
+    "openclaw": ">=2026.3.8"
+  },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
     "@sentry/node": "^8.0.0",

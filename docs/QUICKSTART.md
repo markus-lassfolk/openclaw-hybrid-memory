@@ -12,7 +12,7 @@ Get an agent that **remembers you** and **gets better at giving the right contex
 
 ## Prerequisites
 
-- **OpenClaw** installed and running.
+- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
 - **Embedding access** (required): configure `embedding.apiKey` and `embedding.model` in plugin config so the plugin can call an embedding API (e.g. OpenAI `text-embedding-3-small`). The plugin uses the gateway’s OpenAI-compatible client when available.
 - **Chat/completion** (optional for basic memory): needed for distillation, reflection, auto-classify, etc. Any provider the OpenClaw gateway supports works; optional **`llm`** config sets model preference lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 - **Node.js** with npm.

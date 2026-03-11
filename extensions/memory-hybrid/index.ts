@@ -169,6 +169,7 @@ import { ContextualVariantGenerator, VariantGenerationQueue } from "./services/c
 import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptValue } from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
+import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { IssueStore } from "./backends/issue-store.js";
 import { WorkflowStore, sequenceDistance, sequenceSimilarity, extractGoalKeywords, hashToolSequence } from "./backends/workflow-store.js";
 import { WorkflowTracker, _resetRateLimitForTest } from "./services/workflow-tracker.js";
@@ -607,6 +608,8 @@ export const _testing = {
   CredentialsDB,
   ProposalsDB,
   EventLog,
+  EventBus,
+  computeFingerprint,
   VectorDB,
   Embeddings,
   WriteAheadLog,

@@ -27,6 +27,7 @@ import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { versionInfo } from "../versionInfo.js";
+import { checkOpenClawVersion } from "../utils/version-check.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
@@ -102,6 +103,8 @@ export function createPluginService(ctx: PluginServiceContext) {
         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
       );
 
+      checkOpenClawVersion(api.version, api.logger);
+
       // ========================================================================
       // Startup Task Sequencing (to avoid race conditions):
       // 1. Error reporter init (async)
@@ -163,7 +166,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                   const stored = factsDb.store({
                     text,
                     category: (category as MemoryCategory) || "other",
-                    importance: importance ?? 0.7,
+                    importance: importance ?? 0.5,
                     entity: entity || null,
                     key: key || null,
                     value: value || null,
@@ -178,7 +181,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                     void vectorDb.store({
                       text,
                       vector: entry.data.vector,
-                      importance: importance ?? 0.7,
+                      importance: importance ?? 0.5,
                       category: category || "other",
                       id: stored.id,
                     }).then(() => {

@@ -9,7 +9,7 @@ import { stringEnum } from "openclaw/plugin-sdk";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { PROPOSAL_STATUSES, type HybridMemoryConfig } from "../config.js";
+import { PROPOSAL_STATUSES, type HybridMemoryConfig, isCompactVerbosity } from "../config.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -273,7 +273,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           const applyVerbosity = cfg.verbosity ?? "normal";
           if (applyResult.ok) {
             api.logger.info(`memory-hybrid: persona proposal auto-applied — ${proposal.id} → ${applyResult.targetFile}`);
-            if (applyVerbosity === "quiet") {
+            if (isCompactVerbosity(applyVerbosity)) {
               // Quiet: only emit ID + file, suppress change preview
               return {
                 content: [
@@ -302,7 +302,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             content: [
               {
                 type: "text",
-                text: applyVerbosity === "quiet"
+                text: isCompactVerbosity(applyVerbosity)
                   ? `Proposal ${proposal.id}: apply failed — ${applyResult.error}`
                   : `Proposal ${proposal.id} was approved automatically but applying to the file failed: ${applyResult.error}\n\nYou can run \`openclaw proposals apply ${proposal.id}\` after fixing the issue.`,
               },
@@ -312,7 +312,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         }
 
         const verbosity = cfg.verbosity ?? "normal";
-        if (verbosity === "quiet") {
+        if (isCompactVerbosity(verbosity)) {
           // Quiet: ID and status only — no verbose details
           return {
             content: [
@@ -357,7 +357,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         // Quiet mode: suppress freshly-created pending proposals (< 24h old) to reduce noise,
         // but keep all non-pending proposals (approved/rejected/applied/wont-fix) visible.
         // Only apply quiet filter when no explicit status was provided by the user
-        if (verbosity === "quiet" && !status) {
+        if (isCompactVerbosity(verbosity) && !status) {
           const oneDayAgo = Math.floor(Date.now() / 1000) - SECONDS_PER_DAY;
           proposals = proposals.filter(
             (p) => p.status !== "pending" || p.createdAt < oneDayAgo,
@@ -369,7 +369,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             content: [
               {
                 type: "text",
-                text: verbosity === "quiet"
+                text: isCompactVerbosity(verbosity)
                   ? "No pending proposals awaiting review."
                   : "No proposals found matching filters.",
               },
@@ -381,7 +381,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         const lines = proposals.map((p) => {
           const age = Math.floor((Date.now() / 1000 - p.createdAt) / SECONDS_PER_DAY);
           const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / SECONDS_PER_DAY) : null;
-          if (verbosity === "quiet") {
+          if (isCompactVerbosity(verbosity)) {
             // Compact: one line per proposal with just the actionable info
             const expireStr = expires !== null ? ` (expires ${expires}d)` : "";
             return `[${p.status.toUpperCase()}] ${p.id} — ${p.title}${expireStr}`;
@@ -390,7 +390,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         });
 
         const pendingCount = proposals.filter(p => p.status === "pending").length;
-        const summaryText = verbosity === "quiet"
+        const summaryText = isCompactVerbosity(verbosity)
           ? (pendingCount > 0
               ? `${proposals.length} proposal(s) (${pendingCount} awaiting review):\n${lines.join("\n")}`
               : `${proposals.length} proposal(s):\n${lines.join("\n")}`)

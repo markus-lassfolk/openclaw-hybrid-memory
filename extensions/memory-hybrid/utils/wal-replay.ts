@@ -44,7 +44,7 @@ export async function replayWalEntries(
           const stored = factsDb.store({
             text: entry.data.text as string,
             category: (entry.data.category as import("../config.js").MemoryCategory) ?? "other",
-            importance: (entry.data.importance as number) ?? 0.7,
+            importance: (entry.data.importance as number) ?? 0.5,
             entity: (entry.data.entity as string | null | undefined) ?? null,
             key: (entry.data.key as string | null | undefined) ?? null,
             value: (entry.data.value as string | null | undefined) ?? null,

@@ -8,6 +8,7 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Requirements
 
+- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
 - **OpenAI API key** — Required. The plugin uses it for embeddings (default model `text-embedding-3-small`); without a valid `embedding.apiKey` in config the plugin does not load. Optional features (auto-classify, summarize, consolidate, **memory classification**) use the same key with a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts (by embedding similarity) before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
 - **Build tools** for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
@@ -46,6 +47,27 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 | `config.ts` | Decay classes, TTL defaults, config parsing (incl. autoRecall, store, etc.) |
 | `index.ts` | Plugin implementation (SQLite+FTS5, LanceDB, tools, CLI, lifecycle) |
 | `versionInfo.ts` | Plugin and memory-manager version metadata |
+| `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → Rumination Engine pipeline |
+
+## Event Bus
+
+`backends/event-bus.ts` adds an **Event Bus**: an append-only `memory_events` SQLite table that decouples sensor sweeps (producers) from the Rumination Engine (consumer).
+
+Key API:
+
+| Method | Description |
+|--------|-------------|
+| `appendEvent(type, source, payload, importance?, fingerprint?)` | Append a new event; returns its auto-generated id |
+| `queryEvents(filter?)` | Filter by `status`, `event_type`, `since`, `limit` |
+| `updateStatus(id, newStatus)` | Advance an event through the status lifecycle |
+| `dedup(fingerprint, cooldownHours?)` | Return `true` if a duplicate exists within the cooldown window |
+| `pruneArchived(olderThanDays?)` | Delete archived events older than N days |
+
+Status lifecycle: `raw → processed → surfaced → pushed → archived`
+
+`computeFingerprint(input)` is a SHA-256 helper for building stable dedup keys.
+
+See [`docs/event-bus.md`](docs/event-bus.md) for the full schema, API reference, and integration example.
 
 ## Dependencies
 

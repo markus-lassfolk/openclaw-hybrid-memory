@@ -175,6 +175,7 @@ export async function chatComplete(opts: {
       msg.includes("request was aborted") ||
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
+      msg.includes("econnrefused") ||
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err);  // #302: OpenAI SDK InternalServerError has no numeric prefix
@@ -281,7 +282,9 @@ export async function withLLMRetry<T>(
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
-          /\b405\s+method\s+not\s+allowed/i.test(fullMsg);
+          /\b405\s+method\s+not\s+allowed/i.test(fullMsg) ||
+          causeMsg.includes("econnrefused") ||
+          fullMsg.includes("econnrefused");
         if (!isTransient) {
           capturePluginError(retryError, {
             subsystem: "chat",
