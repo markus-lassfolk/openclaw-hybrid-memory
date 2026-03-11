@@ -79,6 +79,35 @@ describe("resolveSecretRef", () => {
   it("trims plain string before returning", () => {
     expect(resolveSecretRef("  plain  ")).toBe("plain");
   });
+
+  it("resolves ${VAR} template syntax", () => {
+    vi.stubEnv("TEST_VAR_TMPL", "template-value");
+    expect(resolveSecretRef("${TEST_VAR_TMPL}")).toBe("template-value");
+  });
+
+  it("resolves ${VAR} template with surrounding text", () => {
+    vi.stubEnv("TEST_VAR_TMPL", "value");
+    expect(resolveSecretRef("prefix-${TEST_VAR_TMPL}-suffix")).toBe("prefix-value-suffix");
+  });
+
+  it("returns undefined when ${VAR} template references unset env var", () => {
+    delete process.env.TEST_VAR_UNSET;
+    expect(resolveSecretRef("${TEST_VAR_UNSET}")).toBeUndefined();
+  });
+
+  it("accepts resolved value containing literal ${ without closing brace", () => {
+    vi.stubEnv("TEST_VAR_WITH_DOLLAR", "val${ue");
+    expect(resolveSecretRef("${TEST_VAR_WITH_DOLLAR}")).toBe("val${ue");
+  });
+
+  it("accepts plain string containing ${ without closing brace", () => {
+    expect(resolveSecretRef("plain${ token")).toBe("plain${ token");
+  });
+
+  it("returns undefined for malformed template with unresolved ${VAR} pattern", () => {
+    vi.stubEnv("TEST_VAR_A", "value-a");
+    expect(resolveSecretRef("${TEST_VAR_A}-${TEST_VAR_B}")).toBeUndefined();
+  });
 });
 
 // ── parseGatewayConfig ────────────────────────────────────────────────────────

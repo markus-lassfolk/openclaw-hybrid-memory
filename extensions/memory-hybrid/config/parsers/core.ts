@@ -378,7 +378,7 @@ export function resolveSecretRef(value: string): string | undefined {
     try {
       const resolved = resolveEnvVars(v);
       // Guard: if any ${...} placeholder survived, the template is malformed or unresolved.
-      if (resolved.includes("${")) return undefined;
+      if (/\$\{[^}]+\}/.test(resolved)) return undefined;
       return resolved && resolved.trim() ? resolved.trim() : undefined;
     } catch {
       return undefined;
