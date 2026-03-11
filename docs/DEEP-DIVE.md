@@ -40,6 +40,8 @@ facts table
 ├── normalized_hash (SHA-256 of normalized text, for dedup)
 ├── recall_count    (how many times recalled)
 ├── last_accessed   (epoch seconds)
+├── access_count    (INTEGER, times recalled — added by migration #237)
+├── last_accessed_at (ISO 8601 timestamp of last recall — added by migration #237)
 ├── valid_from      (bi-temporal: when fact became true)
 ├── valid_until     (bi-temporal: when fact stopped being true)
 ├── superseded_at   (epoch seconds, when a newer fact replaced this)
@@ -49,7 +51,7 @@ facts table
 
 An **FTS5 virtual table** (`facts_fts`) mirrors `text`, `category`, `entity`, `key`, and `value` for full-text search. It uses **Porter stemming** and **Unicode tokenization** — so searching for "preferred" matches "prefer", and non-ASCII characters work correctly. Triggers keep FTS in sync on every insert/update/delete.
 
-**Indexes** on: `category`, `entity`, `created_at`, `expires_at`, `decay_class`, `tags`, `source_date`, `last_accessed`, `superseded_at`, `valid_from`/`valid_until`, `normalized_hash`.
+**Indexes** on: `category`, `entity`, `created_at`, `expires_at`, `decay_class`, `tags`, `source_date`, `last_accessed`, `superseded_at`, `valid_from`/`valid_until`, `normalized_hash`, `access_count`, `last_accessed_at` (partial, non-null only).
 
 ### 2. LanceDB (vector storage)
 
