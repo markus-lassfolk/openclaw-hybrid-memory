@@ -442,6 +442,26 @@ describe("sweepAll", () => {
     expect(sensorNames).not.toContain("session-history");
   });
 
+  it("accepts camelCase config names in source filter", async () => {
+    const cfg = parseSensorSweepConfig({
+      sensorSweep: {
+        enabled: true,
+        garmin: { enabled: false },
+        github: { enabled: false },
+      },
+    });
+
+    const factsDb = makeFactsDbStub();
+    const result = await sweepAll(bus, cfg, factsDb, {
+      tier: 1,
+      sources: ["memoryPatterns", "sessionHistory"],
+    });
+
+    const sensorNames = result.sensors.map((s) => s.sensor);
+    expect(sensorNames).toContain("memory-patterns");
+    expect(sensorNames).toContain("session-history");
+  });
+
   it("runs Tier 2 when tier=2", async () => {
     const cfg = parseSensorSweepConfig({
       sensorSweep: {

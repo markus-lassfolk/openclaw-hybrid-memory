@@ -823,8 +823,19 @@ export async function sweepAll(
 
   const results: SensorSweepResult[] = [];
 
+  // Map config-style camelCase names to internal hyphenated names
+  const nameMap: Record<string, string> = {
+    "homeAssistantAnomaly": "ha-anomaly",
+    "sessionHistory": "session-history",
+    "memoryPatterns": "memory-patterns",
+    "systemHealth": "system-health",
+  };
+
+  // Normalize sources to internal names
+  const normalizedSources = sources?.map((s) => nameMap[s] ?? s) ?? null;
+
   function shouldRun(name: string): boolean {
-    if (sources !== null && !sources.includes(name)) return false;
+    if (normalizedSources !== null && !normalizedSources.includes(name)) return false;
     return true;
   }
 
