@@ -266,12 +266,11 @@ function collectCostStats(ctx: DashboardContext): CostStats {
          FROM llm_cost_log
          WHERE timestamp >= ?
          GROUP BY feature
-         ORDER BY estimatedCostUsd DESC
-         LIMIT 20`
+         ORDER BY estimatedCostUsd DESC`
       )
       .all(cutoff) as Array<{ feature: string; calls: number; inputTokens: number; outputTokens: number; estimatedCostUsd: number }>;
 
-    const features: CostRow[] = rows.map((r) => ({
+    const allFeatures: CostRow[] = rows.map((r) => ({
       feature: r.feature,
       calls: Number(r.calls),
       inputTokens: Number(r.inputTokens),
@@ -279,12 +278,12 @@ function collectCostStats(ctx: DashboardContext): CostStats {
       estimatedCostUsd: Number(r.estimatedCostUsd),
     }));
 
-    const totalCalls = features.reduce((s, r) => s + r.calls, 0);
-    const totalInputTokens = features.reduce((s, r) => s + r.inputTokens, 0);
-    const totalOutputTokens = features.reduce((s, r) => s + r.outputTokens, 0);
-    const totalEstimatedCostUsd = features.reduce((s, r) => s + r.estimatedCostUsd, 0);
+    const totalCalls = allFeatures.reduce((s, r) => s + r.calls, 0);
+    const totalInputTokens = allFeatures.reduce((s, r) => s + r.inputTokens, 0);
+    const totalOutputTokens = allFeatures.reduce((s, r) => s + r.outputTokens, 0);
+    const totalEstimatedCostUsd = allFeatures.reduce((s, r) => s + r.estimatedCostUsd, 0);
 
-    return { features, totalCalls, totalInputTokens, totalOutputTokens, totalEstimatedCostUsd, days, enabled: true };
+    return { features: allFeatures.slice(0, 20), totalCalls, totalInputTokens, totalOutputTokens, totalEstimatedCostUsd, days, enabled: true };
   } catch {
     return { features: [], totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalEstimatedCostUsd: 0, days: 7, enabled: false };
   }
@@ -635,6 +634,14 @@ export function createDashboardServer(ctx: DashboardContext, port: number): Dash
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
+    }
+  });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.warn(`Dashboard server: port ${port} already in use`);
+    } else {
+      console.error(`Dashboard server error:`, err);
     }
   });
 
