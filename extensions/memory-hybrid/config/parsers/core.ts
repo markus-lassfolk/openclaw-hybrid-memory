@@ -11,6 +11,7 @@ import type {
   LLMConfig,
   LLMProviderConfig,
   GatewayConfig,
+  ResolvedGatewayAuthConfig,
 } from "../types/index.js";
 import { parseDuration } from "../../utils/duration.js";
 
@@ -361,7 +362,7 @@ export function parseGatewayConfig(cfg: Record<string, unknown>): GatewayConfig 
   if (!tokenRaw) return undefined;
 
   const resolvedToken = resolveSecretRef(tokenRaw);
-  const auth: GatewayConfig["auth"] = {
+  const auth: ResolvedGatewayAuthConfig = {
     token: tokenRaw, // keep SecretRef string for config display; NOT the resolved value
   };
   // Store resolved token as non-enumerable so it never leaks into JSON dumps or logs

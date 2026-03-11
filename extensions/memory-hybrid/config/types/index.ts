@@ -289,8 +289,17 @@ export type GatewayAuthConfig = {
   token?: string;
 };
 
+/**
+ * @internal Runtime representation of GatewayAuthConfig after SecretRef resolution.
+ * `_resolvedToken` holds the actual token value; it is stored as a non-enumerable
+ * property so it never appears in JSON.stringify or config dumps.
+ */
+export type ResolvedGatewayAuthConfig = GatewayAuthConfig & {
+  readonly _resolvedToken?: string;
+};
+
 export type GatewayConfig = {
-  auth?: GatewayAuthConfig;
+  auth?: ResolvedGatewayAuthConfig;
 };
 
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */

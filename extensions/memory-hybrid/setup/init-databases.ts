@@ -12,7 +12,7 @@ import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
-import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig } from "../config.js";
+import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig, type ResolvedGatewayAuthConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
@@ -185,11 +185,17 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   // Resolve gateway auth token: prefer cfg.gateway.auth.token (SecretRef) over env var fallback.
   // The parser stores the resolved value as non-enumerable _resolvedToken so it never appears in
   // JSON dumps while remaining accessible here at runtime.
-  const gatewayAuthResolved = (cfg.gateway?.auth as Record<string, unknown> | undefined)?._resolvedToken as string | undefined;
-  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
+  // Fail closed: if gateway.auth.token is configured but cannot be resolved, throw rather than
+  // silently falling back to OPENCLAW_GATEWAY_TOKEN — a stale env token would mask rollout mistakes.
+  const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
   if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
-    api.logger.warn?.(`memory-hybrid: gateway.auth.token is set but could not be resolved (SecretRef "${cfg.gateway.auth.token}" returned empty); falling back to OPENCLAW_GATEWAY_TOKEN env var.`);
+    throw new Error(
+      `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. ` +
+      `Ensure the referenced env var or file is accessible, or remove gateway.auth.token from the plugin config. ` +
+      `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
+    );
   }
+  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
   const gatewayBaseUrl = gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535
     ? `http://127.0.0.1:${gatewayPort}/v1`
     : undefined;

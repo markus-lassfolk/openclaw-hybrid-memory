@@ -111,8 +111,7 @@ describe("parseGatewayConfig", () => {
   it("stores resolved value as non-enumerable _resolvedToken", () => {
     vi.stubEnv("MY_GATEWAY_TOKEN_278", "actual-secret");
     const result = parseGatewayConfig({ gateway: { auth: { token: "env:MY_GATEWAY_TOKEN_278" } } });
-    const resolvedToken = (result?.auth as Record<string, unknown> | undefined)?._resolvedToken;
-    expect(resolvedToken).toBe("actual-secret");
+    expect(result?.auth?._resolvedToken).toBe("actual-secret");
   });
 
   it("_resolvedToken is not visible in JSON.stringify output", () => {
@@ -127,8 +126,7 @@ describe("parseGatewayConfig", () => {
     const tokenFile = join(tmpDir, "gw-token.txt");
     writeFileSync(tokenFile, "file-token-value");
     const result = parseGatewayConfig({ gateway: { auth: { token: `file:${tokenFile}` } } });
-    const resolvedToken = (result?.auth as Record<string, unknown> | undefined)?._resolvedToken;
-    expect(resolvedToken).toBe("file-token-value");
+    expect(result?.auth?._resolvedToken).toBe("file-token-value");
     // The SecretRef string is preserved in the enumerable field
     expect(result?.auth?.token).toBe(`file:${tokenFile}`);
   });
@@ -138,14 +136,12 @@ describe("parseGatewayConfig", () => {
     const result = parseGatewayConfig({ gateway: { auth: { token: "env:UNSET_GW_TOKEN_278" } } });
     // The config is still returned (SecretRef string is valid), but resolved value is undefined
     expect(result?.auth?.token).toBe("env:UNSET_GW_TOKEN_278");
-    const resolvedToken = (result?.auth as Record<string, unknown> | undefined)?._resolvedToken;
-    expect(resolvedToken).toBeUndefined();
+    expect(result?.auth?._resolvedToken).toBeUndefined();
   });
 
   it("accepts plain string token (not a SecretRef)", () => {
     const result = parseGatewayConfig({ gateway: { auth: { token: "plain-token-value" } } });
     expect(result?.auth?.token).toBe("plain-token-value");
-    const resolvedToken = (result?.auth as Record<string, unknown> | undefined)?._resolvedToken;
-    expect(resolvedToken).toBe("plain-token-value");
+    expect(result?.auth?._resolvedToken).toBe("plain-token-value");
   });
 });
