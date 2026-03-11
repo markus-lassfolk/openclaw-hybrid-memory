@@ -342,7 +342,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const rawGoogleKey = (distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim();
   const resolvedGoogleApiKey =
     (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
-      ? (resolveSecretRef(rawGoogleKey) ?? undefined)
+      ? (resolveEnvVars(resolveSecretRef(rawGoogleKey) ?? rawGoogleKey) ?? undefined)
       : undefined;
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
     const isSecretRef = rawGoogleKey.startsWith("env:") || rawGoogleKey.startsWith("file:");
