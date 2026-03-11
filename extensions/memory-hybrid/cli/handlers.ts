@@ -87,6 +87,7 @@ import {
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore, generateMonthlyReport } from "../services/tool-effectiveness.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
+import type { EventBus } from "../backends/event-bus.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
 import { preFilterSessions, type PreFilterConfig } from "../services/session-pre-filter.js";
@@ -354,6 +355,8 @@ export interface HandlerContext {
   api?: import("openclaw/plugin-sdk").ClawdbotPluginApi;
   /** LLM cost tracker — records per-call token usage (Issue #270). */
   costTracker?: CostTracker | null;
+  /** Event Bus for sensor sweep (Issue #236). */
+  eventBus?: EventBus | null;
 }
 
 // Constants

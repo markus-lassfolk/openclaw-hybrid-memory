@@ -15,6 +15,8 @@ import { registerVerifyCommands, type VerifyContext } from "./verify.js";
 import { registerDistillCommands, type DistillContext } from "./distill.js";
 import { registerManageCommands, type ManageContext } from "./manage.js";
 import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
+import { registerSensorSweepCommands, type SensorSweepContext } from "./sensor-sweep.js";
+import type { EventBus } from "../backends/event-bus.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type {
@@ -187,6 +189,8 @@ export type HybridMemCliContext = {
   };
   tieringEnabled: boolean;
   resolvedSqlitePath?: string;
+  /** Event Bus for sensor sweep commands (required when sensorSweep.enabled). */
+  eventBus?: EventBus | null;
   resolvePath?: (file: string) => string;
   /** Active task working memory context (required when activeTask.enabled = true) */
   activeTask?: ActiveTaskContext;
@@ -258,6 +262,21 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       registerActiveTaskCommands(mem, ctx.activeTask);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:active-tasks" });
+      throw err;
+    }
+  }
+
+  if (ctx.cfg.sensorSweep.enabled && ctx.eventBus) {
+    const sensorCtx: SensorSweepContext = {
+      factsDb: ctx.factsDb,
+      cfg: ctx.cfg,
+      eventBus: ctx.eventBus,
+      resolvedSqlitePath: ctx.resolvedSqlitePath ?? "",
+    };
+    try {
+      registerSensorSweepCommands(mem, sensorCtx);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-cli:sensor-sweep" });
       throw err;
     }
   }

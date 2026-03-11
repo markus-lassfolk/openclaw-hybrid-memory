@@ -225,6 +225,7 @@ let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
+let eventBus: EventBus | null = null;
 
 let costTracker: import("./backends/cost-tracker.js").CostTracker | null = null;
 let issueStore: IssueStore | null = null;
@@ -302,6 +303,10 @@ const memoryHybridPlugin = {
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
+    if (eventBus) {
+      try { eventBus.close(); } catch { /* ignore */ }
+      eventBus = null;
+    }
 
     issueStore = null;
     workflowStore = null;
@@ -353,6 +358,27 @@ const memoryHybridPlugin = {
     api.logger.info(
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
     );
+
+    // ========================================================================
+    // Event Bus for Sensor Sweep (Issue #236)
+    // ========================================================================
+
+    if (cfg.sensorSweep.enabled) {
+      try {
+        const eventBusPath = join(dirname(resolvedSqlitePath), "event-bus.db");
+        eventBus = new EventBus(eventBusPath);
+        api.logger.info(`memory-hybrid: event bus initialized at ${eventBusPath}`);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "registration",
+          operation: "plugin-register:event-bus-init",
+          severity: "warning",
+        });
+        eventBus = null;
+      }
+    } else {
+      eventBus = null;
+    }
 
     // ========================================================================
     // Python Bridge (lazy — only when documents.enabled, spawns on first use)
@@ -433,6 +459,7 @@ const memoryHybridPlugin = {
       verificationStore,
       provenanceService,
       costTracker,
+      eventBus,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,

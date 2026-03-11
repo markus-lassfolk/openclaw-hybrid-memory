@@ -87,4 +87,11 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     command: "hybrid-mem consolidate --threshold 0.92 && hybrid-mem build-languages && hybrid-mem backfill-decay",
     featureGate: null,
   },
+  {
+    pluginJobId: "hybrid-mem:sensor-sweep-tier1",
+    name: "sensor-sweep-tier1",
+    schedule: { kind: "cron", expr: "0 */4 * * *" },
+    command: "hybrid-mem sensor-sweep --tier 1 && hybrid-mem sensor-sweep --tier 2",
+    featureGate: "sensorSweep.enabled",
+  },
 ];
