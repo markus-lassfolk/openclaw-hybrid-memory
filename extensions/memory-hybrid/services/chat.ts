@@ -161,7 +161,15 @@ export async function chatComplete(opts: {
     const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    return resp.choices[0]?.message?.content?.trim() ?? "";
+    const msg = resp.choices[0]?.message;
+    const msgContent = msg?.content?.trim();
+    if (msgContent) return msgContent;
+    // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
+    // message.reasoning when enable_thinking=true (the default). Fall back to it
+    // so agents don't see an empty reply and time out (#314).
+    const reasoning = (msg as unknown as Record<string, unknown> | undefined)?.reasoning;
+    if (typeof reasoning === "string" && reasoning.trim()) return reasoning.trim();
+    return msgContent ?? "";
   } catch (err) {
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
