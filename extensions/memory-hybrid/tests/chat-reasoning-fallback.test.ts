@@ -12,7 +12,7 @@ vi.mock("../services/error-reporter.js", async (importOriginal) => {
 
 import { chatComplete } from "../services/chat.js";
 
-function makeMockOpenAI(response: { content: string | null; reasoning?: string }): OpenAI {
+function makeMockOpenAI(response: { content: string | null; reasoning?: string; reasoning_content?: string }): OpenAI {
   return {
     chat: {
       completions: {
@@ -22,6 +22,7 @@ function makeMockOpenAI(response: { content: string | null; reasoning?: string }
               message: {
                 content: response.content,
                 ...(response.reasoning !== undefined ? { reasoning: response.reasoning } : {}),
+                ...(response.reasoning_content !== undefined ? { reasoning_content: response.reasoning_content } : {}),
               },
             },
           ],
@@ -73,5 +74,29 @@ describe("chatComplete — reasoning field fallback (Qwen3/Ollama thinking mode)
     const openai = makeMockOpenAI({ content: "Actual content", reasoning: "Internal thinking" });
     const result = await chatComplete({ model: "ollama/qwen3:8b", content: "test", openai });
     expect(result).toBe("Actual content");
+  });
+
+  it("falls back to message.reasoning_content when content is empty (current standard)", async () => {
+    const openai = makeMockOpenAI({ content: "", reasoning_content: "Response in reasoning_content field" });
+    const result = await chatComplete({ model: "ollama/qwen3:8b", content: "Say hello", openai });
+    expect(result).toBe("Response in reasoning_content field");
+  });
+
+  it("prefers reasoning_content over reasoning when both are present", async () => {
+    const openai = makeMockOpenAI({ content: "", reasoning_content: "From reasoning_content", reasoning: "From reasoning" });
+    const result = await chatComplete({ model: "ollama/qwen3:8b", content: "test", openai });
+    expect(result).toBe("From reasoning_content");
+  });
+
+  it("falls back to reasoning when reasoning_content is empty", async () => {
+    const openai = makeMockOpenAI({ content: "", reasoning_content: "", reasoning: "From reasoning fallback" });
+    const result = await chatComplete({ model: "ollama/qwen3:8b", content: "test", openai });
+    expect(result).toBe("From reasoning fallback");
+  });
+
+  it("trims whitespace from reasoning_content fallback", async () => {
+    const openai = makeMockOpenAI({ content: "", reasoning_content: "  trimmed reasoning_content  " });
+    const result = await chatComplete({ model: "ollama/qwen3:8b", content: "test", openai });
+    expect(result).toBe("trimmed reasoning_content");
   });
 });
