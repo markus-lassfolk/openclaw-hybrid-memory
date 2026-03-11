@@ -132,7 +132,10 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   const expiredFacts = ctx.factsDb.countExpired();
   let vectorCount = 0;
   try { vectorCount = await ctx.vectorDb.count(); } catch { /* non-fatal */ }
-  const sqliteSizeBytes = getFileSize(ctx.resolvedSqlitePath);
+  const sqliteSize = getFileSize(ctx.resolvedSqlitePath);
+  const sqliteWalSize = getFileSize(ctx.resolvedSqlitePath + "-wal");
+  const sqliteShmSize = getFileSize(ctx.resolvedSqlitePath + "-shm");
+  const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize;
 
   // Use cached LanceDB size to avoid blocking on large directory traversals
   const now = Date.now();
