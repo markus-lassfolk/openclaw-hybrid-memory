@@ -194,12 +194,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx, google.`);
   } else {
     // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
+    const rawApiKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
     const hasApiKey =
-      embedding &&
-      typeof embedding.apiKey === "string" &&
-      (embedding.apiKey as string).trim().length >= 10 &&
-      (embedding.apiKey as string).trim() !== "YOUR_OPENAI_API_KEY" &&
-      (embedding.apiKey as string).trim() !== "<OPENAI_API_KEY>";
+      rawApiKey &&
+      (rawApiKey.startsWith("env:") || rawApiKey.startsWith("file:") || rawApiKey.length >= 10) &&
+      rawApiKey !== "YOUR_OPENAI_API_KEY" &&
+      rawApiKey !== "<OPENAI_API_KEY>";
     const modelStr = typeof embedding?.model === "string" ? (embedding.model as string).trim() : "";
     const llm = cfg.llm as { nano?: string[]; default?: string[]; heavy?: string[] } | undefined;
     const llmListsForProvider = [llm?.nano, llm?.default, llm?.heavy].filter(Array.isArray) as string[][];

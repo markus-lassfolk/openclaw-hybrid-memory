@@ -305,6 +305,20 @@ describe("hybridConfigSchema.parse", () => {
     }
   });
 
+  // Provider inference must recognize env:/file: SecretRef format as valid apiKey
+  it("infers openai provider when apiKey is env: SecretRef with short env var name", () => {
+    vi.stubEnv("KEY", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { apiKey: "env:KEY", model: "text-embedding-3-small" },
+      });
+      expect(result.embedding.provider).toBe("openai");
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
   it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
     delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
