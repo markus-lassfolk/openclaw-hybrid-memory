@@ -12,7 +12,7 @@ import type { Server } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process/promises";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 
@@ -220,17 +220,15 @@ function collectForgeState(): ForgeTaskItem[] {
   } catch { return []; }
 }
 
-function collectGitActivity(): GitActivity {
+async function collectGitActivity(): Promise<GitActivity> {
   try {
-    const prJson = execSync(
-      "gh pr list --limit 10 --json number,title,state,url,createdAt 2>/dev/null",
-      { timeout: 8000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-    ).trim();
-    const issueJson = execSync(
-      "gh issue list --limit 10 --json number,title,state,url,createdAt 2>/dev/null",
-      { timeout: 8000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-    ).trim();
+    const [prResult, issueResult] = await Promise.all([
+      execFile("gh", ["pr", "list", "--limit", "10", "--json", "number,title,state,url,createdAt"], { timeout: 8000, encoding: "utf-8" }),
+      execFile("gh", ["issue", "list", "--limit", "10", "--json", "number,title,state,url,createdAt"], { timeout: 8000, encoding: "utf-8" }),
+    ]);
     type GitItem = { number: number; title: string; state: string; url: string; createdAt: string };
+    const prJson = prResult.stdout.trim();
+    const issueJson = issueResult.stdout.trim();
     return {
       prs: prJson ? (JSON.parse(prJson) as GitItem[]) : [],
       issues: issueJson ? (JSON.parse(issueJson) as GitItem[]) : [],
@@ -296,7 +294,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     cronJobs: collectCronJobs(),
     taskQueue: collectTaskQueue(),
     forge: collectForgeState(),
-    git: collectGitActivity(),
+    git: await collectGitActivity(),
     costs: collectCostStats(ctx),
   };
 }
@@ -304,12 +302,6 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
 // ---------------------------------------------------------------------------
 // HTML dashboard
 // ---------------------------------------------------------------------------
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function getDashboardHtml(port: number): string {
   return `<!DOCTYPE html>
@@ -477,7 +469,7 @@ function renderTaskQueue(tq) {
     tq.history.slice(0, 5).forEach(h => {
       html += \`<div class="task-row">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <div class="task-title" style="font-size:12px">\${escHtml(h.title || '#' + h.issue || '?')}</div>
+          <div class="task-title" style="font-size:12px">\${escHtml(h.title || (h.issue != null ? '#' + h.issue : '?'))}</div>
           \${badge(h.status)}
         </div>
         <div class="task-meta">\${fmtDate(h.completed || h.started)}</div>
