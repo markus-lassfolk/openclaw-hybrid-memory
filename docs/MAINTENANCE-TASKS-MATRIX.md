@@ -30,6 +30,7 @@ This matrix shows **which maintenance tasks run** in each context (installation,
 | **Consolidate**                          | No            | No                                       | No                                                  | Yes (monthly-consolidation step 1)     | No                                |
 | **Backfill-decay**                       | No            | No                                       | No                                                  | Yes (monthly-consolidation step 3)     | Yes (once, marker file)           |
 | **Scope promote**                        | No            | No                                       | No                                                  | Yes (weekly-deep-maintenance step 2)   | No                                |
+| **Sensor sweep** (Tier 1 + Tier 2)      | No            | No                                       | No                                                  | Yes (sensor-sweep-tier1, every 4h, if sensorSweep.enabled) | No |
 
 
 ---
@@ -103,7 +104,7 @@ Order of steps (feature flags may omit some):
 14. **self-correction-run**
 15. **build-languages**
 
-**Not in run-all:** consolidate, scope promote, WAL recovery, startup prune, periodic prune, auto-classify, proposals prune. Use cron jobs or one-off CLI for those.
+**Not in run-all:** consolidate, scope promote, sensor-sweep, WAL recovery, startup prune, periodic prune, auto-classify, proposals prune. Use cron jobs or one-off CLI for those.
 
 ---
 
