@@ -245,7 +245,17 @@ export async function sweepSessionHistory(
     const sessions = readRecentSessions(limit);
     if (sessions.length === 0) return result;
 
-    const fp = computeFingerprint(`sensor.session-history:${limit}`);
+    const payload = {
+      sessionCount: sessions.length,
+      sessions: sessions.map((s) => ({
+        sessionId: s.sessionId,
+        startTime: s.startTime,
+        messageCount: s.messageCount,
+        topTopics: s.topics.slice(0, 10),
+      })),
+    };
+
+    const fp = computeFingerprint(`sensor.session-history:${limit}:${JSON.stringify(payload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -254,15 +264,7 @@ export async function sweepSessionHistory(
     bus.appendEvent(
       "sensor.session-history",
       "session-history-sensor",
-      {
-        sessionCount: sessions.length,
-        sessions: sessions.map((s) => ({
-          sessionId: s.sessionId,
-          startTime: s.startTime,
-          messageCount: s.messageCount,
-          topTopics: s.topics.slice(0, 10),
-        })),
-      },
+      payload,
       cfg.importance ?? 0.5,
       fp,
     );
@@ -290,12 +292,6 @@ export async function sweepMemoryPatterns(
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "memory-patterns", eventsWritten: 0, eventsSkipped: 0 };
   try {
-    const fp = computeFingerprint(`sensor.memory-patterns`);
-    if (bus.dedup(fp, cooldownHours)) {
-      result.eventsSkipped++;
-      return result;
-    }
-
     const hotThreshold = cfg.hotAccessThreshold ?? 3;
     const staleAfterDays = cfg.staleAfterDays ?? 14;
     const staleCutoffSec = Math.floor((Date.now() - staleAfterDays * 24 * 3600 * 1000) / 1000);
@@ -320,19 +316,27 @@ export async function sweepMemoryPatterns(
         f.supersededAt == null,
     );
 
+    const payload = {
+      totalFacts,
+      hotFactCount: hotFacts.length,
+      staleFactCount: staleFacts.length,
+      openLoopCount: openLoops.length,
+      categoryBreakdown,
+      hotFactIds: hotFacts.slice(0, 10).map((f) => f.id),
+      staleFactIds: staleFacts.slice(0, 10).map((f) => f.id),
+      openLoopIds: openLoops.slice(0, 10).map((f) => f.id),
+    };
+
+    const fp = computeFingerprint(`sensor.memory-patterns:${JSON.stringify(payload)}`);
+    if (bus.dedup(fp, cooldownHours)) {
+      result.eventsSkipped++;
+      return result;
+    }
+
     bus.appendEvent(
       "sensor.memory-patterns",
       "memory-patterns-sensor",
-      {
-        totalFacts,
-        hotFactCount: hotFacts.length,
-        staleFactCount: staleFacts.length,
-        openLoopCount: openLoops.length,
-        categoryBreakdown,
-        hotFactIds: hotFacts.slice(0, 10).map((f) => f.id),
-        staleFactIds: staleFacts.slice(0, 10).map((f) => f.id),
-        openLoopIds: openLoops.slice(0, 10).map((f) => f.id),
-      },
+      payload,
       cfg.importance ?? 0.4,
       fp,
     );
@@ -608,12 +612,6 @@ export async function sweepSystemHealth(
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "system-health", eventsWritten: 0, eventsSkipped: 0 };
   try {
-    const fp = computeFingerprint(`sensor.system-health`);
-    if (bus.dedup(fp, cooldownHours)) {
-      result.eventsSkipped++;
-      return result;
-    }
-
     let sqliteSizeBytes: number | null = null;
     try {
       if (existsSync(resolvedSqlitePath)) {
@@ -626,18 +624,26 @@ export async function sweepSystemHealth(
     const uptimeSeconds = process.uptime();
     const memoryUsage = process.memoryUsage();
 
+    const payload = {
+      uptimeSeconds: Math.floor(uptimeSeconds),
+      memoryRssBytes: memoryUsage.rss,
+      memoryHeapUsedBytes: memoryUsage.heapUsed,
+      memoryHeapTotalBytes: memoryUsage.heapTotal,
+      sqliteSizeBytes,
+      nodeVersion: process.version,
+      platform: process.platform,
+    };
+
+    const fp = computeFingerprint(`sensor.system-health:${JSON.stringify(payload)}`);
+    if (bus.dedup(fp, cooldownHours)) {
+      result.eventsSkipped++;
+      return result;
+    }
+
     bus.appendEvent(
       "sensor.system-health",
       "system-health-sensor",
-      {
-        uptimeSeconds: Math.floor(uptimeSeconds),
-        memoryRssBytes: memoryUsage.rss,
-        memoryHeapUsedBytes: memoryUsage.heapUsed,
-        memoryHeapTotalBytes: memoryUsage.heapTotal,
-        sqliteSizeBytes,
-        nodeVersion: process.version,
-        platform: process.platform,
-      },
+      payload,
       cfg.importance ?? 0.7,
       fp,
     );
@@ -726,11 +732,6 @@ export async function sweepYarbo(
   const result: SensorSweepResult = { sensor: "yarbo", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const prefix = cfg.entityPrefix ?? "sensor.yarbo";
-    const fp = computeFingerprint(`sensor.yarbo:${prefix}`);
-    if (bus.dedup(fp, cooldownHours)) {
-      result.eventsSkipped++;
-      return result;
-    }
 
     const entities = await fetchHaEntities(ha, prefix);
     if (entities.length === 0) return result;
@@ -755,6 +756,12 @@ export async function sweepYarbo(
         attributes: entity.attributes,
         last_updated: entity.last_updated,
       };
+    }
+
+    const fp = computeFingerprint(`sensor.yarbo:${prefix}:${JSON.stringify(payload)}`);
+    if (bus.dedup(fp, cooldownHours)) {
+      result.eventsSkipped++;
+      return result;
     }
 
     bus.appendEvent("sensor.yarbo", "yarbo-sensor", { entities: payload, errorCount: errorEntities.length }, cfg.importance ?? 0.6, fp);
