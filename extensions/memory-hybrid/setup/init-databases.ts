@@ -697,16 +697,31 @@ export function initializeDatabases(
       let defaultModel: string | null = null;
       if (gwProviders && typeof (gwProviders as Record<string, unknown>)[name] === "object") {
         const gw = (gwProviders as Record<string, unknown>)[name] as Record<string, unknown>;
-        // Check models[] array first (take the first listed model)
+        // Check models[] array first (take the first chat-compatible model).
+        // Skip non-chat entries (embeddings, transcription, TTS, image generation) so that
+        // chatCompleteWithRetry is never routed through an incompatible model.
         if (Array.isArray(gw.models) && gw.models.length > 0) {
-          const first = gw.models[0];
-          const modelId =
-            typeof first === "string"
-              ? first.trim()
-              : typeof first === "object" && first !== null
-              ? String((first as Record<string, unknown>).id ?? (first as Record<string, unknown>).name ?? "").trim()
-              : "";
-          if (modelId) defaultModel = `${name}/${modelId}`;
+          const NON_CHAT_TYPES = new Set(["embedding", "embeddings", "transcription", "speech-to-text", "text-to-speech", "tts", "image", "image-generation"]);
+          const NON_CHAT_ID_RE = /\bembed|whisper|tts\b|dall-e|transcri/i;
+          const isChatEntry = (entry: unknown): boolean => {
+            if (typeof entry === "object" && entry !== null) {
+              const type = String((entry as Record<string, unknown>).type ?? "").toLowerCase().trim();
+              if (type && NON_CHAT_TYPES.has(type)) return false;
+              // If type is explicit and non-empty, trust it (unknown types → assume chat)
+              const id = String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").toLowerCase();
+              return !NON_CHAT_ID_RE.test(id);
+            }
+            if (typeof entry === "string") return !NON_CHAT_ID_RE.test(entry.toLowerCase());
+            return false;
+          };
+          const chatEntry = gw.models.find(isChatEntry);
+          if (chatEntry !== undefined) {
+            const modelId =
+              typeof chatEntry === "string"
+                ? chatEntry.trim()
+                : String((chatEntry as Record<string, unknown>).id ?? (chatEntry as Record<string, unknown>).name ?? "").trim();
+            if (modelId) defaultModel = `${name}/${modelId}`;
+          }
         }
         // Fall back to singular defaultModel or model field
         if (!defaultModel) {
