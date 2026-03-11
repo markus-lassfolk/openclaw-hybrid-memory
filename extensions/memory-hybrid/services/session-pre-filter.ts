@@ -179,11 +179,14 @@ async function classifySession(
     timeoutMs: 20_000,
   });
 
-  // Search the full response for YES/NO — handles thinking models that
-  // emit <think>...</think> before the final answer.
+  // For thinking models: extract only the text after the final </think> tag.
+  // This ensures we classify based on the final answer, not reasoning inside <think> blocks.
+  const lastThinkEnd = response.lastIndexOf("</think>");
+  const finalAnswer = lastThinkEnd >= 0 ? response.slice(lastThinkEnd + 8) : response;
+
   // Use word-boundary matching to avoid false positives from substrings like
   // "UNKNOWN", "CANNOT", "NOTICE", "NOTABLE" matching "NO".
-  const upper = response.toUpperCase();
+  const upper = finalAnswer.toUpperCase();
   if (/\bYES\b/.test(upper)) return true;
   if (/\bNO\b/.test(upper)) return false;
 
@@ -199,7 +202,7 @@ async function classifySession(
  */
 function isConnectionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up/i.test(msg)) {
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up|LLM request timeout/i.test(msg)) {
     return true;
   }
   // HTTP 404 (model not found) or 5xx (server error) should also abort the batch.
