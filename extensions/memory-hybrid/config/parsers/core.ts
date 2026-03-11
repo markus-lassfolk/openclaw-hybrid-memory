@@ -296,8 +296,9 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
   const nanoList = llmRaw && Array.isArray(llmRaw.nano)
     ? (llmRaw.nano as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
     : [];
+  const localAutoStart = llmRaw?.localAutoStart === true;
   const llm: LLMConfig | undefined =
-    defaultList.length > 0 || heavyList.length > 0 || nanoList.length > 0 || llmProviders !== undefined
+    defaultList.length > 0 || heavyList.length > 0 || nanoList.length > 0 || llmProviders !== undefined || localAutoStart
       ? {
           default: defaultList,
           heavy: heavyList,
@@ -305,7 +306,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           fallbackToDefault: llmRaw?.fallbackToDefault === true,
           fallbackModel: typeof llmRaw?.fallbackModel === "string" && (llmRaw.fallbackModel as string).trim().length > 0 ? (llmRaw.fallbackModel as string).trim() : undefined,
           providers: llmProviders,
-          localAutoStart: llmRaw?.localAutoStart === true,
+          localAutoStart,
         }
       : undefined;
   return llm;

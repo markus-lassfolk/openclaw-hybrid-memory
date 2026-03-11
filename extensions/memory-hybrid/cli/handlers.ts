@@ -1102,8 +1102,8 @@ export async function runVerifyForCli(
   }
 
   // Cost advisory
-  const isHeavyModel = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy/.test((m.split("/").pop() ?? m).toLowerCase());
-  const isNanoModel  = (m: string) => m.split("/")[0]?.toLowerCase() === "ollama" || /nano|\bmini\b|haiku|\blite\b/.test((m.split("/").pop() ?? m).toLowerCase());
+  const isHeavyModel = (m: string) => m.split("/")[0]?.toLowerCase() !== "ollama" && /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase());
+  const isNanoModel  = (m: string) => m.split("/")[0]?.toLowerCase() === "ollama" || /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase());
   const isLightModel = (m: string) => isNanoModel(m) || /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
   const nanoPrimary = nanoOrder[0];
   const defaultPrimary = defaultOrder[0];

@@ -2,7 +2,7 @@
  * Tests for Ollama local LLM provider support in hybrid-memory.
  * Covers: provider resolution, health check / graceful fallback, cost tracking ($0), nano-tier classification.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -40,7 +40,7 @@ describe("Ollama cost tracking — $0 for local models", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. chatCompleteWithRetry: ECONNREFUSED on Ollama falls through to next model
 // ─────────────────────────────────────────────────────────────────────────────
-import { chatCompleteWithRetry, UnconfiguredProviderError } from "../services/chat.js";
+import { chatCompleteWithRetry } from "../services/chat.js";
 import OpenAI from "openai";
 
 describe("Ollama graceful fallback — ECONNREFUSED", () => {
@@ -103,7 +103,7 @@ describe("Ollama graceful fallback — ECONNREFUSED", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. Config: localAutoStart is parsed correctly
-// ─────────────────────────────="────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 import { parseLLMConfig } from "../config/parsers/core.js";
 
 describe("parseLLMConfig — localAutoStart", () => {
@@ -153,5 +153,16 @@ describe("parseLLMConfig — localAutoStart", () => {
     };
     const result = parseLLMConfig(cfg);
     expect(result?.nano).toEqual(["ollama/qwen3:8b", "openai/gpt-4.1-nano"]);
+  });
+
+  it("preserves localAutoStart when no tier lists are present", () => {
+    const cfg = {
+      llm: {
+        localAutoStart: true,
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result).toBeDefined();
+    expect(result?.localAutoStart).toBe(true);
   });
 });
