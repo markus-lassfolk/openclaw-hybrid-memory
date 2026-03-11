@@ -6,7 +6,6 @@
  * avg confidence, link density, storage size, and timestamps.
  */
 
-import { statSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -15,7 +14,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
-import { getDirSizeSync } from "../utils/fs.js";
+import { getDirSizeSync, getFileSize } from "../utils/fs.js";
 
 export interface HealthPluginContext {
   factsDb: FactsDB;
@@ -48,14 +47,6 @@ export interface HealthReport {
     total: number;
   };
   generatedAt: string;
-}
-
-function getFileSize(filePath: string): number {
-  try {
-    return statSync(filePath).size;
-  } catch {
-    return 0;
-  }
 }
 
 export function buildHealthReport(
