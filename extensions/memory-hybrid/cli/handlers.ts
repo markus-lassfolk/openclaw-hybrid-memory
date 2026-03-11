@@ -89,6 +89,26 @@ import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectiven
 import type { CostTracker } from "../backends/cost-tracker.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
+import { preFilterSessions, type PreFilterConfig } from "../services/session-pre-filter.js";
+
+/**
+ * Build a PreFilterConfig from the plugin config.
+ * Resolves the Ollama endpoint from extraction.preFilter.endpoint,
+ * then llm.providers.ollama.baseURL, then the default localhost URL.
+ */
+function buildPreFilterConfig(cfg: HybridMemoryConfig): PreFilterConfig {
+  const pf = cfg.extraction?.preFilter;
+  const ollamaEndpoint =
+    pf?.endpoint ??
+    cfg.llm?.providers?.ollama?.baseURL ??
+    "http://localhost:11434";
+  return {
+    enabled: pf?.enabled === true,
+    model: pf?.model ?? "qwen3:8b",
+    endpoint: ollamaEndpoint,
+    maxCharsPerSession: pf?.maxCharsPerSession ?? 2000,
+  };
+}
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
@@ -1962,6 +1982,18 @@ export async function runExtractDirectivesForCli(
       filePaths = getSessionFilePathsSince(sessionDir, days);
     }
 
+    // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
+    const pfCfgDir = buildPreFilterConfig(cfg);
+    if (pfCfgDir.enabled && filePaths.length > 0) {
+      const pfResult = await preFilterSessions(filePaths, pfCfgDir);
+      if (!pfResult.ollamaUnavailable) {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
+        filePaths = pfResult.kept;
+      } else {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+      }
+    }
+
     const directiveRegex = getDirectiveSignalRegex();
     const result = runDirectiveExtract({ filePaths, directiveRegex });
 
@@ -2042,6 +2074,18 @@ export async function runExtractReinforcementForCli(
       filePaths = getSessionFilePathsSince(sessionDir, days);
     }
     const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+
+    // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
+    const pfCfgReinf = buildPreFilterConfig(cfg);
+    if (pfCfgReinf.enabled && filePaths.length > 0) {
+      const pfResult = await preFilterSessions(filePaths, pfCfgReinf);
+      if (!pfResult.ollamaUnavailable) {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
+        filePaths = pfResult.kept;
+      } else {
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+      }
+    }
 
   const reinforcementRegex = getReinforcementSignalRegex();
   const result = runReinforcementExtract({ filePaths, reinforcementRegex });
@@ -3264,7 +3308,7 @@ export async function runDistillForCli(
 
   const sessionFiles = gatherSessionFiles(gatherOpts);
   const maxSessions = opts.maxSessions ?? 0;
-  const filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
+  let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
   if (filesToProcess.length === 0) {
     sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
     if (useWatermark && !opts.dryRun) {
@@ -3273,6 +3317,24 @@ export async function runDistillForCli(
     }
     return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: opts.dryRun };
   }
+
+  // Two-tier pre-filter: use local Ollama to triage sessions before cloud LLM (Issue #290).
+  const pfCfg = buildPreFilterConfig(cfg);
+  if (pfCfg.enabled && filesToProcess.length > 0) {
+    const paths = filesToProcess.map((f) => f.path);
+    const pfResult = await preFilterSessions(paths, pfCfg);
+    if (!pfResult.ollamaUnavailable) {
+      const keptSet = new Set(pfResult.kept);
+      const originalCount = filesToProcess.length;
+      filesToProcess = filesToProcess.filter((f) => keptSet.has(f.path));
+      sink.log(
+        `memory-hybrid: distill pre-filter: ${filesToProcess.length}/${originalCount} sessions flagged as interesting (${pfResult.skipped.length} skipped by local model)`,
+      );
+    } else {
+      sink.log("memory-hybrid: distill pre-filter: Ollama unavailable — processing all sessions");
+    }
+  }
+
   const cronCfgDistill = getCronModelConfig(cfg);
   const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
   const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? getDefaultCronModel(cronCfgDistill, "heavy");
@@ -3619,12 +3681,11 @@ export function runSelfCorrectionExtractForCli(
   opts: {
     days?: number;
     outputPath?: string;
+    /** Pre-filtered session file paths. When provided, skips gatherSessionFiles(). */
+    filePaths?: string[];
   },
 ): SelfCorrectionExtractResult {
-  const sessionFiles = gatherSessionFiles({
-    days: opts.days ?? 3,
-  });
-  const filePaths = sessionFiles.map((f) => f.path);
+  const filePaths = opts.filePaths ?? gatherSessionFiles({ days: opts.days ?? 3 }).map((f) => f.path);
   if (filePaths.length === 0) {
     return { incidents: [], sessionsScanned: 0 };
   }
@@ -3695,7 +3756,23 @@ export async function runSelfCorrectionRunForCli(
       return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, error: String(e) };
     }
   } else {
-    const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3 });
+    // Two-tier pre-filter: use local Ollama to triage sessions before extraction (Issue #290).
+    let scFilePaths: string[] | undefined;
+    const pfCfgSC = buildPreFilterConfig(cfg);
+    if (pfCfgSC.enabled) {
+      const sessionFiles = gatherSessionFiles({ days: 3 });
+      const allPaths = sessionFiles.map((f) => f.path);
+      if (allPaths.length > 0) {
+        const pfResult = await preFilterSessions(allPaths, pfCfgSC);
+        if (!pfResult.ollamaUnavailable) {
+          logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${allPaths.length} sessions flagged as interesting`);
+          scFilePaths = pfResult.kept;
+        } else {
+          logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+        }
+      }
+    }
+    const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3, filePaths: scFilePaths });
     incidents = extractResult.incidents;
   }
   if (incidents.length === 0) {
