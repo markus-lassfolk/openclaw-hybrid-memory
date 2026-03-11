@@ -158,7 +158,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                   const stored = factsDb.store({
                     text,
                     category: (category as MemoryCategory) || "other",
-                    importance: importance ?? 0.7,
+                    importance: importance ?? 0.5,
                     entity: entity || null,
                     key: key || null,
                     value: value || null,
@@ -173,7 +173,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                     void vectorDb.store({
                       text,
                       vector: entry.data.vector,
-                      importance: importance ?? 0.7,
+                      importance: importance ?? 0.5,
                       category: category || "other",
                       id: stored.id,
                     }).then(() => {

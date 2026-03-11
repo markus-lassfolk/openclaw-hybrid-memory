@@ -182,7 +182,7 @@ Without this, custom categories are only assigned via explicit `memory_store` ca
 
 ## Decay and Pruning
 
-**No cron or external jobs are required.** The plugin handles decay automatically: on gateway start (hard-delete expired) and every 60 minutes (hard prune + soft-decay confidence). Decay classes: permanent, stable (90d), active (14d), session (24h), checkpoint (4h). Stable and active facts get their expiry refreshed when recalled.
+**No cron or external jobs are required.** The plugin handles decay automatically: on gateway start (hard-delete expired) and every 60 minutes (hard prune + soft-decay confidence). Decay classes: permanent, durable (~3mo), normal (2w), short (2d), ephemeral (4h), and legacy classes (stable, active, session, checkpoint). Durable, normal, stable, and active facts get their expiry refreshed when recalled.
 
 **Manual controls:** `openclaw hybrid-mem prune` (options: `--soft`, `--dry-run`), `openclaw hybrid-mem backfill-decay` to re-classify existing facts.
 

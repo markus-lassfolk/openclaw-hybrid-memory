@@ -12,15 +12,19 @@ Facts have a **decay class** and an optional **expiry time**. The plugin automat
 
 ## Decay classes
 
-Each fact is assigned one of five decay classes. The class determines **TTL** (time-to-live) and whether **recall refreshes expiry**.
+Each fact is assigned one of nine decay classes. The class determines **TTL** (time-to-live) and whether **recall refreshes expiry**.
 
 | Class | TTL | Refresh on access? | Typical content |
 |-------|-----|--------------------|-----------------|
 | **permanent** | Never expires | N/A | Decisions, conventions, name/email/architecture, "always use X" |
-| **stable** | 90 days | Yes | General long-lived facts; expiry resets when the fact is recalled |
-| **active** | 14 days | Yes | Tasks, WIP, sprints, "working on", "todo"; expiry resets on recall |
-| **session** | 24 hours | No | "Currently debugging", "right now", current_file, temp |
-| **checkpoint** | 4 hours | No | Checkpoints, preflight state |
+| **durable** | ~3 months | Yes | Important context, durable rules |
+| **normal** | 2 weeks | Yes | Default facts, active projects |
+| **short** | 2 days | No | Short-term context, recently used |
+| **ephemeral** | 4 hours | No | Quick scratchpad data |
+| **stable** | 90 days (Legacy) | Yes | General long-lived facts |
+| **active** | 14 days (Legacy) | Yes | Tasks, WIP, sprints |
+| **session** | 24 hours (Legacy) | No | "Currently debugging", temp |
+| **checkpoint**| 4 hours (Legacy) | No | Checkpoints, preflight state |
 
 TTL values are defined in code (`config/types/core.ts`: `TTL_DEFAULTS`). There is no config knob for TTLs; changing them requires editing constants and redeploying.
 
@@ -41,7 +45,7 @@ TTL values are defined in code (`config/types/core.ts`: `TTL_DEFAULTS`). There i
    - `key` matches: task, todo, wip, branch, sprint, blocker
    - Text: "working on", "need to", "todo", "blocker", "sprint"
 4. **Checkpoint** - If `key` (or text) mentions "checkpoint" or "preflight".
-5. **Stable** - Default for everything else.
+5. **Stable** - Default for everything else (Legacy class, still default for auto-classification).
 
 The `memory_store` tool can override decay class via an explicit `decayClass` parameter. Otherwise heuristics only.
 
@@ -49,7 +53,7 @@ The `memory_store` tool can override decay class via an explicit `decayClass` pa
 
 ## Refresh on access (stable and active)
 
-For facts with `decay_class` **stable** or **active**, when they are used in **recall** (search/lookup results that get injected or used by the agent), the plugin can **refresh** their expiry:
+For facts with `decay_class` **stable**, **active**, **durable**, or **normal**, when they are used in **recall** (search/lookup results that get injected or used by the agent), the plugin can **refresh** their expiry:
 
 - It updates `last_confirmed_at` and recomputes `expires_at` from the current time plus TTL.
 - So frequently recalled facts stay "alive"; unused ones eventually expire.
@@ -74,7 +78,7 @@ Two mechanisms run automatically:
   - For facts that **have not yet expired** but are past ~**75% of their TTL** (between `last_confirmed_at` and `expires_at`), confidence is multiplied by **0.5**.
   - Then any fact with **confidence &lt; 0.1** is **deleted**.
 - **When:** Same 60-minute timer, after the hard prune step.
-- **Effect:** Facts that are rarely recalled age out: first their score drops, then they are removed. Frequently recalled stable/active facts keep getting their expiry refreshed, so they don't hit the 75% window the same way.
+- **Effect:** Facts that are rarely recalled age out: first their score drops, then they are removed. Frequently recalled stable/active/durable/normal facts keep getting their expiry refreshed, so they don't hit the 75% window the same way.
 
 Formulae (from `facts-db.ts`):
 
