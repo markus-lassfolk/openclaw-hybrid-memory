@@ -577,6 +577,7 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(heavyList).not.toContain("openai/gpt-image-1");
   });
 
+
   it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
     // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
     // converts to minimax/MiniMax-M2.5 when routing), hasModelFrom should detect the minimax
