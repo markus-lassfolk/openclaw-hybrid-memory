@@ -55,6 +55,28 @@ Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb`
 
 ---
 
+## Verbosity level (silent mode)
+
+The plugin supports four verbosity levels for CLI commands and tool output, configured via `verbosity`.
+
+```json
+{
+  "verbosity": "silent"
+}
+```
+
+- **`silent`**: Suppresses all unsolicited context blocks injected into prompts (e.g. capability hints, `<relevant-memories>`, `<relevant-procedures>`, and credential-hint blocks). Memory tools (`memory_store`, `memory_recall`, etc.) remain fully functional. Ideal for users who want the plugin to work entirely in the background without cluttering the context window.
+- **`quiet`**: Minimal output. For CLI commands, shows only counts/totals without decorative headers. (Default for `essential` mode).
+- **`normal`**: Balanced output with key details. (Default for `normal` and `expert` modes).
+- **`verbose`**: Extra detail. Full breakdowns, all fields, and config summaries. Ideal for debugging. (Default for `full` mode).
+
+You can change this on the fly using the CLI:
+
+```bash
+openclaw hybrid-mem config set verbosity silent
+```
+
+
 ## Auto-capture and auto-recall
 
 `captureMaxChars` (default 5000): messages longer than this are not captured; stored text is truncated to this length.
@@ -474,7 +496,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
 | `nano` | Ordered list for ultra-cheap nano-tier ops. Falls back to `default[0]` when unset. |
 | `default` | Ordered list for default-tier features (reflection, classify, ingest, query expansion, build-languages). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
-| `providers` | Per-provider API keys and optional `baseURL`. Built-in: `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key). Any other OpenAI-compatible provider can be added here. |
+| `providers` | Per-provider API keys and optional `baseURL`. Built-in (no `baseURL` needed): `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key), `minimax` (uses `MINIMAX_API_KEY` env var fallback). Any other OpenAI-compatible provider can be added here with an explicit `baseURL`. |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
 | `fallbackModel` | Optional last-resort model when `fallbackToDefault` is true. |
 
@@ -844,6 +866,39 @@ In addition to `openai` and `google`, the plugin supports **local** embedding pr
 **Auto-migration on model switch:** Set `embedding.autoMigrate: true` to automatically re-embed all existing facts when the provider or model changes on startup. Without this, stale vectors in LanceDB will cause poor search quality until you run `openclaw hybrid-mem backfill-decay` manually.
 
 ---
+
+
+## Local LLM session pre-filtering (#290)
+
+Introduces an optional **two-tier session triage** step. A new `session-pre-filter` service calls a local Ollama model to classify session JSONL files as interesting (`kept`) or not (`skipped`), with a safe fallback that processes all sessions when Ollama is unreachable.
+
+This integrates directly into bulk CLI workflows (`runDistillForCli`, directive/reinforcement extraction, and self-correction runs), reducing cloud LLM costs by up to 90% when re-indexing large session histories.
+
+```json
+{
+  "plugins": {
+    "openclaw-hybrid-memory": {
+      "config": {
+        "extraction": {
+          "preFilter": {
+            "enabled": true,
+            "model": "qwen3:8b",
+            "endpoint": "http://localhost:11434",
+            "maxCharsPerSession": 2000
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable local LLM pre-filtering. |
+| `model` | `"qwen3:8b"` | Ollama model identifier (e.g. `"qwen3:8b"` or `"ollama/qwen3:8b"`). The `"ollama/"` prefix is stripped automatically. |
+| `endpoint` | `"http://localhost:11434"` | Optional. Falls back to `llm.providers.ollama.baseURL` if unset. |
+| `maxCharsPerSession` | `2000` | Max chars of user messages extracted per session for triage. Higher values improve accuracy but increase local LLM call time. |
 
 ## Multi-model embedding registry (#158)
 

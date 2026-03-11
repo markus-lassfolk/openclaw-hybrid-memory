@@ -23,9 +23,13 @@ import type { ConfigMode } from "../config.js";
 // ---------------------------------------------------------------------------
 
 describe("DECAY_CLASSES", () => {
-  it("contains exactly the five expected classes", () => {
+  it("contains the nine expected classes (legacy + new salience classes)", () => {
     expect(DECAY_CLASSES).toEqual([
       "permanent",
+      "durable",
+      "normal",
+      "short",
+      "ephemeral",
       "stable",
       "active",
       "session",
@@ -37,6 +41,22 @@ describe("DECAY_CLASSES", () => {
 describe("TTL_DEFAULTS", () => {
   it("permanent has null TTL (never expires)", () => {
     expect(TTL_DEFAULTS.permanent).toBeNull();
+  });
+
+  it("durable is ~3 months in seconds", () => {
+    expect(TTL_DEFAULTS.durable).toBe(90 * 24 * 3600);
+  });
+
+  it("normal is 2 weeks in seconds", () => {
+    expect(TTL_DEFAULTS.normal).toBe(14 * 24 * 3600);
+  });
+
+  it("short is 2 days in seconds", () => {
+    expect(TTL_DEFAULTS.short).toBe(2 * 24 * 3600);
+  });
+
+  it("ephemeral is 4 hours in seconds", () => {
+    expect(TTL_DEFAULTS.ephemeral).toBe(4 * 3600);
   });
 
   it("stable is 90 days in seconds", () => {

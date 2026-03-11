@@ -113,24 +113,28 @@ Each provider in `llm.providers` can have:
 | `google` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `llm.providers.google.apiKey` or legacy `distill.apiKey` |
 | `openai` | `https://api.openai.com/v1` | `llm.providers.openai.apiKey` or `embedding.apiKey` |
 | `anthropic` | `https://api.anthropic.com/v1` | `llm.providers.anthropic.apiKey` (required; no fallback) |
+| `minimax` | `https://api.minimax.io/v1` | `llm.providers.minimax.apiKey` or `MINIMAX_API_KEY` env var |
 
-### Manual provider configuration required
+### MiniMax configuration
 
-Providers must be configured in the plugin's `llm.providers` section. While OpenClaw's `models.providers` are shown in verify output for reference, they are not automatically used by the plugin's multi-provider proxy.
-
-For any provider beyond the built-ins, add them to `llm.providers`:
+MiniMax M2.5 has a built-in endpoint — only the API key is required (no `baseURL` needed):
 
 ```json
 "llm": {
   "providers": {
     "minimax": {
-      "apiKey": "sk-cp-...",
-      "baseURL": "https://api.minimax.io/v1"
+      "apiKey": "sk-cp-..."
     }
   },
   "nano": ["minimax/MiniMax-M2.5"]
 }
 ```
+
+The `baseURL` defaults to `https://api.minimax.io/v1` (global endpoint). Set it explicitly only if you need a regional or custom endpoint.
+
+**Gateway key auto-merge:** If OpenClaw's gateway has a `minimax` provider configured (under `models.providers.minimax`), the plugin automatically picks up the API key — no duplication needed. Just add `minimax/MiniMax-M2.5` to your `llm.nano` or `llm.default` list.
+
+**OAuth support:** MiniMax supports CLI OAuth via `minimax-portal:minimax-cli` in `auth.order`. When configured alongside an available gateway, requests route through the gateway automatically (same as Google and Anthropic).
 
 ### Any other OpenAI-compatible provider
 
@@ -167,6 +171,11 @@ For providers not auto-detected, add them to `llm.providers`:
 ### OpenAI (including o-series reasoning models)
 - Newer models (GPT-5+) require `max_completion_tokens` instead of `max_tokens`. The plugin remaps automatically.
 - Reasoning models (`o1`, `o3`, `o4-mini`, etc.) do not accept `temperature` or `top_p`. The plugin strips these parameters automatically for any model matching `o[0-9]*`.
+
+### Ollama (local models — e.g. `qwen3:8b`)
+- Configure Ollama as a provider with `baseURL: "http://localhost:11434/v1"` and a dummy `apiKey` (Ollama doesn't require a real key).
+- **Qwen3 thinking mode:** Qwen3 models running via Ollama default to `enable_thinking=true`, which places the actual response in `message.reasoning_content` (May 2025+ standard) or the legacy `message.reasoning` field while leaving `message.content` empty. The plugin automatically falls back to these fields, so agents receive the full response without any configuration change. This is transparent — no special model flag or config is required.
+- Other Ollama models (Llama, Mistral, Phi, etc.) are unaffected; they always populate `message.content` normally.
 
 ---
 
@@ -261,3 +270,21 @@ The `distill.apiKey` is still used as a fallback key for `google/*` models when 
 - **Graceful degradation** — missing key = skip model + notify user; no crash.
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full config reference and [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for distillation-specific usage.
+
+
+### Local LLM Pre-filtering (Ollama)
+
+For bulk operations (like `distill`), you can drastically reduce cloud API usage by enabling the two-tier local LLM pre-filter. A local model (e.g. `qwen3:8b`) triages sessions and only sends the interesting ones to the heavy cloud model.
+
+```json
+{
+  "extraction": {
+    "preFilter": {
+      "enabled": true,
+      "model": "qwen3:8b"
+    }
+  }
+}
+```
+
+See [CONFIGURATION.md](CONFIGURATION.md#local-llm-session-pre-filtering-290) for details.

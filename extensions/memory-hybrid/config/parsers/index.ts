@@ -16,6 +16,8 @@ import {
   parseActiveTaskConfig,
   parseSelfCorrectionConfig,
   parseLLMConfig,
+  parseGatewayConfig,
+  parseAuthConfig,
 } from "./core.js";
 import {
   parseAutoClassifyConfig,
@@ -456,6 +458,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     memoryToSkills: parseMemoryToSkillsConfig(cfg),
     memoryTiering: parseMemoryTieringConfig(cfg),
     llm: parseLLMConfig(cfg),
+    auth: parseAuthConfig(cfg),
     distill,
     languageKeywords,
     ingest: parseIngestConfig(cfg),
@@ -494,12 +497,13 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     costTracking: parseCostTrackingConfig(cfg),
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
+    gateway: parseGatewayConfig(cfg),
   };
 }
 
 /** Parse verbosity level from config. Defaults to "normal" when not set. */
 export function parseVerbosityLevel(cfg: Record<string, unknown>): import("../types/index.js").VerbosityLevel {
-  const valid = ["quiet", "normal", "verbose"] as const;
+  const valid = ["silent", "quiet", "normal", "verbose"] as const;
   const raw = cfg.verbosity;
   if (typeof raw === "string" && (valid as readonly string[]).includes(raw)) {
     return raw as import("../types/index.js").VerbosityLevel;

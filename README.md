@@ -41,6 +41,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 ## Features
 
 ### Core memory system
+- **Event Bus** — internal append-only SQLite table tracking sensor events and telemetry for the Rumination Engine.
 - **Auto-capture** — automatically extracts preferences, decisions, facts, and entities from conversations
 - **Auto-recall** — injects relevant memories into context each turn (configurable token budget)
 - **Dual backend** — SQLite + FTS5 for fast structured lookups; LanceDB for semantic vector search (RRF merge)
@@ -69,6 +70,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 - **Scope promote** — CLI and cron job promote high-importance session-scoped facts to global ([docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md))
 
 ### Developer experience
+- **Silent mode** — set `verbosity: "silent"` to suppress all unsolicited memory context injections into prompts, working purely in the background.
 - **Full CLI** — commands for stats, search, classify, consolidate, reflect, dream-cycle, scope promote, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
 - **One-command setup** — `openclaw hybrid-mem install` applies recommended config and **9 maintenance cron jobs** (nightly distill, memory-to-skills, self-correction, dream-cycle, weekly reflection, extract-procedures, deep-maintenance, persona-proposals, monthly consolidation)
 - **Verify & fix** — `openclaw hybrid-mem verify --fix` diagnoses issues and adds any missing cron jobs
@@ -113,6 +115,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Prerequisites
 
+- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
 - **Embedding access** (required) — for semantic search (auto-recall, store, ingest). Configure `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config.
 - **Chat/completion access** (optional for basic memory) — required for distillation, reflection, auto-classify, query expansion, and other LLM-backed features. The plugin can call provider APIs **directly** (recommended: configure the **`llm`** block with `nano` / `default` / `heavy` tiers and per-provider API keys) or use gateway-derived models. See [docs/LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for tiers and provider setup.
 
@@ -207,4 +210,4 @@ The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down 
 
 ### What this repo adds
 
-This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, **memory tiering** (hot/warm/cold) and **multi-agent scoping**, **retrieval directives** and **query expansion** (#160), **LLM re-ranking** (#161), **contextual variants at index time** (#159), **multi-model embedding registry with RRF merge** (#158), **local embedding providers** (Ollama/ONNX, #153), **future-date decay protection** (#144), **episodic event log Layer 1** (#150), **verification store** (#162), **provenance tracing** (#163), **document ingestion** (PDF/DOCX/HTML/images, #206), **workflow crystallization** (skill proposals) and **self-extension** (tool proposals), graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, **scope promote** and 9 maintenance cron jobs, full CLI, verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.
+This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, **memory tiering** (hot/warm/cold) and **multi-agent scoping**, **retrieval directives** and **query expansion** (#160), **LLM re-ranking** (#161), **contextual variants at index time** (#159), **multi-model embedding registry with RRF merge** (#158), **local embedding providers** (Ollama/ONNX, #153), **local LLM session pre-filtering** (#290), **future-date decay protection** (#144), **episodic event log Layer 1** (#150), **verification store** (#162), **provenance tracing** (#163), **document ingestion** (PDF/DOCX/HTML/images, #206), **workflow crystallization** (skill proposals) and **self-extension** (tool proposals), graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, **scope promote** and 9 maintenance cron jobs, full CLI, verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.

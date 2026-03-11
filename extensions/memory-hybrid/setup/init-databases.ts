@@ -12,8 +12,9 @@ import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
-import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig } from "../config.js";
+import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig, type ResolvedGatewayAuthConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
@@ -29,9 +30,46 @@ import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
+import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+/** Default Ollama server base URL (without /v1 path). */
+const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
+/** How long to cache an Ollama health-check result (positive or negative). */
+const OLLAMA_HEALTH_CACHE_TTL_MS = 30_000;
+/** Timeout for a single Ollama /api/tags health ping. */
+const OLLAMA_HEALTH_TIMEOUT_MS = 2_000;
+
+/**
+ * Module-level health cache so repeated calls within the TTL window skip the network round-trip.
+ * Shared across plugin reloads in the same process (intentional).
+ */
+const _ollamaHealthCache = new Map<string, { ok: boolean; ts: number }>();
+
+/**
+ * Probe an Ollama server via GET /api/tags (the Ollama health endpoint).
+ * Returns true when Ollama is reachable and responsive, false otherwise.
+ * Results are cached for OLLAMA_HEALTH_CACHE_TTL_MS to avoid hammering the endpoint.
+ */
+async function probeOllamaEndpoint(baseUrl: string): Promise<boolean> {
+  const now = Date.now();
+  const cached = _ollamaHealthCache.get(baseUrl);
+  if (cached && now - cached.ts < OLLAMA_HEALTH_CACHE_TTL_MS) return cached.ok;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_HEALTH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
+    const ok = resp.ok;
+    _ollamaHealthCache.set(baseUrl, { ok, ts: now });
+    return ok;
+  } catch {
+    _ollamaHealthCache.set(baseUrl, { ok: false, ts: now });
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /**
  * Infer a human-readable feature label for a chat completion call.
@@ -119,6 +157,9 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 
+/** Built-in OpenAI-compatible base URL for MiniMax API (global endpoint). */
+export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
+
 /**
  * Builds a multi-provider OpenAI-compatible proxy that routes each model to the correct provider API.
  * All existing call sites use `openai.chat.completions.create({ model, ... })` unchanged — this
@@ -127,6 +168,7 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
  * Routing:
  *  - `google/*`  → Google Gemini OpenAI-compat endpoint (distill.apiKey or llm.providers.google.apiKey)
  *  - `openai/*` or bare model (no `/`) → OpenAI (embedding.apiKey or llm.providers.openai.apiKey)
+ *  - `ollama/*` → local Ollama server (http://127.0.0.1:11434/v1, or llm.providers.ollama.baseURL)
  *  - Other `provider/*` with explicit llm.providers config → custom endpoint
  *  - Unknown provider, no config → throws UnconfiguredProviderError
  */
@@ -138,13 +180,26 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const k = key.trim();
     if (k.startsWith("env:")) {
       const v = process.env[k.slice(4).trim()];
-      return v ?? undefined;
+      return v && v.trim() ? v.trim() : undefined;
     }
     return k;
   };
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  // Resolve gateway auth token: prefer cfg.gateway.auth.token (SecretRef) over env var fallback.
+  // The parser stores the resolved value as non-enumerable _resolvedToken so it never appears in
+  // JSON dumps while remaining accessible here at runtime.
+  // Fail closed: if gateway.auth.token is configured but cannot be resolved, throw rather than
+  // silently falling back to OPENCLAW_GATEWAY_TOKEN — a stale env token would mask rollout mistakes.
+  const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
+  if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
+    throw new Error(
+      `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. ` +
+      `Ensure the referenced env var or file is accessible, or remove gateway.auth.token from the plugin config. ` +
+      `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
+    );
+  }
+  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
   const gatewayBaseUrl = gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535
     ? `http://127.0.0.1:${gatewayPort}/v1`
     : undefined;
@@ -152,7 +207,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`);
   }
   if (gatewayBaseUrl && !gatewayToken) {
-    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but OPENCLAW_GATEWAY_TOKEN is missing; gateway calls may fail if the gateway requires auth.");
+    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but no gateway auth token found; set gateway.auth.token (SecretRef) in plugin config or OPENCLAW_GATEWAY_TOKEN env var. Gateway calls may fail if auth is required.");
   }
 
   function getOrCreate(key: string, factory: () => OpenAI): OpenAI {
@@ -185,6 +240,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${trimmed}`;
     if (lower.startsWith("claude-")) return `anthropic/${trimmed}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${trimmed}`;
+    if (lower.startsWith("minimax-")) return `minimax/${trimmed}`;
     return trimmed;
   }
 
@@ -200,10 +256,14 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${bare}`;
     if (lower.startsWith("claude-")) return `anthropic/${bare}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${bare}`;
+    if (lower.startsWith("minimax-")) return `minimax/${bare}`;
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
-  function resolveClient(model: string): { client: OpenAI; bareModel: string } {
+  /** The configured auth.order map from plugin config (issue #311). */
+  const authOrder = cfg.auth?.order;
+
+  function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string; useFullModel?: boolean } {
     const normalized = normalizeModelId(model);
     const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
@@ -216,6 +276,22 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const prefix = trimmed.slice(0, slashIdx).toLowerCase();
     const bareModel = trimmed.slice(slashIdx + 1);
     const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
+
+    // Generic OAuth → gateway routing for any provider.
+    // If OAuth profiles are configured for a provider and the local gateway is available,
+    // route through the gateway so it can resolve the OAuth token before falling back to an API key.
+    // This ensures auth.order behaves consistently across all providers (google, anthropic, minimax, etc.).
+    if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) {
+      return {
+        client: getOrCreate(
+          `gateway:oauth:${gatewayBaseUrl}:${prefix}`,
+          () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl }),
+        ),
+        bareModel,
+        // The gateway expects the full "provider/model" identifier.
+        useFullModel: true,
+      };
+    }
 
     if (prefix === "google") {
       const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey)
@@ -257,6 +333,34 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         })),
         bareModel,
       };
+    }
+
+    if (prefix === "ollama") {
+      // Ollama exposes an OpenAI-compatible API at /v1. No real API key is required.
+      let baseURL = providerCfg?.baseURL ?? `${OLLAMA_DEFAULT_BASE_URL}/v1`;
+      // Ensure baseURL ends with /v1 for OpenAI client
+      if (!/\/v1\/?$/.test(baseURL)) {
+        baseURL = `${baseURL.replace(/\/$/, "")}/v1`;
+      }
+      // Strip /v1 suffix for the health-check base URL
+      const ollamaBaseUrl = baseURL.replace(/\/v1\/?$/, "");
+      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? "ollama";
+      const cacheKey = `ollama:${baseURL}`;
+      return {
+        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, baseURL })),
+        bareModel,
+        ollamaBaseUrl,
+      };
+    }
+
+    if (prefix === "minimax") {
+      // Use the built-in MiniMax API endpoint as default so callers never accidentally
+      // fall through to the default OpenAI client (which returns 404 for MiniMax models).
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (process.env.MINIMAX_API_KEY?.trim() || undefined);
+      if (!apiKey) throw new UnconfiguredProviderError("minimax", trimmed);
+      const baseURL = providerCfg?.baseURL ?? MINIMAX_BASE_URL;
+      return { client: getOrCreate(`minimax:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
@@ -320,14 +424,34 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
             create(body: Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1]) {
               const rawModel: string = (body as { model?: string }).model ?? "";
               const model = normalizeModelId(rawModel);
-              const { client, bareModel } = resolveClient(model);
+              const { client, bareModel, ollamaBaseUrl, useFullModel } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
               const isOpenAI = prefix === "openai" || !model.includes("/");
+              // When gateway-routed for non-OpenAI providers (auth.order OAuth), send the full "provider/model"
+              // name so the gateway can route to the correct provider using the configured auth profile.
+              const modelForRequest = useFullModel ? model.trim() : bareModel;
               const adjustedBody = isOpenAI
-                ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
-                : { ...(body as object), model: bareModel };
+                ? remapMaxTokensForOpenAI({ ...(body as object), model: modelForRequest }, bareModel)
+                : { ...(body as object), model: modelForRequest };
               const start = Date.now();
-              const promise = client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
+              // For Ollama models, probe the local server before attempting the call so we fall
+              // through to the next tier model quickly instead of waiting for a TCP timeout.
+              const makeCall = () => client.chat.completions.create(
+                adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts,
+              );
+              const promise: ReturnType<typeof makeCall> = ollamaBaseUrl
+                ? (async () => {
+                    const available = await probeOllamaEndpoint(ollamaBaseUrl);
+                    if (!available) {
+                      const err = Object.assign(
+                        new Error(`Ollama not available at ${ollamaBaseUrl} (ECONNREFUSED) — try next model`),
+                        { code: "ECONNREFUSED" },
+                      );
+                      throw err;
+                    }
+                    return makeCall();
+                  })() as ReturnType<typeof makeCall>
+                : makeCall();
               // Fire-and-forget cost tracking — never blocks or modifies the returned promise
               if (costTracker) {
                 const feature = inferFeatureLabel(body as unknown as Record<string, unknown>, model);
@@ -445,7 +569,7 @@ export function initializeDatabases(
   // If the gateway list is heavy-only (e.g. only Opus), we prepend a cheap fallback so default/nano
   // tasks don't all use the expensive model (see cost issue: hundreds of tasks running as Opus).
   const RECOMMENDED_CHEAP_FALLBACK = ["openai/gpt-4.1-nano", "google/gemini-2.0-flash-lite", "anthropic/claude-3-5-haiku"];
-  if (!cfg.llm) {
+  if (!cfg.llm || (cfg.llm.default.length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
     const modelCfg = agentDefaults?.model as Record<string, unknown> | undefined;
@@ -465,16 +589,14 @@ export function initializeDatabases(
       // Heavy:  pro, opus, o3, o1, large, ultra, gpt-5  — capable/expensive models (incl. GPT-5.4, Codex)
       // Light:  flash, small                           — fast/cheap (but not nano-cheap)
       // Medium: everything else (sonnet, gpt-4o, etc.)
-      const isNano  = (m: string) => /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isHeavy = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isLight = (m: string) => /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const nano    = uniqueModels.filter(m => isNano(m) && !isHeavy(m));
-      const heavy   = uniqueModels.filter(m => isHeavy(m) && !isNano(m));
-      const light   = uniqueModels.filter(m => isLight(m) && !isNano(m) && !isHeavy(m));
-      const medium  = uniqueModels.filter(m => !isNano(m) && !isLight(m) && !isHeavy(m));
+      // All ollama/* models are nano-tier (local = free, no API cost)
+      const nano    = uniqueModels.filter(m => isNanoModel(m) && !isHeavyModel(m));
+      const heavy   = uniqueModels.filter(m => isHeavyModel(m) && !isNanoModel(m));
+      const light   = uniqueModels.filter(m => isLightModel(m) && !isNanoModel(m) && !isHeavyModel(m));
+      const medium  = uniqueModels.filter(m => !isNanoModel(m) && !isLightModel(m) && !isHeavyModel(m));
 
       // default tier: agent order (primary then fallbacks) so reflection/general match what you set in openclaw.json
-      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavy(m));
+      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavyModel(m));
       let defaultTier = [...uniqueModels];
       if (defaultIsHeavyOnly) {
         defaultTier = [...RECOMMENDED_CHEAP_FALLBACK, ...defaultTier];
@@ -493,6 +615,10 @@ export function initializeDatabases(
             : [];
 
       cfg.llm = {
+        ...(cfg.llm?.localAutoStart !== undefined ? { localAutoStart: cfg.llm.localAutoStart } : {}),
+        ...(cfg.llm?.providers !== undefined ? { providers: cfg.llm.providers } : {}),
+        ...(cfg.llm?.fallbackToDefault !== undefined ? { fallbackToDefault: cfg.llm.fallbackToDefault } : {}),
+        ...(cfg.llm?.fallbackModel !== undefined ? { fallbackModel: cfg.llm.fallbackModel } : {}),
         default: defaultTier.length > 0 ? defaultTier : uniqueModels,
         heavy: heavyTier.length > 0 ? heavyTier : uniqueModels,
         ...(nanoList.length > 0 ? { nano: nanoList } : {}),
@@ -552,7 +678,7 @@ export function initializeDatabases(
   }
 
   // If we merged providers, ensure at least one model from each is in the tier lists so they get tested and used as fallbacks.
-  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google"));
+  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google") || (m.toLowerCase().startsWith("minimax-") && prefix === "minimax"));
   if (cfg.llm && mergedProviderNames.length > 0) {
     const defaultList = Array.isArray(cfg.llm.default) ? [...cfg.llm.default] : [];
     const heavyList = Array.isArray(cfg.llm.heavy) ? [...cfg.llm.heavy] : [];
@@ -560,6 +686,7 @@ export function initializeDatabases(
       anthropic: "anthropic/claude-sonnet-4-6",
       openai: "openai/gpt-4.1-mini",
       google: "google/gemini-2.5-flash",
+      minimax: "minimax/MiniMax-Text-01",
     };
     let appended = false;
     for (const name of mergedProviderNames) {
@@ -582,9 +709,55 @@ export function initializeDatabases(
     }
   }
 
+  // Ollama auto-start: if any tier includes ollama/* models and localAutoStart is enabled,
+  // attempt to launch `ollama serve` in the background when the server is not already running.
+  if (cfg.llm?.localAutoStart) {
+    const allModels = [
+      ...(cfg.llm.nano ?? []),
+      ...(cfg.llm.default ?? []),
+      ...(cfg.llm.heavy ?? []),
+    ];
+    const hasOllamaModels = allModels.some(m => m.split("/")[0]?.toLowerCase() === "ollama");
+    if (hasOllamaModels) {
+      void (async () => {
+        try {
+          const ollamaBase = (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.["ollama"]?.baseURL?.replace(/\/v1\/?$/, "")
+            ?? OLLAMA_DEFAULT_BASE_URL;
+          const running = await probeOllamaEndpoint(ollamaBase);
+          if (!running) {
+            api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
+            const { spawn } = await import("node:child_process");
+            const child = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
+            child.on("error", (err) => {
+              api.logger.warn(`memory-hybrid: Ollama spawn error: ${err.message}`);
+            });
+            child.unref();
+            // Allow Ollama ~2 s to bind its port before re-probing
+            await new Promise<void>((r) => setTimeout(r, 2000));
+            // Invalidate any cached "down" entry so the next probe goes to the network
+            _ollamaHealthCache.delete(ollamaBase);
+            const nowRunning = await probeOllamaEndpoint(ollamaBase);
+            if (nowRunning) {
+              api.logger.info("memory-hybrid: Ollama started successfully");
+            } else {
+              api.logger.warn("memory-hybrid: Ollama auto-start attempted but server still not available — local model calls will fall back to cloud");
+            }
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "ollama-auto-start",
+            subsystem: "llm",
+          });
+          api.logger.warn(`memory-hybrid: Ollama auto-start failed: ${err}`);
+        }
+      })();
+    }
+  }
+
   // Chat/LLM client: multi-provider proxy that routes each model to the correct API.
   // google/* → Google Gemini OpenAI-compat API (uses distill.apiKey or llm.providers.google.apiKey)
   // openai/* or bare names → OpenAI API (uses embedding.apiKey or llm.providers.openai.apiKey)
+  // ollama/* → local Ollama server (http://127.0.0.1:11434/v1 by default)
   // Other providers → require llm.providers.<provider>.apiKey + optionally baseURL
   const openai = buildMultiProviderOpenAI(cfg, api, costTracker);
 

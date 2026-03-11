@@ -30,8 +30,8 @@ The system now applies three mechanisms:
 
 Every time a memory is recalled (via `memory_recall` or auto-recall):
 
-- `recall_count` is incremented
-- `last_accessed` is set to the current timestamp
+- `recall_count` and `access_count` are incremented
+- `last_accessed` (epoch) and `last_accessed_at` (ISO 8601) are set to the current time
 
 The effective importance score is boosted by:
 
@@ -83,12 +83,14 @@ Salience scoring (access boost + time decay) always runs on search and lookup.
 
 ## Database Schema
 
-| Column        | Type    | Description                                  |
-|---------------|---------|----------------------------------------------|
-| `recall_count`| INTEGER | Number of times the fact was recalled        |
+| Column | Type | Description |
+|---|---|---|
+| `recall_count` | INTEGER | Number of times the fact was recalled |
 | `last_accessed` | INTEGER | Epoch seconds of last recall (null if never) |
+| `access_count` | INTEGER | Number of times the fact was recalled (for salience scoring) |
+| `last_accessed_at` | TEXT | ISO 8601 timestamp of last recall |
 
-These columns are added by migration `migrateAccessTracking()` and seeded with `last_confirmed_at` for existing facts.
+The initial columns were added by migration `migrateAccessTracking()`. Migration `migrateAccessCountAndLastAccessedAt()` (#237) adds `access_count` and `last_accessed_at`, backfilling from the original columns for compatibility.
 
 ---
 

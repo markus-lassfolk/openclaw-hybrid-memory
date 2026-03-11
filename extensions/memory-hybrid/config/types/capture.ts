@@ -24,6 +24,29 @@ export type ReflectionConfig = {
   minObservations: number;   // Min observations to support a pattern (default: 2)
 };
 
+/** Two-tier LLM pre-filter configuration for bulk session triage (Issue #290). */
+export type ExtractionPreFilterConfig = {
+  /** Enable local LLM pre-filtering (default: false). When true, each session is triaged by a local Ollama model before cloud LLM analysis. */
+  enabled: boolean;
+  /**
+   * Ollama model identifier (e.g. "qwen3:8b" or "ollama/qwen3:8b").
+   * The "ollama/" prefix is stripped automatically when calling Ollama directly.
+   * For Qwen3 thinking models, consider using a ":no_think" variant to reduce token usage.
+   * Default: "qwen3:8b".
+   */
+  model: string;
+  /**
+   * Ollama base URL. When unset, falls back to llm.providers.ollama.baseURL,
+   * then defaults to "http://localhost:11434".
+   */
+  endpoint?: string;
+  /**
+   * Max characters of user messages extracted per session for triage (default: 2000).
+   * Higher values improve accuracy but increase local LLM call time.
+   */
+  maxCharsPerSession?: number;
+};
+
 /** Multi-pass extraction with LLM verification (Issue #166). */
 export type ExtractionConfig = {
   /** Enable multi-pass extraction (default: false). Pass 1 (explicit) is always enabled when true. */
@@ -36,6 +59,12 @@ export type ExtractionConfig = {
   implicitModel?: string;
   /** Model for Pass 3 verification against transcript; when unset, uses nano tier. */
   verificationModel?: string;
+  /**
+   * Two-tier LLM pre-filter: use a local Ollama model to triage sessions before cloud LLM analysis (Issue #290).
+   * When enabled, only sessions flagged as interesting by the local model are sent to the cloud LLM.
+   * Reduces cloud LLM costs by ~80–95% for bulk re-index operations.
+   */
+  preFilter?: ExtractionPreFilterConfig;
 };
 
 /** Procedural memory: auto-generated skills from learned patterns */

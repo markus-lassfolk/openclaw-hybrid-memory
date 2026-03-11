@@ -161,7 +161,18 @@ export async function chatComplete(opts: {
     const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    return resp.choices[0]?.message?.content?.trim() ?? "";
+    const msg = resp.choices[0]?.message;
+    const msgContent = msg?.content?.trim();
+    if (msgContent) return msgContent;
+    // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
+    // message.reasoning_content (current standard, May 2025+) or message.reasoning (legacy).
+    // Fall back to these fields when enable_thinking=true so agents don't see an empty reply (#314).
+    const msgRecord = msg as unknown as Record<string, unknown> | undefined;
+    const reasoningContent = msgRecord?.reasoning_content;
+    if (typeof reasoningContent === "string" && reasoningContent.trim()) return reasoningContent.trim();
+    const reasoning = msgRecord?.reasoning;
+    if (typeof reasoning === "string" && reasoning.trim()) return reasoning.trim();
+    return msgContent ?? "";
   } catch (err) {
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
@@ -175,6 +186,7 @@ export async function chatComplete(opts: {
       msg.includes("request was aborted") ||
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
+      msg.includes("econnrefused") ||
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err);  // #302: OpenAI SDK InternalServerError has no numeric prefix
@@ -281,7 +293,9 @@ export async function withLLMRetry<T>(
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
-          /\b405\s+method\s+not\s+allowed/i.test(fullMsg);
+          /\b405\s+method\s+not\s+allowed/i.test(fullMsg) ||
+          causeMsg.includes("econnrefused") ||
+          fullMsg.includes("econnrefused");
         if (!isTransient) {
           capturePluginError(retryError, {
             subsystem: "chat",
