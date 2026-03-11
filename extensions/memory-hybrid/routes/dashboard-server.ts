@@ -9,7 +9,8 @@
 
 import { createServer } from "node:http";
 import type { Server } from "node:http";
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
@@ -123,9 +124,9 @@ export interface DashboardStatus {
 const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
 const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
 
-function readJsonFile<T>(filePath: string): T | null {
+async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
-    return JSON.parse(readFileSync(filePath, "utf-8")) as T;
+    return JSON.parse(await readFile(filePath, "utf-8")) as T;
   } catch { return null; }
 }
 
@@ -157,12 +158,12 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   };
 }
 
-function collectCronJobs(): CronJobStatus[] {
+async function collectCronJobs(): Promise<CronJobStatus[]> {
   const openclawDir = join(homedir(), ".openclaw");
   const cronStorePath = join(openclawDir, "cron", "jobs.json");
   if (!existsSync(cronStorePath)) return [];
   try {
-    const store = readJsonFile<{ jobs?: unknown[] }>(cronStorePath);
+    const store = await readJsonFile<{ jobs?: unknown[] }>(cronStorePath);
     if (!store || !Array.isArray(store.jobs)) return [];
     return store.jobs
       .filter((j): j is Record<string, unknown> => typeof j === "object" && j !== null)
@@ -190,44 +191,46 @@ function collectCronJobs(): CronJobStatus[] {
   } catch { return []; }
 }
 
-function collectTaskQueue(): { current: TaskQueueItem | null; history: TaskQueueItem[] } {
+async function collectTaskQueue(): Promise<{ current: TaskQueueItem | null; history: TaskQueueItem[] }> {
   const stateDir = join(homedir(), ".openclaw", "workspace", "state", "task-queue");
   const currentPath = join(stateDir, "current.json");
   const historyDir = join(stateDir, "history");
 
-  const current = readJsonFile<TaskQueueItem>(currentPath);
+  const current = await readJsonFile<TaskQueueItem>(currentPath);
 
   let history: TaskQueueItem[] = [];
   if (existsSync(historyDir)) {
     try {
-      const files = readdirSync(historyDir)
+      const files = (await readdir(historyDir))
         .filter((f) => f.endsWith(".json"))
         .sort()
         .reverse()
         .slice(0, 10);
-      history = files
-        .map((f) => readJsonFile<TaskQueueItem>(join(historyDir, f)))
-        .filter((item): item is TaskQueueItem => item !== null);
+      history = (await Promise.all(
+        files.map((f) => readJsonFile<TaskQueueItem>(join(historyDir, f)))
+      )).filter((item): item is TaskQueueItem => item !== null);
     } catch { /* non-fatal */ }
   }
 
   return { current, history };
 }
 
-function collectForgeState(): ForgeTaskItem[] {
+async function collectForgeState(): Promise<ForgeTaskItem[]> {
   const forgeDir = join(homedir(), ".openclaw", "workspace", "state", "forge");
   if (!existsSync(forgeDir)) return [];
   try {
-    const files = readdirSync(forgeDir).filter((f) => f.endsWith(".json"));
-    // Limit to the 20 most recently modified files to avoid unbounded sync reads
-    const withMtime = files.map((f) => {
-      const fullPath = join(forgeDir, f);
-      try { return { name: f, mtime: statSync(fullPath).mtimeMs }; } catch { return null; }
-    }).filter((e): e is { name: string; mtime: number } => e !== null);
+    const files = (await readdir(forgeDir)).filter((f) => f.endsWith(".json"));
+    // Limit to the 20 most recently modified files to avoid unbounded async reads
+    const withMtime = (await Promise.all(
+      files.map(async (f) => {
+        const fullPath = join(forgeDir, f);
+        try { return { name: f, mtime: (await stat(fullPath)).mtimeMs }; } catch { return null; }
+      })
+    )).filter((e): e is { name: string; mtime: number } => e !== null);
     withMtime.sort((a, b) => b.mtime - a.mtime);
-    return withMtime.slice(0, 20)
-      .map((e) => readJsonFile<ForgeTaskItem>(join(forgeDir, e.name)))
-      .filter((item): item is ForgeTaskItem => item !== null);
+    return (await Promise.all(
+      withMtime.slice(0, 20).map((e) => readJsonFile<ForgeTaskItem>(join(forgeDir, e.name)))
+    )).filter((item): item is ForgeTaskItem => item !== null);
   } catch { return []; }
 }
 
@@ -323,9 +326,9 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
   return {
     generatedAt: new Date().toISOString(),
     memory: await collectMemoryStats(ctx),
-    cronJobs: collectCronJobs(),
-    taskQueue: collectTaskQueue(),
-    forge: collectForgeState(),
+    cronJobs: await collectCronJobs(),
+    taskQueue: await collectTaskQueue(),
+    forge: await collectForgeState(),
     git: await collectGitActivity(ctx.gitRepo),
     costs: collectCostStats(ctx),
   };
