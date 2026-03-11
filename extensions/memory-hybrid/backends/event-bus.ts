@@ -64,7 +64,7 @@ export class EventBus {
         payload TEXT NOT NULL,
         importance REAL DEFAULT 0.5,
         status TEXT DEFAULT 'raw',
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         processed_at TEXT,
         fingerprint TEXT
       );
