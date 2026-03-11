@@ -89,8 +89,5 @@
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme",
   "bugs": {
     "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues"
-  },
-  "overrides": {
-    "@hono/node-server": "^1.19.10"
   }
 }
