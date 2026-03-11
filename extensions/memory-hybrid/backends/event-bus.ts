@@ -109,7 +109,7 @@ export class EventBus {
     importance = 0.5,
     fingerprint?: string,
   ): number {
-    if (importance < 0 || importance > 1) {
+    if (!(importance >= 0 && importance <= 1)) {
       throw new RangeError(`EventBus: importance must be between 0 and 1, got ${importance}`);
     }
     const result = this.liveDb
