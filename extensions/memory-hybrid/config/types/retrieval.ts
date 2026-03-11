@@ -124,7 +124,7 @@ export type QueryExpansionConfig = {
   maxVariants: number;
   /** LRU cache size for memoized expansions (default: 100). */
   cacheSize: number;
-  /** Timeout in ms for the LLM call; on timeout, fall back to original query (default: 5000). */
+  /** Timeout in ms for the LLM call; on timeout, fall back to original query (default: 15000). */
   timeoutMs: number;
 };
 
