@@ -12,7 +12,7 @@ import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
-import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig } from "../config.js";
+import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig, type ResolvedGatewayAuthConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
@@ -176,13 +176,26 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const k = key.trim();
     if (k.startsWith("env:")) {
       const v = process.env[k.slice(4).trim()];
-      return v ?? undefined;
+      return v && v.trim() ? v.trim() : undefined;
     }
     return k;
   };
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  // Resolve gateway auth token: prefer cfg.gateway.auth.token (SecretRef) over env var fallback.
+  // The parser stores the resolved value as non-enumerable _resolvedToken so it never appears in
+  // JSON dumps while remaining accessible here at runtime.
+  // Fail closed: if gateway.auth.token is configured but cannot be resolved, throw rather than
+  // silently falling back to OPENCLAW_GATEWAY_TOKEN — a stale env token would mask rollout mistakes.
+  const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
+  if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
+    throw new Error(
+      `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. ` +
+      `Ensure the referenced env var or file is accessible, or remove gateway.auth.token from the plugin config. ` +
+      `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
+    );
+  }
+  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
   const gatewayBaseUrl = gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535
     ? `http://127.0.0.1:${gatewayPort}/v1`
     : undefined;
@@ -190,7 +203,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`);
   }
   if (gatewayBaseUrl && !gatewayToken) {
-    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but OPENCLAW_GATEWAY_TOKEN is missing; gateway calls may fail if the gateway requires auth.");
+    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but no gateway auth token found; set gateway.auth.token (SecretRef) in plugin config or OPENCLAW_GATEWAY_TOKEN env var. Gateway calls may fail if auth is required.");
   }
 
   function getOrCreate(key: string, factory: () => OpenAI): OpenAI {

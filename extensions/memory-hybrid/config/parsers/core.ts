@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "../types/core.js";
 import type {
   CredentialsConfig,
@@ -9,6 +10,8 @@ import type {
   SelfCorrectionConfig,
   LLMConfig,
   LLMProviderConfig,
+  GatewayConfig,
+  ResolvedGatewayAuthConfig,
 } from "../types/index.js";
 import { parseDuration } from "../../utils/duration.js";
 
@@ -310,4 +313,63 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
         }
       : undefined;
   return llm;
+}
+
+/**
+ * Resolve a SecretRef string to its actual value.
+ *
+ * Supported formats:
+ *   "env:VAR_NAME"   — read from process.env[VAR_NAME]
+ *   "file:/path"     — read from a file, whitespace-trimmed
+ *   plain string     — returned as-is
+ *
+ * Returns undefined when the SecretRef cannot be resolved (env var unset,
+ * file missing, or value is empty after trimming).
+ */
+export function resolveSecretRef(value: string): string | undefined {
+  if (!value || !value.trim()) return undefined;
+  const v = value.trim();
+  if (v.startsWith("env:")) {
+    const varName = v.slice(4).trim();
+    if (!varName) return undefined;
+    const resolved = process.env[varName];
+    return resolved && resolved.trim() ? resolved.trim() : undefined;
+  }
+  if (v.startsWith("file:")) {
+    const filePath = v.slice(5).trim();
+    if (!filePath) return undefined;
+    try {
+      const contents = readFileSync(filePath, "utf-8").trim();
+      return contents || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return v;
+}
+
+/**
+ * Parse gateway config from raw plugin config.
+ * The resolved token is stored as a non-enumerable property so it is not
+ * visible in JSON.stringify / config dumps, while callers can still access it.
+ */
+export function parseGatewayConfig(cfg: Record<string, unknown>): GatewayConfig | undefined {
+  const gwRaw = cfg.gateway as Record<string, unknown> | undefined;
+  if (!gwRaw || typeof gwRaw !== "object") return undefined;
+  const authRaw = gwRaw.auth as Record<string, unknown> | undefined;
+  if (!authRaw || typeof authRaw !== "object") return undefined;
+  const tokenRaw = typeof authRaw.token === "string" ? authRaw.token.trim() : undefined;
+  if (!tokenRaw) return undefined;
+
+  const resolvedToken = resolveSecretRef(tokenRaw);
+  const auth: ResolvedGatewayAuthConfig = {
+    token: tokenRaw, // keep SecretRef string for config display; NOT the resolved value
+  };
+  // Store resolved token as non-enumerable so it never leaks into JSON dumps or logs
+  Object.defineProperty(auth, "_resolvedToken", {
+    value: resolvedToken,
+    enumerable: false,
+    writable: false,
+  });
+  return { auth };
 }
