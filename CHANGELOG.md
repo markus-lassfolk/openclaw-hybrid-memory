@@ -8,9 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Added
+### Fixed
 
-- (none yet)
+- **Qwen3 thinking mode empty responses (#314):** Qwen3 models running via Ollama default to `enable_thinking=true`, which places the actual model output in `message.reasoning_content` (current standard) or the legacy `message.reasoning` field while leaving `message.content` empty. `chatComplete()` now falls back to these fields when `content` is empty, so cron agents routing to `ollama/qwen3:*` receive the full response instead of timing out on a blank reply. Non-Qwen models are unaffected.
 
 ---
 

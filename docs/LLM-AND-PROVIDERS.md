@@ -168,6 +168,11 @@ For providers not auto-detected, add them to `llm.providers`:
 - Newer models (GPT-5+) require `max_completion_tokens` instead of `max_tokens`. The plugin remaps automatically.
 - Reasoning models (`o1`, `o3`, `o4-mini`, etc.) do not accept `temperature` or `top_p`. The plugin strips these parameters automatically for any model matching `o[0-9]*`.
 
+### Ollama (local models — e.g. `qwen3:8b`)
+- Configure Ollama as a provider with `baseURL: "http://localhost:11434/v1"` and a dummy `apiKey` (Ollama doesn't require a real key).
+- **Qwen3 thinking mode:** Qwen3 models running via Ollama default to `enable_thinking=true`, which places the actual response in `message.reasoning_content` (May 2025+ standard) or the legacy `message.reasoning` field while leaving `message.content` empty. The plugin automatically falls back to these fields, so agents receive the full response without any configuration change. This is transparent — no special model flag or config is required.
+- Other Ollama models (Llama, Mistral, Phi, etc.) are unaffected; they always populate `message.content` normally.
+
 ---
 
 ## What happens when a provider key is missing
