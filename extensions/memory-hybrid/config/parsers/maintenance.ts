@@ -76,6 +76,7 @@ export function parseHealthConfig(cfg: Record<string, unknown>): HealthConfig {
   const healthRaw = cfg.health as Record<string, unknown> | undefined;
   return {
     enabled: healthRaw?.enabled !== false,
+    authenticated: healthRaw?.authenticated !== false,
   };
 }
 
