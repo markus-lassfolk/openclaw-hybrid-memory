@@ -25,7 +25,7 @@ facts table
 ├── id              (UUID)
 ├── text            ("User prefers dark mode")
 ├── category        (preference)
-├── importance      (0.7)
+├── importance      (0.5)
 ├── entity          ("user")
 ├── key             ("preference")
 ├── value           ("dark mode")
@@ -62,7 +62,7 @@ memories table (LanceDB)
 ├── id              (UUID)
 ├── text            (fact text)
 ├── vector          (float array, 1536 dims for text-embedding-3-small)
-├── importance      (0.7)
+├── importance      (0.5)
 ├── category        ("preference")
 └── createdAt       (epoch seconds)
 ```
@@ -98,7 +98,7 @@ When you search for "database performance":
    - **Dynamic salience** — access boost (frequently recalled facts score higher) and time decay (older unused memories fade). See [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md).
 4. **Filtering** — excludes expired facts, superseded facts, and optionally filters by tag
 5. **Sorting** — by composite score, then by effective date (newer first) on ties
-6. **Access tracking** — bumps `recall_count` and `last_accessed` for returned facts; extends TTL for stable/active facts; drives salience scoring
+6. **Access tracking** — bumps `access_count`, `last_accessed_at` (and `recall_count`) for returned facts; extends TTL for stable/active/durable/normal facts; drives salience scoring
 
 ### Vector search (LanceDB)
 
