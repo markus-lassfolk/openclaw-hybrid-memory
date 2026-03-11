@@ -143,6 +143,16 @@ describe("parseLLMConfig — localAutoStart", () => {
     expect(result?.localAutoStart).toBe(false);
   });
 
+  it("materializes LLM config when only localAutoStart: true is set (no explicit tiers)", () => {
+    const cfg = { llm: { localAutoStart: true } };
+    const result = parseLLMConfig(cfg);
+    expect(result).not.toBeUndefined();
+    expect(result?.localAutoStart).toBe(true);
+    // Tiers should be empty (auto-derive happens in initializeDatabases, not parseLLMConfig)
+    expect(result?.default).toEqual([]);
+    expect(result?.heavy).toEqual([]);
+  });
+
   it("parses nano tier containing ollama models", () => {
     const cfg = {
       llm: {

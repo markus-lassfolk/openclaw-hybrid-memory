@@ -513,7 +513,7 @@ export function initializeDatabases(
   // If the gateway list is heavy-only (e.g. only Opus), we prepend a cheap fallback so default/nano
   // tasks don't all use the expensive model (see cost issue: hundreds of tasks running as Opus).
   const RECOMMENDED_CHEAP_FALLBACK = ["openai/gpt-4.1-nano", "google/gemini-2.0-flash-lite", "anthropic/claude-3-5-haiku"];
-  if (!cfg.llm) {
+  if (!cfg.llm || (cfg.llm.default.length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
     const modelCfg = agentDefaults?.model as Record<string, unknown> | undefined;
@@ -562,6 +562,7 @@ export function initializeDatabases(
             : [];
 
       cfg.llm = {
+        ...(cfg.llm?.localAutoStart ? { localAutoStart: cfg.llm.localAutoStart } : {}),
         default: defaultTier.length > 0 ? defaultTier : uniqueModels,
         heavy: heavyTier.length > 0 ? heavyTier : uniqueModels,
         ...(nanoList.length > 0 ? { nano: nanoList } : {}),
