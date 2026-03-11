@@ -245,6 +245,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         `memory-hybrid: after_compaction — messages=${msgCount} tokens≈${tokenCount} compacted=${compacted}`,
       );
 
+      // Silent mode: skip memory summary injection entirely (no DB queries, no prependContext).
+      if (ctx.cfg.verbosity === "silent") return;
+
       // Verify SQLite is still accessible after compaction
       let factCount = 0;
       try {
