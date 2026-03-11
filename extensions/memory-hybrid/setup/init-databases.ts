@@ -29,6 +29,7 @@ import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
+import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -538,16 +539,13 @@ export function initializeDatabases(
       // Light:  flash, small                           — fast/cheap (but not nano-cheap)
       // Medium: everything else (sonnet, gpt-4o, etc.)
       // All ollama/* models are nano-tier (local = free, no API cost)
-      const isNano  = (m: string) => m.split("/")[0]?.toLowerCase() === "ollama" || /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isHeavy = (m: string) => m.split("/")[0]?.toLowerCase() !== "ollama" && /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isLight = (m: string) => /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const nano    = uniqueModels.filter(m => isNano(m) && !isHeavy(m));
-      const heavy   = uniqueModels.filter(m => isHeavy(m) && !isNano(m));
-      const light   = uniqueModels.filter(m => isLight(m) && !isNano(m) && !isHeavy(m));
-      const medium  = uniqueModels.filter(m => !isNano(m) && !isLight(m) && !isHeavy(m));
+      const nano    = uniqueModels.filter(m => isNanoModel(m) && !isHeavyModel(m));
+      const heavy   = uniqueModels.filter(m => isHeavyModel(m) && !isNanoModel(m));
+      const light   = uniqueModels.filter(m => isLightModel(m) && !isNanoModel(m) && !isHeavyModel(m));
+      const medium  = uniqueModels.filter(m => !isNanoModel(m) && !isLightModel(m) && !isHeavyModel(m));
 
       // default tier: agent order (primary then fallbacks) so reflection/general match what you set in openclaw.json
-      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavy(m));
+      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavyModel(m));
       let defaultTier = [...uniqueModels];
       if (defaultIsHeavyOnly) {
         defaultTier = [...RECOMMENDED_CHEAP_FALLBACK, ...defaultTier];
