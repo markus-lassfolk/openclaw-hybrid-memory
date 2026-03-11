@@ -17,7 +17,7 @@ import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import { getDirSize, getFileSize } from "../utils/fs.js";
+import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
 
@@ -135,9 +135,9 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   const expiredFacts = ctx.factsDb.countExpired();
   let vectorCount = 0;
   try { vectorCount = await ctx.vectorDb.count(); } catch { /* non-fatal */ }
-  const sqliteSize = getFileSize(ctx.resolvedSqlitePath);
-  const sqliteWalSize = getFileSize(ctx.resolvedSqlitePath + "-wal");
-  const sqliteShmSize = getFileSize(ctx.resolvedSqlitePath + "-shm");
+  const sqliteSize = await getFileSizeAsync(ctx.resolvedSqlitePath);
+  const sqliteWalSize = await getFileSizeAsync(ctx.resolvedSqlitePath + "-wal");
+  const sqliteShmSize = await getFileSizeAsync(ctx.resolvedSqlitePath + "-shm");
   const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize;
 
   // Use cached LanceDB size to avoid blocking on large directory traversals

@@ -14,6 +14,13 @@ export function getFileSize(filePath: string): number {
 }
 
 /**
+ * Returns the byte size of a file asynchronously, or 0 if it cannot be read.
+ */
+export async function getFileSizeAsync(filePath: string): Promise<number> {
+  try { return (await stat(filePath)).size; } catch { return 0; }
+}
+
+/**
  * Recursively calculate the total size of a directory (synchronous).
  * @param dirPath - Path to the directory
  * @returns Total size in bytes, or 0 if the directory cannot be read
