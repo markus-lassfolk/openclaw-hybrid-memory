@@ -113,24 +113,28 @@ Each provider in `llm.providers` can have:
 | `google` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `llm.providers.google.apiKey` or legacy `distill.apiKey` |
 | `openai` | `https://api.openai.com/v1` | `llm.providers.openai.apiKey` or `embedding.apiKey` |
 | `anthropic` | `https://api.anthropic.com/v1` | `llm.providers.anthropic.apiKey` (required; no fallback) |
+| `minimax` | `https://api.minimax.io/v1` | `llm.providers.minimax.apiKey` or `MINIMAX_API_KEY` env var |
 
-### Manual provider configuration required
+### MiniMax configuration
 
-Providers must be configured in the plugin's `llm.providers` section. While OpenClaw's `models.providers` are shown in verify output for reference, they are not automatically used by the plugin's multi-provider proxy.
-
-For any provider beyond the built-ins, add them to `llm.providers`:
+MiniMax M2.5 has a built-in endpoint — only the API key is required (no `baseURL` needed):
 
 ```json
 "llm": {
   "providers": {
     "minimax": {
-      "apiKey": "sk-cp-...",
-      "baseURL": "https://api.minimax.io/v1"
+      "apiKey": "sk-cp-..."
     }
   },
   "nano": ["minimax/MiniMax-M2.5"]
 }
 ```
+
+The `baseURL` defaults to `https://api.minimax.io/v1` (global endpoint). Set it explicitly only if you need a regional or custom endpoint.
+
+**Gateway key auto-merge:** If OpenClaw's gateway has a `minimax` provider configured (under `models.providers.minimax`), the plugin automatically picks up the API key — no duplication needed. Just add `minimax/MiniMax-M2.5` to your `llm.nano` or `llm.default` list.
+
+**OAuth support:** MiniMax supports CLI OAuth via `minimax-portal:minimax-cli` in `auth.order`. When configured alongside an available gateway, requests route through the gateway automatically (same as Google and Anthropic).
 
 ### Any other OpenAI-compatible provider
 

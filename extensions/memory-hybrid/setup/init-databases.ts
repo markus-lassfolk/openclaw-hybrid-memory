@@ -157,6 +157,9 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 
+/** Built-in OpenAI-compatible base URL for MiniMax API (global endpoint). */
+export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
+
 /**
  * Builds a multi-provider OpenAI-compatible proxy that routes each model to the correct provider API.
  * All existing call sites use `openai.chat.completions.create({ model, ... })` unchanged — this
@@ -237,6 +240,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${trimmed}`;
     if (lower.startsWith("claude-")) return `anthropic/${trimmed}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${trimmed}`;
+    if (lower.startsWith("minimax-")) return `minimax/${trimmed}`;
     return trimmed;
   }
 
@@ -252,6 +256,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${bare}`;
     if (lower.startsWith("claude-")) return `anthropic/${bare}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${bare}`;
+    if (lower.startsWith("minimax-")) return `minimax/${bare}`;
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
@@ -346,6 +351,16 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         bareModel,
         ollamaBaseUrl,
       };
+    }
+
+    if (prefix === "minimax") {
+      // Use the built-in MiniMax API endpoint as default so callers never accidentally
+      // fall through to the default OpenAI client (which returns 404 for MiniMax models).
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (process.env.MINIMAX_API_KEY?.trim() || undefined);
+      if (!apiKey) throw new UnconfiguredProviderError("minimax", trimmed);
+      const baseURL = providerCfg?.baseURL ?? MINIMAX_BASE_URL;
+      return { client: getOrCreate(`minimax:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
@@ -663,7 +678,7 @@ export function initializeDatabases(
   }
 
   // If we merged providers, ensure at least one model from each is in the tier lists so they get tested and used as fallbacks.
-  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google"));
+  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google") || (m.toLowerCase().startsWith("minimax-") && prefix === "minimax"));
   if (cfg.llm && mergedProviderNames.length > 0) {
     const defaultList = Array.isArray(cfg.llm.default) ? [...cfg.llm.default] : [];
     const heavyList = Array.isArray(cfg.llm.heavy) ? [...cfg.llm.heavy] : [];
@@ -671,6 +686,7 @@ export function initializeDatabases(
       anthropic: "anthropic/claude-sonnet-4-6",
       openai: "openai/gpt-4.1-mini",
       google: "google/gemini-2.5-flash",
+      minimax: "minimax/MiniMax-Text-01",
     };
     let appended = false;
     for (const name of mergedProviderNames) {
