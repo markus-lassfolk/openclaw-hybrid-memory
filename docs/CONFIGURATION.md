@@ -292,6 +292,28 @@ When `autoBuild` is `true`, the plugin samples recent facts, detects the top lan
 
 ---
 
+## Vector database (LanceDB)
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "vector": {
+            "autoRepair": false
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+- **`autoRepair`** (boolean) — When `true`, automatically drops and recreates the LanceDB table if its vector dimension doesn't match the configured embedding model dimension, re-embedding facts from SQLite. Default: `false` (logs a warning and skips vector search instead of spamming errors on dimension mismatch).
+
+---
+
 ## Memory backend
 
 ```json

@@ -10,6 +10,8 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { UUID_REGEX } from "../utils/constants.js";
 
 const LANCE_TABLE = "memories";
+/** Substring of the LanceDB error thrown on vector-dimension mismatch (issue #366). */
+const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
 /**
  * Module-level optimization guard keyed by dbPath.
@@ -41,6 +43,13 @@ export class VectorDB {
    * decide whether to trigger re-embedding of existing SQLite facts (issue #128).
    */
   wasRepaired = false;
+  /**
+   * Set to false by validateOrRepairSchema() when the table has no vector column or a
+   * dimension mismatch that wasn't auto-repaired. search() and hasDuplicate() return
+   * empty results immediately without reporting to GlitchTip when this is false, since
+   * the schema issue was already logged at startup (issue #366).
+   */
+  private schemaValid = true;
   /**
    * Incremented each time close() is called. Re-embedding loops can capture this value
    * and abort when it changes, preventing them from running on a closed instance.
@@ -111,6 +120,8 @@ export class VectorDB {
   }
 
   private async doInitialize(): Promise<void> {
+    // Reset schema validity on each (re-)init so a fixed table is detected correctly.
+    this.schemaValid = true;
     this.db = await lancedb.connect(this.dbPath);
     const tables = await this.db.tableNames();
 
@@ -158,6 +169,7 @@ export class VectorDB {
       );
 
       if (!vectorField) {
+        this.schemaValid = false;
         this.logWarn(
           `memory-hybrid: ⚠️  LanceDB table '${LANCE_TABLE}' has no vector column — ` +
             `vector search will return empty results. ` +
@@ -177,6 +189,7 @@ export class VectorDB {
             `Set vector.autoRepair=true in plugin config to automatically rebuild the index.`,
         );
         if (this.autoRepair && typeof actualDim === "number" && actualDim !== this.vectorDim) {
+          // schemaValid stays true — it will be valid again after repair
           this.logWarn(
             `memory-hybrid: vector.autoRepair=true — dropping '${LANCE_TABLE}' and recreating ` +
               `with dim=${this.vectorDim} (was ${actual}). ` +
@@ -200,6 +213,10 @@ export class VectorDB {
             this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
           }
           this.wasRepaired = true;
+        } else {
+          // Mismatch without auto-repair: mark schema invalid so search/hasDuplicate
+          // return empty results immediately without spamming GlitchTip (issue #366).
+          this.schemaValid = false;
         }
       }
     } catch (err) {
@@ -318,6 +335,10 @@ export class VectorDB {
   ): Promise<SearchResult[]> {
     try {
       await this.ensureInitialized();
+      // Schema was detected as invalid at startup (dim mismatch or no vector column).
+      // Return empty results immediately without a GlitchTip report — the issue was
+      // already logged once during init (issue #366).
+      if (!this.schemaValid) return [];
       const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
       return results
         .map((row) => {
@@ -347,11 +368,14 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: 'vector-search',
-        severity: 'info',
-        subsystem: 'vector'
-      });
+      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      if (!isKnownSchemaErr) {
+        capturePluginError(err as Error, {
+          operation: 'vector-search',
+          severity: 'info',
+          subsystem: 'vector'
+        });
+      }
       this.logWarn(`memory-hybrid: LanceDB search failed: ${err}`);
       return [];
     }
@@ -360,16 +384,21 @@ export class VectorDB {
   async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
     try {
       await this.ensureInitialized();
+      // Same early-exit as search(): schema was already reported invalid at startup.
+      if (!this.schemaValid) return false;
       const results = await this.getTable().vectorSearch(vector).limit(1).toArray();
       if (results.length === 0) return false;
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: 'vector-duplicate-check',
-        severity: 'info',
-        subsystem: 'vector'
-      });
+      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      if (!isKnownSchemaErr) {
+        capturePluginError(err as Error, {
+          operation: 'vector-duplicate-check',
+          severity: 'info',
+          subsystem: 'vector'
+        });
+      }
       this.logWarn(`memory-hybrid: LanceDB hasDuplicate failed: ${err}`);
       return false;
     }
