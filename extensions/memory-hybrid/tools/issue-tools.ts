@@ -12,6 +12,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { IssueStore } from "../backends/issue-store.js";
 import type { IssueStatus, IssueSeverity } from "../types/issue-types.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { isCompactVerbosity } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 const ISSUE_STATUSES = [
@@ -66,7 +67,7 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
 
         try {
           const issue = issueStore.create({ title, symptoms, severity, tags });
-          const createText = verbosity === "quiet" || verbosity === "silent"
+          const createText = isCompactVerbosity(verbosity)
             ? `Issue: ${issue.id}.`
             : `Created issue "${issue.title}" [${issue.id}] (status: ${issue.status}, severity: ${issue.severity})`;
           return {
@@ -137,7 +138,7 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
             issue = issueStore.update(id, { rootCause, fix, rollback, symptoms });
           }
 
-          const updateText = verbosity === "quiet" || verbosity === "silent"
+          const updateText = isCompactVerbosity(verbosity)
             ? `Issue ${issue.id}: ${issue.status}.`
             : `Updated issue "${issue.title}" [${issue.id}] (status: ${issue.status})`;
           return {

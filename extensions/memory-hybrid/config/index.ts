@@ -8,6 +8,7 @@ export {
   setMemoryCategories,
   isValidCategory,
   PRESET_OVERRIDES,
+  isCompactVerbosity,
 } from "./utils.js";
 
 // Re-export embedding dimension utilities

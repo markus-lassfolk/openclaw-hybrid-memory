@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, type CronModelConfig } from "../config.js";
+import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, isCompactVerbosity, type CronModelConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
@@ -730,7 +730,7 @@ export async function runVerifyForCli(
   const verbosity = cfg.verbosity ?? "normal";
   // In quiet mode: suppress ✅ / [OK] lines and section headers (─────); only pass through failures and summaries.
   const rawLog = sink.log;
-  const log: typeof rawLog = verbosity === "quiet" || verbosity === "silent"
+  const log: typeof rawLog = isCompactVerbosity(verbosity)
     ? (msg: string) => {
         // Suppress lines that are purely informational OK messages, section headers, and indented feature status lines
         const trimmed = msg.trimStart();
@@ -4889,7 +4889,7 @@ export function runCostReportForCli(
   const days = opts.days ?? 7;
   const verbosity = ctx.cfg.verbosity ?? "normal";
   // quiet: only totals (compact layout); normal/verbose: full per-feature breakdown with savings
-  const compact = opts.format === "compact" || verbosity === "quiet" || verbosity === "silent";
+  const compact = opts.format === "compact" || isCompactVerbosity(verbosity);
 
   // --modes: show config-mode cost estimate table (no live data needed)
   if (opts.modes) {
