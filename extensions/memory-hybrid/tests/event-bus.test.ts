@@ -50,6 +50,18 @@ describe("EventBus.appendEvent", () => {
     expect(events[0].importance).toBe(0.9);
   });
 
+  it("throws RangeError for importance below 0", () => {
+    expect(() => bus.appendEvent("sensor.test", "test", {}, -0.1)).toThrow(RangeError);
+  });
+
+  it("throws RangeError for importance above 1", () => {
+    expect(() => bus.appendEvent("sensor.test", "test", {}, 1.1)).toThrow(RangeError);
+  });
+
+  it("throws RangeError for NaN importance", () => {
+    expect(() => bus.appendEvent("sensor.test", "test", {}, NaN)).toThrow(RangeError);
+  });
+
   it("stores fingerprint when provided", () => {
     const fp = computeFingerprint("sensor.garmin:entity123:summary:bucket");
     bus.appendEvent("sensor.garmin", "garmin-sensor", {}, 0.5, fp);
