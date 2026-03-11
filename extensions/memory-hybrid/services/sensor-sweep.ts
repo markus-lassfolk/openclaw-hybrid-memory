@@ -401,11 +401,6 @@ export async function sweepGitHub(
   const result: SensorSweepResult = { sensor: "github", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const repo = cfg.repo ?? "";
-    const fp = computeFingerprint(`sensor.github:${repo}`);
-    if (bus.dedup(fp, cooldownHours)) {
-      result.eventsSkipped++;
-      return result;
-    }
 
     // Check if gh CLI is available
     const ghCheck = tryExecFileSync("gh", ["--version"]);
@@ -491,34 +486,42 @@ export async function sweepGitHub(
       (i) => i.updatedAt !== undefined && i.updatedAt < staleCutoff,
     );
 
+    const payload = {
+      openPrCount: openPrs.length,
+      openPrs: openPrs.slice(0, 10).map((p) => ({
+        number: p.number,
+        title: p.title,
+        url: p.url,
+        isDraft: p.isDraft ?? false,
+        reviewDecision: p.reviewDecision ?? null,
+      })),
+      reviewRequestCount: reviewRequests.length,
+      reviewRequests: reviewRequests.slice(0, 5).map((p) => ({
+        number: p.number,
+        title: p.title,
+        url: p.url,
+      })),
+      ciFailureCount: ciFailures.length,
+      ciFailures: ciFailures.slice(0, 5),
+      staleIssueCount: staleIssues.length,
+      staleIssues: staleIssues.slice(0, 5).map((i) => ({
+        number: i.number,
+        title: i.title,
+        url: i.url,
+        updatedAt: i.updatedAt ?? null,
+      })),
+    };
+
+    const fp = computeFingerprint(`sensor.github:${repo}:${JSON.stringify(payload)}`);
+    if (bus.dedup(fp, cooldownHours)) {
+      result.eventsSkipped++;
+      return result;
+    }
+
     bus.appendEvent(
       "sensor.github",
       "github-sensor",
-      {
-        openPrCount: openPrs.length,
-        openPrs: openPrs.slice(0, 10).map((p) => ({
-          number: p.number,
-          title: p.title,
-          url: p.url,
-          isDraft: p.isDraft ?? false,
-          reviewDecision: p.reviewDecision ?? null,
-        })),
-        reviewRequestCount: reviewRequests.length,
-        reviewRequests: reviewRequests.slice(0, 5).map((p) => ({
-          number: p.number,
-          title: p.title,
-          url: p.url,
-        })),
-        ciFailureCount: ciFailures.length,
-        ciFailures: ciFailures.slice(0, 5),
-        staleIssueCount: staleIssues.length,
-        staleIssues: staleIssues.slice(0, 5).map((i) => ({
-          number: i.number,
-          title: i.title,
-          url: i.url,
-          updatedAt: i.updatedAt ?? null,
-        })),
-      },
+      payload,
       cfg.importance ?? 0.7,
       fp,
     );
@@ -634,7 +637,7 @@ export async function sweepSystemHealth(
       platform: process.platform,
     };
 
-    const fp = computeFingerprint(`sensor.system-health:${process.version}:${process.platform}`);
+    const fp = computeFingerprint(`sensor.system-health:${JSON.stringify(payload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
