@@ -176,7 +176,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const k = key.trim();
     if (k.startsWith("env:")) {
       const v = process.env[k.slice(4).trim()];
-      return v ?? undefined;
+      return v && v.trim() ? v.trim() : undefined;
     }
     return k;
   };
