@@ -69,7 +69,13 @@ interface HAEntity {
 async function fetchHaEntities(
   ha: HomeAssistantSensorConfig,
   prefix: string,
+  cachedStates?: HAEntity[],
 ): Promise<HAEntity[]> {
+  // If cached states are provided, filter and return from cache
+  if (cachedStates) {
+    return cachedStates.filter((e) => e.entity_id.startsWith(prefix));
+  }
+
   const url = `${ha.baseUrl.replace(/\/$/, "")}/api/states`;
   const token = ha.token.startsWith("env:")
     ? (process.env[ha.token.slice(4)] ?? "")
@@ -114,6 +120,26 @@ async function fetchHaEntityById(
   }
 }
 
+async function fetchAllHaStates(ha: HomeAssistantSensorConfig): Promise<HAEntity[]> {
+  const url = `${ha.baseUrl.replace(/\/$/, "")}/api/states`;
+  const token = ha.token.startsWith("env:")
+    ? (process.env[ha.token.slice(4)] ?? "")
+    : ha.token;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
+    return (await res.json()) as HAEntity[];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tier 1: Garmin Connect via Home Assistant
 // ---------------------------------------------------------------------------
@@ -123,11 +149,12 @@ export async function sweepGarmin(
   cfg: GarminSensorConfig,
   ha: HomeAssistantSensorConfig,
   cooldownHours: number,
+  cachedHaStates?: HAEntity[],
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "garmin", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const prefix = cfg.entityPrefix ?? "sensor.garmin";
-    const entities = await fetchHaEntities(ha, prefix);
+    const entities = await fetchHaEntities(ha, prefix, cachedHaStates);
     if (entities.length === 0) return result;
 
     const payload: Record<string, unknown> = {};
@@ -752,12 +779,13 @@ export async function sweepYarbo(
   cfg: YarboSensorConfig,
   ha: HomeAssistantSensorConfig,
   cooldownHours: number,
+  cachedHaStates?: HAEntity[],
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "yarbo", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const prefix = cfg.entityPrefix ?? "sensor.yarbo";
 
-    const entities = await fetchHaEntities(ha, prefix);
+    const entities = await fetchHaEntities(ha, prefix, cachedHaStates);
     if (entities.length === 0) return result;
 
     const errorEntities = entities.filter(
@@ -850,11 +878,31 @@ export async function sweepAll(
 
   const ha = cfg.homeAssistant;
 
+  // Fetch all HA states once if any HA-dependent sensors will run (Garmin or Yarbo).
+  // This avoids duplicate full-state fetches within a single sweep run.
+  let cachedHaStates: HAEntity[] | undefined;
+  if (ha && !opts.dryRun) {
+    const needsHaStates = 
+      ((tier === 1 || tier === "all") && shouldRun("garmin") && cfg.garmin?.enabled) ||
+      ((tier === 2 || tier === "all") && shouldRun("yarbo") && cfg.yarbo?.enabled);
+    if (needsHaStates) {
+      try {
+        cachedHaStates = await fetchAllHaStates(ha);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "sweep-all-fetch-ha-states",
+          severity: "warning",
+          subsystem: "sensor-sweep",
+        });
+      }
+    }
+  }
+
   // Tier 1
   if (tier === 1 || tier === "all") {
     if (shouldRun("garmin") && cfg.garmin?.enabled && ha) {
       if (!opts.dryRun) {
-        results.push(await sweepGarmin(bus, cfg.garmin, ha, cooldown));
+        results.push(await sweepGarmin(bus, cfg.garmin, ha, cooldown, cachedHaStates));
       } else {
         results.push({ sensor: "garmin", eventsWritten: 0, eventsSkipped: 0 });
       }
@@ -915,7 +963,7 @@ export async function sweepAll(
 
     if (shouldRun("yarbo") && cfg.yarbo?.enabled && ha) {
       if (!opts.dryRun) {
-        results.push(await sweepYarbo(bus, cfg.yarbo, ha, cooldown));
+        results.push(await sweepYarbo(bus, cfg.yarbo, ha, cooldown, cachedHaStates));
       } else {
         results.push({ sensor: "yarbo", eventsWritten: 0, eventsSkipped: 0 });
       }
