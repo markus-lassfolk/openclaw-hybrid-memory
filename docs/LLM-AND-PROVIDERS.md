@@ -183,8 +183,8 @@ For providers not auto-detected, add them to `llm.providers`:
 
 If a model in `llm.nano`/`llm.default`/`llm.heavy` uses a provider with no configured API key, the plugin:
 1. **Skips it immediately** (no retry) and moves to the next model in the list.
-2. **Does not report it to error telemetry** (it's a config issue, not a runtime error).
-3. **Queues a user-visible warning** if *all* models fail due to missing keys — the AI agent will see it on the next chat turn and can relay the config guidance to the user.
+2. **Does not report it to error telemetry** (it's a config issue, not a runtime error). This holds even in mixed-failure scenarios where earlier models in the fallback chain failed for a different reason (e.g. rate limit or ECONNREFUSED) — if the final error is an unconfigured-provider error, GlitchTip reporting is suppressed.
+3. **Queues a user-visible warning** whenever at least one model fails due to a missing key — the AI agent will see it on the next chat turn and can relay the config guidance to the user. The message distinguishes two cases: "No LLM provider keys are configured" (all models unconfigured) vs. "Some LLM provider keys are missing" (partial — some models failed for other reasons).
 
 Run `openclaw hybrid-mem verify --test-llm` to see which models are reachable and which are skipped.
 

@@ -48,6 +48,7 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 | `index.ts` | Plugin implementation (SQLite+FTS5, LanceDB, tools, CLI, lifecycle) |
 | `versionInfo.ts` | Plugin and memory-manager version metadata |
 | `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → Rumination Engine pipeline |
+| `tools/dashboard-routes.ts` | Dashboard HTTP route registration — registers all `/plugins/memory-dashboard/*` routes with consistent auth (Issue #279) |
 
 ## Event Bus
 
@@ -68,6 +69,26 @@ Status lifecycle: `raw → processed → surfaced → pushed → archived`
 `computeFingerprint(input)` is a SHA-256 helper for building stable dedup keys.
 
 See [`docs/event-bus.md`](docs/event-bus.md) for the full schema, API reference, and integration example.
+
+## Dashboard HTTP Routes
+
+`tools/dashboard-routes.ts` registers two HTTP routes under the `/plugins/memory-dashboard/` prefix:
+
+| Route | Description |
+|-------|-------------|
+| `GET /plugins/memory-dashboard/` | HTML dashboard shell |
+| `GET /plugins/memory-dashboard/api/health` | JSON health report (`{ status, generatedAt }`) |
+
+Routes are only registered when `health.enabled` is `true` (the default). OpenClaw v2026.3.8 enforces a **consistent-auth requirement**: every route under the same path prefix must use the same `authenticated` value. `dashboard-routes.ts` satisfies this by reading `cfg.health.authenticated` once and applying it to all routes via a single shared `routeOpts` object.
+
+**Config field:** `health.authenticated` (boolean, default `true`) — controls whether dashboard routes require an authenticated session. Set to `false` only if you intentionally want unauthenticated access.
+
+```json
+"health": {
+  "enabled": true,
+  "authenticated": true
+}
+```
 
 ## Dependencies
 
