@@ -41,11 +41,22 @@ export function computeFingerprint(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
+/**
+ * Manages the SQLite-backed Event Bus for the hybrid memory system.
+ * Provides an append-only store for incoming telemetry, sensor data, and
+ * unstructured events. Events transition through a defined lifecycle
+ * (raw -> processed -> surfaced -> pushed -> archived) as they are consumed
+ * by the Rumination Engine.
+ */
 export class EventBus {
   private db: Database.Database;
   private readonly dbPath: string;
   private closed = false;
 
+  /**
+   * Initializes the Event Bus database, creating the file and schema if needed.
+   * @param dbPath Absolute path to the SQLite database file.
+   */
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -182,6 +193,10 @@ export class EventBus {
     return result.changes;
   }
 
+  /**
+   * Deserializes a raw SQLite row into a strongly-typed MemoryEvent.
+   * Gracefully falls back to an empty object if JSON parsing fails.
+   */
   private rowToEvent(row: Record<string, unknown>): MemoryEvent {
     let payload: Record<string, unknown> = {};
     try {
@@ -207,10 +222,16 @@ export class EventBus {
     };
   }
 
+  /**
+   * Returns true if the database connection is open and active.
+   */
   isOpen(): boolean {
     return !this.closed && this.db.open;
   }
 
+  /**
+   * Closes the database connection cleanly. Idempotent.
+   */
   close(): void {
     if (this.closed) return;
     this.closed = true;
