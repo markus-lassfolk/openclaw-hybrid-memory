@@ -54,17 +54,18 @@ async function probeOllamaEndpoint(baseUrl: string): Promise<boolean> {
   const now = Date.now();
   const cached = _ollamaHealthCache.get(baseUrl);
   if (cached && now - cached.ts < OLLAMA_HEALTH_CACHE_TTL_MS) return cached.ok;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_HEALTH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OLLAMA_HEALTH_TIMEOUT_MS);
     const resp = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-    clearTimeout(timeout);
     const ok = resp.ok;
     _ollamaHealthCache.set(baseUrl, { ok, ts: now });
     return ok;
   } catch {
     _ollamaHealthCache.set(baseUrl, { ok: false, ts: now });
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

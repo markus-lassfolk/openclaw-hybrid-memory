@@ -1103,7 +1103,7 @@ export async function runVerifyForCli(
 
   // Cost advisory
   const isHeavyModel = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy/.test((m.split("/").pop() ?? m).toLowerCase());
-  const isNanoModel  = (m: string) => /nano|\bmini\b|haiku|\blite\b/.test((m.split("/").pop() ?? m).toLowerCase());
+  const isNanoModel  = (m: string) => m.split("/")[0]?.toLowerCase() === "ollama" || /nano|\bmini\b|haiku|\blite\b/.test((m.split("/").pop() ?? m).toLowerCase());
   const isLightModel = (m: string) => isNanoModel(m) || /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
   const nanoPrimary = nanoOrder[0];
   const defaultPrimary = defaultOrder[0];
