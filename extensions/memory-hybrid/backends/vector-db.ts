@@ -368,17 +368,11 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
-      // Suppress GlitchTip only when the schema was already known invalid at startup
-      // (schemaValid=false). If schema is valid and we still get a vector-column error
-      // (e.g. embedding drift returns wrong length), it should be reported (issue #366).
-      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
-      if (!isKnownSchemaErr) {
-        capturePluginError(err as Error, {
-          operation: 'vector-search',
-          severity: 'info',
-          subsystem: 'vector'
-        });
-      }
+      capturePluginError(err as Error, {
+        operation: 'vector-search',
+        severity: 'info',
+        subsystem: 'vector'
+      });
       this.logWarn(`memory-hybrid: LanceDB search failed: ${err}`);
       return [];
     }
@@ -394,15 +388,11 @@ export class VectorDB {
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
-      // Same as search(): suppress only when schemaValid=false (known invalid at startup).
-      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
-      if (!isKnownSchemaErr) {
-        capturePluginError(err as Error, {
-          operation: 'vector-duplicate-check',
-          severity: 'info',
-          subsystem: 'vector'
-        });
-      }
+      capturePluginError(err as Error, {
+        operation: 'vector-duplicate-check',
+        severity: 'info',
+        subsystem: 'vector'
+      });
       this.logWarn(`memory-hybrid: LanceDB hasDuplicate failed: ${err}`);
       return false;
     }
