@@ -302,6 +302,37 @@ export type GatewayConfig = {
   auth?: ResolvedGatewayAuthConfig;
 };
 
+/**
+ * Per-provider auth profile ordering for OAuth-first LLM authentication.
+ * When configured, OAuth profiles are tried before API keys (first eligible wins).
+ * Requires the OpenClaw gateway (OPENCLAW_GATEWAY_PORT) to be running for OAuth routing.
+ *
+ * Example:
+ *   auth:
+ *     order:
+ *       anthropic: ['anthropic:claude-cli', 'anthropic:api']   # OAuth first, API key fallback
+ *       openai:    ['openai-codex', 'openai:api']              # OAuth first, API key fallback
+ *       google:    ['google-gemini-cli', 'google:default']     # OAuth first, API key fallback
+ *
+ * Supported OAuth/token profiles (must be set up via `openclaw configure`):
+ *   - anthropic:claude-cli  — Claude Code CLI OAuth
+ *   - openai-codex          — OpenAI Codex OAuth
+ *   - github-copilot        — GitHub Copilot token (device code flow)
+ *   - google-gemini-cli     — Gemini CLI OAuth
+ *   - google-vertex         — Google Vertex AI OAuth
+ *   - qwen-portal:qwen-cli  — Qwen Code CLI OAuth
+ *   - minimax-portal:minimax-cli — MiniMax CLI OAuth
+ */
+export type AuthOrderConfig = {
+  /**
+   * Per-provider ordered list of auth profile IDs.
+   * First eligible profile wins; falls through on missing/expired OAuth token.
+   * Keys are provider prefixes (e.g. "anthropic", "openai", "google").
+   * Always populated when an AuthOrderConfig is present (parseAuthConfig never returns {}).
+   */
+  order: Record<string, string[]>;
+};
+
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
 export type ConfigMode = "essential" | "normal" | "expert" | "full";
 
@@ -390,6 +421,12 @@ export type HybridMemoryConfig = {
   memoryTiering: MemoryTieringConfig;
   /** Optional: LLM preference lists and per-provider API config for direct chat calls (issue #87). */
   llm?: LLMConfig;
+  /**
+   * Optional: OAuth-first auth profile ordering per provider (issue #311).
+   * When set, providers with OAuth profiles route through the OpenClaw gateway instead of direct API keys.
+   * Falls back to API keys when gateway is unavailable or OAuth token is missing/expired.
+   */
+  auth?: AuthOrderConfig;
   /** Optional: Gemini for distill (1M context). apiKey/defaultModel deprecated in favor of llm + gateway. */
   distill?: {
     apiKey?: string;

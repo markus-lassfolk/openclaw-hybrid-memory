@@ -14,6 +14,7 @@ import { createEmbeddingProvider, type EmbeddingProvider } from "../services/emb
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
 import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig, type ResolvedGatewayAuthConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
@@ -254,7 +255,10 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
-  function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string } {
+  /** The configured auth.order map from plugin config (issue #311). */
+  const authOrder = cfg.auth?.order;
+
+  function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string; useFullModel?: boolean } {
     const normalized = normalizeModelId(model);
     const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
@@ -267,6 +271,22 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const prefix = trimmed.slice(0, slashIdx).toLowerCase();
     const bareModel = trimmed.slice(slashIdx + 1);
     const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
+
+    // Generic OAuth → gateway routing for any provider.
+    // If OAuth profiles are configured for a provider and the local gateway is available,
+    // route through the gateway so it can resolve the OAuth token before falling back to an API key.
+    // This ensures auth.order behaves consistently across all providers (google, anthropic, minimax, etc.).
+    if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) {
+      return {
+        client: getOrCreate(
+          `gateway:oauth:${gatewayBaseUrl}:${prefix}`,
+          () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl }),
+        ),
+        bareModel,
+        // The gateway expects the full "provider/model" identifier.
+        useFullModel: true,
+      };
+    }
 
     if (prefix === "google") {
       const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey)
@@ -389,12 +409,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
             create(body: Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1]) {
               const rawModel: string = (body as { model?: string }).model ?? "";
               const model = normalizeModelId(rawModel);
-              const { client, bareModel, ollamaBaseUrl } = resolveClient(model);
+              const { client, bareModel, ollamaBaseUrl, useFullModel } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
               const isOpenAI = prefix === "openai" || !model.includes("/");
+              // When gateway-routed for non-OpenAI providers (auth.order OAuth), send the full "provider/model"
+              // name so the gateway can route to the correct provider using the configured auth profile.
+              const modelForRequest = useFullModel ? model.trim() : bareModel;
               const adjustedBody = isOpenAI
-                ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
-                : { ...(body as object), model: bareModel };
+                ? remapMaxTokensForOpenAI({ ...(body as object), model: modelForRequest }, bareModel)
+                : { ...(body as object), model: modelForRequest };
               const start = Date.now();
               // For Ollama models, probe the local server before attempting the call so we fall
               // through to the next tier model quickly instead of waiting for a TCP timeout.

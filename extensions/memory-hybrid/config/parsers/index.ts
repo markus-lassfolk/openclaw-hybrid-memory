@@ -17,6 +17,7 @@ import {
   parseSelfCorrectionConfig,
   parseLLMConfig,
   parseGatewayConfig,
+  parseAuthConfig,
 } from "./core.js";
 import {
   parseAutoClassifyConfig,
@@ -457,6 +458,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     memoryToSkills: parseMemoryToSkillsConfig(cfg),
     memoryTiering: parseMemoryTieringConfig(cfg),
     llm: parseLLMConfig(cfg),
+    auth: parseAuthConfig(cfg),
     distill,
     languageKeywords,
     ingest: parseIngestConfig(cfg),
