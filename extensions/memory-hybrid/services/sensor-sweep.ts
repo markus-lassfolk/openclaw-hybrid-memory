@@ -130,7 +130,7 @@ export async function sweepGarmin(
       };
     }
 
-    const fp = computeFingerprint(`sensor.garmin:${prefix}`);
+    const fp = computeFingerprint(`sensor.garmin:${prefix}:${JSON.stringify(payload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -671,7 +671,9 @@ export async function sweepWeather(
       return result;
     }
 
-    const url = `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
+    const url = location === "auto"
+      ? `https://wttr.in/?format=j1`
+      : `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     let weatherData: Record<string, unknown> = {};
@@ -724,14 +726,14 @@ export async function sweepYarbo(
   const result: SensorSweepResult = { sensor: "yarbo", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const prefix = cfg.entityPrefix ?? "sensor.yarbo";
-    const entities = await fetchHaEntities(ha, prefix);
-    if (entities.length === 0) return result;
-
     const fp = computeFingerprint(`sensor.yarbo:${prefix}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
     }
+
+    const entities = await fetchHaEntities(ha, prefix);
+    if (entities.length === 0) return result;
 
     const errorEntities = entities.filter(
       (e) =>

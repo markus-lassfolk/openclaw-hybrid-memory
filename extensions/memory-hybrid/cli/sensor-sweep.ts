@@ -37,15 +37,6 @@ export function registerSensorSweepCommands(mem: Chainable, ctx: SensorSweepCont
     .action(
       withExit(async (opts: { tier?: string; source?: string; dryRun?: boolean; json?: boolean }) => {
         try {
-          if (!ctx.cfg.sensorSweep.enabled) {
-            if (opts.json) {
-              process.stdout.write(JSON.stringify({ ok: false, error: "sensorSweep.enabled is false in config" }) + "\n");
-            } else {
-              process.stdout.write("Sensor sweep is disabled. Set sensorSweep.enabled: true in your config.\n");
-            }
-            return;
-          }
-
           const tierRaw = opts.tier ?? "1";
           let tier: SweepAllOpts["tier"] = 1;
           if (tierRaw === "2") tier = 2;
