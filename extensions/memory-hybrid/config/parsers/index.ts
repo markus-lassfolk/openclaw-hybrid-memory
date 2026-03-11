@@ -184,8 +184,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
   const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
   const hasGoogleKey =
-    (typeof distillForEmbed?.apiKey === "string" && distillForEmbed.apiKey.trim().length >= 10) ||
-    (typeof llmProvidersForEmbed?.google?.apiKey === "string" && llmProvidersForEmbed.google.apiKey.trim().length >= 10);
+    (typeof distillForEmbed?.apiKey === "string" && distillForEmbed.apiKey.trim().length > 0) ||
+    (typeof llmProvidersForEmbed?.google?.apiKey === "string" && llmProvidersForEmbed.google.apiKey.trim().length > 0);
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;
