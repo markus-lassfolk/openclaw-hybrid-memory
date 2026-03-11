@@ -39,6 +39,7 @@ function makeMockApi() {
     registerService: vi.fn(),
     registerCli: vi.fn(),
     registerLifecycleHook: vi.fn(),
+    registerHttpRoute: vi.fn(),
     on: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
     context: { sessionId: "e2e-session", agentId: "e2e-agent" },

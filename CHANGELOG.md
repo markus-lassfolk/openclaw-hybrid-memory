@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+(Nothing yet.)
+
+---
+
+## [2026.3.110] - 2026-03-11
+
 ### Fixed
 
 - **GlitchTip false-positive for UnconfiguredProviderError in mixed fallback chains (#328):** In `chatCompleteWithRetry`, when the final fallback model threw `UnconfiguredProviderError` but an earlier model in the chain had failed for a different reason (e.g. ECONNREFUSED, rate limit), the `else if (unconfiguredCount > 0)` branch was incorrectly reporting the error to GlitchTip. `UnconfiguredProviderError` is always a config issue, not a code bug — GlitchTip reporting is now suppressed whenever the final error is an unconfigured-provider error, regardless of what earlier models failed with.
@@ -658,6 +664,7 @@ Major feature release including procedural memory, directive extraction, reinfor
 ---
 
 [Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.92...HEAD
+[2026.3.110]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.110
 [2026.3.100]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.100
 [2026.3.92]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.92
 [2026.3.91]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.91
