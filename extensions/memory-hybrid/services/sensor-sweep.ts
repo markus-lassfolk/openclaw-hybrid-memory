@@ -645,17 +645,10 @@ export async function sweepSystemHealth(
       platform: process.platform,
     };
 
-    const MB = 1024 * 1024;
-    const fingerprintPayload = {
-      nodeVersion: process.version,
-      platform: process.platform,
-      memoryRssMB: Math.floor(memoryUsage.rss / MB / 10) * 10,
-      memoryHeapUsedMB: Math.floor(memoryUsage.heapUsed / MB / 10) * 10,
-      memoryHeapTotalMB: Math.floor(memoryUsage.heapTotal / MB / 10) * 10,
-      sqliteSizeMB: sqliteSizeBytes !== null ? Math.floor(sqliteSizeBytes / MB / 10) * 10 : null,
-    };
-
-    const fp = computeFingerprint(`sensor.system-health:${JSON.stringify(fingerprintPayload)}`);
+    // System health metrics (uptime, memory) are inherently volatile and change
+    // on every invocation. Content-based dedup is not feasible here, so we use
+    // a stable time-based key: one event per cooldown window per node/platform.
+    const fp = computeFingerprint(`sensor.system-health:${process.version}:${process.platform}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
