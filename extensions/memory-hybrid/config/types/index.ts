@@ -63,6 +63,7 @@ import type {
   CrossAgentLearningConfig,
   ToolEffectivenessConfig,
   CostTrackingConfig,
+  DashboardConfig,
 } from "./features.js";
 
 import type {
@@ -439,6 +440,8 @@ export type HybridMemoryConfig = {
   provenance: ProvenanceConfig;
   /** LLM cost tracking — per-feature token usage and estimated cost (Issue #270, default: enabled). */
   costTracking: CostTrackingConfig;
+  /** Mission Control dashboard HTTP server (Issue #309, default: enabled on port 7700). */
+  dashboard: DashboardConfig;
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.

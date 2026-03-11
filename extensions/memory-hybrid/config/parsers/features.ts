@@ -21,6 +21,7 @@ import type {
   CrossAgentLearningConfig,
   ToolEffectivenessConfig,
   CostTrackingConfig,
+  DashboardConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -638,5 +639,16 @@ export function parseCostTrackingConfig(cfg: Record<string, unknown>): CostTrack
         ? Math.floor(raw.retainDays)
         : 90,
     pruneInNightlyCycle: raw?.pruneInNightlyCycle !== false,
+  };
+}
+
+export function parseDashboardConfig(cfg: Record<string, unknown>): DashboardConfig {
+  const raw = cfg.dashboard as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    port:
+      typeof raw?.port === "number" && raw.port >= 1024 && raw.port <= 65535
+        ? Math.floor(raw.port)
+        : 7700,
   };
 }

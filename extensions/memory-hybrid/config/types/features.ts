@@ -317,3 +317,11 @@ export type ClosedLoopConfig = {
   /** Run measurement in the nightly cycle (default: true). */
   runInNightlyCycle: boolean;
 };
+
+/** Mission Control dashboard HTTP server (Issue #309). */
+export type DashboardConfig = {
+  /** Enable the dashboard HTTP server (default: true). */
+  enabled: boolean;
+  /** Port for the dashboard HTTP server (default: 7700). */
+  port: number;
+};

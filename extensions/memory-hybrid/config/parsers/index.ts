@@ -64,6 +64,7 @@ import {
   parseCrossAgentLearningConfig,
   parseToolEffectivenessConfig,
   parseCostTrackingConfig,
+  parseDashboardConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -492,6 +493,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     verification: parseVerificationConfig(cfg),
     provenance: parseProvenanceConfig(cfg),
     costTracking: parseCostTrackingConfig(cfg),
+    dashboard: parseDashboardConfig(cfg),
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
   };
