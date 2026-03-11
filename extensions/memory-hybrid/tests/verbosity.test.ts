@@ -664,7 +664,7 @@ describe("VerbosityLevel — silent mode", () => {
  * all other fields are only touched inside async hook callbacks and can be null/vi.fn().
  */
 function makeMinimalLifecycleContext(
-  verbosity: "normal" | "silent",
+  verbosity: VerbosityLevel,
 ): LifecycleContext {
   const cfg = hybridConfigSchema.parse({
     embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
