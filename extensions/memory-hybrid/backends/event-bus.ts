@@ -76,7 +76,7 @@ export class EventBus {
         importance REAL NOT NULL DEFAULT 0.5 CHECK(importance >= 0.0 AND importance <= 1.0),
         status TEXT NOT NULL DEFAULT 'raw'
           CHECK(status IN ('raw','processed','surfaced','pushed','archived')),
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now', 'subsec')),
         processed_at TEXT,
         fingerprint TEXT
       );
