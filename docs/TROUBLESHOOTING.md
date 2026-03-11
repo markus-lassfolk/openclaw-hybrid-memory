@@ -48,7 +48,8 @@ This is a **false positive**. The plugin only uses your OpenAI API key to call O
 | memory-hybrid disabled / "memory slot set to memory-core" | Slot not set | Set `plugins.slots.memory` to `"openclaw-hybrid-memory"` in `openclaw.json` |
 | Plugin fails to load / "embedding.apiKey is required" | No OpenAI key in config | Add `embedding.apiKey` and `embedding.model` to plugin config. See [CONFIGURATION.md](CONFIGURATION.md). |
 | Invalid or expired API key | Key wrong, revoked, or out of credits | First embed or `verify` will fail with 401/403. Fix the key and restart. |
-| Missing env var for API key | Env not loaded in non-interactive shell | Inline key in config or ensure env is set for the process |
+| Missing env var for API key | Env not loaded in non-interactive shell | Use `"env:VAR_NAME"` SecretRef or `"${VAR}"` template — ensure the variable is exported before starting the gateway, or inline the literal key |
+| Unresolvable `env:` or `file:` SecretRef in `embedding.apiKey` | Env var not exported / file missing | Plugin throws at load with a descriptive error. Export the env var before starting the gateway, or switch to a literal key |
 | `Cannot find module '@lancedb/lancedb'`, `better-sqlite3`, or `@sinclair/typebox` | Extension deps not installed, or OpenClaw was upgraded | Run `npm install` in the extension dir: `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm install`. See [QUICKSTART.md](QUICKSTART.md); after upgrades run post-upgrade ([MAINTENANCE.md](MAINTENANCE.md)). Full gateway stop/start. |
 | Recall/capture failed after npm install | Stale module cache from SIGUSR1 reload | **Full stop then start** (`openclaw gateway stop` then `start`). Required for native modules. |
 | Bootstrap file truncation | Limits too low | Increase `bootstrapMaxChars` (15000) and `bootstrapTotalMaxChars` (50000). See [CONFIGURATION.md](CONFIGURATION.md). |
@@ -221,6 +222,8 @@ Move `autoCapture`, `autoRecall`, `embedding`, and any other plugin settings int
 ### At config load
 
 If `embedding.apiKey` is missing or not a string, the plugin throws and does not register. You must supply a key.
+
+`env:VAR_NAME` and `file:PATH` SecretRef formats are resolved at config load time. If the referenced variable or file is unset/missing, the plugin throws a descriptive error (e.g. `embedding.apiKey references environment variable 'OPENAI_API_KEY' which could not be resolved`). For non-OpenAI providers where `embedding.apiKey` is an optional fallback, an unresolvable SecretRef logs a warning instead of throwing.
 
 ### At runtime
 

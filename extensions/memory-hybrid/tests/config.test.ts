@@ -240,6 +240,102 @@ describe("hybridConfigSchema.parse", () => {
     ).toThrow(/missing or a placeholder/);
   });
 
+  // ── embedding.apiKey SecretRef (env:VAR) resolution — Issue #333 ─────────────
+
+  it("resolves embedding.apiKey when set as env:VAR_NAME SecretRef (openai provider)", () => {
+    vi.stubEnv("TEST_EMBED_API_KEY_333", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "openai", apiKey: "env:TEST_EMBED_API_KEY_333", model: "text-embedding-3-small" },
+      });
+      // Resolved value must be the actual key, not the literal "env:..." string
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+      expect(result.embedding.apiKey).not.toMatch(/^env:/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("throws when embedding.apiKey env: SecretRef references an unset env var", () => {
+    delete process.env.TEST_EMBED_KEY_UNSET_333;
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "openai", apiKey: "env:TEST_EMBED_KEY_UNSET_333", model: "text-embedding-3-small" },
+      }),
+    ).toThrow(/could not be resolved/);
+  });
+
+  it("resolves embedding.apiKey env: SecretRef for non-openai provider fallback (ollama)", () => {
+    vi.stubEnv("TEST_EMBED_FALLBACK_KEY_333", "sk-fallback-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "ollama", model: "nomic-embed-text", apiKey: "env:TEST_EMBED_FALLBACK_KEY_333" },
+      });
+      expect(result.embedding.apiKey).toBe("sk-fallback-key-that-is-long-enough");
+      expect(result.embedding.apiKey).not.toMatch(/^env:/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 1: resolved SecretRef value is re-validated for placeholder/length
+  it("throws when embedding.apiKey SecretRef resolves to a placeholder value", () => {
+    vi.stubEnv("TEST_EMBED_PLACEHOLDER_333", "YOUR_OPENAI_API_KEY");
+    try {
+      expect(() =>
+        hybridConfigSchema.parse({
+          embedding: { provider: "openai", apiKey: "env:TEST_EMBED_PLACEHOLDER_333", model: "text-embedding-3-small" },
+        }),
+      ).toThrow(/missing or a placeholder/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 2: short env var names (raw string < 10 chars) must not be blocked by the raw-length check
+  it("accepts env: SecretRef with a short env var name (raw string < 10 chars)", () => {
+    vi.stubEnv("KEY", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "openai", apiKey: "env:KEY", model: "text-embedding-3-small" },
+      });
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Provider inference must recognize env:/file: SecretRef format as valid apiKey
+  it("infers openai provider when apiKey is env: SecretRef with short env var name", () => {
+    vi.stubEnv("KEY", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { apiKey: "env:KEY", model: "text-embedding-3-small" },
+      });
+      expect(result.embedding.provider).toBe("openai");
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
+  it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
+    delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "ollama", model: "nomic-embed-text", apiKey: "env:TEST_EMBED_FALLBACK_UNSET_333" },
+      });
+      // Should not throw — fallback apiKey is optional
+      expect(result.embedding.apiKey).toBeUndefined();
+      // Should have warned about the unresolvable SecretRef
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/could not be resolved/));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("throws on null/array/string config", () => {
     expect(() => hybridConfigSchema.parse(null)).toThrow();
     expect(() => hybridConfigSchema.parse([])).toThrow();
