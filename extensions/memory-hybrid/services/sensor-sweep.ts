@@ -121,7 +121,6 @@ export async function sweepGarmin(
     const entities = await fetchHaEntities(ha, prefix);
     if (entities.length === 0) return result;
 
-    const bucketHour = new Date().toISOString().slice(0, 13); // "YYYY-MM-DDTHH"
     const payload: Record<string, unknown> = {};
     for (const entity of entities) {
       payload[entity.entity_id] = {
@@ -131,7 +130,7 @@ export async function sweepGarmin(
       };
     }
 
-    const fp = computeFingerprint(`sensor.garmin:${prefix}:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.garmin:${prefix}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -246,8 +245,7 @@ export async function sweepSessionHistory(
     const sessions = readRecentSessions(limit);
     if (sessions.length === 0) return result;
 
-    const bucketHour = new Date().toISOString().slice(0, 13);
-    const fp = computeFingerprint(`sensor.session-history:${limit}:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.session-history:${limit}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -292,8 +290,7 @@ export async function sweepMemoryPatterns(
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "memory-patterns", eventsWritten: 0, eventsSkipped: 0 };
   try {
-    const bucketHour = new Date().toISOString().slice(0, 13);
-    const fp = computeFingerprint(`sensor.memory-patterns:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.memory-patterns`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -399,9 +396,8 @@ export async function sweepGitHub(
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "github", eventsWritten: 0, eventsSkipped: 0 };
   try {
-    const bucketHour = new Date().toISOString().slice(0, 13);
     const repo = cfg.repo ?? "";
-    const fp = computeFingerprint(`sensor.github:${repo}:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.github:${repo}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -574,9 +570,8 @@ export async function sweepHomeAssistantAnomaly(
       return result;
     }
 
-    const bucketHour = new Date().toISOString().slice(0, 13);
     const anomalyKey = anomalies.map((a) => `${a.entity}:${a.state}`).sort().join("|");
-    const fp = computeFingerprint(`sensor.ha-anomaly:${anomalyKey}:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.ha-anomaly:${anomalyKey}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -613,8 +608,7 @@ export async function sweepSystemHealth(
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "system-health", eventsWritten: 0, eventsSkipped: 0 };
   try {
-    const bucketHour = new Date().toISOString().slice(0, 13);
-    const fp = computeFingerprint(`sensor.system-health:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.system-health`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -671,8 +665,7 @@ export async function sweepWeather(
   const result: SensorSweepResult = { sensor: "weather", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const location = cfg.location ?? "auto";
-    const bucketHour = new Date().toISOString().slice(0, 13);
-    const fp = computeFingerprint(`sensor.weather:${location}:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.weather:${location}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -734,8 +727,7 @@ export async function sweepYarbo(
     const entities = await fetchHaEntities(ha, prefix);
     if (entities.length === 0) return result;
 
-    const bucketHour = new Date().toISOString().slice(0, 13);
-    const fp = computeFingerprint(`sensor.yarbo:${prefix}:${bucketHour}`);
+    const fp = computeFingerprint(`sensor.yarbo:${prefix}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;

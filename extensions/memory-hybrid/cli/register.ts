@@ -266,7 +266,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     }
   }
 
-  if (ctx.cfg.sensorSweep.enabled && ctx.eventBus) {
+  if (ctx.eventBus) {
     const sensorCtx: SensorSweepContext = {
       factsDb: ctx.factsDb,
       cfg: ctx.cfg,
