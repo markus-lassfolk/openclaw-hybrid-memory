@@ -8,7 +8,7 @@ nav_order: 1
 
 All commands are available via `openclaw hybrid-mem <command>`.
 
-> **Note:** CLI subcommands require OpenClaw v2026.3.8 or later. On older versions, the plugin runs but commands will not be registered.
+> **Note:** CLI subcommands require OpenClaw v2026.3.8 or later. The plugin enforces this minimum version at startup to ensure commands and config reloads work.
 
 ---
 
