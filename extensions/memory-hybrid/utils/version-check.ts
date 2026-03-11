@@ -9,15 +9,15 @@
 export const MIN_OPENCLAW_VERSION = "2026.3.8";
 
 /**
- * Parses a version string like "2026.3.8" into a numeric tuple.
- * Returns null if the string cannot be parsed as three non-negative integers.
+ * Parses a version string into a numeric tuple.
+ * Handles optional leading `v`, pre-release suffixes (e.g. `2026.3.8-beta`),
+ * and build metadata. Rejects empty segments like `2026..8`.
+ * Returns null if three non-negative integers cannot be found.
  */
 export function parseVersion(version: string): [number, number, number] | null {
-  const parts = version.split(".");
-  if (parts.length !== 3) return null;
-  const nums = parts.map(Number);
-  if (nums.some((n) => !Number.isInteger(n) || n < 0 || isNaN(n))) return null;
-  return [nums[0], nums[1], nums[2]];
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
 /**
@@ -46,7 +46,12 @@ export function checkOpenClawVersion(
   currentVersion: string | undefined,
   logger: { warn: (msg: string) => void },
 ): void {
-  if (!currentVersion) return;
+  if (!currentVersion) {
+    logger.warn(
+      `memory-hybrid: WARNING — OpenClaw version is undefined (gateway likely < v${MIN_OPENCLAW_VERSION}). Minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
+    );
+    return;
+  }
   if (!isVersionAtLeast(currentVersion, MIN_OPENCLAW_VERSION)) {
     logger.warn(
       `memory-hybrid: WARNING — OpenClaw v${currentVersion} detected, minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
