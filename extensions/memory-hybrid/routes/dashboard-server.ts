@@ -10,6 +10,7 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
@@ -28,6 +29,8 @@ export interface DashboardContext {
   vectorDb: VectorDB;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
+  /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory") */
+  gitRepo?: string;
 }
 
 export interface MemoryStats {
@@ -49,6 +52,8 @@ export interface CronJobStatus {
   lastStatus: string | null;
   lastError: string | null;
   consecutiveErrors: number;
+  agentId: string;
+  model?: string;
 }
 
 export interface TaskQueueItem {
@@ -112,21 +117,25 @@ export interface DashboardStatus {
 // Data collection helpers
 // ---------------------------------------------------------------------------
 
-function getDirSize(dirPath: string): number {
+async function getDirSize(dirPath: string): Promise<number> {
   try {
-    const entries = readdirSync(dirPath, { withFileTypes: true });
+    const entries = await readdir(dirPath, { withFileTypes: true });
     let total = 0;
     for (const entry of entries) {
       const fullPath = join(dirPath, entry.name);
       if (entry.isFile()) {
-        try { total += statSync(fullPath).size; } catch { /* skip */ }
+        try { total += (await stat(fullPath)).size; } catch { /* skip */ }
       } else if (entry.isDirectory()) {
-        total += getDirSize(fullPath);
+        total += await getDirSize(fullPath);
       }
     }
     return total;
   } catch { return 0; }
 }
+
+/** Cached LanceDB dir size to avoid repeated async traversal on every poll */
+let _lanceSizeCache = { size: 0, ts: 0 };
+const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
 
 function getFileSize(filePath: string): number {
   try { return statSync(filePath).size; } catch { return 0; }
@@ -144,7 +153,14 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   let vectorCount = 0;
   try { vectorCount = await ctx.vectorDb.count(); } catch { /* non-fatal */ }
   const sqliteSizeBytes = getFileSize(ctx.resolvedSqlitePath);
-  const lanceSizeBytes = getDirSize(ctx.resolvedLancePath);
+
+  // Use cached LanceDB size to avoid blocking on large directory traversals
+  const now = Date.now();
+  if (now - _lanceSizeCache.ts > LANCE_CACHE_TTL_MS) {
+    _lanceSizeCache = { size: await getDirSize(ctx.resolvedLancePath), ts: now };
+  }
+  const lanceSizeBytes = _lanceSizeCache.size;
+
   return {
     activeFacts,
     expiredFacts,
@@ -216,18 +232,25 @@ function collectForgeState(): ForgeTaskItem[] {
   const forgeDir = join(homedir(), ".openclaw", "workspace", "state", "forge");
   if (!existsSync(forgeDir)) return [];
   try {
-    return readdirSync(forgeDir)
-      .filter((f) => f.endsWith(".json"))
-      .map((f) => readJsonFile<ForgeTaskItem>(join(forgeDir, f)))
+    const files = readdirSync(forgeDir).filter((f) => f.endsWith(".json"));
+    // Limit to the 20 most recently modified files to avoid unbounded sync reads
+    const withMtime = files.map((f) => {
+      const fullPath = join(forgeDir, f);
+      try { return { name: f, mtime: statSync(fullPath).mtimeMs }; } catch { return null; }
+    }).filter((e): e is { name: string; mtime: number } => e !== null);
+    withMtime.sort((a, b) => b.mtime - a.mtime);
+    return withMtime.slice(0, 20)
+      .map((e) => readJsonFile<ForgeTaskItem>(join(forgeDir, e.name)))
       .filter((item): item is ForgeTaskItem => item !== null);
   } catch { return []; }
 }
 
-async function collectGitActivity(): Promise<GitActivity> {
+async function collectGitActivity(repo?: string): Promise<GitActivity> {
   try {
+    const repoArgs = repo ? ["--repo", repo] : [];
     const [prResult, issueResult] = await Promise.all([
-      execFile("gh", ["pr", "list", "--limit", "10", "--json", "number,title,state,url,createdAt"], { timeout: 8000, encoding: "utf-8" }),
-      execFile("gh", ["issue", "list", "--limit", "10", "--json", "number,title,state,url,createdAt"], { timeout: 8000, encoding: "utf-8" }),
+      execFile("gh", ["pr", "list", "--limit", "10", "--json", "number,title,state,url,createdAt", ...repoArgs], { timeout: 8000, encoding: "utf-8" }),
+      execFile("gh", ["issue", "list", "--limit", "10", "--json", "number,title,state,url,createdAt", ...repoArgs], { timeout: 8000, encoding: "utf-8" }),
     ]);
     type GitItem = { number: number; title: string; state: string; url: string; createdAt: string };
     const prJson = prResult.stdout.trim();
@@ -296,7 +319,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     cronJobs: collectCronJobs(),
     taskQueue: collectTaskQueue(),
     forge: collectForgeState(),
-    git: await collectGitActivity(),
+    git: await collectGitActivity(ctx.gitRepo),
     costs: collectCostStats(ctx),
   };
 }
@@ -402,7 +425,7 @@ const STATUS_BADGE = {
 };
 
 function badge(status) {
-  const s = (status || '').toLowerCase();
+  const s = String(status ?? '').toLowerCase();
   return STATUS_BADGE[s] || \`<span class="badge badge-muted">\${escHtml(status || 'unknown')}</span>\`;
 }
 
@@ -537,7 +560,7 @@ function renderGit(git) {
       items.slice(0, 8).forEach(item => {
         const statColor = item.state === 'OPEN' ? 'green' : (item.state === 'MERGED' ? 'blue' : 'muted');
         html += \`<div class="pr-row">
-          <div class="pr-title"><a href="\${escHtml(item.url || '#')}" target="_blank">\${escHtml(item.kind === 'PR' ? '#' : '')}\${escHtml(String(item.number))} \${escHtml(item.title)}</a></div>
+          <div class="pr-title"><a href="\${escHtml(item.url || '#')}" target="_blank" rel="noopener noreferrer">\${escHtml(item.kind === 'PR' ? '#' : '')}\${escHtml(String(item.number))} \${escHtml(item.title)}</a></div>
           <div class="pr-meta"><span class="badge badge-\${statColor}" style="font-size:10px">\${escHtml(item.state)}</span> \${escHtml(item.kind)} · \${fmtDate(item.createdAt)}</div>
         </div>\`;
       });
@@ -608,7 +631,7 @@ export interface DashboardServer {
   close(): void;
 }
 
-export function createDashboardServer(ctx: DashboardContext, port: number): DashboardServer {
+export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
   const html = getDashboardHtml(port);
 
   const server = createServer((req, res) => {
@@ -621,7 +644,6 @@ export function createDashboardServer(ctx: DashboardContext, port: number): Dash
         res.writeHead(200, {
           "Content-Type": "application/json",
           "Cache-Control": "no-cache",
-          "Access-Control-Allow-Origin": "*",
         });
         res.end(body);
       }).catch((err: unknown) => {
@@ -637,21 +659,21 @@ export function createDashboardServer(ctx: DashboardContext, port: number): Dash
     }
   });
 
-  server.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EADDRINUSE") {
-      console.warn(`Dashboard server: port ${port} already in use`);
-    } else {
-      console.error(`Dashboard server error:`, err);
-    }
+  return new Promise((resolve, reject) => {
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      reject(err);
+    });
+
+    server.listen(port, "127.0.0.1", () => {
+      const addr = server.address();
+      const boundPort = typeof addr === "object" && addr ? addr.port : port;
+      resolve({
+        server,
+        port: boundPort,
+        close() {
+          server.close();
+        },
+      });
+    });
   });
-
-  server.listen(port, "127.0.0.1");
-
-  return {
-    server,
-    port,
-    close() {
-      server.close();
-    },
-  };
 }

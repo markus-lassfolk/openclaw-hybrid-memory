@@ -27,6 +27,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { request } from "node:http";
 import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
@@ -50,14 +51,10 @@ function makeContext(tmpDir: string) {
   };
 }
 
-function freePort(): number {
-  // Use a port in a safe test range; vitest runs tests in parallel so offset by random
-  return 19700 + Math.floor(Math.random() * 200);
-}
+// Port 0 lets the OS assign an unused port — no EADDRINUSE races in parallel tests
 
 async function httpGet(port: number, path: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const { request } = require("node:http") as typeof import("node:http");
     const req = request({ hostname: "127.0.0.1", port, path, method: "GET" }, (res) => {
       let body = "";
       res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
@@ -209,13 +206,13 @@ describe("createDashboardServer", () => {
   let tmpDir: string;
   let ctx: ReturnType<typeof makeContext>;
   let port: number;
-  let server: ReturnType<typeof createDashboardServer>;
+  let server: Awaited<ReturnType<typeof createDashboardServer>>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "dashboard-srv-test-"));
     ctx = makeContext(tmpDir);
-    port = freePort();
-    server = createDashboardServer(ctx, port);
+    server = await createDashboardServer(ctx, 0);
+    port = server.port;
   });
 
   afterEach(() => {
@@ -245,11 +242,10 @@ describe("createDashboardServer", () => {
     expect(typeof data.generatedAt).toBe("string");
   });
 
-  it("GET /api/status has Access-Control-Allow-Origin header", async () => {
+  it("GET /api/status does NOT include Access-Control-Allow-Origin header", async () => {
     return new Promise<void>((resolve, reject) => {
-      const { request } = require("node:http") as typeof import("node:http");
       const req = request({ hostname: "127.0.0.1", port, path: "/api/status", method: "GET" }, (res) => {
-        expect(res.headers["access-control-allow-origin"]).toBe("*");
+        expect(res.headers["access-control-allow-origin"]).toBeUndefined();
         res.resume();
         res.on("end", resolve);
       });
@@ -264,11 +260,13 @@ describe("createDashboardServer", () => {
   });
 
   it("exposes the port in the returned object", () => {
-    expect(server.port).toBe(port);
+    expect(server.port).toBeGreaterThan(0);
   });
 
   it("close() stops the server", async () => {
     server.close();
+    // Give the underlying HTTP server time to finish closing before asserting failure
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await expect(httpGet(port, "/")).rejects.toThrow();
   });
 });

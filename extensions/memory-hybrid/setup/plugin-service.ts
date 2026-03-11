@@ -239,11 +239,11 @@ export function createPluginService(ctx: PluginServiceContext) {
       // Issue #309: Mission Control dashboard HTTP server
       if (cfg.dashboard.enabled) {
         try {
-          dashboardServer = createDashboardServer(
+          dashboardServer = await createDashboardServer(
             { factsDb, vectorDb, resolvedSqlitePath, resolvedLancePath },
             cfg.dashboard.port,
           );
-          api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${cfg.dashboard.port}`);
+          api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
         } catch (err) {
           api.logger.warn(`memory-hybrid: dashboard server failed to start (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
