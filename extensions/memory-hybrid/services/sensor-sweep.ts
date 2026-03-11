@@ -138,7 +138,14 @@ export async function sweepGarmin(
       };
     }
 
-    const fp = computeFingerprint(`sensor.garmin:${prefix}:${JSON.stringify(fingerprintPayload)}`);
+    const sortedFingerprintPayload = Object.keys(fingerprintPayload)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = fingerprintPayload[key];
+        return acc;
+      }, {} as Record<string, unknown>);
+
+    const fp = computeFingerprint(`sensor.garmin:${prefix}:${JSON.stringify(sortedFingerprintPayload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -781,7 +788,14 @@ export async function sweepYarbo(
       };
     }
 
-    const fp = computeFingerprint(`sensor.yarbo:${prefix}:${JSON.stringify(fingerprintPayload)}`);
+    const sortedFingerprintPayload = Object.keys(fingerprintPayload)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = fingerprintPayload[key];
+        return acc;
+      }, {} as Record<string, unknown>);
+
+    const fp = computeFingerprint(`sensor.yarbo:${prefix}:${JSON.stringify(sortedFingerprintPayload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
