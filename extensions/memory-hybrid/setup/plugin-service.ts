@@ -45,6 +45,7 @@ export interface PluginServiceContext {
   api: ClawdbotPluginApi;
   pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
   provenanceService?: ProvenanceService | null;
+  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -84,6 +85,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     api,
     timers,
     provenanceService,
+    costTracker,
   } = ctx;
 
   let observerRunning = false;
@@ -240,7 +242,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (cfg.dashboard.enabled) {
         try {
           dashboardServer = await createDashboardServer(
-            { factsDb, vectorDb, resolvedSqlitePath, resolvedLancePath },
+            { factsDb, vectorDb, resolvedSqlitePath, resolvedLancePath, costTracker },
             cfg.dashboard.port,
           );
           api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);

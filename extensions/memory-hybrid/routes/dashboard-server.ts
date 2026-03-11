@@ -31,6 +31,8 @@ export interface DashboardContext {
   resolvedLancePath: string;
   /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory") */
   gitRepo?: string;
+  /** Optional CostTracker instance — delegates cost stats to the established abstraction. */
+  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
 }
 
 export interface MemoryStats {
@@ -249,19 +251,37 @@ async function collectGitActivity(repo?: string): Promise<GitActivity> {
 }
 
 function collectCostStats(ctx: DashboardContext): CostStats {
+  const days = 7;
+  const empty: CostStats = { features: [], totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalEstimatedCostUsd: 0, days, enabled: false };
+
+  // Prefer the established CostTracker abstraction when available to avoid duplicating SQL.
+  if (ctx.costTracker) {
+    try {
+      const report = ctx.costTracker.getReport({ days });
+      return {
+        features: report.features.slice(0, 20),
+        totalCalls: report.total.calls,
+        totalInputTokens: report.total.inputTokens,
+        totalOutputTokens: report.total.outputTokens,
+        totalEstimatedCostUsd: report.total.estimatedCostUsd,
+        days,
+        enabled: true,
+      };
+    } catch {
+      return empty;
+    }
+  }
+
+  // Fallback: query the DB directly (e.g. in tests where CostTracker is not injected).
   try {
     const db = ctx.factsDb.getRawDb();
-    const days = 7;
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
 
-    // Check if cost tracking table exists
     const tableExists = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'")
       .get() as { name: string } | undefined;
 
-    if (!tableExists) {
-      return { features: [], totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalEstimatedCostUsd: 0, days, enabled: false };
-    }
+    if (!tableExists) return empty;
 
     const rows = db
       .prepare(
@@ -285,14 +305,17 @@ function collectCostStats(ctx: DashboardContext): CostStats {
       estimatedCostUsd: Number(r.estimatedCostUsd),
     }));
 
-    const totalCalls = allFeatures.reduce((s, r) => s + r.calls, 0);
-    const totalInputTokens = allFeatures.reduce((s, r) => s + r.inputTokens, 0);
-    const totalOutputTokens = allFeatures.reduce((s, r) => s + r.outputTokens, 0);
-    const totalEstimatedCostUsd = allFeatures.reduce((s, r) => s + r.estimatedCostUsd, 0);
-
-    return { features: allFeatures.slice(0, 20), totalCalls, totalInputTokens, totalOutputTokens, totalEstimatedCostUsd, days, enabled: true };
+    return {
+      features: allFeatures.slice(0, 20),
+      totalCalls: allFeatures.reduce((s, r) => s + r.calls, 0),
+      totalInputTokens: allFeatures.reduce((s, r) => s + r.inputTokens, 0),
+      totalOutputTokens: allFeatures.reduce((s, r) => s + r.outputTokens, 0),
+      totalEstimatedCostUsd: allFeatures.reduce((s, r) => s + r.estimatedCostUsd, 0),
+      days,
+      enabled: true,
+    };
   } catch {
-    return { features: [], totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalEstimatedCostUsd: 0, days: 7, enabled: false };
+    return empty;
   }
 }
 

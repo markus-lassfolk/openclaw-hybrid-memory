@@ -512,6 +512,7 @@ const memoryHybridPlugin = {
         timers,
         pythonBridge,
         provenanceService,
+        costTracker,
       })
     );
     } catch (err) {
