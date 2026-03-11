@@ -43,8 +43,11 @@ const MODEL_PRICING_LOWER: Record<string, ModelPricing> = Object.fromEntries(
 /**
  * Look up pricing for a model. Returns null if the model is not in the table.
  * Model name is matched case-insensitively.
+ * Local Ollama models always return $0 (no API cost).
  */
 export function getModelPricing(model: string): ModelPricing | null {
+  // Local Ollama models are always free ($0)
+  if (model.toLowerCase().startsWith("ollama/")) return { inputPer1M: 0, outputPer1M: 0 };
   // Direct match first (fastest path)
   if (model in MODEL_PRICING) return MODEL_PRICING[model]!;
   // O(1) case-insensitive lookup via pre-built lowercase index

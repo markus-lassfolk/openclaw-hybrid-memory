@@ -29,9 +29,46 @@ import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
+import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+/** Default Ollama server base URL (without /v1 path). */
+const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
+/** How long to cache an Ollama health-check result (positive or negative). */
+const OLLAMA_HEALTH_CACHE_TTL_MS = 30_000;
+/** Timeout for a single Ollama /api/tags health ping. */
+const OLLAMA_HEALTH_TIMEOUT_MS = 2_000;
+
+/**
+ * Module-level health cache so repeated calls within the TTL window skip the network round-trip.
+ * Shared across plugin reloads in the same process (intentional).
+ */
+const _ollamaHealthCache = new Map<string, { ok: boolean; ts: number }>();
+
+/**
+ * Probe an Ollama server via GET /api/tags (the Ollama health endpoint).
+ * Returns true when Ollama is reachable and responsive, false otherwise.
+ * Results are cached for OLLAMA_HEALTH_CACHE_TTL_MS to avoid hammering the endpoint.
+ */
+async function probeOllamaEndpoint(baseUrl: string): Promise<boolean> {
+  const now = Date.now();
+  const cached = _ollamaHealthCache.get(baseUrl);
+  if (cached && now - cached.ts < OLLAMA_HEALTH_CACHE_TTL_MS) return cached.ok;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_HEALTH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
+    const ok = resp.ok;
+    _ollamaHealthCache.set(baseUrl, { ok, ts: now });
+    return ok;
+  } catch {
+    _ollamaHealthCache.set(baseUrl, { ok: false, ts: now });
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /**
  * Infer a human-readable feature label for a chat completion call.
@@ -127,6 +164,7 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
  * Routing:
  *  - `google/*`  → Google Gemini OpenAI-compat endpoint (distill.apiKey or llm.providers.google.apiKey)
  *  - `openai/*` or bare model (no `/`) → OpenAI (embedding.apiKey or llm.providers.openai.apiKey)
+ *  - `ollama/*` → local Ollama server (http://127.0.0.1:11434/v1, or llm.providers.ollama.baseURL)
  *  - Other `provider/*` with explicit llm.providers config → custom endpoint
  *  - Unknown provider, no config → throws UnconfiguredProviderError
  */
@@ -203,7 +241,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
-  function resolveClient(model: string): { client: OpenAI; bareModel: string } {
+  function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string } {
     const normalized = normalizeModelId(model);
     const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
@@ -256,6 +294,24 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
           defaultHeaders: { "anthropic-version": ANTHROPIC_VERSION_HEADER },
         })),
         bareModel,
+      };
+    }
+
+    if (prefix === "ollama") {
+      // Ollama exposes an OpenAI-compatible API at /v1. No real API key is required.
+      let baseURL = providerCfg?.baseURL ?? `${OLLAMA_DEFAULT_BASE_URL}/v1`;
+      // Ensure baseURL ends with /v1 for OpenAI client
+      if (!/\/v1\/?$/.test(baseURL)) {
+        baseURL = `${baseURL.replace(/\/$/, "")}/v1`;
+      }
+      // Strip /v1 suffix for the health-check base URL
+      const ollamaBaseUrl = baseURL.replace(/\/v1\/?$/, "");
+      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? "ollama";
+      const cacheKey = `ollama:${baseURL}`;
+      return {
+        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, baseURL })),
+        bareModel,
+        ollamaBaseUrl,
       };
     }
 
@@ -320,14 +376,31 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
             create(body: Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1]) {
               const rawModel: string = (body as { model?: string }).model ?? "";
               const model = normalizeModelId(rawModel);
-              const { client, bareModel } = resolveClient(model);
+              const { client, bareModel, ollamaBaseUrl } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
               const isOpenAI = prefix === "openai" || !model.includes("/");
               const adjustedBody = isOpenAI
                 ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
                 : { ...(body as object), model: bareModel };
               const start = Date.now();
-              const promise = client.chat.completions.create(adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts);
+              // For Ollama models, probe the local server before attempting the call so we fall
+              // through to the next tier model quickly instead of waiting for a TCP timeout.
+              const makeCall = () => client.chat.completions.create(
+                adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts,
+              );
+              const promise: ReturnType<typeof makeCall> = ollamaBaseUrl
+                ? (async () => {
+                    const available = await probeOllamaEndpoint(ollamaBaseUrl);
+                    if (!available) {
+                      const err = Object.assign(
+                        new Error(`Ollama not available at ${ollamaBaseUrl} (ECONNREFUSED) — try next model`),
+                        { code: "ECONNREFUSED" },
+                      );
+                      throw err;
+                    }
+                    return makeCall();
+                  })() as ReturnType<typeof makeCall>
+                : makeCall();
               // Fire-and-forget cost tracking — never blocks or modifies the returned promise
               if (costTracker) {
                 const feature = inferFeatureLabel(body as unknown as Record<string, unknown>, model);
@@ -445,7 +518,7 @@ export function initializeDatabases(
   // If the gateway list is heavy-only (e.g. only Opus), we prepend a cheap fallback so default/nano
   // tasks don't all use the expensive model (see cost issue: hundreds of tasks running as Opus).
   const RECOMMENDED_CHEAP_FALLBACK = ["openai/gpt-4.1-nano", "google/gemini-2.0-flash-lite", "anthropic/claude-3-5-haiku"];
-  if (!cfg.llm) {
+  if (!cfg.llm || (cfg.llm.default.length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
     const modelCfg = agentDefaults?.model as Record<string, unknown> | undefined;
@@ -465,16 +538,14 @@ export function initializeDatabases(
       // Heavy:  pro, opus, o3, o1, large, ultra, gpt-5  — capable/expensive models (incl. GPT-5.4, Codex)
       // Light:  flash, small                           — fast/cheap (but not nano-cheap)
       // Medium: everything else (sonnet, gpt-4o, etc.)
-      const isNano  = (m: string) => /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isHeavy = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase());
-      const isLight = (m: string) => /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
-      const nano    = uniqueModels.filter(m => isNano(m) && !isHeavy(m));
-      const heavy   = uniqueModels.filter(m => isHeavy(m) && !isNano(m));
-      const light   = uniqueModels.filter(m => isLight(m) && !isNano(m) && !isHeavy(m));
-      const medium  = uniqueModels.filter(m => !isNano(m) && !isLight(m) && !isHeavy(m));
+      // All ollama/* models are nano-tier (local = free, no API cost)
+      const nano    = uniqueModels.filter(m => isNanoModel(m) && !isHeavyModel(m));
+      const heavy   = uniqueModels.filter(m => isHeavyModel(m) && !isNanoModel(m));
+      const light   = uniqueModels.filter(m => isLightModel(m) && !isNanoModel(m) && !isHeavyModel(m));
+      const medium  = uniqueModels.filter(m => !isNanoModel(m) && !isLightModel(m) && !isHeavyModel(m));
 
       // default tier: agent order (primary then fallbacks) so reflection/general match what you set in openclaw.json
-      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavy(m));
+      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavyModel(m));
       let defaultTier = [...uniqueModels];
       if (defaultIsHeavyOnly) {
         defaultTier = [...RECOMMENDED_CHEAP_FALLBACK, ...defaultTier];
@@ -493,6 +564,10 @@ export function initializeDatabases(
             : [];
 
       cfg.llm = {
+        ...(cfg.llm?.localAutoStart !== undefined ? { localAutoStart: cfg.llm.localAutoStart } : {}),
+        ...(cfg.llm?.providers !== undefined ? { providers: cfg.llm.providers } : {}),
+        ...(cfg.llm?.fallbackToDefault !== undefined ? { fallbackToDefault: cfg.llm.fallbackToDefault } : {}),
+        ...(cfg.llm?.fallbackModel !== undefined ? { fallbackModel: cfg.llm.fallbackModel } : {}),
         default: defaultTier.length > 0 ? defaultTier : uniqueModels,
         heavy: heavyTier.length > 0 ? heavyTier : uniqueModels,
         ...(nanoList.length > 0 ? { nano: nanoList } : {}),
@@ -582,9 +657,55 @@ export function initializeDatabases(
     }
   }
 
+  // Ollama auto-start: if any tier includes ollama/* models and localAutoStart is enabled,
+  // attempt to launch `ollama serve` in the background when the server is not already running.
+  if (cfg.llm?.localAutoStart) {
+    const allModels = [
+      ...(cfg.llm.nano ?? []),
+      ...(cfg.llm.default ?? []),
+      ...(cfg.llm.heavy ?? []),
+    ];
+    const hasOllamaModels = allModels.some(m => m.split("/")[0]?.toLowerCase() === "ollama");
+    if (hasOllamaModels) {
+      void (async () => {
+        try {
+          const ollamaBase = (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.["ollama"]?.baseURL?.replace(/\/v1\/?$/, "")
+            ?? OLLAMA_DEFAULT_BASE_URL;
+          const running = await probeOllamaEndpoint(ollamaBase);
+          if (!running) {
+            api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
+            const { spawn } = await import("node:child_process");
+            const child = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
+            child.on("error", (err) => {
+              api.logger.warn(`memory-hybrid: Ollama spawn error: ${err.message}`);
+            });
+            child.unref();
+            // Allow Ollama ~2 s to bind its port before re-probing
+            await new Promise<void>((r) => setTimeout(r, 2000));
+            // Invalidate any cached "down" entry so the next probe goes to the network
+            _ollamaHealthCache.delete(ollamaBase);
+            const nowRunning = await probeOllamaEndpoint(ollamaBase);
+            if (nowRunning) {
+              api.logger.info("memory-hybrid: Ollama started successfully");
+            } else {
+              api.logger.warn("memory-hybrid: Ollama auto-start attempted but server still not available — local model calls will fall back to cloud");
+            }
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "ollama-auto-start",
+            subsystem: "llm",
+          });
+          api.logger.warn(`memory-hybrid: Ollama auto-start failed: ${err}`);
+        }
+      })();
+    }
+  }
+
   // Chat/LLM client: multi-provider proxy that routes each model to the correct API.
   // google/* → Google Gemini OpenAI-compat API (uses distill.apiKey or llm.providers.google.apiKey)
   // openai/* or bare names → OpenAI API (uses embedding.apiKey or llm.providers.openai.apiKey)
+  // ollama/* → local Ollama server (http://127.0.0.1:11434/v1 by default)
   // Other providers → require llm.providers.<provider>.apiKey + optionally baseURL
   const openai = buildMultiProviderOpenAI(cfg, api, costTracker);
 

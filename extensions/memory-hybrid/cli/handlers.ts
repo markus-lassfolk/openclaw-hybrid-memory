@@ -75,6 +75,7 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { isValidCategory } from "../config.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 import { capProposalConfidence } from "./proposals.js";
 import { relativeTime } from "./shared.js";
 import {
@@ -1102,9 +1103,7 @@ export async function runVerifyForCli(
   }
 
   // Cost advisory
-  const isHeavyModel = (m: string) => /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy/.test((m.split("/").pop() ?? m).toLowerCase());
-  const isNanoModel  = (m: string) => /nano|\bmini\b|haiku|\blite\b/.test((m.split("/").pop() ?? m).toLowerCase());
-  const isLightModel = (m: string) => isNanoModel(m) || /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
+  const isLightOrNano = (m: string) => isNanoModel(m) || isLightModel(m);
   const nanoPrimary = nanoOrder[0];
   const defaultPrimary = defaultOrder[0];
   const nanoIsHeavy = nanoPrimary ? isHeavyModel(nanoPrimary) : false;
@@ -1117,7 +1116,7 @@ export async function runVerifyForCli(
     log(`     will use ${nanoPrimary} (a heavy model) for short, cheap tasks. This may increase costs.`);
     log(`     Fix: add llm.nano in plugin config, or set autoClassify.model and queryExpansion.model`);
     log(`     explicitly. Good options: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*`);
-  } else if (!hasNanoModel && !hasExplicitClassifyOverride && defaultPrimary && !isLightModel(defaultPrimary)) {
+  } else if (!hasNanoModel && !hasExplicitClassifyOverride && defaultPrimary && !isLightOrNano(defaultPrimary)) {
     log(`  ℹ️  Nano tier uses ${nanoPrimary ?? "default"}. For lower cost on classify/query-expansion/summarize,`);
     log(`     add llm.nano: ["openai/gpt-4.1-nano"] (OpenAI) or other nano/mini model to plugin config.`);
   }
