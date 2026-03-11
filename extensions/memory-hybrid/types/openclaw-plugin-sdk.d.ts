@@ -18,6 +18,8 @@ declare module "openclaw/plugin-sdk" {
 
   export type ClawdbotPluginApi = {
     resolvePath: (path: string) => string;
+    /** OpenClaw gateway version string (e.g. "2026.3.8"). Available since OpenClaw ≥2026.3.8. */
+    version?: string;
     logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void; debug?: (msg: string) => void };
     registerService: (opts: { id: string; start: () => void; stop?: () => void }) => void;
     registerTool: (

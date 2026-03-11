@@ -25,6 +25,7 @@ import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { versionInfo } from "../versionInfo.js";
+import { checkOpenClawVersion } from "../utils/version-check.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
@@ -96,6 +97,8 @@ export function createPluginService(ctx: PluginServiceContext) {
       api.logger.info(
         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
       );
+
+      checkOpenClawVersion(api.version, api.logger);
 
       // ========================================================================
       // Startup Task Sequencing (to avoid race conditions):
