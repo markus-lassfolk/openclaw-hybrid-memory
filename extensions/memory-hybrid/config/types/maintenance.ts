@@ -50,6 +50,13 @@ export type NightlyCycleConfig = {
 export type HealthConfig = {
   /** Enable memory_health tool (default: true). */
   enabled: boolean;
+  /**
+   * Require authentication for all dashboard HTTP routes (Issue #279).
+   * Must be the same value for every route under /plugins/memory-dashboard/
+   * to satisfy the OpenClaw v2026.3.8 consistent-auth requirement.
+   * Default: true.
+   */
+  authenticated: boolean;
 };
 
 /** Monthly knowledge quality review (Issue #165). */
