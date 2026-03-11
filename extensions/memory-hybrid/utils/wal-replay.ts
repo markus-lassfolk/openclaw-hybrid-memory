@@ -95,14 +95,12 @@ export async function replayWalEntries(
         // Remove these entries to prevent unbounded WAL growth.
         skipped++;
         wal.remove(entry.id);
-      } else if (entry.operation === "delete" && entry.data?.text) {
-        const factId = entry.data.text as string;
-        const deleted = factsDb.delete(factId);
-        if (deleted) {
-          committed++;
-        } else {
-          skipped++;
-        }
+      } else if (entry.operation === "delete") {
+        // Delete WAL entries cannot be reliably replayed: the WAL data structure stores
+        // text content in data.text, not the target fact UUID. Replaying would pass the
+        // memory text as a UUID, causing an "Invalid UUID format" error (see issue #334).
+        // Skip and remove to prevent unbounded WAL growth.
+        skipped++;
         wal.remove(entry.id);
       }
     } catch (err) {

@@ -1680,6 +1680,21 @@ export function registerMemoryTools(
             }
           }
 
+          // Validate that resolvedId is a proper UUID before attempting deletion.
+          // LLMs sometimes pass memory text content as the ID instead of the UUID.
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          if (!uuidRegex.test(resolvedId)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `"${memoryId}" is not a valid memory ID. Use memory_recall to find the memory and get its UUID, then pass the UUID to memory_forget.`,
+                },
+              ],
+              details: { action: "invalid_id", originalId: memoryId },
+            };
+          }
+
           const sqlDeleted = factsDb.delete(resolvedId);
           let lanceDeleted = false;
           let lanceError: string | null = null;
