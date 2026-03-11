@@ -131,7 +131,7 @@ const MIN_INTERVAL_MS: Record<string, number> = {
 
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
-const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number }> = [
+const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
   // Daily 02:30 | self-correction-analysis | self-correction-run
@@ -153,7 +153,7 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano
   { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
   // Every 4h | sensor-sweep | tier-1 + tier-2 data collection (no LLM, Issue #236)
   // Default schedule; overridden by cfg.sensorSweep.schedule during install/verify/upgrade.
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "sensor-sweep-tier1", name: "sensor-sweep-tier1", schedule: { kind: "cron", expr: "0 */4 * * *" }, channel: "system", message: "Run sensor sweep data collection (no LLM):\n1. openclaw hybrid-mem sensor-sweep --tier 1\n2. openclaw hybrid-mem sensor-sweep --tier 2\nCheck if sensorSweep.enabled is true in config before running. Exit 0 if disabled. Report events written and skipped per sensor.", isolated: true, modelTier: "nano", enabled: true, minIntervalMs: 3 * 60 * 60 * 1000 },
+  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "sensor-sweep-tier1", name: "sensor-sweep-tier1", schedule: { kind: "cron", expr: "0 */4 * * *" }, channel: "system", message: "Run sensor sweep data collection (no LLM):\n1. openclaw hybrid-mem sensor-sweep --tier 1\n2. openclaw hybrid-mem sensor-sweep --tier 2\nCheck if sensorSweep.enabled is true in config before running. Exit 0 if disabled. Report events written and skipped per sensor.", isolated: true, modelTier: "nano", enabled: true, minIntervalMs: 3 * 60 * 60 * 1000, featureGate: "sensorSweep.enabled" },
 ];
 
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier).
@@ -204,9 +204,9 @@ function buildMemoryToSkillsMessage(notify: boolean): string {
 function ensureMaintenanceCronJobs(
   openclawDir: string,
   pluginConfig: CronModelConfig | undefined,
-  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean; scheduleOverrides?: Record<string, string>; messageOverrides?: Record<string, string> } = {},
+  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean; scheduleOverrides?: Record<string, string>; messageOverrides?: Record<string, string>; featureGates?: Record<string, boolean> } = {},
 ): { added: string[]; normalized: string[] } {
-  const { normalizeExisting = false, reEnableDisabled = false, scheduleOverrides, messageOverrides } = options;
+  const { normalizeExisting = false, reEnableDisabled = false, scheduleOverrides, messageOverrides, featureGates } = options;
   const added: string[] = [];
   const normalized: string[] = [];
   const cronDir = join(openclawDir, "cron");
@@ -220,6 +220,8 @@ function ensureMaintenanceCronJobs(
     const id = def.pluginJobId as string;
     const name = def.name as string;
     const scheduleExpr = scheduleOverrides?.[id];
+    // Skip jobs whose feature gate is explicitly disabled (gate must be true to install).
+    if (def.featureGate && featureGates && featureGates[def.featureGate] !== true) continue;
     const existing = jobsArr.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
     if (!existing) {
       const job = resolveCronJob(def, pluginConfig) as Record<string, unknown>;
@@ -735,6 +737,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         reEnableDisabled: false,
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
         messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(notify) },
+        featureGates: { "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true },
       });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
@@ -1619,6 +1622,7 @@ export async function runVerifyForCli(
             reEnableDisabled: false,
             scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
             messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
+            featureGates: { "sensorSweep.enabled": cfg.sensorSweep?.enabled === true },
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
@@ -4102,6 +4106,7 @@ export async function runUpgradeForCli(
       reEnableDisabled: false,
       scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
       messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
+      featureGates: { "sensorSweep.enabled": cfg.sensorSweep?.enabled === true },
     });
     if (added.length > 0 || normalized.length > 0) {
       logger?.info?.(`memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`);
