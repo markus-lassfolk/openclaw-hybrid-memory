@@ -27,7 +27,8 @@ export function isHeavyModel(m: string): boolean {
 
 /**
  * Returns true if the model should be classified as light-tier (fast/cheap).
+ * Ollama models are never light-tier (they're local/free, nano-tier).
  */
 export function isLightModel(m: string): boolean {
-  return /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
+  return m.split("/")[0]?.toLowerCase() !== "ollama" && /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
 }
