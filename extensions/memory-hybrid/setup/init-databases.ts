@@ -655,7 +655,7 @@ export function initializeDatabases(
   }
 
   // If we merged providers, ensure at least one model from each is in the tier lists so they get tested and used as fallbacks.
-  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google"));
+  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google") || (m.toLowerCase().startsWith("minimax-") && prefix === "minimax"));
   if (cfg.llm && mergedProviderNames.length > 0) {
     const defaultList = Array.isArray(cfg.llm.default) ? [...cfg.llm.default] : [];
     const heavyList = Array.isArray(cfg.llm.heavy) ? [...cfg.llm.heavy] : [];
@@ -663,6 +663,7 @@ export function initializeDatabases(
       anthropic: "anthropic/claude-sonnet-4-6",
       openai: "openai/gpt-4.1-mini",
       google: "google/gemini-2.5-flash",
+      minimax: "minimax/MiniMax-Text-01",
     };
     let appended = false;
     for (const name of mergedProviderNames) {

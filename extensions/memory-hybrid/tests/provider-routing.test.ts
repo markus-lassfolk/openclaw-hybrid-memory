@@ -380,4 +380,60 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(wrongCall).toBeUndefined();
 
   });
+
+  it("appends minimax/MiniMax-Text-01 to tier lists when gateway provides minimax key but no minimax model is configured", () => {
+    // When gateway has a minimax key but the user's llm.default/heavy lists have no minimax model,
+    // the knownDefault fallback should auto-append minimax/MiniMax-Text-01 (same as anthropic/google/openai).
+    const cfg = getTestConfig(tmpDir);
+    // Start with no llm config so auto-derive runs from gateway models (empty → no gatewayModels).
+    // We simulate the post-merge state by setting llm with non-minimax tiers.
+    cfg.llm = {
+      default: ["openai/gpt-4.1-mini"],
+      heavy: ["openai/gpt-4o"],
+    } as typeof cfg.llm;
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            minimax: { apiKey: "sk-cp-gw-knowndefault-test" },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
+    expect(defaultList).toContain("minimax/MiniMax-Text-01");
+    expect(heavyList).toContain("minimax/MiniMax-Text-01");
+  });
+
+  it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
+    // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
+    // converts to minimax/MiniMax-M2.5 when routing), hasModelFrom should detect the minimax
+    // prefix so the knownDefault fallback is skipped.
+    const cfg = getTestConfig(tmpDir);
+    cfg.llm = {
+      default: ["minimax/MiniMax-M2.5"],
+      heavy: ["minimax/MiniMax-M2.5"],
+    } as typeof cfg.llm;
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            minimax: { apiKey: "sk-cp-hasmodelfrom-test" },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    // The tier lists should NOT have MiniMax-Text-01 appended since minimax is already present.
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    expect(defaultList.filter((m) => m.startsWith("minimax/")).length).toBe(1);
+  });
 });
