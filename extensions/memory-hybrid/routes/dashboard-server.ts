@@ -323,13 +323,20 @@ function collectCostStats(ctx: DashboardContext): CostStats {
 }
 
 export async function collectStatus(ctx: DashboardContext): Promise<DashboardStatus> {
+  const [memory, cronJobs, taskQueue, forge, git] = await Promise.all([
+    collectMemoryStats(ctx),
+    collectCronJobs(),
+    collectTaskQueue(),
+    collectForgeState(),
+    collectGitActivity(ctx.gitRepo),
+  ]);
   return {
     generatedAt: new Date().toISOString(),
-    memory: await collectMemoryStats(ctx),
-    cronJobs: await collectCronJobs(),
-    taskQueue: await collectTaskQueue(),
-    forge: await collectForgeState(),
-    git: await collectGitActivity(ctx.gitRepo),
+    memory,
+    cronJobs,
+    taskQueue,
+    forge,
+    git,
     costs: collectCostStats(ctx),
   };
 }
@@ -671,6 +678,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     server.listen(port, "127.0.0.1", () => {
       const addr = server.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
+      server.removeAllListeners("error");
+      server.on("error", (err: NodeJS.ErrnoException) => {
+        console.error("[dashboard-server] Server error:", err);
+      });
       resolve({
         server,
         port: boundPort,
