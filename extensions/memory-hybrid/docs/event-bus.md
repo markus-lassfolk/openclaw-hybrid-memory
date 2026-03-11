@@ -58,7 +58,7 @@ Insert a new event. Returns the auto-generated row `id`.
 | `importance` | `number` | `0.5` | Salience score in `[0, 1]` |
 | `fingerprint` | `string` | `undefined` | SHA-256 hash for dedup; use `computeFingerprint()` |
 
-Throws `RangeError` if `importance` is outside `[0, 1]`.
+Throws `RangeError` if `importance` is outside `[0, 1]` or is `NaN`. (All comparisons with `NaN` return `false` in JavaScript, so the guard is written as `!(importance >= 0 && importance <= 1)` to catch `NaN` explicitly.)
 
 ### `queryEvents(filter?): MemoryEvent[]`
 
