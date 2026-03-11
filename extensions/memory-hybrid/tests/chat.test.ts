@@ -7,6 +7,7 @@ import {
   LLMRetryError,
   chatCompleteWithRetry,
   createPendingLLMWarnings,
+  is404Like,
 } from "../services/chat.js";
 
 vi.mock("../services/error-reporter.js", () => ({
@@ -249,6 +250,83 @@ describe("withLLMRetry", () => {
     const result = await promise;
     expect(result).toBe("success");
     expect(fn).toHaveBeenCalledTimes(4);
+  });
+
+  it("#329: does not retry Google API 404 (model not found for API version), capturePluginError not called", async () => {
+    vi.clearAllMocks();
+    const googleError = Object.assign(
+      new Error("404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings."),
+      { status: 404 },
+    );
+    const fn = vi.fn().mockRejectedValue(googleError);
+    await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models/text-embedding-004");
+    // Should only be called once — no retry for 404
+    expect(fn).toHaveBeenCalledTimes(1);
+    // 404 exits early before the final-failure branch — GlitchTip must not be called
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#329: does not retry Google API 404 without status property (message-only detection)", async () => {
+    // Simulates the case where .status is not accessible (e.g. cross-realm instanceof failure)
+    const googleError = new Error("404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings.");
+    const fn = vi.fn().mockRejectedValue(googleError);
+    await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models/text-embedding-004");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("#329: does not retry when error message matches Google 'is not found for api version' pattern", async () => {
+    // Exact format Google returns when model is unavailable at the given API version
+    const err = new Error("models/text-embedding-004 is not found for API version v1beta");
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("is not found for API version");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("#329: 404 exits early (before final-failure branch) — capturePluginError not called", async () => {
+    vi.clearAllMocks();
+    // 404 errors are detected by the dedicated is404Like() check before any retry attempt,
+    // so they never reach the final-failure LLMRetryError branch where capturePluginError runs.
+    const googleError = Object.assign(
+      new Error("404 models/text-embedding-004 is not found for API version v1beta"),
+      { status: 404 },
+    );
+    const fn = vi.fn().mockRejectedValue(googleError);
+    // Throws the raw 404 error (not an LLMRetryError), called exactly once — exits before retry loop
+    await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("is404Like", () => {
+  it("returns true for error with numeric status 404", () => {
+    const err = Object.assign(new Error("Not Found"), { status: 404 });
+    expect(is404Like(err)).toBe(true);
+  });
+
+  it("returns true for error with string status '404'", () => {
+    const err = Object.assign(new Error("Not Found"), { status: "404" });
+    expect(is404Like(err)).toBe(true);
+  });
+
+  it("returns true for Google API 'is not found for API version' format", () => {
+    const err = new Error("models/text-embedding-004 is not found for API version v1beta");
+    expect(is404Like(err)).toBe(true);
+  });
+
+  it("returns true for '404 Not Found' messages", () => {
+    expect(is404Like(new Error("404 Not Found"))).toBe(true);
+  });
+
+  it("returns true for 'model not found' messages", () => {
+    expect(is404Like(new Error("Model not found: gpt-4"))).toBe(true);
+  });
+
+  it("returns false for non-404 errors", () => {
+    expect(is404Like(new Error("Connection refused"))).toBe(false);
+    expect(is404Like(new Error("500 Internal Server Error"))).toBe(false);
+    expect(is404Like(new Error("file not found"))).toBe(false);
+    expect(is404Like(new Error("module not found"))).toBe(false);
   });
 });
 

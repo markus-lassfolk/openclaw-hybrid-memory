@@ -64,12 +64,14 @@ const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
  * Checks the HTTP status code property first (reliable), then falls back to
  * targeted message pattern matching. Only matches "model not found" scenarios,
  * NOT generic "file not found" or "module not found" errors.
+ *
+ * Exported so embeddings.ts can suppress capturePluginError for 404 errors.
  */
-function is404Like(err: unknown): boolean {
+export function is404Like(err: unknown): boolean {
   if (err && typeof err === "object") {
-    // OpenAI SDK sets .status directly
+    // OpenAI SDK sets .status directly (number); also tolerate string "404" for robustness
     const status = (err as { status?: unknown }).status;
-    if (status === 404) return true;
+    if (status === 404 || status === "404") return true;
   }
   if (err instanceof Error) {
     // Match HTTP 404 patterns specifically — avoid false positives from
@@ -78,7 +80,10 @@ function is404Like(err: unknown): boolean {
       // Also match bare numeric 404 in error messages (e.g. "404 Not Found" from HTTP responses)
       || /^\b404\b/.test(err.message.trim())
       // OpenAI SDK formats: "404 Model not found" or "Error code: 404"
-      || /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message);
+      || /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message)
+      // Google Generative Language API: "models/<name> is not found for API version <v>"
+      // Occurs when a model is unavailable through a specific API version endpoint (e.g. v1beta/openai/).
+      || /is not found for api version/i.test(err.message);
   }
   return false;
 }
@@ -278,12 +283,15 @@ export async function withLLMRetry<T>(
           lastError,
           attempt + 1,
         );
-        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429)
+        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429).
+        // Note: 404 errors should never reach this branch (they exit early via the dedicated is404Like() check above),
+        // but we include is404Like(lastError) as a defensive safety net in case they slip past due to future refactors or edge cases.
         const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
           isServerError ||  // #302: 5xx server errors are transient
+          is404Like(lastError) ||  // #329: defensive safety net — 404 = model not found, config issue, not a bug
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
