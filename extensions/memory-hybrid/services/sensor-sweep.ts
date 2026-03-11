@@ -47,6 +47,15 @@ export interface SweepAllResult {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Stringify an object with sorted keys for stable, order-independent fingerprints. */
+function stableStringify(obj: Record<string, unknown>): string {
+  return JSON.stringify(Object.fromEntries(Object.keys(obj).sort().map((k) => [k, obj[k]])));
+}
+
+// ---------------------------------------------------------------------------
 // HA REST helpers
 // ---------------------------------------------------------------------------
 
@@ -138,14 +147,7 @@ export async function sweepGarmin(
       };
     }
 
-    const sortedFingerprintPayload = Object.keys(fingerprintPayload)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = fingerprintPayload[key];
-        return acc;
-      }, {} as Record<string, unknown>);
-
-    const fp = computeFingerprint(`sensor.garmin:${prefix}:${JSON.stringify(sortedFingerprintPayload)}`);
+    const fp = computeFingerprint(`sensor.garmin:${prefix}:${stableStringify(fingerprintPayload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -788,14 +790,7 @@ export async function sweepYarbo(
       };
     }
 
-    const sortedFingerprintPayload = Object.keys(fingerprintPayload)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = fingerprintPayload[key];
-        return acc;
-      }, {} as Record<string, unknown>);
-
-    const fp = computeFingerprint(`sensor.yarbo:${prefix}:${JSON.stringify(sortedFingerprintPayload)}`);
+    const fp = computeFingerprint(`sensor.yarbo:${prefix}:${stableStringify(fingerprintPayload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
