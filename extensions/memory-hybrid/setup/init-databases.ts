@@ -726,7 +726,7 @@ export function initializeDatabases(
         // Skip non-chat entries (embeddings, transcription, TTS, image generation) so that
         // chatCompleteWithRetry is never routed through an incompatible model.
         const NON_CHAT_TYPES = new Set(["embed", "embedding", "embeddings", "transcription", "speech-to-text", "text-to-speech", "tts", "image", "image-generation"]);
-        const NON_CHAT_ID_RE = /\bembed|whisper|tts\b|dall-e|transcri/i;
+        const NON_CHAT_ID_RE = /\bembed|whisper|\btts\b|dall-e|transcri|gpt-image|image-gen/i;
         const isChatEntry = (entry: unknown): boolean => {
           if (typeof entry === "object" && entry !== null) {
             const type = String((entry as Record<string, unknown>).type ?? "").toLowerCase().trim();
@@ -739,15 +739,16 @@ export function initializeDatabases(
           if (typeof entry === "string") return !NON_CHAT_ID_RE.test(entry.toLowerCase());
           return false;
         };
-        // Check models[] array first (take the first chat-compatible model).
+        // Check models[] array first: iterate to find the first chat-compatible entry that
+        // yields a non-empty trimmed model ID (skips entries with missing/empty id/name).
         if (Array.isArray(gw.models) && gw.models.length > 0) {
-          const chatEntry = gw.models.find(isChatEntry);
-          if (chatEntry !== undefined) {
+          for (const entry of gw.models) {
+            if (!isChatEntry(entry)) continue;
             const modelId =
-              typeof chatEntry === "string"
-                ? chatEntry.trim()
-                : String((chatEntry as Record<string, unknown>).id ?? (chatEntry as Record<string, unknown>).name ?? "").trim();
-            if (modelId) defaultModel = `${name}/${modelId}`;
+              typeof entry === "string"
+                ? entry.trim()
+                : String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").trim();
+            if (modelId) { defaultModel = `${name}/${modelId}`; break; }
           }
         }
         // Fall back to singular defaultModel or model field (also filter non-chat models)
