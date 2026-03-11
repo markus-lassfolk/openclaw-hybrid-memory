@@ -229,8 +229,8 @@ function ensureMaintenanceCronJobs(
       }
       continue;
     }
-    // If feature gate is now enabled but existing job is disabled, re-enable it.
-    if (def.featureGate && featureGates && featureGates[def.featureGate] === true && existing && existing.enabled === false) {
+    // If feature gate is now enabled but existing job is disabled, re-enable it (only if reEnableDisabled is true).
+    if (def.featureGate && featureGates && featureGates[def.featureGate] === true && existing && existing.enabled === false && reEnableDisabled) {
       existing.enabled = true;
       jobsChanged = true;
     }
