@@ -107,11 +107,18 @@ export type LLMConfig = {
   fallbackModel?: string;
   /**
    * Per-provider API config for direct LLM calls.
-   * Keys are provider prefixes as they appear in model IDs (e.g. "google", "openai", "anthropic").
-   * Built-in providers (google, openai) have defaults; others require explicit apiKey + baseURL.
+   * Keys are provider prefixes as they appear in model IDs (e.g. "google", "openai", "anthropic", "ollama").
+   * Built-in providers (google, openai, ollama) have defaults; others require explicit apiKey + baseURL.
    * Example: { google: { apiKey: "AIzaSy..." }, anthropic: { apiKey: "sk-ant-...", baseURL: "https://api.anthropic.com/v1" } }
+   * Ollama example: { ollama: { baseURL: "http://127.0.0.1:11434/v1" } }
    */
   providers?: Record<string, LLMProviderConfig | undefined>;
+  /**
+   * When true and an `ollama/*` model appears in any tier list, automatically start Ollama (`ollama serve`)
+   * if it is not already running. Only has effect when Ollama models are configured.
+   * Default: false.
+   */
+  localAutoStart?: boolean;
 };
 
 /** Minimal plugin config shape for resolving cron job model (no full parse). */

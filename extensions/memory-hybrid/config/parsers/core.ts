@@ -305,6 +305,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           fallbackToDefault: llmRaw?.fallbackToDefault === true,
           fallbackModel: typeof llmRaw?.fallbackModel === "string" && (llmRaw.fallbackModel as string).trim().length > 0 ? (llmRaw.fallbackModel as string).trim() : undefined,
           providers: llmProviders,
+          localAutoStart: llmRaw?.localAutoStart === true,
         }
       : undefined;
   return llm;
