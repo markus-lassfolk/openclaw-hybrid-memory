@@ -1,5 +1,5 @@
 /**
- * Tests for Quiet Mode / Verbosity feature (Issue #282).
+ * Tests for Quiet Mode / Verbosity feature (Issue #282) and Silent Mode (Issue #317).
  *
  * Covers:
  * - VerbosityLevel type parsing via hybridConfigSchema.parse
@@ -11,6 +11,8 @@
  * - memory_store output at each verbosity level
  * - runVerifyForCli quiet-mode sink filtering
  * - runCostReportForCli compact=true when verbosity=quiet
+ * - silent mode: parseVerbosityLevel accepts "silent"
+ * - silent mode: hybridConfigSchema accepts "silent"
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -47,6 +49,11 @@ describe("VerbosityLevel — hybridConfigSchema", () => {
     // which sets verbosity to 'verbose'.
     const cfg = parseWithVerbosity();
     expect(cfg.verbosity).toBe("verbose");
+  });
+
+  it("accepts 'silent'", () => {
+    const cfg = parseWithVerbosity("silent");
+    expect(cfg.verbosity).toBe("silent");
   });
 
   it("accepts 'quiet'", () => {
@@ -139,9 +146,13 @@ describe("parseVerbosityLevel()", () => {
     expect(parseVerbosityLevel({ verbosity: "verbose" })).toBe("verbose");
   });
 
+  it("returns 'silent' for 'silent'", () => {
+    expect(parseVerbosityLevel({ verbosity: "silent" })).toBe("silent");
+  });
+
   it("returns 'normal' and warns for unknown value", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(parseVerbosityLevel({ verbosity: "silent" })).toBe("normal");
+    expect(parseVerbosityLevel({ verbosity: "loud" })).toBe("normal");
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("invalid verbosity"));
     warnSpy.mockRestore();
   });
@@ -590,5 +601,39 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
     expect(emptyLines).toHaveLength(0);
     // Should still output mode names in the table
     expect(lines.some((l) => /essential|normal|full/i.test(l))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Silent mode — Issue #317
+// ---------------------------------------------------------------------------
+
+describe("VerbosityLevel — silent mode", () => {
+  it("parseVerbosityLevel accepts 'silent'", () => {
+    expect(parseVerbosityLevel({ verbosity: "silent" })).toBe("silent");
+  });
+
+  it("hybridConfigSchema.parse accepts 'silent'", () => {
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, verbosity: "silent" });
+    expect(cfg.verbosity).toBe("silent");
+  });
+
+  it("silent verbosity still allows user override (sets mode to custom)", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...BASE_CONFIG,
+      mode: "full",
+      verbosity: "silent",
+    });
+    expect(cfg.verbosity).toBe("silent");
+    expect(cfg.mode).toBe("custom");
+  });
+
+  it("parseVerbosityLevel includes 'silent' in valid values warning message", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    parseVerbosityLevel({ verbosity: "supersecret" });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("silent"),
+    );
+    warnSpy.mockRestore();
   });
 });

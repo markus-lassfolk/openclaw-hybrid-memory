@@ -461,7 +461,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       }
     });
 
-    if (ctx.cfg.autoRecall.enabled) {
+    // Silent mode suppresses all unsolicited context injection (Issue #317).
+    if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent") {
       api.on("before_agent_start", async (event: unknown) => {
         const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
 
@@ -1704,8 +1705,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    // Credential auto-detect: when patterns found in conversation, persist hint for next turn
-    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect) {
+    // Credential auto-detect: when patterns found in conversation, persist hint for next turn.
+    // Silent mode suppresses credential-hint injection (Issue #317).
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
       const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
       const PENDING_TTL_MS = 5 * 60 * 1000; // 5 min
 

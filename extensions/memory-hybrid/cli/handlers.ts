@@ -4341,7 +4341,7 @@ export function runConfigSetForCli(
   }
   // verbosity: must be one of the valid levels
   if (k === "verbosity") {
-    const validVerbosity = ["quiet", "normal", "verbose"];
+    const validVerbosity = ["silent", "quiet", "normal", "verbose"];
     if (!validVerbosity.includes(value)) {
       return { ok: false, error: `Invalid verbosity: "${value}". Use one of: ${validVerbosity.join(", ")}` };
     }
