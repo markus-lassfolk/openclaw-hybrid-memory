@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.3.100",
+  "version": "2026.3.110",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -78,6 +78,10 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.0.0",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "@hono/node-server": ">=1.19.10",
+    "opusscript": "0.1.1"
   },
   "engines": {
     "node": ">=20.0.0"

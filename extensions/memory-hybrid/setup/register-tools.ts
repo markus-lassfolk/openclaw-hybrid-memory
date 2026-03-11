@@ -42,6 +42,7 @@ import {
   type RunReflectionRulesFn,
   type RunReflectionMetaFn,
 } from "../tools/utility-tools.js";
+import { registerDashboardHttpRoutes } from "../tools/dashboard-routes.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
@@ -235,4 +236,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   if (toolProposalStore && workflowStore) {
     registerSelfExtensionTools({ toolProposalStore, workflowStore, cfg }, api);
   }
+
+  // Dashboard HTTP routes (Issue #279)
+  registerDashboardHttpRoutes({ cfg }, api);
 }
