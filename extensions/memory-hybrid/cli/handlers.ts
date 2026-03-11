@@ -161,7 +161,7 @@ const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano
  * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs.
  * If the def has minIntervalMs, prepends a guard prefix to the message to prevent re-runs on gateway restart (#304). */
 function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
-  const { modelTier, channel: _channel, minIntervalMs, ...rest } = def;
+  const { modelTier, channel: _channel, minIntervalMs, featureGate: _featureGate, ...rest } = def;
   const tier = modelTier ?? "default";
   const model = getDefaultCronModel(pluginConfig, tier);
   // Prepend guard prefix to message if minIntervalMs is set (issue #304)
@@ -220,9 +220,15 @@ function ensureMaintenanceCronJobs(
     const id = def.pluginJobId as string;
     const name = def.name as string;
     const scheduleExpr = scheduleOverrides?.[id];
-    // Skip jobs whose feature gate is explicitly disabled (gate must be true to install).
-    if (def.featureGate && featureGates && featureGates[def.featureGate] !== true) continue;
     const existing = jobsArr.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
+    // If feature gate is explicitly disabled, disable existing job (if any) and skip installation.
+    if (def.featureGate && featureGates && featureGates[def.featureGate] !== true) {
+      if (existing && existing.enabled !== false) {
+        existing.enabled = false;
+        jobsChanged = true;
+      }
+      continue;
+    }
     if (!existing) {
       const job = resolveCronJob(def, pluginConfig) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
