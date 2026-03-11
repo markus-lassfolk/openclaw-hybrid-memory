@@ -239,6 +239,9 @@ export class FactsDB {
 
     // ---- Scan cursors for incremental processing (#288) ----
     this.migrateScanCursorsTable();
+
+    // ---- access_count and last_accessed_at for salience scoring (#237) ----
+    this.migrateAccessCountAndLastAccessedAt();
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -447,6 +450,37 @@ export class FactsDB {
         sessions_processed INTEGER NOT NULL DEFAULT 0
       )
     `);
+  }
+
+  /** Add access_count and last_accessed_at columns for salience scoring (#237).
+   *  access_count is backfilled from recall_count.
+   *  last_accessed_at (ISO 8601 TEXT) is backfilled from last_accessed (epoch INTEGER).
+   */
+  private migrateAccessCountAndLastAccessedAt(): void {
+    const cols = this.liveDb
+      .prepare(`PRAGMA table_info(facts)`)
+      .all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+
+    if (!colNames.has("access_count")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0`);
+      // Backfill from recall_count so existing access history is preserved
+      this.liveDb.exec(`UPDATE facts SET access_count = COALESCE(recall_count, 0)`);
+      this.liveDb.exec(
+        `CREATE INDEX IF NOT EXISTS idx_facts_access_count ON facts(access_count)`,
+      );
+    }
+
+    if (!colNames.has("last_accessed_at")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_accessed_at TEXT`);
+      // Backfill from last_accessed (epoch seconds → ISO 8601)
+      this.liveDb.exec(
+        `UPDATE facts SET last_accessed_at = datetime(last_accessed, 'unixepoch') WHERE last_accessed IS NOT NULL`,
+      );
+      this.liveDb.exec(
+        `CREATE INDEX IF NOT EXISTS idx_facts_last_accessed_at ON facts(last_accessed_at) WHERE last_accessed_at IS NOT NULL`,
+      );
+    }
   }
 
   /** Return the cursor for the given scan type, or null if never run. */
@@ -1497,6 +1531,9 @@ export class FactsDB {
       sourceSessions: sourceSessionsRaw ?? undefined,
       // normalize to null (not undefined) to match rowToEntry() behaviour
       decayFreezeUntil: decayFreezeUntil,
+      // #237: access tracking columns start at zero for new facts
+      accessCount: 0,
+      lastAccessedAt: null,
     };
   }
 
@@ -1518,12 +1555,12 @@ export class FactsDB {
           )
           .run(nowSec, nowSec, TTL_DEFAULTS.stable, nowSec, TTL_DEFAULTS.active, ...batch);
 
-        // Bump recall_count and last_accessed for all
+        // Bump recall_count, last_accessed, access_count, and last_accessed_at for all
         this.liveDb
           .prepare(
-            `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ? WHERE id IN (${placeholders})`,
+            `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = datetime(?, 'unixepoch') WHERE id IN (${placeholders})`,
           )
-          .run(nowSec, ...batch);
+          .run(nowSec, nowSec, ...batch);
       }
     });
     tx();
@@ -2065,6 +2102,8 @@ export class FactsDB {
       summary: (row.summary as string) || undefined,
       recallCount: (row.recall_count as number) || 0,
       lastAccessed: (row.last_accessed as number) || null,
+      accessCount: (row.access_count as number) || 0,
+      lastAccessedAt: (row.last_accessed_at as string) || null,
       supersededAt: (row.superseded_at as number) || null,
       supersededBy: (row.superseded_by as string) || null,
       validFrom: (row.valid_from as number) ?? undefined,

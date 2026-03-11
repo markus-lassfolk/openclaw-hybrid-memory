@@ -707,6 +707,8 @@ export function registerMemoryTools(
               ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
               : undefined,
             contradicted: contradictionStatus.get(r.entry.id) || undefined,
+            accessCount: r.entry.accessCount ?? 0,
+            lastAccessedAt: r.entry.lastAccessedAt ?? null,
             ...(meta
               ? {
                   expansionSource: meta.expansionSource,
@@ -860,7 +862,7 @@ export function registerMemoryTools(
       parameters: Type.Object({
         text: Type.String({ description: "Information to remember" }),
         importance: Type.Optional(
-          Type.Number({ description: "Importance 0-1 (default: 0.7)" }),
+          Type.Number({ description: "Importance 0-1 (default: 0.5). Higher values signal facts that should survive longer during decay." }),
         ),
         category: Type.Optional(
           stringEnum(getMemoryCategories() as unknown as readonly string[]),
@@ -917,7 +919,7 @@ export function registerMemoryTools(
         try {
           const {
             text,
-            importance = 0.7,
+            importance = 0.5,
             category = "other",
             entity: paramEntity,
             key: paramKey,
