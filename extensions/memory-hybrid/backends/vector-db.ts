@@ -10,6 +10,8 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { UUID_REGEX } from "../utils/constants.js";
 
 const LANCE_TABLE = "memories";
+/** Substring of the LanceDB error thrown on vector-dimension mismatch (issue #366). */
+const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
 /**
  * Module-level optimization guard keyed by dbPath.
@@ -366,11 +368,11 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
-      // "No vector column found" is a known consequence of a dimension mismatch or
-      // missing vector column that validateOrRepairSchema() already reported at startup.
-      // Don't flood GlitchTip with repeated reports for this handled case (issue #366).
-      const isVectorColErr = err instanceof Error && err.message.includes("No vector column found");
-      if (!isVectorColErr) {
+      // Suppress GlitchTip only when the schema was already known invalid at startup
+      // (schemaValid=false). If schema is valid and we still get a vector-column error
+      // (e.g. embedding drift returns wrong length), it should be reported (issue #366).
+      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      if (!isKnownSchemaErr) {
         capturePluginError(err as Error, {
           operation: 'vector-search',
           severity: 'info',
@@ -392,9 +394,9 @@ export class VectorDB {
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
-      // Same as search(): skip GlitchTip for the known "No vector column" error (issue #366).
-      const isVectorColErr = err instanceof Error && err.message.includes("No vector column found");
-      if (!isVectorColErr) {
+      // Same as search(): suppress only when schemaValid=false (known invalid at startup).
+      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      if (!isKnownSchemaErr) {
         capturePluginError(err as Error, {
           operation: 'vector-duplicate-check',
           severity: 'info',

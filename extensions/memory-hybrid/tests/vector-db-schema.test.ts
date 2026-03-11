@@ -275,7 +275,7 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
     const results = await db.search(new Array(CORRECT_DIM).fill(0.1), 5, 0);
     expect(results).toHaveLength(0);
     expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
-    db.close();
+    await db.close();
   });
 
   it("hasDuplicate() does not call capturePluginError on dimension mismatch", async () => {
@@ -283,7 +283,7 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
     const isDup = await db.hasDuplicate(new Array(CORRECT_DIM).fill(0.1));
     expect(isDup).toBe(false);
     expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
-    db.close();
+    await db.close();
   });
 
   it("repeated search() calls do not call capturePluginError", async () => {
@@ -293,20 +293,27 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
       await db.search(new Array(CORRECT_DIM).fill(0.1), 5, 0);
     }
     expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
-    db.close();
+    await db.close();
   });
 
   it("capturePluginError IS called for unexpected (non-schema) errors", async () => {
-    // Fresh valid DB (correct dimensions)
+    // Open with matching dimensions — schemaValid will be true after init
     const db = new VectorDB(lanceDir, WRONG_DIM);
-    // Force an unexpected error by closing and nulling the internal table via close()
-    // then trying to access it — but that path throws "not initialized" not a vector col error.
-    // Instead, verify that normal valid searches do NOT suppress capturePluginError pathways
-    // by confirming a valid search on a matching-dim table works fine (no error at all).
+    await db.count(); // trigger initialization so this.table is populated
+
+    // Inject an unexpected (non-schema) error by replacing the internal table with a
+    // stub whose vectorSearch throws a generic error. schemaValid is still true, so
+    // the catch block must NOT suppress capturePluginError.
+    const unexpectedErr = new Error("Unexpected I/O failure");
+    (db as any).table = { vectorSearch: () => { throw unexpectedErr; } };
+
     const results = await db.search(new Array(WRONG_DIM).fill(0.1), 5, 0);
-    // Seed row was deleted, so no results — but no errors either
-    expect(Array.isArray(results)).toBe(true);
-    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
-    db.close();
+    expect(results).toHaveLength(0);
+    expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledOnce();
+    expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledWith(
+      unexpectedErr,
+      expect.objectContaining({ operation: 'vector-search' }),
+    );
+    await db.close();
   });
 });
