@@ -671,11 +671,22 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
   });
 
   return new Promise((resolve, reject) => {
-    server.on("error", (err: NodeJS.ErrnoException) => {
+    // Reject on startup errors (e.g. EADDRINUSE). This handler is replaced
+    // with a logging handler after successful bind so post-bind errors are not
+    // silently swallowed.
+    function onStartupError(err: NodeJS.ErrnoException) {
       reject(err);
-    });
+    }
+    server.once("error", onStartupError);
 
     server.listen(port, "127.0.0.1", () => {
+      // Remove the startup error handler and install a persistent one for
+      // post-bind errors (e.g. socket failures, resource exhaustion).
+      server.removeListener("error", onStartupError);
+      server.on("error", (err: Error) => {
+        console.error("[dashboard-server] server error:", err);
+      });
+
       const addr = server.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
       server.removeAllListeners("error");
