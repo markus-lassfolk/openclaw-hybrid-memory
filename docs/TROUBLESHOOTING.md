@@ -24,7 +24,7 @@ openclaw hybrid-mem stats         # show fact/vector counts
 
 On **WSL2** or in **containers**, `systemctl --user` is often unavailable (`Failed to connect to bus: No medium found`). The gateway should **not** be run as a systemd service; run it in the foreground or let a **cron watchdog** start and supervise it.
 
-- **Log messages you can ignore:** “systemd user services unavailable”, “run the gateway in the foreground instead of openclaw gateway”, “Cleanup hint: systemctl --user disable …”. As long as you see “Listening: 127.0.0.1:18789” and “web gateway heartbeat”, the gateway is fine.
+- **Log messages you can ignore:** "systemd user services unavailable", "run the gateway in the foreground instead of openclaw gateway", "Cleanup hint: systemctl --user disable …". As long as you see "Listening: 127.0.0.1:18789" and "web gateway heartbeat", the gateway is fine.
 - **Recommended:** Use the **cron-only watchdog** so that every 5 minutes something checks if the gateway is responsive and, if not, restores one of the last 3 known-good configs and starts the gateway with `openclaw gateway run`. That way a bad config edit is auto-recovered. See [scripts/README.md](../scripts/README.md#gateway-watchdog-cron-only-no-systemd): copy `scripts/gateway-watchdog-cron.sh` to `~/.openclaw/scripts/`, make it executable, and add one crontab entry. Do not use `openclaw gateway start` (systemd) together with this watchdog.
 
 ---
@@ -34,10 +34,10 @@ On **WSL2** or in **containers**, `systemctl --user` is often unavailable (`Fail
 When you run `openclaw plugins install openclaw-hybrid-memory`, the OpenClaw plugin scanner may show:
 
 ```text
-WARNING: Plugin "openclaw-hybrid-memory" contains dangerous code patterns: Environment variable access combined with network send — possible credential harvesting
+WARNING: Plugin "openclaw-hybrid-memory" contains dangerous code patterns: Environment variable access combined with network send - possible credential harvesting
 ```
 
-This is a **false positive**. The plugin only uses your OpenAI API key to call OpenAI’s embedding API; it does not send credentials anywhere else. The scanner flags any plugin that both reads environment variables (e.g. for config) and performs network requests. You can ignore this warning and continue. To use your key from the environment, set `embedding.apiKey` in config to `"${OPENAI_API_KEY}"` (see [CONFIGURATION.md](CONFIGURATION.md)).
+This is a **false positive**. The plugin only uses your configured API keys (OpenAI, Google, or none for local providers such as Ollama and ONNX) to call the respective embedding APIs; it does not send credentials anywhere else. The scanner flags any plugin that both reads environment variables (e.g. for config) and performs network requests. You can ignore this warning and continue. To use your key from the environment, set `embedding.apiKey` in config to `"${OPENAI_API_KEY}"` (see [CONFIGURATION.md](CONFIGURATION.md)).
 
 ---
 
@@ -60,11 +60,11 @@ This is a **false positive**. The plugin only uses your OpenAI API key to call O
 | `openclaw plugin install` fails or does nothing (singular "plugin") | The correct command uses **plugins** (plural) | Use **`openclaw plugins install`** (plural). See [issue #36](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/36). |
 | "plugin not found: openclaw-hybrid-memory" (blocks `plugins install`) | Config references the plugin but folder is missing | Use a standalone installer: `npx -y openclaw-hybrid-memory-install` or `curl -sSL https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh \| bash`. See [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md#when-plugin-not-found-blocks-install). |
 | "duplicate plugin id detected" / two copies of memory-hybrid | Plugin exists in both global openclaw and ~/.openclaw/extensions | Use NPM only: run `./scripts/use-npm-only.sh` (from this repo) to remove the global copy. Then use `openclaw plugins install openclaw-hybrid-memory` for upgrades. See [UPGRADE-PLUGIN.md](UPGRADE-PLUGIN.md#using-npm-only-recommended). |
-| Could not locate bindings file (better_sqlite3.node) | Native module not built after install or rebuild was interrupted | Run `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3 @lancedb/lancedb`, then `openclaw gateway stop && openclaw gateway start`. If `npm rebuild` exits non-zero (e.g. node-gyp `node_gyp_bins` ENOENT on Node 25), check whether `node_modules/better-sqlite3/build/Release/better_sqlite3.node` exists — if it does, restarting the gateway may be enough. The published package runs rebuild in `postinstall`; ensure build tools (e.g. `build-essential`, `python3`) are installed. |
+| Could not locate bindings file (better_sqlite3.node) | Native module not built after install or rebuild was interrupted | Run `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3 @lancedb/lancedb`, then `openclaw gateway stop && openclaw gateway start`. If `npm rebuild` exits non-zero (e.g. node-gyp `node_gyp_bins` ENOENT on Node 25), check whether `node_modules/better-sqlite3/build/Release/better_sqlite3.node` exists - if it does, restarting the gateway may be enough. The published package runs rebuild in `postinstall`; ensure build tools (e.g. `build-essential`, `python3`) are installed. |
 | "Unrecognized keys: autoCapture, autoRecall, embedding" | Config keys placed at wrong nesting level | Move those keys under `config`. Correct structure: `plugins.entries["openclaw-hybrid-memory"]` = `{ enabled: true, config: { autoCapture, autoRecall, embedding, ... } }`. See [Config nesting](#config-nesting) below. |
 | `invalid config: must NOT have additional properties` (plugin entry) | Newer OpenClaw validates plugin config using the plugin's `configSchema`; with `additionalProperties: false` any key not listed was rejected. | The plugin's `openclaw.plugin.json` now sets **`additionalProperties: true`** at the root of `configSchema` so the core accepts all config keys. The plugin still parses and validates config at runtime. If you see this error, ensure you're using a plugin version that has this change (copy `extensions/memory-hybrid/openclaw.plugin.json` from this repo to `~/.openclaw/extensions/openclaw-hybrid-memory/` or upgrade the plugin). |
 | Agent doesn't answer chat / tools do nothing | Gateway down, plugin failed to load, or before_agent_start blocking | See [Agent not responding](#agent-not-responding--chat-or-tools-do-nothing) below. |
-| Cron agents using `ollama/qwen3:*` time out or return empty responses | Qwen3 thinking mode places reply in `message.reasoning` instead of `message.content` | Fixed in plugin v2026.3.101+. Upgrade the plugin. The fix is automatic — no config change needed. |
+| Cron agents using `ollama/qwen3:*` time out or return empty responses | Qwen3 thinking mode places reply in `message.reasoning` instead of `message.content` | Fixed in plugin v2026.3.101+. Upgrade the plugin. The fix is automatic - no config change needed. |
 
 ---
 
@@ -122,16 +122,16 @@ Inspect OpenClaw (or gateway) logs for errors when you send a message. Look for:
 - Gateway/connection errors (e.g. ECONNREFUSED, timeouts).
 - Errors in `before_agent_start` or from the embedding/LLM calls (e.g. 401/403, timeout).
 
-When **nothing relevant appears** (no timeout, no errors) but the agent still doesn’t respond, the turn may be **stuck** in the plugin’s `before_agent_start` (e.g. waiting on the gateway/LLM for query expansion or embeddings). As of recent plugin versions:
+When **nothing relevant appears** (no timeout, no errors) but the agent still doesn't respond, the turn may be **stuck** in the plugin's `before_agent_start` (e.g. waiting on the gateway/LLM for query expansion or embeddings). As of recent plugin versions:
 
-- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (query expansion, embedding, or vector search). The plugin applies timeouts (query expansion: 5–25s, vector step: 30s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
+- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (query expansion, embedding, or vector search). The plugin applies timeouts (query expansion: 5-25s, vector step: 30s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
 - **Temporarily disable auto-recall** (`autoRecall.enabled: false`) or **query expansion** (`queryExpansion.enabled: false`) and restart the gateway. If the agent starts responding, the hang was in that path (often gateway/LLM not responding). Re-enable after fixing the gateway or model config.
 
 Log location depends on your OpenClaw setup (often under `~/.openclaw/` or wherever the gateway is run).
 
 ### 6. Provider cooldown / "All models failed"
 
-If scheduled jobs or verify show **"Provider X is in cooldown"** or **"All models failed"**, one of the providers the plugin is configured to use is rate-limiting or returning errors. The plugin tries all models in the tier list in order — if all fail, the job errors.
+If scheduled jobs or verify show **"Provider X is in cooldown"** or **"All models failed"**, one of the providers the plugin is configured to use is rate-limiting or returning errors. The plugin tries all models in the tier list in order - if all fail, the job errors.
 
 - Run `openclaw hybrid-mem verify` and check the "Scheduled jobs" section for recent errors.
 - Run `openclaw hybrid-mem verify --test-llm` to see which specific models are reachable.
@@ -150,7 +150,7 @@ Or set `queryExpansion.model` to a single fast model (e.g. `google/gemini-2.5-fl
 
 ### 7. "Query expansion failed, using raw prompt" (500, timeout, or "Request was aborted")
 
-This means the nano-tier LLM used for query expansion is failing — e.g. provider API error, missing API key, or timeout. The plugin falls back to the raw user prompt, so recall still works.
+This means the nano-tier LLM used for query expansion is failing - e.g. provider API error, missing API key, or timeout. The plugin falls back to the raw user prompt, so recall still works.
 
 - **Fix:** Check which model is being used: `openclaw hybrid-mem verify` shows `queryExpansion.model` (or nano tier). Run `openclaw hybrid-mem verify --test-llm` to confirm it is reachable.
 - Add fallback models to `llm.nano` or explicitly set `queryExpansion.model` to a reliable model.
@@ -159,15 +159,15 @@ This means the nano-tier LLM used for query expansion is failing — e.g. provid
 
 ### 8. "400/404 model not found" from verify --test-llm
 
-The plugin calls provider APIs **directly** — no gateway allowlist is involved. If you see 400 or 404 errors:
+The plugin calls provider APIs **directly** - no gateway allowlist is involved. If you see 400 or 404 errors:
 
-- **404 "model does not exist"** — the model ID is wrong or your API key does not have access to that model. Run `openclaw models list --all --provider <name>` to see available model IDs for your account.
-- **404 from Google embedding endpoint ("is not found for API version v1beta")** — Google's OpenAI-compatibility endpoint only supports some models (e.g. `text-embedding-004` is not available via `v1beta`). Fix: switch the embedding `model` in config to a model that is available on the OpenAI-compat endpoint, or use a different provider. The plugin detects this exact 404 pattern and **fails fast** (no retries) without reporting it to GlitchTip, so it is a config error, not a transient failure.
-- **404 for MiniMax models** — if you see 404 on `minimax/*` calls and you're on an older plugin version, upgrade: a previous bug routed MiniMax requests to `api.openai.com` instead of `api.minimax.io`. Since v1.x the plugin has a built-in `minimax` handler with the correct default endpoint (no `baseURL` needed in config).
-- **400 "invalid model ID"** — use `provider/model` format: `google/gemini-2.5-flash`, `openai/gpt-4.1-nano`, `anthropic/claude-haiku-4-5`, `minimax/MiniMax-M2.5`.
-- **400 "unsupported parameter: temperature"** — OpenAI reasoning model (`o1`, `o3`, `o4-*`). The plugin automatically strips `temperature` for these; ensure you are running the latest plugin version.
-- **401 / authentication error** — check that `llm.providers.<provider>.apiKey` is set correctly in plugin config.
-- **No key configured** — verify shows `⚠️ skipped` for that model. Add the key to `llm.providers.<provider>.apiKey`.
+- **404 "model does not exist"** - the model ID is wrong or your API key does not have access to that model. Run `openclaw models list --all --provider <name>` to see available model IDs for your account.
+- **404 from Google embedding endpoint ("is not found for API version v1beta")** - Google's OpenAI-compatibility endpoint only supports some models (e.g. `text-embedding-004` is not available via `v1beta`). Fix: switch the embedding `model` in config to a model that is available on the OpenAI-compat endpoint, or use a different provider. The plugin detects this exact 404 pattern and **fails fast** (no retries) without reporting it to GlitchTip, so it is a config error, not a transient failure.
+- **404 for MiniMax models** - if you see 404 on `minimax/*` calls and you're on an older plugin version, upgrade: a previous bug routed MiniMax requests to `api.openai.com` instead of `api.minimax.io`. Since v1.x the plugin has a built-in `minimax` handler with the correct default endpoint (no `baseURL` needed in config).
+- **400 "invalid model ID"** - use `provider/model` format: `google/gemini-2.5-flash`, `openai/gpt-4.1-nano`, `anthropic/claude-haiku-4-5`, `minimax/MiniMax-M2.5`.
+- **400 "unsupported parameter: temperature"** - OpenAI reasoning model (`o1`, `o3`, `o4-*`). The plugin automatically strips `temperature` for these; ensure you are running the latest plugin version.
+- **401 / authentication error** - check that `llm.providers.<provider>.apiKey` is set correctly in plugin config.
+- **No key configured** - verify shows `⚠️ skipped` for that model. Add the key to `llm.providers.<provider>.apiKey`.
 ---
 
 ## Temporarily disabling hybrid-memory for testing
@@ -232,7 +232,7 @@ Embeddings are used for vector search, auto-recall, store, consolidate, and find
 
 ### Detection
 
-Run `openclaw hybrid-mem verify` — it checks for a non-placeholder key and calls the embedding API once. If invalid, verify reports "Embedding API: FAIL".
+Run `openclaw hybrid-mem verify` - it checks for a non-placeholder key and calls the embedding API once. If invalid, verify reports "Embedding API: FAIL".
 
 ### Failover
 
@@ -242,10 +242,10 @@ The plugin does **not** support automatic failover to another provider. All embe
 
 ## Related docs
 
-- [FAQ.md](FAQ.md) — Quick answers to common questions
-- [QUICKSTART.md](QUICKSTART.md) — Installation
-- [CONFIGURATION.md](CONFIGURATION.md) — Full config reference
-- [OPERATIONS.md](OPERATIONS.md) — Background jobs, scripts, upgrades
-- [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
-- [CREDENTIALS.md](CREDENTIALS.md) — Credential vault troubleshooting
-- [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) — Write-ahead log design
+- [FAQ.md](FAQ.md) - Quick answers to common questions
+- [QUICKSTART.md](QUICKSTART.md) - Installation
+- [CONFIGURATION.md](CONFIGURATION.md) - Full config reference
+- [OPERATIONS.md](OPERATIONS.md) - Background jobs, scripts, upgrades
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands
+- [CREDENTIALS.md](CREDENTIALS.md) - Credential vault troubleshooting
+- [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) - Write-ahead log design

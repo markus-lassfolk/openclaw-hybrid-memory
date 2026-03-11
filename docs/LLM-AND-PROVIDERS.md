@@ -11,7 +11,7 @@ The hybrid-memory plugin uses **two kinds of model access**:
 1. **Embeddings** — turn text into vectors for semantic search (auto-recall, dedup, ingest).
 2. **Chat/completion** — distillation, reflection, classification, query expansion, self-correction, and other LLM-backed features.
 
-The plugin calls provider APIs **directly** using the API keys you configure — it does not route LLM calls through the OpenClaw gateway's agent pipeline. Embeddings always go directly to OpenAI.
+The plugin calls provider APIs **directly** using the API keys you configure — it does not route LLM calls through the OpenClaw gateway's agent pipeline. Embeddings go directly to whichever embedding provider you configure (OpenAI, Ollama, ONNX, or Google).
 
 ---
 
@@ -19,7 +19,7 @@ The plugin calls provider APIs **directly** using the API keys you configure —
 
 | Requirement | Purpose |
 |-------------|---------|
-| **Embedding access** | Required. An OpenAI API key and embedding model (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config. |
+| **Embedding access** | Required. Configure `embedding.provider` and related settings (see [Embedding providers](#embedding-providers) below). Supported providers: OpenAI (requires API key), Ollama (local, no key), ONNX (local, no key), Google (requires API key). The plugin will not load without valid embedding config. |
 | **Chat/completion access** | Optional for basic memory (capture/recall). Required for: distillation, reflection, auto-classify, query expansion, self-correction, ingest-files, proposals, build-languages. |
 
 For full features you need at least one chat provider configured. The plugin works with any OpenAI-compatible API.
@@ -222,26 +222,157 @@ Calls each configured model with a minimal prompt and reports ✅ reachable / �
 
 ---
 
-## Embedding configuration
+## Embedding providers
 
-Embeddings are required and always go directly to OpenAI.
+Embeddings are required. The plugin supports four providers — choose the one that fits your setup:
+
+| Provider | `embedding.provider` | API key required | Notes |
+|----------|---------------------|-----------------|-------|
+| **OpenAI** | `"openai"` (default) | Yes (`embedding.apiKey`) | `text-embedding-3-small` (1536d) or `text-embedding-3-large` (3072d) |
+| **Ollama** | `"ollama"` | No | Fully local. Any Ollama model (e.g. `nomic-embed-text`, `mxbai-embed-large`). Ollama must be running. |
+| **ONNX** | `"onnx"` | No | Fully local. Models auto-downloaded from HuggingFace. Requires `onnxruntime-node`. |
+| **Google** | `"google"` | Yes (Google API key) | `text-embedding-004` via Gemini API. Reuses `llm.providers.google.apiKey` or `distill.apiKey`. |
+
+---
+
+### OpenAI (default)
 
 ```json
 "embedding": {
+  "provider": "openai",
   "apiKey": "sk-proj-...",
   "model": "text-embedding-3-small"
 }
 ```
 
-**Optional fallback list:** Set `embedding.models` to try multiple models in order on rate limit or failure. All models must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`).
+**Optional fallback model list:** Set `embedding.models` to try multiple models in order on rate limit or failure. All models must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`).
 
 ```json
 "embedding": {
+  "provider": "openai",
   "apiKey": "sk-proj-...",
   "model": "text-embedding-3-small",
   "models": ["text-embedding-3-small"]
 }
 ```
+
+---
+
+### Ollama (fully local, no API key)
+
+Requires a running [Ollama](https://ollama.com) instance (default: `http://localhost:11434`).
+
+```json
+"embedding": {
+  "provider": "ollama",
+  "model": "nomic-embed-text",
+  "dimensions": 768,
+  "endpoint": "http://localhost:11434"
+}
+```
+
+Popular models and their dimensions:
+
+| Model | Dimensions |
+|-------|-----------|
+| `nomic-embed-text` | 768 |
+| `mxbai-embed-large` | 1024 |
+| `all-minilm` | 384 |
+
+> **Note:** The `dimensions` value must match what the model actually produces. Check your model's documentation.
+
+**With OpenAI fallback:** If you also set `embedding.apiKey`, the plugin automatically falls back to OpenAI when Ollama is unavailable (using `FallbackEmbeddingProvider`):
+
+```json
+"embedding": {
+  "provider": "ollama",
+  "model": "nomic-embed-text",
+  "dimensions": 768,
+  "apiKey": "sk-proj-..."
+}
+```
+
+---
+
+### ONNX (fully local, no API key)
+
+Runs inference locally using [ONNX Runtime](https://onnxruntime.ai/). Models are auto-downloaded from HuggingFace on first use and cached at `~/.cache/openclaw/onnx-embeddings/`.
+
+**Prerequisites:** `npm install onnxruntime-node` in the extension directory.
+
+```json
+"embedding": {
+  "provider": "onnx",
+  "model": "all-MiniLM-L6-v2",
+  "dimensions": 384
+}
+```
+
+Supported models (auto-downloaded):
+
+| Model | Dimensions |
+|-------|-----------|
+| `all-MiniLM-L6-v2` | 384 |
+| `bge-small-en-v1.5` | 384 |
+
+You can also provide a path to a local `.onnx` file:
+
+```json
+"embedding": {
+  "provider": "onnx",
+  "model": "/path/to/model.onnx",
+  "dimensions": 384
+}
+```
+
+**With OpenAI fallback:** If `onnxruntime-node` is not installed, the plugin can fall back to OpenAI automatically when `embedding.apiKey` is also set:
+
+```json
+"embedding": {
+  "provider": "onnx",
+  "model": "all-MiniLM-L6-v2",
+  "dimensions": 384,
+  "apiKey": "sk-proj-..."
+}
+```
+
+---
+
+### Google (Gemini API)
+
+Uses Google's `text-embedding-004` model via the Gemini API's OpenAI-compatible endpoint. Reuses the Google API key from `llm.providers.google.apiKey` (or `distill.apiKey` as a fallback).
+
+```json
+"embedding": {
+  "provider": "google"
+},
+"llm": {
+  "providers": {
+    "google": { "apiKey": "AIzaSy..." }
+  }
+}
+```
+
+Default dimensions for `text-embedding-004`: 768.
+
+---
+
+### Ordered failover with `preferredProviders`
+
+Use `embedding.preferredProviders` to define an ordered fallback chain. The plugin tries each provider in sequence; first success wins. This is the same pattern as LLM tier failover.
+
+```json
+"embedding": {
+  "preferredProviders": ["ollama", "openai"],
+  "model": "nomic-embed-text",
+  "dimensions": 768,
+  "apiKey": "sk-proj-..."
+}
+```
+
+In this example: Ollama is tried first (local, free); if it fails, the plugin falls back to OpenAI automatically. Supported in `preferredProviders`: `"ollama"`, `"openai"`, `"google"`.
+
+> **Constraint:** All providers in a chain must use the same vector dimensions. Design your chain accordingly (e.g. use a 768d Ollama model + OpenAI configured to 768d).
 
 ---
 
