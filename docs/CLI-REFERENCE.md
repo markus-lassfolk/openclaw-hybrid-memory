@@ -10,6 +10,10 @@ All commands are available via `openclaw hybrid-mem <command>`.
 
 ---
 
+**Tip: Verbosity level**
+CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `normal`, `verbose`). You can change it with `openclaw hybrid-mem config-set verbosity silent`.
+
+
 ## Commands by category
 
 | Category | Commands |
@@ -65,7 +69,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and **maintenance cron jobs** (nightly distill, weekly reflection, weekly extract-procedures, self-correction). Idempotent. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 | `config-mode <preset>` | Set preset: **essential** \| **normal** \| **expert** \| **full**. Writes to openclaw.json. Restart gateway after. Presets set defaults for most enable/disable options (autoCapture, autoRecall, autoClassify, graph, procedures, reflection, memoryTiering, personaProposals, selfCorrection, etc.); see [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode full`). |
 | `help config-set <key>` | Show current value and a short description (tweet-length) for a config key. Example: `help config-set autoCapture`. |
-| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `verify` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
+| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `verify` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
 | `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 \| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). **Uses local Ollama pre-filtering** if `extraction.preFilter.enabled` is true. Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |

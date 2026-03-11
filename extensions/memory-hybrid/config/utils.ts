@@ -1,4 +1,4 @@
-import type { ConfigMode } from "./types/index.js";
+import type { ConfigMode, VerbosityLevel } from "./types/index.js";
 
 /** Default categories — can be extended via config.categories */
 export const DEFAULT_MEMORY_CATEGORIES = [
@@ -137,3 +137,12 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     verbosity: "verbose",
   },
 };
+
+/**
+ * Check if verbosity level is in "compact mode" (quiet or silent).
+ * Compact mode suppresses verbose output and only shows essential information.
+ * Use this helper instead of inline checks to ensure consistent behavior across the codebase.
+ */
+export function isCompactVerbosity(verbosity: VerbosityLevel | undefined): boolean {
+  return verbosity === "quiet" || verbosity === "silent";
+}

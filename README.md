@@ -69,6 +69,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 - **Scope promote** — CLI and cron job promote high-importance session-scoped facts to global ([docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md))
 
 ### Developer experience
+- **Silent mode** — set `verbosity: "silent"` to suppress all unsolicited memory context injections into prompts, working purely in the background.
 - **Full CLI** — commands for stats, search, classify, consolidate, reflect, dream-cycle, scope promote, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
 - **One-command setup** — `openclaw hybrid-mem install` applies recommended config and **9 maintenance cron jobs** (nightly distill, memory-to-skills, self-correction, dream-cycle, weekly reflection, extract-procedures, deep-maintenance, persona-proposals, monthly consolidation)
 - **Verify & fix** — `openclaw hybrid-mem verify --fix` diagnoses issues and adds any missing cron jobs
