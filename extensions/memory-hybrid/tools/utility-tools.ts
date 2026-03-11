@@ -7,7 +7,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { resolveReflectionModelAndFallbacks } from "../config.js";
+import { resolveReflectionModelAndFallbacks, isCompactVerbosity } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -188,7 +188,7 @@ export function registerUtilityTools(
 
         const verbosity = cfg.verbosity ?? "normal";
         let text: string;
-        if (verbosity === "quiet") {
+        if (isCompactVerbosity(verbosity)) {
           // Quiet: compact one-liner — statsBreakdown and countExpired are still computed above
           // and included in the `details` field for programmatic consumers; they're intentionally
           // omitted from the human-readable text to reduce noise in quiet sessions.
@@ -255,7 +255,7 @@ export function registerUtilityTools(
           );
           const verbosity = cfg.verbosity ?? "normal";
           let reflectText: string;
-          if (verbosity === "quiet") {
+          if (isCompactVerbosity(verbosity)) {
             reflectText = `Reflected: ${result.patternsStored} patterns stored.`;
           } else if (verbosity === "verbose") {
             reflectText = `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days, model: ${defaultModel}).`;
