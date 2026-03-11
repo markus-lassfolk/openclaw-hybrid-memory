@@ -72,7 +72,8 @@ Then set your **embedding** config (required) and optionally **LLM** preferences
 
 ```bash
 # Edit ~/.openclaw/openclaw.json:
-# - embedding.apiKey and embedding.model (required for vector search)
+# - embedding.provider + embedding.model + embedding.dimensions (required for vector search)
+# - embedding.apiKey (required for OpenAI and Google providers only)
 # - llm.default / llm.heavy (optional) for chat model preference lists - see LLM-AND-PROVIDERS.md
 # Or use env: e.g. embedding.apiKey = "env:OPENAI_API_KEY"
 ```
@@ -111,7 +112,7 @@ If SQLite or LanceDB show native bindings errors, run `openclaw hybrid-mem verif
 You should see:
 
 ```
-Config: embedding.apiKey and model present
+Config: embedding.provider and model present
 SQLite: OK (...)
 LanceDB: OK (...)
 Embedding API: OK

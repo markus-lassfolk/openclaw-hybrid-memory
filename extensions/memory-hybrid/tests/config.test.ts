@@ -794,13 +794,13 @@ describe("hybridConfigSchema.parse", () => {
   // actual resolved key, not the literal SecretRef string.
 
   it("resolves embedding.googleApiKey when distill.apiKey is env:VAR SecretRef (Issue #344)", () => {
-    vi.stubEnv("TEST_GEMINI_API_KEY_344", "AIzaSy-resolved-key-that-is-long-enough-to-pass");
+    vi.stubEnv("TEST_GEMINI_API_KEY_344", "test-google-key-resolved-long-enough-00000001");
     const result = hybridConfigSchema.parse({
       embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
       distill: { apiKey: "env:TEST_GEMINI_API_KEY_344", defaultModel: "gemini-2.0-flash" },
     });
     // embedding.googleApiKey must be the resolved value, not the literal "env:..." string
-    expect(result.embedding.googleApiKey).toBe("AIzaSy-resolved-key-that-is-long-enough-to-pass");
+    expect(result.embedding.googleApiKey).toBe("test-google-key-resolved-long-enough-00000001");
     expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
     // distill.apiKey stays raw (resolved at runtime by resolveApiKey() in init-databases)
     expect(result.distill?.apiKey).toBe("env:TEST_GEMINI_API_KEY_344");
@@ -817,22 +817,22 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("resolves embedding.googleApiKey when llm.providers.google.apiKey is env:VAR SecretRef (Issue #344)", () => {
-    vi.stubEnv("TEST_GEMINI_PROVIDER_KEY_344", "AIzaSy-provider-key-that-is-long-enough-12345");
+    vi.stubEnv("TEST_GEMINI_PROVIDER_KEY_344", "test-google-key-provider-long-enough-000000002");
     const result = hybridConfigSchema.parse({
       embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
       llm: { default: ["google/gemini-2.0-flash"], providers: { google: { apiKey: "env:TEST_GEMINI_PROVIDER_KEY_344" } } },
     });
-    expect(result.embedding.googleApiKey).toBe("AIzaSy-provider-key-that-is-long-enough-12345");
+    expect(result.embedding.googleApiKey).toBe("test-google-key-provider-long-enough-000000002");
     expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
   });
 
   it("resolves short SecretRef like env:GKEY (9 chars) for google embedding (Issue #344 edge case)", () => {
-    vi.stubEnv("GKEY", "AIzaSy-short-ref-resolved-key-long-enough");
+    vi.stubEnv("GKEY", "test-google-key-short-ref-resolved-long-enough");
     const result = hybridConfigSchema.parse({
       embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
       distill: { apiKey: "env:GKEY" },
     });
-    expect(result.embedding.googleApiKey).toBe("AIzaSy-short-ref-resolved-key-long-enough");
+    expect(result.embedding.googleApiKey).toBe("test-google-key-short-ref-resolved-long-enough");
     expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
   });
 

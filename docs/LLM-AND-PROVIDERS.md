@@ -344,7 +344,9 @@ Uses Google's `text-embedding-004` model via the Gemini API's OpenAI-compatible 
 
 ```json
 "embedding": {
-  "provider": "google"
+  "provider": "google",
+  "model": "text-embedding-004",
+  "dimensions": 768
 },
 "llm": {
   "providers": {
@@ -353,7 +355,7 @@ Uses Google's `text-embedding-004` model via the Gemini API's OpenAI-compatible 
 }
 ```
 
-Default dimensions for `text-embedding-004`: 768.
+Default dimensions for `text-embedding-004`: 768. Set `embedding.dimensions` explicitly to override.
 
 ---
 
