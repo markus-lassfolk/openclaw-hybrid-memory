@@ -52,7 +52,17 @@ export interface SweepAllResult {
 
 /** Stringify an object with sorted keys for stable, order-independent fingerprints. */
 function stableStringify(obj: Record<string, unknown>): string {
-  return JSON.stringify(Object.fromEntries(Object.keys(obj).sort().map((k) => [k, obj[k]])));
+  function sortDeep(value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(sortDeep);
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = sortDeep((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return JSON.stringify(sortDeep(obj));
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +76,25 @@ interface HAEntity {
   last_updated: string;
 }
 
+async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
+  const url = `${ha.baseUrl.replace(/\/$/, "")}${path}`;
+  const token = ha.token.startsWith("env:")
+    ? (process.env[ha.token.slice(4)] ?? "")
+    : ha.token;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      signal: controller.signal,
+    });
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchHaEntities(
   ha: HomeAssistantSensorConfig,
   prefix: string,
@@ -76,68 +105,26 @@ async function fetchHaEntities(
     return cachedStates.filter((e) => e.entity_id.startsWith(prefix));
   }
 
-  const url = `${ha.baseUrl.replace(/\/$/, "")}/api/states`;
-  const token = ha.token.startsWith("env:")
-    ? (process.env[ha.token.slice(4)] ?? "")
-    : ha.token;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
-    const all = (await res.json()) as HAEntity[];
-    return all.filter((e) => e.entity_id.startsWith(prefix));
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await fetchHa(ha, "/api/states");
+  if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
+  const all = (await res.json()) as HAEntity[];
+  return all.filter((e) => e.entity_id.startsWith(prefix));
 }
 
 async function fetchHaEntityById(
   ha: HomeAssistantSensorConfig,
   entityId: string,
 ): Promise<HAEntity | null> {
-  const url = `${ha.baseUrl.replace(/\/$/, "")}/api/states/${encodeURIComponent(entityId)}`;
-  const token = ha.token.startsWith("env:")
-    ? (process.env[ha.token.slice(4)] ?? "")
-    : ha.token;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      signal: controller.signal,
-    });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
-    return (await res.json()) as HAEntity;
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await fetchHa(ha, `/api/states/${encodeURIComponent(entityId)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
+  return (await res.json()) as HAEntity;
 }
 
 async function fetchAllHaStates(ha: HomeAssistantSensorConfig): Promise<HAEntity[]> {
-  const url = `${ha.baseUrl.replace(/\/$/, "")}/api/states`;
-  const token = ha.token.startsWith("env:")
-    ? (process.env[ha.token.slice(4)] ?? "")
-    : ha.token;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
-    return (await res.json()) as HAEntity[];
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await fetchHa(ha, "/api/states");
+  if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
+  return (await res.json()) as HAEntity[];
 }
 
 // ---------------------------------------------------------------------------
