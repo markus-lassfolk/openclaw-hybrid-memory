@@ -247,7 +247,11 @@ Back up `facts.db` and the `lancedb/` directory. SQLite can be safely copied whi
 
 ### Can I use this with a local LLM / Ollama?
 
-Not currently. The plugin requires OpenAI's embedding API. Local LLMs could work for the chat features (classify, consolidate) if they expose an OpenAI-compatible API, but this isn't officially supported. See [MODEL-AGNOSTIC-ANALYSIS.md](MODEL-AGNOSTIC-ANALYSIS.md).
+**Yes.** You can use Ollama for two specific workloads:
+1. **Embeddings**: Set `embedding.provider: "ollama"` and use models like `nomic-embed-text` (see [CONFIGURATION.md](CONFIGURATION.md#local-embedding-providers-153)).
+2. **Bulk Session Pre-filtering**: Set `extraction.preFilter.enabled: true` and `extraction.preFilter.model: "qwen3:8b"` to use a local LLM as a gatekeeper before sending bulk sessions to a cloud LLM (see [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) and [CONFIGURATION.md](CONFIGURATION.md)).
+
+For main conversational tasks (classification, consolidation, chat), local LLMs often lack the instruction-following consistency required, though any provider supported by the OpenClaw gateway can technically be configured via `llm.heavy` / `llm.fast` (see [MODEL-AGNOSTIC-ANALYSIS.md](MODEL-AGNOSTIC-ANALYSIS.md)).
 
 ---
 

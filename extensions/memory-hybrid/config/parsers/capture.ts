@@ -5,6 +5,7 @@ import type {
   ReflectionConfig,
   ProceduresConfig,
   ExtractionConfig,
+  ExtractionPreFilterConfig,
 } from "../types/capture.js";
 
 export function parsePassiveObserverConfig(cfg: Record<string, unknown>): PassiveObserverConfig {
@@ -73,6 +74,22 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
   };
 }
 
+function parsePreFilterConfig(raw: Record<string, unknown> | undefined): ExtractionPreFilterConfig | undefined {
+  if (!raw) return undefined;
+  return {
+    enabled: raw.enabled === true,
+    model: typeof raw.model === "string" && raw.model.trim().length > 0
+      ? raw.model.trim()
+      : "qwen3:8b",
+    endpoint: typeof raw.endpoint === "string" && raw.endpoint.trim().length > 0
+      ? raw.endpoint.trim()
+      : undefined,
+    maxCharsPerSession: typeof raw.maxCharsPerSession === "number" && raw.maxCharsPerSession >= 100
+      ? Math.floor(raw.maxCharsPerSession)
+      : undefined,
+  };
+}
+
 export function parseExtractionConfig(cfg: Record<string, unknown>): ExtractionConfig {
   const extractionRaw = cfg.extraction as Record<string, unknown> | undefined;
   return {
@@ -87,5 +104,6 @@ export function parseExtractionConfig(cfg: Record<string, unknown>): ExtractionC
     verificationModel: typeof extractionRaw?.verificationModel === "string" && extractionRaw.verificationModel.trim().length > 0
       ? extractionRaw.verificationModel.trim()
       : undefined,
+    preFilter: parsePreFilterConfig(extractionRaw?.preFilter as Record<string, unknown> | undefined),
   };
 }

@@ -25,7 +25,7 @@ facts table
 ├── id              (UUID)
 ├── text            ("User prefers dark mode")
 ├── category        (preference)
-├── importance      (0.7)
+├── importance      (0.5)
 ├── entity          ("user")
 ├── key             ("preference")
 ├── value           ("dark mode")
@@ -40,6 +40,8 @@ facts table
 ├── normalized_hash (SHA-256 of normalized text, for dedup)
 ├── recall_count    (how many times recalled)
 ├── last_accessed   (epoch seconds)
+├── access_count    (INTEGER, times recalled — added by migration #237)
+├── last_accessed_at (ISO 8601 timestamp of last recall — added by migration #237)
 ├── valid_from      (bi-temporal: when fact became true)
 ├── valid_until     (bi-temporal: when fact stopped being true)
 ├── superseded_at   (epoch seconds, when a newer fact replaced this)
@@ -49,7 +51,7 @@ facts table
 
 An **FTS5 virtual table** (`facts_fts`) mirrors `text`, `category`, `entity`, `key`, and `value` for full-text search. It uses **Porter stemming** and **Unicode tokenization** — so searching for "preferred" matches "prefer", and non-ASCII characters work correctly. Triggers keep FTS in sync on every insert/update/delete.
 
-**Indexes** on: `category`, `entity`, `created_at`, `expires_at`, `decay_class`, `tags`, `source_date`, `last_accessed`, `superseded_at`, `valid_from`/`valid_until`, `normalized_hash`.
+**Indexes** on: `category`, `entity`, `created_at`, `expires_at`, `decay_class`, `tags`, `source_date`, `last_accessed`, `superseded_at`, `valid_from`/`valid_until`, `normalized_hash`, `access_count`, `last_accessed_at` (partial, non-null only).
 
 ### 2. LanceDB (vector storage)
 
@@ -62,7 +64,7 @@ memories table (LanceDB)
 ├── id              (UUID)
 ├── text            (fact text)
 ├── vector          (float array, 1536 dims for text-embedding-3-small)
-├── importance      (0.7)
+├── importance      (0.5)
 ├── category        ("preference")
 └── createdAt       (epoch seconds)
 ```
@@ -98,7 +100,7 @@ When you search for "database performance":
    - **Dynamic salience** — access boost (frequently recalled facts score higher) and time decay (older unused memories fade). See [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md).
 4. **Filtering** — excludes expired facts, superseded facts, and optionally filters by tag
 5. **Sorting** — by composite score, then by effective date (newer first) on ties
-6. **Access tracking** — bumps `recall_count` and `last_accessed` for returned facts; extends TTL for stable/active facts; drives salience scoring
+6. **Access tracking** — bumps `access_count`, `last_accessed_at` (and `recall_count`) for returned facts; extends TTL for stable/active/durable/normal facts; drives salience scoring
 
 ### Vector search (LanceDB)
 

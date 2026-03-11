@@ -29,6 +29,10 @@ export type MemoryEntry = {
   tags?: string[] | null;
   recallCount?: number;
   lastAccessed?: number | null;
+  /** Incremented on every memory_recall hit (#237). */
+  accessCount?: number;
+  /** ISO 8601 timestamp of last recall hit (#237). */
+  lastAccessedAt?: string | null;
   supersededAt?: number | null;
   supersededBy?: string | null;
   /** When the fact became true in the real world (epoch seconds). */

@@ -70,6 +70,28 @@ Live auto-capture (via `memory-hybrid` plugin) catches **~73% of important facts
 
 ---
 
+
+## Two-Tier Architecture (Local LLM Pre-filtering)
+
+To significantly reduce cloud LLM costs and API calls, session distillation supports an optional **two-tier architecture**. When enabled, a local Ollama model acts as a gatekeeper, triaging sessions before they ever reach the cloud LLM.
+
+1. **Tier 1 (Local triage):** A fast, free local model (like `qwen3:8b`) reads the first ~2000 characters of each session and classifies it as `kept` (contains extractable facts/knowledge) or `skipped` (ephemeral chatting, tool errors, empty).
+2. **Tier 2 (Cloud extraction):** Only the `kept` sessions are forwarded to the heavy cloud model (like Gemini or Claude) for full fact extraction.
+
+If the local Ollama endpoint is unreachable, the system fails open: all sessions are sent to the cloud model, ensuring no data is missed. 
+
+**Configuration:**
+```yaml
+extraction:
+  preFilter:
+    enabled: true
+    model: "qwen3:8b"           # local Ollama model (free)
+    endpoint: "http://localhost:11434"  # optional
+    maxCharsPerSession: 2000    # characters evaluated per session
+```
+
+This pre-filter is integrated into `openclaw hybrid-mem distill`, as well as directive, reinforcement, and self-correction extraction CLI commands.
+
 ## Two-Phase Approach
 
 ### Phase 1: Bulk Historical Distillation
