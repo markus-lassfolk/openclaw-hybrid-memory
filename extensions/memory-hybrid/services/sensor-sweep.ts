@@ -570,7 +570,6 @@ export async function sweepHomeAssistantAnomaly(
     }
 
     if (anomalies.length === 0) {
-      result.eventsSkipped++;
       return result;
     }
 
@@ -751,7 +750,6 @@ export async function sweepYarbo(
 
     // Only write if there's something notable
     if (errorEntities.length === 0 && entities.every((e) => e.state === "idle" || e.state === "off")) {
-      result.eventsSkipped++;
       return result;
     }
 
