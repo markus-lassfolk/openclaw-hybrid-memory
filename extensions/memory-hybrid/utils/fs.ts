@@ -55,20 +55,21 @@ export function getDirSizeSync(dirPath: string): number {
 export async function getDirSize(dirPath: string): Promise<number> {
   try {
     const entries = await readdir(dirPath, { withFileTypes: true });
-    let total = 0;
-    for (const entry of entries) {
+    const promises = entries.map(async (entry) => {
       const fullPath = join(dirPath, entry.name);
       if (entry.isFile()) {
         try {
-          total += (await stat(fullPath)).size;
+          return (await stat(fullPath)).size;
         } catch {
-          // skip unreadable files
+          return 0;
         }
       } else if (entry.isDirectory()) {
-        total += await getDirSize(fullPath);
+        return getDirSize(fullPath);
       }
-    }
-    return total;
+      return 0;
+    });
+    const sizes = await Promise.all(promises);
+    return sizes.reduce((total, size) => total + size, 0);
   } catch {
     return 0;
   }
