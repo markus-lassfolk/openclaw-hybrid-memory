@@ -133,8 +133,8 @@ async function getDirSize(dirPath: string): Promise<number> {
   } catch { return 0; }
 }
 
-/** Cached LanceDB dir size to avoid repeated async traversal on every poll */
-let _lanceSizeCache = { size: 0, ts: 0 };
+/** Cached LanceDB dir size keyed by resolved path to avoid repeated traversal on every poll */
+const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
 const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
 
 function getFileSize(filePath: string): number {
@@ -156,10 +156,11 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
 
   // Use cached LanceDB size to avoid blocking on large directory traversals
   const now = Date.now();
-  if (now - _lanceSizeCache.ts > LANCE_CACHE_TTL_MS) {
-    _lanceSizeCache = { size: await getDirSize(ctx.resolvedLancePath), ts: now };
+  const cachedEntry = _lanceSizeCache.get(ctx.resolvedLancePath);
+  if (!cachedEntry || now - cachedEntry.ts > LANCE_CACHE_TTL_MS) {
+    _lanceSizeCache.set(ctx.resolvedLancePath, { size: await getDirSize(ctx.resolvedLancePath), ts: now });
   }
-  const lanceSizeBytes = _lanceSizeCache.size;
+  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)!.size;
 
   return {
     activeFacts,
