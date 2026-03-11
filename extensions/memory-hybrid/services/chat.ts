@@ -431,7 +431,12 @@ export async function chatCompleteWithRetry(opts: {
       `⚠️ Memory plugin: Some LLM provider keys are missing. ` +
       `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`
     );
-    if (!finalIs500) {
+    // Don't report UnconfiguredProviderError to GlitchTip — it's a config issue, not a code bug.
+    // This can happen when the final model in the fallback chain is also unconfigured but an
+    // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
+    const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
+      (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
+    if (!finalIs500 && !finalIsUnconfigured) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",

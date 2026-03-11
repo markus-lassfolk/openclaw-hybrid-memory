@@ -8,6 +8,7 @@ import {
   chatCompleteWithRetry,
   createPendingLLMWarnings,
   is404Like,
+  UnconfiguredProviderError,
 } from "../services/chat.js";
 
 vi.mock("../services/error-reporter.js", () => ({
@@ -603,5 +604,78 @@ describe("chatCompleteWithRetry — 500 and 404 fallback (#302, #303)", () => {
     const drained = warnings.drain();
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatch(/404/);
+  });
+});
+
+describe("chatCompleteWithRetry — UnconfiguredProviderError (#328)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#328: does not report to GlitchTip when all models fail with UnconfiguredProviderError", async () => {
+    const err = new UnconfiguredProviderError("anthropic", "anthropic/claude-sonnet-4-6");
+    const mockOpenai = {
+      chat: {
+        completions: { create: vi.fn().mockRejectedValue(err) },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "anthropic/claude-sonnet-4-6",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["anthropic/claude-opus-4-6"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/provider keys/i);
+  });
+
+  it("#328: does not report UnconfiguredProviderError to GlitchTip when final model is unconfigured but earlier model had a different error", async () => {
+    const unconfiguredErr = new UnconfiguredProviderError("anthropic", "anthropic/claude-sonnet-4-6");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn()
+            // Primary (openai): transient ECONNREFUSED — does not count as unconfigured
+            .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+            .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+            // Fallback (anthropic): unconfigured provider
+            .mockRejectedValue(unconfiguredErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["anthropic/claude-sonnet-4-6"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    // UnconfiguredProviderError is a config issue — must NOT be reported to GlitchTip regardless of other errors
+    const unconfiguredCalls = vi.mocked(errorReporter.capturePluginError).mock.calls
+      .filter(([err]) => err instanceof UnconfiguredProviderError);
+    expect(unconfiguredCalls).toHaveLength(0);
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/provider keys/i);
   });
 });
