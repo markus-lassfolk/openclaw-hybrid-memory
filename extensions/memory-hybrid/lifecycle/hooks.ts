@@ -1770,6 +1770,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   const onFrustrationDetect = (api: ClawdbotPluginApi) => {
     if (ctx.cfg.frustrationDetection?.enabled === false) return;
+    if (ctx.cfg.verbosity === "silent") return;
     const fCfg = ctx.cfg.frustrationDetection;
 
     // Capture each incoming user turn
