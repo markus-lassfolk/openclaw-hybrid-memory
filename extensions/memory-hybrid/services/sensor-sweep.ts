@@ -634,7 +634,7 @@ export async function sweepSystemHealth(
       platform: process.platform,
     };
 
-    const fp = computeFingerprint(`sensor.system-health:${JSON.stringify(payload)}`);
+    const fp = computeFingerprint(`sensor.system-health`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
