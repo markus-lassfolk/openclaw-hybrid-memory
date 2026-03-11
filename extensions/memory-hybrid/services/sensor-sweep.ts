@@ -389,9 +389,11 @@ export async function sweepGitHub(
       return result;
     }
 
+    const repoFlag = cfg.repo ? ` --repo ${cfg.repo}` : "";
+
     // Open PRs
     const prOutput = tryExecSync(
-      `gh pr list --state open --limit 20 --json number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt`,
+      `gh pr list${repoFlag} --state open --limit 20 --json number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt`,
     );
     const openPrs = parseGhJson<GitHubPR>(prOutput);
 
@@ -399,7 +401,7 @@ export async function sweepGitHub(
     let reviewRequests: GitHubPR[] = [];
     if (cfg.includeReviewRequests !== false) {
       const rrOutput = tryExecSync(
-        `gh pr list --state open --review-requested @me --limit 20 --json number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt`,
+        `gh pr list${repoFlag} --state open --review-requested @me --limit 20 --json number,title,state,url,reviewDecision,isDraft,createdAt,updatedAt`,
       );
       reviewRequests = parseGhJson<GitHubPR>(rrOutput);
     }
@@ -407,7 +409,7 @@ export async function sweepGitHub(
     // CI failures on open PRs
     const ciFailures: Array<{ pr: number; title: string; url: string }> = [];
     for (const pr of openPrs.slice(0, 5)) {
-      const ciOutput = tryExecSync(`gh pr checks ${pr.number} --json name,state 2>/dev/null`);
+      const ciOutput = tryExecSync(`gh pr checks${repoFlag} ${pr.number} --json name,state 2>/dev/null`);
       if (ciOutput) {
         try {
           const checks = JSON.parse(ciOutput) as Array<{ name: string; state: string }>;
@@ -424,7 +426,7 @@ export async function sweepGitHub(
     const staleIssueDays = cfg.staleIssueDays ?? 7;
     const staleCutoff = new Date(Date.now() - staleIssueDays * 24 * 3600 * 1000).toISOString();
     const issueOutput = tryExecSync(
-      `gh issue list --state open --limit 30 --json number,title,state,url,updatedAt`,
+      `gh issue list${repoFlag} --state open --limit 30 --json number,title,state,url,updatedAt`,
     );
     const allIssues = parseGhJson<GitHubIssue>(issueOutput);
     const staleIssues = allIssues.filter(
@@ -490,15 +492,12 @@ export async function sweepHomeAssistantAnomaly(
     if (watchEntities.length === 0) return result;
 
     const states: Record<string, { state: string; last_updated: string }> = {};
+    // Fetch all HA entities once, then filter locally for each watched entity.
+    const allEntities = await fetchHaEntities(ha, "");
     for (const entityId of watchEntities) {
-      try {
-        const entities = await fetchHaEntities(ha, entityId);
-        const match = entities.find((e) => e.entity_id === entityId);
-        if (match) {
-          states[entityId] = { state: match.state, last_updated: match.last_updated };
-        }
-      } catch {
-        // skip individual entity failures
+      const match = allEntities.find((e) => e.entity_id === entityId);
+      if (match) {
+        states[entityId] = { state: match.state, last_updated: match.last_updated };
       }
     }
 

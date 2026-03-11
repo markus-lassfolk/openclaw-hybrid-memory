@@ -40,6 +40,8 @@ export type MemoryPatternsSensorConfig = SensorSourceConfig & {
 
 /** Tier 1 sensor: GitHub status via `gh` CLI. */
 export type GitHubSensorConfig = SensorSourceConfig & {
+  /** Target repository in "owner/name" format (e.g. "markus-lassfolk/openclaw-hybrid-memory"). Required for cron contexts where no git checkout is present. */
+  repo?: string;
   /** Include PRs assigned for review (default: true). */
   includeReviewRequests?: boolean;
   /** Include stale issues (no activity for N days, default: 7). */
@@ -57,7 +59,7 @@ export type SystemHealthSensorConfig = SensorSourceConfig;
 
 /** Tier 2 sensor: Weather from wttr.in. */
 export type WeatherSensorConfig = SensorSourceConfig & {
-  /** Location for weather query (e.g. "Helsinki" or "60.17,24.94"). Default: inferred from HA. */
+  /** Location for weather query (e.g. "Helsinki" or "60.17,24.94"). Default: wttr.in "auto" (IP-based inference when omitted). */
   location?: string;
 };
 
