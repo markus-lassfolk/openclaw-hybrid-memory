@@ -239,6 +239,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${trimmed}`;
     if (lower.startsWith("claude-")) return `anthropic/${trimmed}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${trimmed}`;
+    if (lower.startsWith("minimax-")) return `minimax/${trimmed}`;
     return trimmed;
   }
 
@@ -254,6 +255,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${bare}`;
     if (lower.startsWith("claude-")) return `anthropic/${bare}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${bare}`;
+    if (lower.startsWith("minimax-")) return `minimax/${bare}`;
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 

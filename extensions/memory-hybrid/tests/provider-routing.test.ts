@@ -90,11 +90,21 @@ describe("MINIMAX_BASE_URL", () => {
 describe("MiniMax provider routing — direct API key", () => {
   let tmpDir: string;
   let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  // Capture original env vars so we can restore them after each test
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+  let origMinimaxApiKey: string | undefined;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-"));
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
+    ctx = undefined;
+    // Capture originals before mutating
+    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    origMinimaxApiKey = process.env.MINIMAX_API_KEY;
     // Unset gateway env vars to ensure direct routing
     delete process.env.OPENCLAW_GATEWAY_PORT;
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
@@ -102,7 +112,13 @@ describe("MiniMax provider routing — direct API key", () => {
   });
 
   afterEach(() => {
+    // Always close db handles before removing the temp dir
+    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
     rmSync(tmpDir, { recursive: true, force: true });
+    // Restore original env vars
+    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
+    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    if (origMinimaxApiKey !== undefined) process.env.MINIMAX_API_KEY = origMinimaxApiKey; else delete process.env.MINIMAX_API_KEY;
   });
 
   it("routes minimax/MiniMax-M2.5 to MINIMAX_BASE_URL when apiKey is configured but no explicit baseURL", async () => {
@@ -119,7 +135,7 @@ describe("MiniMax provider routing — direct API key", () => {
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
     });
 
-    const ctx = initializeDatabases(cfg, api as never);
+    ctx = initializeDatabases(cfg, api as never);
 
     // Trigger routing — this lazily creates the minimax OpenAI client
     await ctx.openai.chat.completions.create({
@@ -135,7 +151,6 @@ describe("MiniMax provider routing — direct API key", () => {
     expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-minimax-test-key-1234");
     expect((minimaxCall![0] as Record<string, unknown>).baseURL).toBe("https://api.minimax.io/v1");
 
-    closeOldDatabases(ctx);
   });
 
   it("routes to custom baseURL when explicitly overridden in llm.providers.minimax", async () => {
@@ -153,7 +168,7 @@ describe("MiniMax provider routing — direct API key", () => {
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
     });
 
-    const ctx = initializeDatabases(cfg, api as never);
+    ctx = initializeDatabases(cfg, api as never);
 
     await ctx.openai.chat.completions.create({
       model: "minimax/MiniMax-M2.5",
@@ -166,7 +181,6 @@ describe("MiniMax provider routing — direct API key", () => {
     expect(minimaxCall).toBeDefined();
     expect((minimaxCall![0] as Record<string, unknown>).baseURL).toBe(customURL);
 
-    closeOldDatabases(ctx);
   });
 
   it("uses MINIMAX_API_KEY env var as fallback when no apiKey in config", async () => {
@@ -182,7 +196,7 @@ describe("MiniMax provider routing — direct API key", () => {
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
     });
 
-    const ctx = initializeDatabases(cfg, api as never);
+    ctx = initializeDatabases(cfg, api as never);
 
     await ctx.openai.chat.completions.create({
       model: "minimax/MiniMax-M2.5",
@@ -194,9 +208,6 @@ describe("MiniMax provider routing — direct API key", () => {
     );
     expect(minimaxCall).toBeDefined();
     expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-from-env-123456");
-
-    delete process.env.MINIMAX_API_KEY;
-    closeOldDatabases(ctx);
   });
 
   it("throws UnconfiguredProviderError when no apiKey is available for minimax", async () => {
@@ -211,7 +222,7 @@ describe("MiniMax provider routing — direct API key", () => {
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
     });
 
-    const ctx = initializeDatabases(cfg, api as never);
+    ctx = initializeDatabases(cfg, api as never);
 
     // resolveClient throws synchronously for unconfigured providers,
     // so we test with a sync toThrow matcher (not rejects)
@@ -222,7 +233,6 @@ describe("MiniMax provider routing — direct API key", () => {
       }),
     ).toThrow("Provider 'minimax' is not configured");
 
-    closeOldDatabases(ctx);
   });
 
   it("sends bare model name MiniMax-M2.5 (not full provider/model) to the MiniMax API", async () => {
@@ -239,7 +249,7 @@ describe("MiniMax provider routing — direct API key", () => {
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
     });
 
-    const ctx = initializeDatabases(cfg, api as never);
+    ctx = initializeDatabases(cfg, api as never);
 
     await ctx.openai.chat.completions.create({
       model: "minimax/MiniMax-M2.5",
@@ -265,7 +275,36 @@ describe("MiniMax provider routing — direct API key", () => {
     );
     expect(callWithBareModel).toBeDefined();
 
-    closeOldDatabases(ctx);
+  });
+
+  it("auto-prefixes bare MiniMax-M2.5 (no provider/ prefix) to minimax/MiniMax-M2.5 and routes correctly", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["MiniMax-M2.5"],  // bare — no minimax/ prefix
+        heavy: ["MiniMax-M2.5"],
+        providers: {
+          minimax: { apiKey: "sk-cp-bare-prefix-test" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    // Use the bare model name — normalizeModelId should auto-prefix it to minimax/MiniMax-M2.5
+    await ctx.openai.chat.completions.create({
+      model: "MiniMax-M2.5",
+      messages: [{ role: "user", content: "bare prefix test" }],
+    });
+
+    // Verify it routed to MINIMAX_BASE_URL (not default OpenAI)
+    const minimaxCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
+    );
+    expect(minimaxCall).toBeDefined();
+    expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-bare-prefix-test");
   });
 });
 
@@ -276,18 +315,30 @@ describe("MiniMax provider routing — direct API key", () => {
 describe("MiniMax provider routing — gateway key auto-merge", () => {
   let tmpDir: string;
   let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+  let origMinimaxApiKey: string | undefined;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-gw-"));
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
+    ctx = undefined;
+    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    origMinimaxApiKey = process.env.MINIMAX_API_KEY;
     delete process.env.OPENCLAW_GATEWAY_PORT;
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
     delete process.env.MINIMAX_API_KEY;
   });
 
   afterEach(() => {
+    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
     rmSync(tmpDir, { recursive: true, force: true });
+    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
+    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    if (origMinimaxApiKey !== undefined) process.env.MINIMAX_API_KEY = origMinimaxApiKey; else delete process.env.MINIMAX_API_KEY;
   });
 
   it("uses MINIMAX_BASE_URL (not OpenAI default) when gateway provides apiKey but no baseURL", async () => {
@@ -306,7 +357,7 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
       },
     });
 
-    const ctx = initializeDatabases(cfg, api as never);
+    ctx = initializeDatabases(cfg, api as never);
 
     await ctx.openai.chat.completions.create({
       model: "minimax/MiniMax-M2.5",
@@ -328,6 +379,5 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     );
     expect(wrongCall).toBeUndefined();
 
-    closeOldDatabases(ctx);
   });
 });
