@@ -7,7 +7,6 @@ import {
   EMBEDDING_DIMENSIONS,
   OPENAI_MODELS,
   resolveEnvVars,
-  resolveSecretRef,
   parseStoreConfig,
   parseWALConfig,
   parseEventLogConfig,
@@ -223,34 +222,13 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
     const rawKey = (embedding.apiKey as string).trim();
-    const isSecretRef = rawKey.startsWith("env:") || rawKey.startsWith("file:");
-    if (!isSecretRef && (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>")) {
+    if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
       throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
-    // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
-    if (isSecretRef) {
-      const resolved = resolveSecretRef(rawKey);
-      if (!resolved) {
-        const refDesc = rawKey.startsWith("env:")
-          ? `environment variable '${rawKey.slice(4)}'`
-          : `file '${rawKey.slice(5)}'`;
-        throw new Error(`embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`);
-      }
-      resolvedApiKey = resolved;
-    } else {
-      resolvedApiKey = resolveEnvVars(rawKey);
-    }
-  } else if (embedding && typeof embedding.apiKey === "string") {
+    resolvedApiKey = resolveEnvVars(rawKey);
+  } else if (embedding && typeof embedding.apiKey === "string" && (embedding.apiKey as string).trim().length >= 10) {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
-    const rawKey = (embedding.apiKey as string).trim();
-    const isSecretRef = rawKey.startsWith("env:") || rawKey.startsWith("file:");
-    if (isSecretRef || rawKey.length >= 10) {
-      if (isSecretRef) {
-        resolvedApiKey = resolveSecretRef(rawKey) ?? undefined;
-      } else {
-        resolvedApiKey = resolveEnvVars(rawKey);
-      }
-    }
+    resolvedApiKey = resolveEnvVars((embedding.apiKey as string).trim());
   }
 
   // Resolve model from explicit 'model' field or provider-specific aliases (ollamaModel, onnxModelPath)

@@ -240,44 +240,6 @@ describe("hybridConfigSchema.parse", () => {
     ).toThrow(/missing or a placeholder/);
   });
 
-  // ── embedding.apiKey SecretRef (env:VAR) resolution — Issue #333 ─────────────
-
-  it("resolves embedding.apiKey when set as env:VAR_NAME SecretRef (openai provider)", () => {
-    vi.stubEnv("TEST_EMBED_API_KEY_333", "sk-resolved-key-that-is-long-enough");
-    try {
-      const result = hybridConfigSchema.parse({
-        embedding: { provider: "openai", apiKey: "env:TEST_EMBED_API_KEY_333", model: "text-embedding-3-small" },
-      });
-      // Resolved value must be the actual key, not the literal "env:..." string
-      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
-      expect(result.embedding.apiKey).not.toMatch(/^env:/);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("throws when embedding.apiKey env: SecretRef references an unset env var", () => {
-    delete process.env.TEST_EMBED_KEY_UNSET_333;
-    expect(() =>
-      hybridConfigSchema.parse({
-        embedding: { provider: "openai", apiKey: "env:TEST_EMBED_KEY_UNSET_333", model: "text-embedding-3-small" },
-      }),
-    ).toThrow(/could not be resolved/);
-  });
-
-  it("resolves embedding.apiKey env: SecretRef for non-openai provider fallback (ollama)", () => {
-    vi.stubEnv("TEST_EMBED_FALLBACK_KEY_333", "sk-fallback-key-that-is-long-enough");
-    try {
-      const result = hybridConfigSchema.parse({
-        embedding: { provider: "ollama", model: "nomic-embed-text", apiKey: "env:TEST_EMBED_FALLBACK_KEY_333" },
-      });
-      expect(result.embedding.apiKey).toBe("sk-fallback-key-that-is-long-enough");
-      expect(result.embedding.apiKey).not.toMatch(/^env:/);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
   it("throws on null/array/string config", () => {
     expect(() => hybridConfigSchema.parse(null)).toThrow();
     expect(() => hybridConfigSchema.parse([])).toThrow();
