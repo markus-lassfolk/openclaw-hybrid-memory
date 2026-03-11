@@ -113,6 +113,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Prerequisites
 
+- **OpenClaw v2026.3.8+** (recommended) — older versions work for core memory but lack support for CLI subcommands and config reloads.
 - **Embedding access** (required) — for semantic search (auto-recall, store, ingest). Configure `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config.
 - **Chat/completion access** (optional for basic memory) — required for distillation, reflection, auto-classify, query expansion, and other LLM-backed features. The plugin can call provider APIs **directly** (recommended: configure the **`llm`** block with `nano` / `default` / `heavy` tiers and per-provider API keys) or use gateway-derived models. See [docs/LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for tiers and provider setup.
 
