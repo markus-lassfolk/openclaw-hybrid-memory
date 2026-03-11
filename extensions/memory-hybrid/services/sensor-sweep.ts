@@ -81,6 +81,30 @@ async function fetchHaEntities(
   }
 }
 
+async function fetchHaEntityById(
+  ha: HomeAssistantSensorConfig,
+  entityId: string,
+): Promise<HAEntity | null> {
+  const url = `${ha.baseUrl.replace(/\/$/, "")}/api/states/${encodeURIComponent(entityId)}`;
+  const token = ha.token.startsWith("env:")
+    ? (process.env[ha.token.slice(4)] ?? "")
+    : ha.token;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      signal: controller.signal,
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
+    return (await res.json()) as HAEntity;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tier 1: Garmin Connect via Home Assistant
 // ---------------------------------------------------------------------------
@@ -525,14 +549,15 @@ export async function sweepHomeAssistantAnomaly(
     if (watchEntities.length === 0) return result;
 
     const states: Record<string, { state: string; last_updated: string }> = {};
-    // Fetch all HA entities once, then filter locally for each watched entity.
-    const allEntities = await fetchHaEntities(ha, "");
-    for (const entityId of watchEntities) {
-      const match = allEntities.find((e) => e.entity_id === entityId);
-      if (match) {
-        states[entityId] = { state: match.state, last_updated: match.last_updated };
-      }
-    }
+    // Fetch only the specific watched entities by ID to avoid downloading all HA states.
+    await Promise.all(
+      watchEntities.map(async (entityId) => {
+        const entity = await fetchHaEntityById(ha, entityId);
+        if (entity) {
+          states[entityId] = { state: entity.state, last_updated: entity.last_updated };
+        }
+      }),
+    );
 
     if (Object.keys(states).length === 0) return result;
 
