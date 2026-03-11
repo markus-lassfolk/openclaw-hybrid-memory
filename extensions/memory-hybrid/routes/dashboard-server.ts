@@ -34,6 +34,8 @@ export interface DashboardContext {
   gitRepo?: string
   /** Optional CostTracker instance — delegates cost stats to the established abstraction. */
   costTracker?: import('../backends/cost-tracker.js').CostTracker | null
+  /** Optional logger for structured logging of server errors */
+  logger?: { error?: (msg: string) => void }
 }
 
 export interface MemoryStats {
@@ -778,7 +780,11 @@ export async function createDashboardServer(
       const boundPort = typeof addr === 'object' && addr ? addr.port : port
       server.removeAllListeners('error')
       server.on('error', (err: NodeJS.ErrnoException) => {
-        console.error('[dashboard-server] Server error:', err)
+        if (ctx.logger?.error) {
+          ctx.logger.error(`[dashboard-server] Server error: ${err}`)
+        } else {
+          console.error('[dashboard-server] Server error:', err)
+        }
       })
       resolve({
         server,

@@ -245,7 +245,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (cfg.dashboard.enabled) {
         try {
           dashboardServer = await createDashboardServer(
-            { factsDb, vectorDb, resolvedSqlitePath, resolvedLancePath, gitRepo: cfg.dashboard.gitRepo, costTracker },
+            { factsDb, vectorDb, resolvedSqlitePath, resolvedLancePath, gitRepo: cfg.dashboard.gitRepo, costTracker, logger: api.logger },
             cfg.dashboard.port,
           );
           api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
