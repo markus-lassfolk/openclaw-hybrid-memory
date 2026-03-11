@@ -410,7 +410,6 @@ function getDashboardHtml(port: number): string {
   </div>
 </main>
 <script>
-const PORT = ${port};
 const AGENT_AVATARS = { Maeve: '🦊', Forge: '⚒️', Scholar: '📚', Hearth: '🏠', Warden: '🛡️', Reaver: '🔧' };
 const STATUS_BADGE = {
   running: '<span class="badge badge-green">running</span>',
@@ -450,11 +449,6 @@ function fmtDate(iso) {
   if (diffH < 24) return diffH.toFixed(0) + 'h ago';
   if (diffH < 168) return Math.round(diffH/24) + 'd ago';
   return d.toLocaleDateString();
-}
-
-function fmtDateFull(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString();
 }
 
 function getAvatar(name) {
