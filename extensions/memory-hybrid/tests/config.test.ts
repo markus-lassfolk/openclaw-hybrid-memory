@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   DECAY_CLASSES,
   TTL_DEFAULTS,
@@ -171,6 +171,8 @@ describe("CREDENTIAL_TYPES", () => {
 // ---------------------------------------------------------------------------
 
 describe("hybridConfigSchema.parse", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   const validBase = {
     embedding: {
       apiKey: "sk-test-key-that-is-long-enough-to-pass",
@@ -930,6 +932,43 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(result.embedding.googleApiKey).toBe("test-google-key-short-ref-resolved-long-enough");
     expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
+  });
+
+  // ── ${VAR} template syntax for Google API key (Issue #373 review comment #15) ─────────────────
+
+  it("resolves embedding.googleApiKey when distill.apiKey uses ${VAR} template syntax (Issue #373)", () => {
+    vi.stubEnv("TEST_GEMINI_TMPL_KEY_373", "AIzaSy-template-key-that-is-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "${TEST_GEMINI_TMPL_KEY_373}", defaultModel: "gemini-2.0-flash" },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-template-key-that-is-long-enough-to-pass");
+    expect(result.embedding.googleApiKey).not.toContain("${");
+  });
+
+  it("throws when distill.apiKey ${VAR} template references an unset env var (Issue #373)", () => {
+    delete process.env.TEST_GEMINI_TMPL_UNSET_373;
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+        distill: { apiKey: "${TEST_GEMINI_TMPL_UNSET_373}" },
+      }),
+    ).toThrow(/SecretRef.*could not be resolved/);
+  });
+
+  it("resolves embedding.googleApiKey when distill.apiKey is a file: SecretRef (Issue #373)", () => {
+    const tmpFile = require("node:os").tmpdir() + "/test-gemini-key-373.txt";
+    require("node:fs").writeFileSync(tmpFile, "AIzaSy-file-key-that-is-long-enough-to-pass\n");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+        distill: { apiKey: `file:${tmpFile}`, defaultModel: "gemini-2.0-flash" },
+      });
+      expect(result.embedding.googleApiKey).toBe("AIzaSy-file-key-that-is-long-enough-to-pass");
+      expect(result.embedding.googleApiKey).not.toMatch(/^file:/);
+    } finally {
+      require("node:fs").unlinkSync(tmpFile);
+    }
   });
 
   it("no mode applies full preset: distill is defined with preset defaults", () => {

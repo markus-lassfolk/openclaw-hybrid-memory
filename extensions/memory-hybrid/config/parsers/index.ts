@@ -395,27 +395,18 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
   // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
-  // Pick the first valid key (matching hasGoogleKey logic) to avoid using a short/invalid distill key when a valid llm key exists.
-  const rawGoogleKey = (
-    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:"))
-      ? distillApiKeyRaw
-      : (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:"))
-        ? llmGoogleApiKeyRaw
-        : ""
-  );
-  const isSecretRefFormat = rawGoogleKey.startsWith("env:") || rawGoogleKey.startsWith("file:");
-  let resolvedGoogleApiKey: string | undefined;
-  if ((preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey) {
-    const secretRefResolved = resolveSecretRef(rawGoogleKey);
-    if (secretRefResolved !== undefined) {
-      const envExpanded = resolveEnvVars(secretRefResolved) || undefined;
-      // Reject keys that still contain unresolved ${VAR} template syntax after all resolution
-      resolvedGoogleApiKey = envExpanded && !envExpanded.includes("${") ? envExpanded : undefined;
-    }
-  }
+  const rawGoogleKey = (distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim();
+  const resolvedGoogleApiKey =
+    (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
+      ? resolveSecretRef(rawGoogleKey)
+      : undefined;
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
-    const hint = isSecretRefFormat
-      ? ` (SecretRef '${rawGoogleKey}' could not be resolved — check the referenced env var or file is set and non-empty.)`
+    const isSecretRef =
+      rawGoogleKey.startsWith("env:") ||
+      rawGoogleKey.startsWith("file:") ||
+      rawGoogleKey.includes("${");
+    const hint = isSecretRef
+      ? ` (SecretRef could not be resolved — check the referenced env var, file, or template placeholder is set and non-empty.)`
       : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
     throw new Error(`embedding.provider is 'google' but no valid key found.${hint}`);
   }

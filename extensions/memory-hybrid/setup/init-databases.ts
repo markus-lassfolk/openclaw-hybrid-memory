@@ -4,6 +4,7 @@ import { existsSync, readFileSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import { resolveSecretRef } from "../config/parsers/core.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
@@ -17,7 +18,6 @@ import { UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
-import { resolveSecretRef } from "../config/parsers/core.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -176,9 +176,12 @@ export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
+  /** Resolve env:VAR / file:/path / ${VAR} SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344).
+   *  Delegates to the shared resolveSecretRef helper from config/parsers/core.ts to avoid duplicated logic. */
   const resolveApiKey = (key: string | undefined): string | undefined => {
-    if (typeof key !== "string" || !key.trim()) return undefined;
-    return resolveSecretRef(key.trim());
+    // Reject undefined, null, and whitespace-only strings before reaching resolveSecretRef (issues #10, #11).
+    if (!key?.trim()) return undefined;
+    return resolveSecretRef(key);
   };
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;

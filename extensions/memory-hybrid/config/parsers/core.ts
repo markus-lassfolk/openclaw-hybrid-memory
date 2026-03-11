@@ -371,10 +371,15 @@ export function resolveSecretRef(value: string): string | undefined {
       return undefined;
     }
   }
-  // Handle ${VAR} template syntax for backward compatibility
+  // Handle ${VAR} template syntax (issues #6, #12).
+  // resolveEnvVars throws when the variable is unset or empty, so catch → undefined.
+  // After resolution, guard against malformed/partially-resolved templates.
   if (v.includes("${")) {
     try {
-      return resolveEnvVars(v);
+      const resolved = resolveEnvVars(v);
+      // Guard: if any ${...} placeholder survived, the template is malformed or unresolved.
+      if (resolved.includes("${")) return undefined;
+      return resolved && resolved.trim() ? resolved.trim() : undefined;
     } catch {
       return undefined;
     }
