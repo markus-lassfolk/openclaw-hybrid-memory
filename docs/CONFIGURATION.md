@@ -1501,6 +1501,54 @@ Defaults are **enabled** (opt-out).
 
 ---
 
+## Mission Control dashboard (dashboard)
+
+A built-in HTTP server that serves a **real-time web dashboard** (Issue #309). The dashboard auto-refreshes every 60 seconds and shows memory stats, cron job status, task queue, Forge agent state, recent GitHub PRs/issues, and LLM cost tracking for the last 7 days.
+
+Enabled by default. Access it at `http://localhost:7700` while the gateway is running.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "dashboard": {
+            "enabled": true,
+            "port": 7700
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Start the dashboard HTTP server with the gateway. Set `false` to disable. |
+| `port` | `7700` | Port to bind on `127.0.0.1`. Must be between 1024 and 65535. |
+
+**Dashboard sections:**
+
+| Section | What it shows |
+|---------|---------------|
+| 🧠 Memory Stats | Active/expired facts, vector index count, SQLite and LanceDB storage sizes |
+| 📋 Task Queue | Current task in progress + last 5 completed tasks (from `~/.openclaw/workspace/state/task-queue/`) |
+| ⚒️ Agent Status | Active Forge agent tasks (from `~/.openclaw/workspace/state/forge/*.json`). Agent avatars: 🦊 Maeve, ⚒️ Forge, 📚 Scholar, 🏠 Hearth, 🛡️ Warden, 🔧 Reaver |
+| ⏰ Cron Jobs | All registered cron jobs with schedule, last run time, and status (from `~/.openclaw/cron/jobs.json`) |
+| 🔀 Git Activity | Last 10 open PRs and issues via `gh` CLI (requires GitHub CLI installed and authenticated) |
+| 💰 Cost Tracking (7d) | LLM cost breakdown by feature for the last 7 days (requires cost tracking enabled) |
+
+**JSON API:** `GET /api/status` returns the same data as JSON for scripting or external monitoring tools.
+
+**Notes:**
+- The server binds to `127.0.0.1` only — it is not exposed to the network.
+- Git activity requires the `gh` CLI; if unavailable, the section shows "gh CLI unavailable".
+- LanceDB size is cached for 5 minutes to avoid blocking on large directory traversals.
+
+---
+
 ## Error reporting (errorReporting)
 
 Anonymous error reporting to GlitchTip/Sentry. **Enabled by default (opt-out)** in `community` mode.

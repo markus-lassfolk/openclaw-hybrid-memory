@@ -20,6 +20,8 @@ import {
 } from "../services/error-reporter.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
+import { createDashboardServer } from "../routes/dashboard-server.js";
+import type { DashboardServer } from "../routes/dashboard-server.js";
 import { runPassiveObserver } from "../services/passive-observer.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
@@ -44,6 +46,7 @@ export interface PluginServiceContext {
   api: ClawdbotPluginApi;
   pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
   provenanceService?: ProvenanceService | null;
+  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -83,11 +86,13 @@ export function createPluginService(ctx: PluginServiceContext) {
     api,
     timers,
     provenanceService,
+    costTracker,
   } = ctx;
 
   let observerRunning = false;
   let observerRunPromise: Promise<void> | null = null;
   let shuttingDown = false;
+  let dashboardServer: DashboardServer | null = null;
 
   return {
     id: PLUGIN_ID,
@@ -234,6 +239,23 @@ export function createPluginService(ctx: PluginServiceContext) {
         syncCronLastRunFromGuards(api.logger);
       } catch (err) {
         api.logger.warn?.(`memory-hybrid: cron guard sync failed (non-fatal): ${err}`);
+      }
+
+      // Issue #309: Mission Control dashboard HTTP server
+      if (cfg.dashboard.enabled) {
+        try {
+          dashboardServer = await createDashboardServer(
+            { factsDb, vectorDb, resolvedSqlitePath, resolvedLancePath, gitRepo: cfg.dashboard.gitRepo, costTracker, logger: api.logger },
+            cfg.dashboard.port,
+          );
+          api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: dashboard server failed to start (non-fatal): ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "dashboard-start",
+          });
+        }
       }
 
       // Periodic prune timer
@@ -499,6 +521,10 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (timers.postUpgradeTimeout.value) {
         clearTimeout(timers.postUpgradeTimeout.value);
         timers.postUpgradeTimeout.value = null;
+      }
+      if (dashboardServer) {
+        try { dashboardServer.close(); } catch { /* non-fatal */ }
+        dashboardServer = null;
       }
       api.logger.info("memory-hybrid: stopping...");
       if (observerRunPromise) {

@@ -19,6 +19,7 @@
     "*.ts",
     "backends/**/*.ts",
     "cli/**/*.ts",
+    "routes/**/*.ts",
     "services/**/*.ts",
     "tools/**/*.ts",
     "utils/**/*.ts",

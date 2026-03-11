@@ -43,6 +43,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Verification store** | [CONFIGURATION.md](CONFIGURATION.md#verification-store-162) | Integrity layer for critical facts: `memory_verify`, `memory_verified_list`, re-verification schedule. (#162) |
 | **Provenance tracing** | [CONFIGURATION.md](CONFIGURATION.md#provenance-tracing-163) | Full origin chain from any fact back to its source events via `memory_provenance`. (#163) |
 | **Document ingestion** | [CONFIGURATION.md](CONFIGURATION.md#document-ingestion-206) | Ingest PDF, DOCX, HTML, images, and more as searchable fact chunks (`memory_ingest_document`, `memory_ingest_folder`). (#206) |
+| **Mission Control dashboard** | [CONFIGURATION.md](CONFIGURATION.md#mission-control-dashboard-dashboard) | Real-time web dashboard (port 7700) — memory stats, cron jobs, task queue, agent status, git activity, and 7-day LLM cost tracking. Auto-refreshes every 60s. (#309) |
 
 ---
 

@@ -444,7 +444,7 @@ const memoryHybridPlugin = {
     }
 
     // ContextEngine Plugin Slot (Issue #273) — feature-detected, non-fatal if unavailable
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+     
     import("./services/context-engine.js")
       .then(({ registerHybridContextEngine }) =>
         registerHybridContextEngine({
@@ -513,6 +513,7 @@ const memoryHybridPlugin = {
         timers,
         pythonBridge,
         provenanceService,
+        costTracker,
       })
     );
     } catch (err) {
