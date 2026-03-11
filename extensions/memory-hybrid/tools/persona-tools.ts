@@ -273,7 +273,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           const applyVerbosity = cfg.verbosity ?? "normal";
           if (applyResult.ok) {
             api.logger.info(`memory-hybrid: persona proposal auto-applied — ${proposal.id} → ${applyResult.targetFile}`);
-            if (applyVerbosity === "quiet") {
+            if (applyVerbosity === "quiet" || applyVerbosity === "silent") {
               // Quiet: only emit ID + file, suppress change preview
               return {
                 content: [
@@ -302,7 +302,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             content: [
               {
                 type: "text",
-                text: applyVerbosity === "quiet"
+                text: applyVerbosity === "quiet" || applyVerbosity === "silent"
                   ? `Proposal ${proposal.id}: apply failed — ${applyResult.error}`
                   : `Proposal ${proposal.id} was approved automatically but applying to the file failed: ${applyResult.error}\n\nYou can run \`openclaw proposals apply ${proposal.id}\` after fixing the issue.`,
               },

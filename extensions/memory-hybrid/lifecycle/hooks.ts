@@ -1548,7 +1548,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
 
     // Auto-recall on authentication failures (reactive memory trigger)
-    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
+    // Silent mode suppresses credential-hint injection (Issue #317).
+    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled && ctx.cfg.verbosity !== "silent") {
       // Compile custom patterns once at handler registration time
       const customPatterns: AuthFailurePattern[] = [];
       for (const p of ctx.cfg.autoRecall.authFailure.patterns) {
