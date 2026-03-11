@@ -8,7 +8,7 @@
  * Issue #236
  */
 
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -350,14 +350,6 @@ interface GitHubIssue {
   updatedAt?: string;
 }
 
-function tryExecSync(cmd: string): string | null {
-  try {
-    return execSync(cmd, { encoding: "utf-8", timeout: 15_000 }).trim();
-  } catch {
-    return null;
-  }
-}
-
 function tryExecFileSync(file: string, args: string[]): string | null {
   try {
     return execFileSync(file, args, { encoding: "utf-8", timeout: 15_000 }).trim();
@@ -441,12 +433,12 @@ export async function sweepGitHub(
         ...repoArgs,
         String(pr.number),
         "--json",
-        "name,state",
+        "name,bucket",
       ]);
       if (ciOutput) {
         try {
-          const checks = JSON.parse(ciOutput) as Array<{ name: string; state: string }>;
-          if (checks.some((c) => c.state === "FAILURE" || c.state === "ERROR")) {
+          const checks = JSON.parse(ciOutput) as Array<{ name: string; bucket: string }>;
+          if (checks.some((c) => c.bucket === "fail")) {
             ciFailures.push({ pr: pr.number, title: pr.title, url: pr.url });
           }
         } catch {
