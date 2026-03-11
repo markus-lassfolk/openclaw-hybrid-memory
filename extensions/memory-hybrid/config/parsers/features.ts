@@ -650,5 +650,6 @@ export function parseDashboardConfig(cfg: Record<string, unknown>): DashboardCon
       typeof raw?.port === "number" && raw.port >= 1024 && raw.port <= 65535
         ? Math.floor(raw.port)
         : 7700,
+    gitRepo: typeof raw?.gitRepo === "string" ? raw.gitRepo : undefined,
   };
 }

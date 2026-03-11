@@ -72,6 +72,7 @@ export interface TaskQueueItem {
 }
 
 export interface ForgeTaskItem {
+  agent?: string
   task: string
   workdir?: string
   pid?: number
@@ -263,7 +264,13 @@ async function collectForgeState(): Promise<ForgeTaskItem[]> {
     withMtime.sort((a, b) => b.mtime - a.mtime)
     return (
       await Promise.all(
-        withMtime.slice(0, 20).map((e) => readJsonFile<ForgeTaskItem>(join(forgeDir, e.name))),
+        withMtime.slice(0, 20).map(async (e) => {
+          const item = await readJsonFile<ForgeTaskItem>(join(forgeDir, e.name))
+          if (item) {
+            item.agent = e.name.replace(/\.json$/, '')
+          }
+          return item
+        }),
       )
     ).filter((item): item is ForgeTaskItem => item !== null)
   } catch {
@@ -589,12 +596,12 @@ function renderForge(forge) {
     html += '<div class="empty">No active agents</div>';
   } else {
     forge.forEach(f => {
-      const name = f.task || 'unknown';
+      const name = f.agent || 'unknown';
       html += \`<div class="agent-row">
         <div class="agent-avatar">\${getAvatar(name)}</div>
         <div class="agent-info">
           <div class="agent-name">\${escHtml(name)}</div>
-          <div class="agent-task">\${escHtml(f.workdir || '')}</div>
+          <div class="agent-task">\${escHtml(f.task || f.workdir || '')}</div>
         </div>
         <div>\${badge(f.status)}</div>
       </div>\`;
