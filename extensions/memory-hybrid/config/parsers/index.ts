@@ -223,9 +223,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
     const rawKey = (embedding.apiKey as string).trim();
-    if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
-      throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
-    }
     // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
       const resolved = resolveSecretRef(rawKey);
@@ -237,14 +234,17 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       }
       resolvedApiKey = resolved;
     } else {
+      if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
+        throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
+      }
       resolvedApiKey = resolveEnvVars(rawKey);
     }
-  } else if (embedding && typeof embedding.apiKey === "string" && (embedding.apiKey as string).trim().length >= 10) {
+  } else if (embedding && typeof embedding.apiKey === "string") {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
     const rawKey = (embedding.apiKey as string).trim();
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
       resolvedApiKey = resolveSecretRef(rawKey) ?? undefined;
-    } else {
+    } else if (rawKey.length >= 10) {
       resolvedApiKey = resolveEnvVars(rawKey);
     }
   }
