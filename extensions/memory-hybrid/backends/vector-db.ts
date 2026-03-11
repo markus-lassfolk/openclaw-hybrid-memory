@@ -368,11 +368,14 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: 'vector-search',
-        severity: 'info',
-        subsystem: 'vector'
-      });
+      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      if (!isKnownSchemaErr) {
+        capturePluginError(err as Error, {
+          operation: 'vector-search',
+          severity: 'info',
+          subsystem: 'vector'
+        });
+      }
       this.logWarn(`memory-hybrid: LanceDB search failed: ${err}`);
       return [];
     }
@@ -388,11 +391,14 @@ export class VectorDB {
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: 'vector-duplicate-check',
-        severity: 'info',
-        subsystem: 'vector'
-      });
+      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      if (!isKnownSchemaErr) {
+        capturePluginError(err as Error, {
+          operation: 'vector-duplicate-check',
+          severity: 'info',
+          subsystem: 'vector'
+        });
+      }
       this.logWarn(`memory-hybrid: LanceDB hasDuplicate failed: ${err}`);
       return false;
     }
