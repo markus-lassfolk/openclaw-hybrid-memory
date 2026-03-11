@@ -12,7 +12,8 @@ See [docs/CREDENTIALS.md](../docs/CREDENTIALS.md) § Migration.
 ### Model-agnostic analysis (documentation)
 
 - [docs/MODEL-AGNOSTIC-ANALYSIS.md](../docs/MODEL-AGNOSTIC-ANALYSIS.md) now documents the **Option B** exploration: the OpenClaw plugin SDK does not expose chat or embedding APIs, so "use OpenClaw for chat/embeddings" is not possible with the current SDK. The doc recommends Option C (multi-provider in the plugin) or requesting plugin-callable model/embed APIs from OpenClaw for a future Option B.
-- **Decision:** We are not implementing model-agnostic setup for now; the plugin keeps hardcoded models (OpenAI for embeddings and chat, Gemini in docs/scripts for distillation). The analysis and options remain for future reference.
+- **Decision (at time of this release):** We are not implementing model-agnostic setup for now; the plugin keeps hardcoded models (OpenAI for embeddings and chat, Gemini in docs/scripts for distillation). The analysis and options remain for future reference.
+- **Note:** This decision was subsequently reversed. Multi-provider embedding support (OpenAI, Ollama, ONNX, Google) was implemented in a later release. See [MODEL-AGNOSTIC-ANALYSIS.md](../docs/MODEL-AGNOSTIC-ANALYSIS.md) for the full status update and [LLM-AND-PROVIDERS.md](../docs/LLM-AND-PROVIDERS.md#embedding-providers) for configuration details.
 
 ### Summary
 

@@ -184,9 +184,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   type EmbeddingProviderName = "openai" | "ollama" | "onnx" | "google";
   const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
   const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
+  const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
+  const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
   const hasGoogleKey =
-    (typeof distillForEmbed?.apiKey === "string" && distillForEmbed.apiKey.trim().length >= 10) ||
-    (typeof llmProvidersForEmbed?.google?.apiKey === "string" && llmProvidersForEmbed.google.apiKey.trim().length >= 10);
+    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:")) ||
+    (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:"));
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;
@@ -391,12 +393,31 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     if (hasGoogleKey) inferred.push("google");
     preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
   }
-  const resolvedGoogleApiKey =
-    (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
-      ? resolveEnvVars((distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim())
-      : undefined;
+  // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
+  // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
+  // Pick the first valid key (matching hasGoogleKey logic) to avoid using a short/invalid distill key when a valid llm key exists.
+  const rawGoogleKey = (
+    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:"))
+      ? distillApiKeyRaw
+      : (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:"))
+        ? llmGoogleApiKeyRaw
+        : ""
+  );
+  const isSecretRefFormat = rawGoogleKey.startsWith("env:") || rawGoogleKey.startsWith("file:");
+  let resolvedGoogleApiKey: string | undefined;
+  if ((preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey) {
+    const secretRefResolved = resolveSecretRef(rawGoogleKey);
+    if (secretRefResolved !== undefined) {
+      const envExpanded = resolveEnvVars(secretRefResolved) || undefined;
+      // Reject keys that still contain unresolved ${VAR} template syntax after all resolution
+      resolvedGoogleApiKey = envExpanded && !envExpanded.includes("${") ? envExpanded : undefined;
+    }
+  }
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
-    throw new Error("embedding.provider is 'google' but no valid key found. Set distill.apiKey or llm.providers.google.apiKey in plugin config.");
+    const hint = isSecretRefFormat
+      ? ` (SecretRef '${rawGoogleKey}' could not be resolved — check the referenced env var or file is set and non-empty.)`
+      : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
+    throw new Error(`embedding.provider is 'google' but no valid key found.${hint}`);
   }
 
   // Parse multi-model embedding config (Issue #158)

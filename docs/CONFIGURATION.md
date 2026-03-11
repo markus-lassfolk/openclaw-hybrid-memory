@@ -32,6 +32,7 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-h
         "enabled": true,
         "config": {
           "embedding": {
+            "provider": "openai",
             "apiKey": "YOUR_OPENAI_API_KEY",
             "model": "text-embedding-3-small"
           },
@@ -49,7 +50,9 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-h
 
 **API key:** Supports three formats: a literal string (`"sk-..."`), an environment variable template (`"${OPENAI_API_KEY}"`), or a SecretRef (`"env:OPENAI_API_KEY"` or `"file:/path/to/key"`). The SecretRef format is resolved at config load — if the referenced variable or file is unset, the plugin throws a clear error rather than passing the literal string to the API. Editing the config file directly is more reliable than using `config.patch`.
 
-**Embedding model preference:** Optional `embedding.models` is an ordered list of embedding model names (e.g. `["text-embedding-3-small"]`). The plugin tries the first; on failure (rate limit, provider down) it tries the next. All entries must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`). The first model in the list defines the dimension used for LanceDB. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-configuration).
+**Embedding provider:** Set `embedding.provider` to choose your embedding backend. Options: `"openai"` (default, requires API key), `"ollama"` (local, no key), `"onnx"` (local, no key, requires `onnxruntime-node`), `"google"` (Gemini API, requires `llm.providers.google.apiKey`). Use `embedding.preferredProviders` for ordered failover (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full examples.
+
+**Embedding model preference:** Optional `embedding.models` is an ordered list of embedding model names (e.g. `["text-embedding-3-small"]`). The plugin tries the first; on failure (rate limit, provider down) it tries the next. All entries must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`). The first model in the list defines the dimension used for LanceDB. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers).
 
 Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb` and `~/.openclaw/memory/facts.db`).
 

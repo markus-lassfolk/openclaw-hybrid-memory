@@ -9,7 +9,13 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 ## Requirements
 
 - **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
-- **OpenAI API key** — Required. The plugin uses it for embeddings (default model `text-embedding-3-small`); without a valid `embedding.apiKey` in config the plugin does not load. Optional features (auto-classify, summarize, consolidate, **memory classification**) use the same key with a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts (by embedding similarity) before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
+- **Embedding provider** — Required. The plugin needs an embedding provider to load. Four options:
+  - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). Requires an OpenAI API key.
+  - **Ollama** (local): set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — runs fully locally via a local Ollama instance.
+  - **ONNX** (local): set `embedding.provider: "onnx"` and `embedding.model` (e.g. `all-MiniLM-L6-v2`). Fully local; models auto-downloaded from HuggingFace. Requires `onnxruntime-node` (`npm i onnxruntime-node`).
+  - **Google** (Gemini API): set `embedding.provider: "google"`, `embedding.model: "text-embedding-004"`, `embedding.dimensions: 768`, and `llm.providers.google.apiKey`.
+  
+  Use `embedding.preferredProviders` (e.g. `["ollama", "openai"]`) for automatic ordered failover between providers. Optional features (auto-classify, summarize, consolidate, **memory classification**) use a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md#embedding-providers) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
 - **Build tools** for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
 ## Installation

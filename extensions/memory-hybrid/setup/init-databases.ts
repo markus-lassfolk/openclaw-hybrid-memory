@@ -31,6 +31,7 @@ import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
+import { resolveSecretRef } from "../config/parsers/core.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -174,15 +175,10 @@ export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
-  /** Resolve env:VAR to process.env[VAR] so gateway-stored keys work when merged into llm.providers */
+  /** Resolve env:VAR / file:/path SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344). */
   const resolveApiKey = (key: string | undefined): string | undefined => {
     if (typeof key !== "string" || !key.trim()) return undefined;
-    const k = key.trim();
-    if (k.startsWith("env:")) {
-      const v = process.env[k.slice(4).trim()];
-      return v && v.trim() ? v.trim() : undefined;
-    }
-    return k;
+    return resolveSecretRef(key.trim());
   };
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
