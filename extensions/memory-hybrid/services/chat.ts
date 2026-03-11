@@ -165,9 +165,12 @@ export async function chatComplete(opts: {
     const msgContent = msg?.content?.trim();
     if (msgContent) return msgContent;
     // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
-    // message.reasoning when enable_thinking=true (the default). Fall back to it
-    // so agents don't see an empty reply and time out (#314).
-    const reasoning = (msg as unknown as Record<string, unknown> | undefined)?.reasoning;
+    // message.reasoning_content (current standard, May 2025+) or message.reasoning (legacy).
+    // Fall back to these fields when enable_thinking=true so agents don't see an empty reply (#314).
+    const msgRecord = msg as unknown as Record<string, unknown> | undefined;
+    const reasoningContent = msgRecord?.reasoning_content;
+    if (typeof reasoningContent === "string" && reasoningContent.trim()) return reasoningContent.trim();
+    const reasoning = msgRecord?.reasoning;
     if (typeof reasoning === "string" && reasoning.trim()) return reasoning.trim();
     return msgContent ?? "";
   } catch (err) {
