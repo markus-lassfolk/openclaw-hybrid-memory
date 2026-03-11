@@ -51,3 +51,12 @@ export const SECONDS_PER_DAY = 86400;
 
 /** Max tokens for HOT tier (always-loaded session context). */
 export const HOT_TIER_MAX_TOKENS = 2000;
+
+/**
+ * UUID v1–v5 validation regex (case-insensitive).
+ * Used as the security boundary before LanceDB string interpolation and
+ * as the user-facing guard in memory_forget.
+ * Centralised here to avoid drift between vector-db.ts and memory-tools.ts.
+ */
+export const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

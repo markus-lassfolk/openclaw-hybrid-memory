@@ -15,6 +15,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
+import { UUID_REGEX } from "../utils/constants.js";
 
 // ---------------------------------------------------------------------------
 // AliasDB
@@ -179,9 +180,7 @@ class AliasVectorIndex {
   async deleteByFactId(factId: string): Promise<void> {
     try {
       await this.ensureInitialized();
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(factId)) {
+      if (!UUID_REGEX.test(factId)) {
         console.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
         return;
       }
