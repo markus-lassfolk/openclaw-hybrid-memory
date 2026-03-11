@@ -496,7 +496,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
 | `nano` | Ordered list for ultra-cheap nano-tier ops. Falls back to `default[0]` when unset. |
 | `default` | Ordered list for default-tier features (reflection, classify, ingest, query expansion, build-languages). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
-| `providers` | Per-provider API keys and optional `baseURL`. Built-in: `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key). Any other OpenAI-compatible provider can be added here. |
+| `providers` | Per-provider API keys and optional `baseURL`. Built-in (no `baseURL` needed): `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key), `minimax` (uses `MINIMAX_API_KEY` env var fallback). Any other OpenAI-compatible provider can be added here with an explicit `baseURL`. |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
 | `fallbackModel` | Optional last-resort model when `fallbackToDefault` is true. |
 

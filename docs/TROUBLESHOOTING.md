@@ -161,7 +161,8 @@ This means the nano-tier LLM used for query expansion is failing — e.g. provid
 The plugin calls provider APIs **directly** — no gateway allowlist is involved. If you see 400 or 404 errors:
 
 - **404 "model does not exist"** — the model ID is wrong or your API key does not have access to that model. Run `openclaw models list --all --provider <name>` to see available model IDs for your account.
-- **400 "invalid model ID"** — use `provider/model` format: `google/gemini-2.5-flash`, `openai/gpt-4.1-nano`, `anthropic/claude-haiku-4-5`.
+- **404 for MiniMax models** — if you see 404 on `minimax/*` calls and you're on an older plugin version, upgrade: a previous bug routed MiniMax requests to `api.openai.com` instead of `api.minimax.io`. Since v1.x the plugin has a built-in `minimax` handler with the correct default endpoint (no `baseURL` needed in config).
+- **400 "invalid model ID"** — use `provider/model` format: `google/gemini-2.5-flash`, `openai/gpt-4.1-nano`, `anthropic/claude-haiku-4-5`, `minimax/MiniMax-M2.5`.
 - **400 "unsupported parameter: temperature"** — OpenAI reasoning model (`o1`, `o3`, `o4-*`). The plugin automatically strips `temperature` for these; ensure you are running the latest plugin version.
 - **401 / authentication error** — check that `llm.providers.<provider>.apiKey` is set correctly in plugin config.
 - **No key configured** — verify shows `⚠️ skipped` for that model. Add the key to `llm.providers.<provider>.apiKey`.
