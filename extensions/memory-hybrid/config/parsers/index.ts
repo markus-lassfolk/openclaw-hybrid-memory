@@ -336,9 +336,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     if (hasGoogleKey) inferred.push("google");
     preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
   }
+  // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
+  // Chain resolvers: resolveEnvVars() handles ${VAR} template syntax; resolveSecretRef() handles env:VAR and file:/path.
   const resolvedGoogleApiKey =
     (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
-      ? resolveEnvVars((distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim())
+      ? (resolveSecretRef(resolveEnvVars((distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim())) ?? undefined)
       : undefined;
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
     throw new Error("embedding.provider is 'google' but no valid key found. Set distill.apiKey or llm.providers.google.apiKey in plugin config.");
