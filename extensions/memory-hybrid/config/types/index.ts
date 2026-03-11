@@ -272,6 +272,36 @@ export type SelfCorrectionConfig = {
   agentsRuleToProposals?: boolean;
 };
 
+/**
+ * Gateway authentication configuration.
+ * The token field accepts a SecretRef for safe storage:
+ *   - "env:VAR_NAME"   — resolve from process.env[VAR_NAME] at startup
+ *   - "file:/path"     — read from a file at startup (whitespace-trimmed)
+ *   - plain string     — used as-is (not recommended; token will be in config)
+ * When set, takes priority over the OPENCLAW_GATEWAY_TOKEN environment variable.
+ */
+export type GatewayAuthConfig = {
+  /**
+   * Auth token for the OpenClaw gateway.
+   * Use a SecretRef so the plaintext token is never stored in config files:
+   *   "env:OPENCLAW_GATEWAY_TOKEN" or "file:/run/secrets/gateway-token"
+   */
+  token?: string;
+};
+
+/**
+ * @internal Runtime representation of GatewayAuthConfig after SecretRef resolution.
+ * `_resolvedToken` holds the actual token value; it is stored as a non-enumerable
+ * property so it never appears in JSON.stringify or config dumps.
+ */
+export type ResolvedGatewayAuthConfig = GatewayAuthConfig & {
+  readonly _resolvedToken?: string;
+};
+
+export type GatewayConfig = {
+  auth?: ResolvedGatewayAuthConfig;
+};
+
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
 export type ConfigMode = "essential" | "normal" | "expert" | "full";
 
@@ -457,4 +487,10 @@ export type HybridMemoryConfig = {
   verbosity: VerbosityLevel;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
+  /**
+   * Gateway connection settings. Token supports SecretRef:
+   *   "env:VAR_NAME" or "file:/path/to/file"
+   * Overrides the OPENCLAW_GATEWAY_TOKEN environment variable when set.
+   */
+  gateway?: GatewayConfig;
 };
