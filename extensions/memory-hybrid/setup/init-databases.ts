@@ -156,6 +156,9 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 
+/** Built-in OpenAI-compatible base URL for MiniMax API (global endpoint). */
+export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
+
 /**
  * Builds a multi-provider OpenAI-compatible proxy that routes each model to the correct provider API.
  * All existing call sites use `openai.chat.completions.create({ model, ... })` unchanged — this
@@ -326,6 +329,16 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         bareModel,
         ollamaBaseUrl,
       };
+    }
+
+    if (prefix === "minimax") {
+      // Use the built-in MiniMax API endpoint as default so callers never accidentally
+      // fall through to the default OpenAI client (which returns 404 for MiniMax models).
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (process.env.MINIMAX_API_KEY?.trim() || undefined);
+      if (!apiKey) throw new UnconfiguredProviderError("minimax", trimmed);
+      const baseURL = providerCfg?.baseURL ?? MINIMAX_BASE_URL;
+      return { client: getOrCreate(`minimax:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
