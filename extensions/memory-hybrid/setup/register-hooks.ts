@@ -302,10 +302,6 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
 
         if (summaryLines.length > 0) {
           summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
-          
-          // Silent mode suppresses all unsolicited context injection (Issue #317).
-          if (ctx.cfg.verbosity === "silent") return;
-          
           api.logger.debug?.(
             `memory-hybrid: after_compaction — injecting memory summary (${summaryFacts.length} facts)`,
           );
