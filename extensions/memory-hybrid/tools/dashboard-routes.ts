@@ -56,6 +56,8 @@ export function registerDashboardHttpRoutes(
 ): void {
   if (!ctx.cfg.health.enabled) return;
 
+  if (typeof api.registerHttpRoute !== "function") return;
+
   const routeOpts: HttpRouteOptions = {
     authenticated: ctx.cfg.health.authenticated,
   };
