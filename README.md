@@ -41,6 +41,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 ## Features
 
 ### Core memory system
+- **Event Bus** — internal append-only SQLite table tracking sensor events and telemetry for the Rumination Engine.
 - **Auto-capture** — automatically extracts preferences, decisions, facts, and entities from conversations
 - **Auto-recall** — injects relevant memories into context each turn (configurable token budget)
 - **Dual backend** — SQLite + FTS5 for fast structured lookups; LanceDB for semantic vector search (RRF merge)
