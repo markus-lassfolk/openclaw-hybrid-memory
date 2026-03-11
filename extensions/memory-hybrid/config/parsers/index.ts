@@ -338,12 +338,18 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
   // Chain resolvers: resolveEnvVars() handles ${VAR} template syntax; resolveSecretRef() handles env:VAR and file:/path.
+  // rawGoogleKey is hoisted so the error block below can reference it without re-computing.
+  const rawGoogleKey = (distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim();
   const resolvedGoogleApiKey =
-    (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
-      ? (resolveSecretRef(resolveEnvVars((distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim())) ?? undefined)
+    (preferredProviders.includes("google") || embeddingProvider === "google") && rawGoogleKey.length > 0
+      ? resolveSecretRef(resolveEnvVars(rawGoogleKey))
       : undefined;
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
-    throw new Error("embedding.provider is 'google' but no valid key found. Set distill.apiKey or llm.providers.google.apiKey in plugin config.");
+    const isSecretRef = rawGoogleKey.startsWith("env:") || rawGoogleKey.startsWith("file:");
+    const hint = isSecretRef
+      ? ` (SecretRef '${rawGoogleKey}' could not be resolved — check the referenced env var or file is set and non-empty.)`
+      : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
+    throw new Error(`embedding.provider is 'google' but no valid key found.${hint}`);
   }
 
   // Parse multi-model embedding config (Issue #158)
