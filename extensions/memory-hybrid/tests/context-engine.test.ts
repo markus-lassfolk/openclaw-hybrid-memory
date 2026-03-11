@@ -151,6 +151,31 @@ describe("HybridMemoryContextEngine.compact()", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("skips delete WAL entries without attempting deletion (issue #334)", async () => {
+    // A delete WAL entry stores memory text in data.text, NOT a UUID.
+    // Replaying it used to pass the text as a fact ID, causing "Invalid UUID format" errors.
+    // The fix: skip delete entries during replay (same as update entries).
+    const deleteEntryId = randomUUID();
+    wal.write({
+      id: deleteEntryId,
+      timestamp: Date.now(),
+      operation: "delete",
+      data: { text: "MiniMax M2.5 limitations for council reviews (2026-02-22)", source: "test" },
+    });
+
+    const before = factsDb.getCount();
+    const engine = makeEngine();
+
+    // Should not throw — delete entries are now skipped
+    const result = await engine.compact({ sessionId: "delete-skip-session", sessionFile: "/tmp/s.json" });
+
+    expect(result.ok).toBe(true);
+    // No facts added — the delete entry was skipped, not replayed as a store
+    expect(factsDb.getCount()).toBe(before);
+    // The WAL entry should have been removed (no longer pending)
+    expect(wal.readAll()).toHaveLength(0);
+  });
+
   it("includes top-fact summary in result when facts are present", async () => {
     // Store a few facts first
     factsDb.store({ entity: null, key: null, value: null, text: "Important context fact", category: "fact", importance: 0.9, source: "test" });

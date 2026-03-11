@@ -64,6 +64,7 @@ This is a **false positive**. The plugin only uses your OpenAI API key to call O
 | "Unrecognized keys: autoCapture, autoRecall, embedding" | Config keys placed at wrong nesting level | Move those keys under `config`. Correct structure: `plugins.entries["openclaw-hybrid-memory"]` = `{ enabled: true, config: { autoCapture, autoRecall, embedding, ... } }`. See [Config nesting](#config-nesting) below. |
 | `invalid config: must NOT have additional properties` (plugin entry) | Newer OpenClaw validates plugin config using the plugin's `configSchema`; with `additionalProperties: false` any key not listed was rejected. | The plugin's `openclaw.plugin.json` now sets **`additionalProperties: true`** at the root of `configSchema` so the core accepts all config keys. The plugin still parses and validates config at runtime. If you see this error, ensure you're using a plugin version that has this change (copy `extensions/memory-hybrid/openclaw.plugin.json` from this repo to `~/.openclaw/extensions/openclaw-hybrid-memory/` or upgrade the plugin). |
 | Agent doesn't answer chat / tools do nothing | Gateway down, plugin failed to load, or before_agent_start blocking | See [Agent not responding](#agent-not-responding--chat-or-tools-do-nothing) below. |
+| Cron agents using `ollama/qwen3:*` time out or return empty responses | Qwen3 thinking mode places reply in `message.reasoning` instead of `message.content` | Fixed in plugin v2026.3.101+. Upgrade the plugin. The fix is automatic — no config change needed. |
 
 ---
 
@@ -161,7 +162,8 @@ This means the nano-tier LLM used for query expansion is failing — e.g. provid
 The plugin calls provider APIs **directly** — no gateway allowlist is involved. If you see 400 or 404 errors:
 
 - **404 "model does not exist"** — the model ID is wrong or your API key does not have access to that model. Run `openclaw models list --all --provider <name>` to see available model IDs for your account.
-- **400 "invalid model ID"** — use `provider/model` format: `google/gemini-2.5-flash`, `openai/gpt-4.1-nano`, `anthropic/claude-haiku-4-5`.
+- **404 for MiniMax models** — if you see 404 on `minimax/*` calls and you're on an older plugin version, upgrade: a previous bug routed MiniMax requests to `api.openai.com` instead of `api.minimax.io`. Since v1.x the plugin has a built-in `minimax` handler with the correct default endpoint (no `baseURL` needed in config).
+- **400 "invalid model ID"** — use `provider/model` format: `google/gemini-2.5-flash`, `openai/gpt-4.1-nano`, `anthropic/claude-haiku-4-5`, `minimax/MiniMax-M2.5`.
 - **400 "unsupported parameter: temperature"** — OpenAI reasoning model (`o1`, `o3`, `o4-*`). The plugin automatically strips `temperature` for these; ensure you are running the latest plugin version.
 - **401 / authentication error** — check that `llm.providers.<provider>.apiKey` is set correctly in plugin config.
 - **No key configured** — verify shows `⚠️ skipped` for that model. Add the key to `llm.providers.<provider>.apiKey`.
