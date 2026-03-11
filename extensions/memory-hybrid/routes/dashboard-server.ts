@@ -7,113 +7,113 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { createServer } from "node:http";
-import type { Server } from "node:http";
-import { existsSync } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
+import { createServer } from 'node:http'
+import type { Server } from 'node:http'
+import { existsSync } from 'node:fs'
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { execFile as execFileCb } from 'node:child_process'
+import { promisify } from 'node:util'
+import type { FactsDB } from '../backends/facts-db.js'
+import type { VectorDB } from '../backends/vector-db.js'
+import { getDirSize, getFileSizeAsync } from '../utils/fs.js'
 
-const execFile = promisify(execFileCb);
+const execFile = promisify(execFileCb)
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface DashboardContext {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  resolvedSqlitePath: string;
-  resolvedLancePath: string;
+  factsDb: FactsDB
+  vectorDb: VectorDB
+  resolvedSqlitePath: string
+  resolvedLancePath: string
   /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory") */
-  gitRepo?: string;
+  gitRepo?: string
   /** Optional CostTracker instance — delegates cost stats to the established abstraction. */
-  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+  costTracker?: import('../backends/cost-tracker.js').CostTracker | null
 }
 
 export interface MemoryStats {
-  activeFacts: number;
-  expiredFacts: number;
-  vectorCount: number;
-  sqliteSizeBytes: number;
-  lanceSizeBytes: number;
-  totalSizeBytes: number;
+  activeFacts: number
+  expiredFacts: number
+  vectorCount: number
+  sqliteSizeBytes: number
+  lanceSizeBytes: number
+  totalSizeBytes: number
 }
 
 export interface CronJobStatus {
-  id: string;
-  name: string;
-  schedule: string;
-  enabled: boolean;
-  lastRunAt: string | null;
-  nextRunAt: string | null;
-  lastStatus: string | null;
-  lastError: string | null;
-  consecutiveErrors: number;
-  agentId: string;
-  model?: string;
+  id: string
+  name: string
+  schedule: string
+  enabled: boolean
+  lastRunAt: string | null
+  nextRunAt: string | null
+  lastStatus: string | null
+  lastError: string | null
+  consecutiveErrors: number
+  agentId: string
+  model?: string
 }
 
 export interface TaskQueueItem {
-  issue?: number;
-  title?: string;
-  branch?: string;
-  pid?: number;
-  started?: string;
-  status?: string;
-  completed?: string;
-  exit_code?: number;
-  details?: string;
+  issue?: number
+  title?: string
+  branch?: string
+  pid?: number
+  started?: string
+  status?: string
+  completed?: string
+  exit_code?: number
+  details?: string
 }
 
 export interface ForgeTaskItem {
-  task: string;
-  workdir?: string;
-  pid?: number;
-  started_at?: string;
-  status?: string;
+  task: string
+  workdir?: string
+  pid?: number
+  started_at?: string
+  status?: string
 }
 
 export interface GitActivity {
-  prs: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>;
-  issues: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>;
-  gitError?: string;
+  prs: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>
+  issues: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>
+  gitError?: string
 }
 
 export interface CostRow {
-  feature: string;
-  calls: number;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCostUsd: number;
+  feature: string
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  estimatedCostUsd: number
 }
 
 export interface CostStats {
-  features: CostRow[];
-  totalCalls: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalEstimatedCostUsd: number;
-  days: number;
-  enabled: boolean;
+  features: CostRow[]
+  totalCalls: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalEstimatedCostUsd: number
+  days: number
+  enabled: boolean
 }
 
 export interface DashboardStatus {
-  generatedAt: string;
-  memory: MemoryStats;
-  cronJobs: CronJobStatus[];
+  generatedAt: string
+  memory: MemoryStats
+  cronJobs: CronJobStatus[]
   taskQueue: {
-    current: TaskQueueItem | null;
-    history: TaskQueueItem[];
-  };
-  forge: ForgeTaskItem[];
-  git: GitActivity;
-  costs: CostStats;
+    current: TaskQueueItem | null
+    history: TaskQueueItem[]
+  }
+  forge: ForgeTaskItem[]
+  git: GitActivity
+  costs: CostStats
 }
 
 // ---------------------------------------------------------------------------
@@ -121,32 +121,41 @@ export interface DashboardStatus {
 // ---------------------------------------------------------------------------
 
 /** Cached LanceDB dir size keyed by resolved path to avoid repeated traversal on every poll */
-const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
-const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
+const _lanceSizeCache = new Map<string, { size: number; ts: number }>()
+const LANCE_CACHE_TTL_MS = 300_000 // 5 minutes
 
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
-    return JSON.parse(await readFile(filePath, "utf-8")) as T;
-  } catch { return null; }
+    return JSON.parse(await readFile(filePath, 'utf-8')) as T
+  } catch {
+    return null
+  }
 }
 
 async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
-  const activeFacts = ctx.factsDb.count();
-  const expiredFacts = ctx.factsDb.countExpired();
-  let vectorCount = 0;
-  try { vectorCount = await ctx.vectorDb.count(); } catch { /* non-fatal */ }
-  const sqliteSize = await getFileSizeAsync(ctx.resolvedSqlitePath);
-  const sqliteWalSize = await getFileSizeAsync(ctx.resolvedSqlitePath + "-wal");
-  const sqliteShmSize = await getFileSizeAsync(ctx.resolvedSqlitePath + "-shm");
-  const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize;
+  const activeFacts = ctx.factsDb.count()
+  const expiredFacts = ctx.factsDb.countExpired()
+  let vectorCount = 0
+  try {
+    vectorCount = await ctx.vectorDb.count()
+  } catch {
+    /* non-fatal */
+  }
+  const sqliteSize = await getFileSizeAsync(ctx.resolvedSqlitePath)
+  const sqliteWalSize = await getFileSizeAsync(ctx.resolvedSqlitePath + '-wal')
+  const sqliteShmSize = await getFileSizeAsync(ctx.resolvedSqlitePath + '-shm')
+  const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize
 
   // Use cached LanceDB size to avoid blocking on large directory traversals
-  const now = Date.now();
-  const cachedEntry = _lanceSizeCache.get(ctx.resolvedLancePath);
+  const now = Date.now()
+  const cachedEntry = _lanceSizeCache.get(ctx.resolvedLancePath)
   if (!cachedEntry || now - cachedEntry.ts > LANCE_CACHE_TTL_MS) {
-    _lanceSizeCache.set(ctx.resolvedLancePath, { size: await getDirSize(ctx.resolvedLancePath), ts: now });
+    _lanceSizeCache.set(ctx.resolvedLancePath, {
+      size: await getDirSize(ctx.resolvedLancePath),
+      ts: now,
+    })
   }
-  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)!.size;
+  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)!.size
 
   return {
     activeFacts,
@@ -155,112 +164,164 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
     sqliteSizeBytes,
     lanceSizeBytes,
     totalSizeBytes: sqliteSizeBytes + lanceSizeBytes,
-  };
+  }
 }
 
 async function collectCronJobs(): Promise<CronJobStatus[]> {
-  const openclawDir = join(homedir(), ".openclaw");
-  const cronStorePath = join(openclawDir, "cron", "jobs.json");
-  if (!existsSync(cronStorePath)) return [];
+  const openclawDir = join(homedir(), '.openclaw')
+  const cronStorePath = join(openclawDir, 'cron', 'jobs.json')
+  if (!existsSync(cronStorePath)) return []
   try {
-    const store = await readJsonFile<{ jobs?: unknown[] }>(cronStorePath);
-    if (!store || !Array.isArray(store.jobs)) return [];
+    const store = await readJsonFile<{ jobs?: unknown[] }>(cronStorePath)
+    if (!store || !Array.isArray(store.jobs)) return []
     return store.jobs
-      .filter((j): j is Record<string, unknown> => typeof j === "object" && j !== null)
+      .filter((j): j is Record<string, unknown> => typeof j === 'object' && j !== null)
       .map((job) => {
-        const state = (typeof job.state === "object" && job.state !== null ? job.state : {}) as Record<string, unknown>;
-        const schedule = job.schedule as Record<string, unknown> | undefined;
-        const payload = job.payload as Record<string, unknown> | undefined;
+        const state = (
+          typeof job.state === 'object' && job.state !== null ? job.state : {}
+        ) as Record<string, unknown>
+        const schedule = job.schedule as Record<string, unknown> | undefined
+        const payload = job.payload as Record<string, unknown> | undefined
         return {
-          id: String(job.id ?? ""),
-          name: String(job.name ?? ""),
-          schedule: typeof schedule?.expr === "string" ? schedule.expr : "",
+          id: String(job.id ?? ''),
+          name: String(job.name ?? ''),
+          schedule: typeof schedule?.expr === 'string' ? schedule.expr : '',
           enabled: job.enabled !== false,
-          lastRunAt: typeof state.lastRunAtMs === "number"
-            ? new Date(state.lastRunAtMs).toISOString() : null,
-          nextRunAt: typeof state.nextRunAtMs === "number"
-            ? new Date(state.nextRunAtMs).toISOString() : null,
-          lastStatus: typeof state.lastStatus === "string" ? state.lastStatus
-            : typeof state.lastRunStatus === "string" ? state.lastRunStatus : null,
-          lastError: typeof state.lastError === "string" ? state.lastError : null,
-          consecutiveErrors: typeof state.consecutiveErrors === "number" ? state.consecutiveErrors : 0,
-          agentId: String(job.agentId ?? ""),
-          model: typeof payload?.model === "string" ? payload.model : undefined,
-        };
-      });
-  } catch { return []; }
+          lastRunAt:
+            typeof state.lastRunAtMs === 'number'
+              ? new Date(state.lastRunAtMs).toISOString()
+              : null,
+          nextRunAt:
+            typeof state.nextRunAtMs === 'number'
+              ? new Date(state.nextRunAtMs).toISOString()
+              : null,
+          lastStatus:
+            typeof state.lastStatus === 'string'
+              ? state.lastStatus
+              : typeof state.lastRunStatus === 'string'
+                ? state.lastRunStatus
+                : null,
+          lastError: typeof state.lastError === 'string' ? state.lastError : null,
+          consecutiveErrors:
+            typeof state.consecutiveErrors === 'number' ? state.consecutiveErrors : 0,
+          agentId: String(job.agentId ?? ''),
+          model: typeof payload?.model === 'string' ? payload.model : undefined,
+        }
+      })
+  } catch {
+    return []
+  }
 }
 
-async function collectTaskQueue(): Promise<{ current: TaskQueueItem | null; history: TaskQueueItem[] }> {
-  const stateDir = join(homedir(), ".openclaw", "workspace", "state", "task-queue");
-  const currentPath = join(stateDir, "current.json");
-  const historyDir = join(stateDir, "history");
+async function collectTaskQueue(): Promise<{
+  current: TaskQueueItem | null
+  history: TaskQueueItem[]
+}> {
+  const stateDir = join(homedir(), '.openclaw', 'workspace', 'state', 'task-queue')
+  const currentPath = join(stateDir, 'current.json')
+  const historyDir = join(stateDir, 'history')
 
-  const current = await readJsonFile<TaskQueueItem>(currentPath);
+  const current = await readJsonFile<TaskQueueItem>(currentPath)
 
-  let history: TaskQueueItem[] = [];
+  let history: TaskQueueItem[] = []
   if (existsSync(historyDir)) {
     try {
       const files = (await readdir(historyDir))
-        .filter((f) => f.endsWith(".json"))
+        .filter((f) => f.endsWith('.json'))
         .sort()
         .reverse()
-        .slice(0, 10);
-      history = (await Promise.all(
-        files.map((f) => readJsonFile<TaskQueueItem>(join(historyDir, f)))
-      )).filter((item): item is TaskQueueItem => item !== null);
-    } catch { /* non-fatal */ }
+        .slice(0, 10)
+      history = (
+        await Promise.all(files.map((f) => readJsonFile<TaskQueueItem>(join(historyDir, f))))
+      ).filter((item): item is TaskQueueItem => item !== null)
+    } catch {
+      /* non-fatal */
+    }
   }
 
-  return { current, history };
+  return { current, history }
 }
 
 async function collectForgeState(): Promise<ForgeTaskItem[]> {
-  const forgeDir = join(homedir(), ".openclaw", "workspace", "state", "forge");
-  if (!existsSync(forgeDir)) return [];
+  const forgeDir = join(homedir(), '.openclaw', 'workspace', 'state', 'forge')
+  if (!existsSync(forgeDir)) return []
   try {
-    const files = (await readdir(forgeDir)).filter((f) => f.endsWith(".json"));
+    const files = (await readdir(forgeDir)).filter((f) => f.endsWith('.json'))
     // Limit to the 20 most recently modified files to avoid unbounded async reads
-    const withMtime = (await Promise.all(
-      files.map(async (f) => {
-        const fullPath = join(forgeDir, f);
-        try { return { name: f, mtime: (await stat(fullPath)).mtimeMs }; } catch { return null; }
-      })
-    )).filter((e): e is { name: string; mtime: number } => e !== null);
-    withMtime.sort((a, b) => b.mtime - a.mtime);
-    return (await Promise.all(
-      withMtime.slice(0, 20).map((e) => readJsonFile<ForgeTaskItem>(join(forgeDir, e.name)))
-    )).filter((item): item is ForgeTaskItem => item !== null);
-  } catch { return []; }
+    const withMtime = (
+      await Promise.all(
+        files.map(async (f) => {
+          const fullPath = join(forgeDir, f)
+          try {
+            return { name: f, mtime: (await stat(fullPath)).mtimeMs }
+          } catch {
+            return null
+          }
+        }),
+      )
+    ).filter((e): e is { name: string; mtime: number } => e !== null)
+    withMtime.sort((a, b) => b.mtime - a.mtime)
+    return (
+      await Promise.all(
+        withMtime.slice(0, 20).map((e) => readJsonFile<ForgeTaskItem>(join(forgeDir, e.name))),
+      )
+    ).filter((item): item is ForgeTaskItem => item !== null)
+  } catch {
+    return []
+  }
 }
 
 async function collectGitActivity(repo?: string): Promise<GitActivity> {
   try {
-    const repoArgs = repo ? ["--repo", repo] : [];
+    const repoArgs = repo ? ['--repo', repo] : []
     const [prResult, issueResult] = await Promise.all([
-      execFile("gh", ["pr", "list", "--limit", "10", "--json", "number,title,state,url,createdAt", ...repoArgs], { timeout: 8000, encoding: "utf-8" }),
-      execFile("gh", ["issue", "list", "--limit", "10", "--json", "number,title,state,url,createdAt", ...repoArgs], { timeout: 8000, encoding: "utf-8" }),
-    ]);
-    type GitItem = { number: number; title: string; state: string; url: string; createdAt: string };
-    const prJson = prResult.stdout.trim();
-    const issueJson = issueResult.stdout.trim();
+      execFile(
+        'gh',
+        ['pr', 'list', '--limit', '10', '--json', 'number,title,state,url,createdAt', ...repoArgs],
+        { timeout: 8000, encoding: 'utf-8' },
+      ),
+      execFile(
+        'gh',
+        [
+          'issue',
+          'list',
+          '--limit',
+          '10',
+          '--json',
+          'number,title,state,url,createdAt',
+          ...repoArgs,
+        ],
+        { timeout: 8000, encoding: 'utf-8' },
+      ),
+    ])
+    type GitItem = { number: number; title: string; state: string; url: string; createdAt: string }
+    const prJson = prResult.stdout.trim()
+    const issueJson = issueResult.stdout.trim()
     return {
       prs: prJson ? (JSON.parse(prJson) as GitItem[]) : [],
       issues: issueJson ? (JSON.parse(issueJson) as GitItem[]) : [],
-    };
+    }
   } catch (err) {
-    return { prs: [], issues: [], gitError: String(err) };
+    return { prs: [], issues: [], gitError: String(err) }
   }
 }
 
 function collectCostStats(ctx: DashboardContext): CostStats {
-  const days = 7;
-  const empty: CostStats = { features: [], totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalEstimatedCostUsd: 0, days, enabled: false };
+  const days = 7
+  const empty: CostStats = {
+    features: [],
+    totalCalls: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalEstimatedCostUsd: 0,
+    days,
+    enabled: false,
+  }
 
   // Prefer the established CostTracker abstraction when available to avoid duplicating SQL.
   if (ctx.costTracker) {
     try {
-      const report = ctx.costTracker.getReport({ days });
+      const report = ctx.costTracker.getReport({ days })
       return {
         features: report.features.slice(0, 20),
         totalCalls: report.total.calls,
@@ -269,22 +330,22 @@ function collectCostStats(ctx: DashboardContext): CostStats {
         totalEstimatedCostUsd: report.total.estimatedCostUsd,
         days,
         enabled: true,
-      };
+      }
     } catch {
-      return empty;
+      return empty
     }
   }
 
   // Fallback: query the DB directly (e.g. in tests where CostTracker is not injected).
   try {
-    const db = ctx.factsDb.getRawDb();
-    const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+    const db = ctx.factsDb.getRawDb()
+    const cutoff = Math.floor(Date.now() / 1000) - days * 86400
 
     const tableExists = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'")
-      .get() as { name: string } | undefined;
+      .get() as { name: string } | undefined
 
-    if (!tableExists) return empty;
+    if (!tableExists) return empty
 
     const rows = db
       .prepare(
@@ -296,9 +357,15 @@ function collectCostStats(ctx: DashboardContext): CostStats {
          FROM llm_cost_log
          WHERE timestamp >= ?
          GROUP BY feature
-         ORDER BY estimatedCostUsd DESC`
+         ORDER BY estimatedCostUsd DESC`,
       )
-      .all(cutoff) as Array<{ feature: string; calls: number; inputTokens: number; outputTokens: number; estimatedCostUsd: number }>;
+      .all(cutoff) as Array<{
+      feature: string
+      calls: number
+      inputTokens: number
+      outputTokens: number
+      estimatedCostUsd: number
+    }>
 
     const allFeatures: CostRow[] = rows.map((r) => ({
       feature: r.feature,
@@ -306,7 +373,7 @@ function collectCostStats(ctx: DashboardContext): CostStats {
       inputTokens: Number(r.inputTokens),
       outputTokens: Number(r.outputTokens),
       estimatedCostUsd: Number(r.estimatedCostUsd),
-    }));
+    }))
 
     return {
       features: allFeatures.slice(0, 20),
@@ -316,9 +383,9 @@ function collectCostStats(ctx: DashboardContext): CostStats {
       totalEstimatedCostUsd: allFeatures.reduce((s, r) => s + r.estimatedCostUsd, 0),
       days,
       enabled: true,
-    };
+    }
   } catch {
-    return empty;
+    return empty
   }
 }
 
@@ -329,7 +396,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     collectTaskQueue(),
     collectForgeState(),
     collectGitActivity(ctx.gitRepo),
-  ]);
+  ])
   return {
     generatedAt: new Date().toISOString(),
     memory,
@@ -338,7 +405,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     forge,
     git,
     costs: collectCostStats(ctx),
-  };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +509,7 @@ const STATUS_BADGE = {
 
 function badge(status) {
   const s = String(status ?? '').toLowerCase();
-  return STATUS_BADGE[s] || \`<span class="badge badge-muted">\${escHtml(status || 'unknown')}</span>\`;
+  return Object.hasOwn(STATUS_BADGE, s) ? STATUS_BADGE[s] : \`<span class="badge badge-muted">\${escHtml(status || 'unknown')}</span>\`;
 }
 
 function escHtml(s) {
@@ -629,7 +696,7 @@ refresh();
 setInterval(refresh, 60000);
 </script>
 </body>
-</html>`;
+</html>`
 }
 
 // ---------------------------------------------------------------------------
@@ -637,62 +704,70 @@ setInterval(refresh, 60000);
 // ---------------------------------------------------------------------------
 
 export interface DashboardServer {
-  server: Server;
-  port: number;
-  close(): void;
+  server: Server
+  port: number
+  close(): void
 }
 
-export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
-  const html = getDashboardHtml();
+export async function createDashboardServer(
+  ctx: DashboardContext,
+  port: number,
+): Promise<DashboardServer> {
+  const html = getDashboardHtml()
 
   const server = createServer((req, res) => {
-    const url = req.url ?? "/";
-    const pathname = url.split("?")[0];
+    const url = req.url ?? '/'
+    const pathname = url.split('?')[0]
 
-    if (pathname === "/api/status") {
-      collectStatus(ctx).then((status) => {
-        const body = JSON.stringify(status);
-        res.writeHead(200, {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-        });
-        res.end(body);
-      }).catch((err: unknown) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
-      });
-    } else if (pathname === "/" || pathname === "/index.html") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
-      res.end(html);
+    if (pathname === '/api/status') {
+      collectStatus(ctx)
+        .then((status) => {
+          const body = JSON.stringify(status)
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache',
+          })
+          res.end(body)
+        })
+        .catch((err: unknown) => {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: String(err) }))
+        })
+    } else if (pathname === '/' || pathname === '/index.html') {
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      })
+      res.end(html)
     } else {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found");
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      res.end('Not found')
     }
-  });
+  })
 
   return new Promise((resolve, reject) => {
     // Reject on startup errors (e.g. EADDRINUSE). This handler is replaced
     // with a logging handler after successful bind so post-bind errors are not
     // silently swallowed.
     function onStartupError(err: NodeJS.ErrnoException) {
-      reject(err);
+      reject(err)
     }
-    server.once("error", onStartupError);
+    server.once('error', onStartupError)
 
-    server.listen(port, "127.0.0.1", () => {
-      const addr = server.address();
-      const boundPort = typeof addr === "object" && addr ? addr.port : port;
-      server.removeAllListeners("error");
-      server.on("error", (err: NodeJS.ErrnoException) => {
-        console.error("[dashboard-server] Server error:", err);
-      });
+    server.listen(port, '127.0.0.1', () => {
+      const addr = server.address()
+      const boundPort = typeof addr === 'object' && addr ? addr.port : port
+      server.removeAllListeners('error')
+      server.on('error', (err: NodeJS.ErrnoException) => {
+        console.error('[dashboard-server] Server error:', err)
+      })
       resolve({
         server,
         port: boundPort,
         close() {
-          server.close();
+          server.close()
         },
-      });
-    });
-  });
+      })
+    })
+  })
 }
