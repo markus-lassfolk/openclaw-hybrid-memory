@@ -184,9 +184,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   type EmbeddingProviderName = "openai" | "ollama" | "onnx" | "google";
   const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
   const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
+  const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
+  const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
   const hasGoogleKey =
-    (typeof distillForEmbed?.apiKey === "string" && distillForEmbed.apiKey.trim().length >= 10) ||
-    (typeof llmProvidersForEmbed?.google?.apiKey === "string" && llmProvidersForEmbed.google.apiKey.trim().length >= 10);
+    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:")) ||
+    (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:"));
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;

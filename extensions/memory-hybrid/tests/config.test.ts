@@ -826,6 +826,16 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
   });
 
+  it("resolves short SecretRef like env:GKEY (9 chars) for google embedding (Issue #344 edge case)", () => {
+    vi.stubEnv("GKEY", "AIzaSy-short-ref-resolved-key-long-enough");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "env:GKEY" },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-short-ref-resolved-key-long-enough");
+    expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
+  });
+
   it("no mode applies full preset: distill is defined with preset defaults", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeDefined();
