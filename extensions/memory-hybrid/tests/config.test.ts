@@ -787,6 +787,45 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill?.defaultModel).toBe("gemini-2.0-flash");
   });
 
+  // ── Google embedding.googleApiKey SecretRef resolution — Issue #344 ──────────
+  // distill.apiKey / llm.providers.google.apiKey stored as literal "env:VAR" or "file:/path"
+  // when resolveEnvVars() was called — it only handles ${VAR} template syntax, not the env:/file:
+  // SecretRef format. Fixed by using resolveSecretRef() so embedding.googleApiKey holds the
+  // actual resolved key, not the literal SecretRef string.
+
+  it("resolves embedding.googleApiKey when distill.apiKey is env:VAR SecretRef (Issue #344)", () => {
+    vi.stubEnv("TEST_GEMINI_API_KEY_344", "AIzaSy-resolved-key-that-is-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "env:TEST_GEMINI_API_KEY_344", defaultModel: "gemini-2.0-flash" },
+    });
+    // embedding.googleApiKey must be the resolved value, not the literal "env:..." string
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-resolved-key-that-is-long-enough-to-pass");
+    expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
+    // distill.apiKey stays raw (resolved at runtime by resolveApiKey() in init-databases)
+    expect(result.distill?.apiKey).toBe("env:TEST_GEMINI_API_KEY_344");
+  });
+
+  it("throws when distill.apiKey env: SecretRef for google embedding references an unset env var (Issue #344)", () => {
+    delete process.env.TEST_GEMINI_KEY_UNSET_344;
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+        distill: { apiKey: "env:TEST_GEMINI_KEY_UNSET_344" },
+      }),
+    ).toThrow(/SecretRef.*could not be resolved/);
+  });
+
+  it("resolves embedding.googleApiKey when llm.providers.google.apiKey is env:VAR SecretRef (Issue #344)", () => {
+    vi.stubEnv("TEST_GEMINI_PROVIDER_KEY_344", "AIzaSy-provider-key-that-is-long-enough-12345");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      llm: { default: ["google/gemini-2.0-flash"], providers: { google: { apiKey: "env:TEST_GEMINI_PROVIDER_KEY_344" } } },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-provider-key-that-is-long-enough-12345");
+    expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
+  });
+
   it("no mode applies full preset: distill is defined with preset defaults", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeDefined();

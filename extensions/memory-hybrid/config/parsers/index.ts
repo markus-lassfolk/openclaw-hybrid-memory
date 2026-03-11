@@ -7,6 +7,7 @@ import {
   EMBEDDING_DIMENSIONS,
   OPENAI_MODELS,
   resolveEnvVars,
+  resolveSecretRef,
   parseStoreConfig,
   parseWALConfig,
   parseEventLogConfig,
@@ -336,12 +337,19 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     if (hasGoogleKey) inferred.push("google");
     preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
   }
+  // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
+  // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
+  const rawGoogleKey = (distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim();
   const resolvedGoogleApiKey =
     (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
-      ? resolveEnvVars((distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim())
+      ? (resolveSecretRef(rawGoogleKey) ?? undefined)
       : undefined;
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
-    throw new Error("embedding.provider is 'google' but no valid key found. Set distill.apiKey or llm.providers.google.apiKey in plugin config.");
+    const isSecretRef = rawGoogleKey.startsWith("env:") || rawGoogleKey.startsWith("file:");
+    const hint = isSecretRef
+      ? ` (SecretRef '${rawGoogleKey}' could not be resolved — check the referenced env var or file is set and non-empty.)`
+      : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
+    throw new Error(`embedding.provider is 'google' but no valid key found.${hint}`);
   }
 
   // Parse multi-model embedding config (Issue #158)

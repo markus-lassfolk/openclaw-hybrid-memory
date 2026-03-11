@@ -174,13 +174,21 @@ export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
-  /** Resolve env:VAR to process.env[VAR] so gateway-stored keys work when merged into llm.providers */
+  /** Resolve env:VAR / file:/path SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344). */
   const resolveApiKey = (key: string | undefined): string | undefined => {
     if (typeof key !== "string" || !key.trim()) return undefined;
     const k = key.trim();
     if (k.startsWith("env:")) {
       const v = process.env[k.slice(4).trim()];
       return v && v.trim() ? v.trim() : undefined;
+    }
+    if (k.startsWith("file:")) {
+      try {
+        const contents = readFileSync(k.slice(5).trim(), "utf-8").trim();
+        return contents || undefined;
+      } catch {
+        return undefined;
+      }
     }
     return k;
   };
