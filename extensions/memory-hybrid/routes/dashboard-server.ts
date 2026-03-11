@@ -10,13 +10,13 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import { getDirSize } from "../utils/fs.js";
+import { getDirSize, getFileSize } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
 
@@ -120,10 +120,6 @@ export interface DashboardStatus {
 /** Cached LanceDB dir size keyed by resolved path to avoid repeated traversal on every poll */
 const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
 const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
-
-function getFileSize(filePath: string): number {
-  try { return statSync(filePath).size; } catch { return 0; }
-}
 
 function readJsonFile<T>(filePath: string): T | null {
   try {

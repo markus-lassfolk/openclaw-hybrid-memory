@@ -7,6 +7,13 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
+ * Returns the byte size of a file, or 0 if it cannot be read.
+ */
+export function getFileSize(filePath: string): number {
+  try { return statSync(filePath).size; } catch { return 0; }
+}
+
+/**
  * Recursively calculate the total size of a directory (synchronous).
  * @param dirPath - Path to the directory
  * @returns Total size in bytes, or 0 if the directory cannot be read
