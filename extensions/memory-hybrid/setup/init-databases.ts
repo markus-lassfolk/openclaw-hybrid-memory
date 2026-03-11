@@ -669,6 +669,9 @@ export function initializeDatabases(
             api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
             const { spawn } = await import("node:child_process");
             const child = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
+            child.on("error", (err) => {
+              api.logger.warn(`memory-hybrid: Ollama spawn error: ${err.message}`);
+            });
             child.unref();
             // Allow Ollama ~2 s to bind its port before re-probing
             await new Promise<void>((r) => setTimeout(r, 2000));
