@@ -1701,3 +1701,138 @@ describe("FactsDB.languageKeywordsCount", () => {
     expect(count).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Schema migration #237: access_count and last_accessed_at
+// ---------------------------------------------------------------------------
+
+describe("FactsDB migration #237: access_count and last_accessed_at", () => {
+  it("new facts have access_count=0 and last_accessed_at=null", () => {
+    const entry = db.store({
+      text: "Fresh fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    expect(entry.accessCount).toBe(0);
+    expect(entry.lastAccessedAt).toBeNull();
+  });
+
+  it("refreshAccessedFacts increments access_count and sets last_accessed_at", () => {
+    const entry = db.store({
+      text: "Recall tracking fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    expect(entry.accessCount).toBe(0);
+
+    db.refreshAccessedFacts([entry.id]);
+
+    const updated = db.getById(entry.id);
+    expect(updated?.accessCount).toBe(1);
+    expect(updated?.lastAccessedAt).toBeDefined();
+    expect(updated?.lastAccessedAt).not.toBeNull();
+    // Must be strict UTC ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+    expect(updated!.lastAccessedAt!).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it("refreshAccessedFacts increments access_count cumulatively", () => {
+    const entry = db.store({
+      text: "Repeat recall fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    db.refreshAccessedFacts([entry.id]);
+    db.refreshAccessedFacts([entry.id]);
+    db.refreshAccessedFacts([entry.id]);
+
+    const updated = db.getById(entry.id);
+    expect(updated?.accessCount).toBe(3);
+    expect(updated?.recallCount).toBe(3);
+  });
+
+  it("access_count and recall_count stay in sync after multiple recalls", () => {
+    const a = db.store({ text: "Fact A", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test" });
+    const b = db.store({ text: "Fact B", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test" });
+
+    db.refreshAccessedFacts([a.id]);
+    db.refreshAccessedFacts([a.id, b.id]);
+
+    const updatedA = db.getById(a.id);
+    const updatedB = db.getById(b.id);
+    expect(updatedA?.accessCount).toBe(2);
+    expect(updatedB?.accessCount).toBe(1);
+    expect(updatedA?.accessCount).toBe(updatedA?.recallCount);
+    expect(updatedB?.accessCount).toBe(updatedB?.recallCount);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New decay classes (#237): ephemeral, short, normal, durable
+// ---------------------------------------------------------------------------
+
+describe("FactsDB new decay classes (#237)", () => {
+  it.each(["ephemeral", "short", "normal", "durable"] as const)(
+    "stores and retrieves decay_class=%s",
+    (dc) => {
+      const entry = db.store({
+        text: `Fact with decay class ${dc}`,
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+        decayClass: dc,
+      });
+      expect(entry.decayClass).toBe(dc);
+      const retrieved = db.getById(entry.id);
+      expect(retrieved?.decayClass).toBe(dc);
+    },
+  );
+
+  it("normal decay class has 2-week TTL", () => {
+    const entry = db.store({
+      text: "Normal decay fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "normal",
+    });
+    const twoWeeksSec = 14 * 24 * 3600;
+    const nowSec = Math.floor(Date.now() / 1000);
+    expect(entry.expiresAt).toBeDefined();
+    expect(entry.expiresAt).not.toBeNull();
+    // expires_at should be roughly now + 2 weeks (within 60s tolerance)
+    expect(Math.abs(entry.expiresAt! - (nowSec + twoWeeksSec))).toBeLessThan(60);
+  });
+
+  it("permanent decay class never expires", () => {
+    const entry = db.store({
+      text: "Permanent fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    expect(entry.expiresAt).toBeNull();
+  });
+});

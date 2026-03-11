@@ -30,7 +30,7 @@ Categories can also be **discovered** over time from "other" facts (new category
 |------|-------------------|----------|
 | **Tags** | Regex patterns over fact text (and optional entity). First match per tag; stored comma-separated. Optional explicit tags override. | [AUTO-TAGGING.md](AUTO-TAGGING.md) |
 | **Categories** | Stage 1: heuristic regex (detectCategory). Stage 2: LLM auto-classify for "other". Stage 3: **category discovery** — LLM suggests topic labels; labels with ≥ N facts become new categories. | [FEATURES.md](FEATURES.md#categories), [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md) |
-| **Decay class** | Heuristic (classifyDecay) from entity/key/text: permanent, stable, active, session, checkpoint. Determines TTL and refresh-on-access. | [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) |
+| **Decay class** | Heuristic (classifyDecay) from entity/key/text: permanent, durable, normal, short, ephemeral (plus legacy classes). Determines TTL and refresh-on-access. | [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) |
 | **Entity / key / value** | Structured extraction (extractStructuredFields) from text: e.g. "X's Y is Z", "decided X because Y", email/phone. | [FEATURES.md](FEATURES.md#structured-field-extraction) |
 | **Conflicting memories** | Classify-before-write (ADD/UPDATE/DELETE/NOOP); supersession (supersedes_id, valid_from, valid_until). | [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) |
 | **Dynamic salience** | Access boost (recall_count), time decay (last_accessed), Hebbian RELATED_TO links on co-recall. | [DYNAMIC-SALIENCE.md](DYNAMIC-SALIENCE.md) |
