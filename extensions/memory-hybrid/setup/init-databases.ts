@@ -254,7 +254,21 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
-  function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string } {
+  /**
+   * Returns true when the auth order for a provider includes at least one OAuth/token profile
+   * (i.e. not just the plain API-key profile). Used to decide whether to route through the gateway.
+   * API-key-only profiles end with ':api' or ':default' (e.g. 'anthropic:api', 'google:default').
+   */
+  function hasOAuthProfiles(order: string[] | undefined, provider: string): boolean {
+    if (!order || order.length === 0) return false;
+    const apiOnlyPatterns = [`${provider}:api`, `${provider}:default`];
+    return order.some((p) => !apiOnlyPatterns.includes(p));
+  }
+
+  /** The configured auth.order map from plugin config (issue #311). */
+  const authOrder = (cfg.auth as { order?: Record<string, string[]> } | undefined)?.order;
+
+  function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string; useFullModel?: boolean } {
     const normalized = normalizeModelId(model);
     const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
@@ -269,6 +283,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
 
     if (prefix === "google") {
+      // When OAuth profiles are configured for google AND gateway is available, route through gateway
+      // so the gateway can resolve the OAuth token (e.g. google-gemini-cli) before falling back to API key.
+      if (hasOAuthProfiles(authOrder?.['google'], 'google') && gatewayBaseUrl && gatewayToken) {
+        return {
+          client: getOrCreate(`gateway:oauth:${gatewayBaseUrl}`, () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl })),
+          bareModel,
+          useFullModel: true, // gateway expects full "google/model" name, not bare model
+        };
+      }
       const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey)
         ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
@@ -295,6 +318,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
 
     if (prefix === "anthropic") {
+      // When OAuth profiles are configured for anthropic AND gateway is available, route through gateway
+      // so the gateway can resolve the OAuth token (e.g. anthropic:claude-cli) before falling back to API key.
+      if (hasOAuthProfiles(authOrder?.['anthropic'], 'anthropic') && gatewayBaseUrl && gatewayToken) {
+        return {
+          client: getOrCreate(`gateway:oauth:${gatewayBaseUrl}`, () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl })),
+          bareModel,
+          useFullModel: true, // gateway expects full "anthropic/model" name, not bare model
+        };
+      }
       const apiKey = resolveApiKey(providerCfg?.apiKey)
         ?? (process.env.ANTHROPIC_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
@@ -389,12 +421,15 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
             create(body: Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1]) {
               const rawModel: string = (body as { model?: string }).model ?? "";
               const model = normalizeModelId(rawModel);
-              const { client, bareModel, ollamaBaseUrl } = resolveClient(model);
+              const { client, bareModel, ollamaBaseUrl, useFullModel } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
               const isOpenAI = prefix === "openai" || !model.includes("/");
+              // When gateway-routed for non-OpenAI providers (auth.order OAuth), send the full "provider/model"
+              // name so the gateway can route to the correct provider using the configured auth profile.
+              const modelForRequest = useFullModel ? model.trim() : bareModel;
               const adjustedBody = isOpenAI
-                ? remapMaxTokensForOpenAI({ ...(body as object), model: bareModel }, bareModel)
-                : { ...(body as object), model: bareModel };
+                ? remapMaxTokensForOpenAI({ ...(body as object), model: modelForRequest }, bareModel)
+                : { ...(body as object), model: modelForRequest };
               const start = Date.now();
               // For Ollama models, probe the local server before attempting the call so we fall
               // through to the next tier model quickly instead of waiting for a TCP timeout.

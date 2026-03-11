@@ -12,6 +12,7 @@ import type {
   LLMProviderConfig,
   GatewayConfig,
   ResolvedGatewayAuthConfig,
+  AuthOrderConfig,
 } from "../types/index.js";
 import { parseDuration } from "../../utils/duration.js";
 
@@ -271,6 +272,29 @@ function isPlaceholderApiKey(key: string): boolean {
     // Also reject values that are entirely repeated single characters (e.g. "aaaaaaaaaa", "1111111111")
     // but NOT all-lowercase/uppercase alphanumeric real keys.
     || /^(.)\1{9,}$/.test(key);
+}
+
+/**
+ * Parse auth.order config for OAuth-first LLM provider authentication (issue #311).
+ * Returns undefined when no valid auth order is configured.
+ */
+export function parseAuthConfig(cfg: Record<string, unknown>): AuthOrderConfig | undefined {
+  const authRaw = cfg.auth as Record<string, unknown> | undefined;
+  if (!authRaw || typeof authRaw !== "object" || Array.isArray(authRaw)) return undefined;
+  const orderRaw = authRaw.order;
+  if (!orderRaw || typeof orderRaw !== "object" || Array.isArray(orderRaw)) return undefined;
+  const order: Record<string, string[]> = {};
+  for (const [provider, profiles] of Object.entries(orderRaw as Record<string, unknown>)) {
+    if (!provider || typeof provider !== "string") continue;
+    if (!Array.isArray(profiles)) continue;
+    const validProfiles = profiles
+      .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      .map((p) => p.trim());
+    if (validProfiles.length > 0) {
+      order[provider.toLowerCase()] = validProfiles;
+    }
+  }
+  return Object.keys(order).length > 0 ? { order } : undefined;
 }
 
 export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefined {
