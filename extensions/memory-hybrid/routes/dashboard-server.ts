@@ -12,9 +12,12 @@ import type { Server } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { execFile } from "node:child_process/promises";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+
+const execFile = promisify(execFileCb);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -571,6 +574,9 @@ async function refresh() {
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Server error');
+    }
     const grid = document.getElementById('grid');
     grid.innerHTML = [
       renderMemory(data.memory),

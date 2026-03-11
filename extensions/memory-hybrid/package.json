@@ -11,6 +11,7 @@
     "backends",
     "cli",
     "lifecycle",
+    "routes",
     "setup",
     "services",
     "tools",
