@@ -46,6 +46,27 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 | `config.ts` | Decay classes, TTL defaults, config parsing (incl. autoRecall, store, etc.) |
 | `index.ts` | Plugin implementation (SQLite+FTS5, LanceDB, tools, CLI, lifecycle) |
 | `versionInfo.ts` | Plugin and memory-manager version metadata |
+| `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → Rumination Engine pipeline |
+
+## Event Bus
+
+`backends/event-bus.ts` adds an **Event Bus**: an append-only `memory_events` SQLite table that decouples sensor sweeps (producers) from the Rumination Engine (consumer).
+
+Key API:
+
+| Method | Description |
+|--------|-------------|
+| `appendEvent(type, source, payload, importance?, fingerprint?)` | Append a new event; returns its auto-generated id |
+| `queryEvents(filter?)` | Filter by `status`, `event_type`, `since`, `limit` |
+| `updateStatus(id, newStatus)` | Advance an event through the status lifecycle |
+| `dedup(fingerprint, cooldownHours?)` | Return `true` if a duplicate exists within the cooldown window |
+| `pruneArchived(olderThanDays?)` | Delete archived events older than N days |
+
+Status lifecycle: `raw → processed → surfaced → pushed → archived`
+
+`computeFingerprint(input)` is a SHA-256 helper for building stable dedup keys.
+
+See [`docs/event-bus.md`](docs/event-bus.md) for the full schema, API reference, and integration example.
 
 ## Dependencies
 
