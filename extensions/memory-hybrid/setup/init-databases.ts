@@ -298,7 +298,11 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
     if (prefix === "ollama") {
       // Ollama exposes an OpenAI-compatible API at /v1. No real API key is required.
-      const baseURL = providerCfg?.baseURL ?? `${OLLAMA_DEFAULT_BASE_URL}/v1`;
+      let baseURL = providerCfg?.baseURL ?? `${OLLAMA_DEFAULT_BASE_URL}/v1`;
+      // Ensure baseURL ends with /v1 for OpenAI client
+      if (!/\/v1\/?$/.test(baseURL)) {
+        baseURL = `${baseURL.replace(/\/$/, "")}/v1`;
+      }
       // Strip /v1 suffix for the health-check base URL
       const ollamaBaseUrl = baseURL.replace(/\/v1\/?$/, "");
       const apiKey = resolveApiKey(providerCfg?.apiKey) ?? "ollama";
