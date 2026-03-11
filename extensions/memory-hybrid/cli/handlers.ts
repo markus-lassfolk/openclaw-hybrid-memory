@@ -229,6 +229,11 @@ function ensureMaintenanceCronJobs(
       }
       continue;
     }
+    // If feature gate is now enabled but existing job is disabled, re-enable it.
+    if (def.featureGate && featureGates && featureGates[def.featureGate] === true && existing && existing.enabled === false) {
+      existing.enabled = true;
+      jobsChanged = true;
+    }
     if (!existing) {
       const job = resolveCronJob(def, pluginConfig) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
