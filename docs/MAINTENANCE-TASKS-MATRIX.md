@@ -39,7 +39,7 @@ This matrix shows **which maintenance tasks run** in each context (installation,
 ### After installation (`openclaw hybrid-mem install`)
 
 - **Writes** `~/.openclaw/openclaw.json` with full defaults (memory slot, plugin config, compaction prompts, bootstrap limits, etc.).
-- **Creates** `~/.openclaw/memory` and **ensures maintenance cron job definitions** in `~/.openclaw/cron/jobs.json`: any of the **9** canonical jobs that are missing are added (existing jobs are left as-is; disabled jobs are **not** re-enabled). The jobs are **not executed** by install; the scheduler (OpenClaw or system cron) runs them later.
+- **Creates** `~/.openclaw/memory` and **ensures maintenance cron job definitions** in `~/.openclaw/cron/jobs.json`: any of the **10** canonical jobs that are missing are added (existing jobs are left as-is; disabled jobs are **not** re-enabled). The jobs are **not executed** by install; the scheduler (OpenClaw or system cron) runs them later.
 - **Does not run** any maintenance tasks (no prune, distill, reflect, etc.). User should restart the gateway and optionally run `verify [--fix]` and/or `run-all` manually.
 
 ### After update (`openclaw hybrid-mem upgrade` + gateway restart)
@@ -80,6 +80,7 @@ The plugin **ensures** these job definitions exist in `~/.openclaw/cron/jobs.jso
 | **weekly-deep-maintenance**   | Sat 04:00          | compact → scope promote                                                                |
 | **weekly-persona-proposals**  | Sun 10:00          | generate-proposals (and notify if pending). Exit 0 if personaProposals disabled.        |
 | **monthly-consolidation**     | 1st of month 05:00 | consolidate --threshold 0.92 → build-languages → backfill-decay                         |
+| **sensor-sweep-tier1**        | Every 4h           | sensor-sweep --tier 1 → sensor-sweep --tier 2 (no LLM). Exit 0 if sensorSweep.enabled false. |
 
 
 ### In `run-all` (`openclaw hybrid-mem run-all`)
