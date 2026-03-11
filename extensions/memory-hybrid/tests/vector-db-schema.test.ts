@@ -7,13 +7,21 @@
  *    an existing table that was created with a different vector dimension.
  * 3. Auto-repair: when autoRepair=true, the table is dropped and recreated with the
  *    correct dimension; wasRepaired is set so callers can trigger re-embedding.
+ * 4. GlitchTip noise fix (issue #366): search() and hasDuplicate() do not call
+ *    capturePluginError on dimension mismatch — the error is already logged at startup.
  */
+
+// vi.mock is hoisted before any imports, intercepting capturePluginError in VectorDB.
+vi.mock("../services/error-reporter.js", () => ({
+  capturePluginError: vi.fn(),
+}));
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 const { VectorDB } = _testing;
 
@@ -236,5 +244,76 @@ describe("VectorDB.optimize() — compaction and version pruning (issue #292)", 
     expect(typeof id).toBe("string");
     const results = await db.search([0.5, 0.5, 0.5], 5, 0);
     expect(results.some((r) => r.entry.text === "post-optimize fact")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VectorDB issue #366 — no GlitchTip spam on dimension mismatch
+// When validateOrRepairSchema() sets schemaValid=false at startup, subsequent
+// search() and hasDuplicate() calls must NOT invoke capturePluginError, since
+// the problem was already logged once at init.
+// ---------------------------------------------------------------------------
+
+describe("VectorDB issue #366 — capturePluginError suppressed on schema mismatch", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-366-test-"));
+    lanceDir = join(tmpDir, "lance");
+    // Seed with WRONG_DIM to simulate a table created by an old embedding model
+    await seedTable(lanceDir, WRONG_DIM);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("search() does not call capturePluginError on dimension mismatch", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    const results = await db.search(new Array(CORRECT_DIM).fill(0.1), 5, 0);
+    expect(results).toHaveLength(0);
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    await db.close();
+  });
+
+  it("hasDuplicate() does not call capturePluginError on dimension mismatch", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    const isDup = await db.hasDuplicate(new Array(CORRECT_DIM).fill(0.1));
+    expect(isDup).toBe(false);
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    await db.close();
+  });
+
+  it("repeated search() calls do not call capturePluginError", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    // Multiple calls in the same session — each would previously report to GlitchTip
+    for (let i = 0; i < 5; i++) {
+      await db.search(new Array(CORRECT_DIM).fill(0.1), 5, 0);
+    }
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    await db.close();
+  });
+
+  it("capturePluginError IS called for unexpected (non-schema) errors", async () => {
+    // Open with matching dimensions — schemaValid will be true after init
+    const db = new VectorDB(lanceDir, WRONG_DIM);
+    await db.count(); // trigger initialization so this.table is populated
+
+    // Inject an unexpected (non-schema) error by replacing the internal table with a
+    // stub whose vectorSearch throws a generic error. schemaValid is still true, so
+    // the catch block must NOT suppress capturePluginError.
+    const unexpectedErr = new Error("Unexpected I/O failure");
+    (db as any).table = { vectorSearch: () => { throw unexpectedErr; } };
+
+    const results = await db.search(new Array(WRONG_DIM).fill(0.1), 5, 0);
+    expect(results).toHaveLength(0);
+    expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledOnce();
+    expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledWith(
+      unexpectedErr,
+      expect.objectContaining({ operation: 'vector-search' }),
+    );
+    await db.close();
   });
 });
