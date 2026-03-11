@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { capturePluginError } from "./error-reporter.js";
-import { withLLMRetry } from "./chat.js";
+import { withLLMRetry, is404Like, LLMRetryError } from "./chat.js";
 
 /**
  * Thrown by ChainEmbeddingProvider when every provider in the chain has failed.
@@ -550,6 +550,13 @@ function makeCacheKey(model: string, text: string): string {
   return `${model}:${hashText(text)}`;
 }
 
+/** Returns true when the error is a 404 (model not found) — either directly or wrapped in LLMRetryError. */
+function is404OrWrapped(err: Error): boolean {
+  if (is404Like(err)) return true;
+  if (err instanceof LLMRetryError && is404Like(err.cause)) return true;
+  return false;
+}
+
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
@@ -654,11 +661,14 @@ export class Embeddings implements EmbeddingProvider {
     // lastErr is always defined here: constructor enforces models.length >= 1, so
     // the loop always runs at least once; either it returns early (success) or
     // sets lastErr on every iteration before reaching this point.
-    capturePluginError(lastErr!, {
-      subsystem: "embeddings",
-      operation: "embed",
-      phase: "fallback-exhausted",
-    });
+    // Skip reporting 404 errors (model not found) — config issue, not a bug (#329).
+    if (!is404OrWrapped(lastErr!)) {
+      capturePluginError(lastErr!, {
+        subsystem: "embeddings",
+        operation: "embed",
+        phase: "fallback-exhausted",
+      });
+    }
     throw lastErr!;
   }
 
@@ -700,11 +710,14 @@ export class Embeddings implements EmbeddingProvider {
         );
       }
       if (lastErr !== undefined && allResults.length === i) {
-        capturePluginError(lastErr, {
-          subsystem: "embeddings",
-          operation: "embedBatch",
-          phase: "fallback-exhausted",
-        });
+        // Skip reporting 404 errors (model not found) — config issue, not a bug (#329).
+        if (!is404OrWrapped(lastErr)) {
+          capturePluginError(lastErr, {
+            subsystem: "embeddings",
+            operation: "embedBatch",
+            phase: "fallback-exhausted",
+          });
+        }
         throw lastErr;
       }
     }

@@ -144,6 +144,40 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(() => new Embeddings(client, ["text-embedding-3-small", "text-embedding-ada-002"], 768)).toThrow(/does not support custom dimensions/);
   });
 
+  it("#329: Google API 404 fails fast (no retry) and does not report to GlitchTip", async () => {
+    vi.useFakeTimers();
+    try {
+      // Simulate OpenAI SDK v6 NotFoundError from Google Generative Language API
+      const googleError = Object.assign(
+        new Error("404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings. Call ListModels to see the list of available models and their supported methods."),
+        { status: 404 },
+      );
+      const mockCreate = vi.fn().mockRejectedValue(googleError);
+      const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+      const provider = new Embeddings(client, "text-embedding-004", 768);
+      await expect(provider.embed("test")).rejects.toThrow("404 models/text-embedding-004");
+      // Must NOT retry — is404Like should exit withLLMRetry on first attempt
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#329: Google API 404 (message-only, no status) still fails fast", async () => {
+    vi.useFakeTimers();
+    try {
+      // Google API error without HTTP .status set (cross-realm or plain Error fallback)
+      const googleError = new Error("models/text-embedding-004 is not found for API version v1beta");
+      const mockCreate = vi.fn().mockRejectedValue(googleError);
+      const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+      const provider = new Embeddings(client, "text-embedding-004", 768);
+      await expect(provider.embed("test")).rejects.toThrow("is not found for API version");
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("updates modelName when a fallback model succeeds", async () => {
     vi.useFakeTimers();
     try {
