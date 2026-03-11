@@ -637,7 +637,17 @@ export async function sweepSystemHealth(
       platform: process.platform,
     };
 
-    const fp = computeFingerprint(`sensor.system-health:${JSON.stringify(payload)}`);
+    const MB = 1024 * 1024;
+    const fingerprintPayload = {
+      nodeVersion: process.version,
+      platform: process.platform,
+      memoryRssMB: Math.floor(memoryUsage.rss / MB / 10) * 10,
+      memoryHeapUsedMB: Math.floor(memoryUsage.heapUsed / MB / 10) * 10,
+      memoryHeapTotalMB: Math.floor(memoryUsage.heapTotal / MB / 10) * 10,
+      sqliteSizeMB: sqliteSizeBytes !== null ? Math.floor(sqliteSizeBytes / MB / 10) * 10 : null,
+    };
+
+    const fp = computeFingerprint(`sensor.system-health:${JSON.stringify(fingerprintPayload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -674,11 +684,6 @@ export async function sweepWeather(
   const result: SensorSweepResult = { sensor: "weather", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const location = cfg.location ?? "auto";
-    const fp = computeFingerprint(`sensor.weather:${location}`);
-    if (bus.dedup(fp, cooldownHours)) {
-      result.eventsSkipped++;
-      return result;
-    }
 
     const url = location === "auto"
       ? `https://wttr.in/?format=j1`
@@ -707,6 +712,12 @@ export async function sweepWeather(
       }
     } finally {
       clearTimeout(timeout);
+    }
+
+    const fp = computeFingerprint(`sensor.weather:${location}:${JSON.stringify(weatherData)}`);
+    if (bus.dedup(fp, cooldownHours)) {
+      result.eventsSkipped++;
+      return result;
     }
 
     bus.appendEvent("sensor.weather", "weather-sensor", weatherData, cfg.importance ?? 0.3, fp);
