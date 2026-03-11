@@ -261,3 +261,21 @@ The `distill.apiKey` is still used as a fallback key for `google/*` models when 
 - **Graceful degradation** — missing key = skip model + notify user; no crash.
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full config reference and [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for distillation-specific usage.
+
+
+### Local LLM Pre-filtering (Ollama)
+
+For bulk operations (like `distill`), you can drastically reduce cloud API usage by enabling the two-tier local LLM pre-filter. A local model (e.g. `qwen3:8b`) triages sessions and only sends the interesting ones to the heavy cloud model.
+
+```json
+{
+  "extraction": {
+    "preFilter": {
+      "enabled": true,
+      "model": "qwen3:8b"
+    }
+  }
+}
+```
+
+See [CONFIGURATION.md](CONFIGURATION.md#local-llm-session-pre-filtering-290) for details.
