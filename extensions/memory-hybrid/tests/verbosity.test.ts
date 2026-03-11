@@ -13,12 +13,28 @@
  * - runCostReportForCli compact=true when verbosity=quiet
  * - silent mode: parseVerbosityLevel accepts "silent"
  * - silent mode: hybridConfigSchema accepts "silent"
+ * - silent mode: lifecycle hooks suppress all before_agent_start injection handlers (Issue #317)
+ * - silent mode: agent_end credential auto-detect does not register in silent mode
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { rmSync } from "node:fs";
 import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
+import { createLifecycleHooks } from "../lifecycle/hooks.js";
+import type { LifecycleContext } from "../lifecycle/hooks.js";
+
+// @sentry/node is an optional runtime dependency; stub it for unit tests so that
+// importing lifecycle/hooks.ts (which transitively imports error-reporter.ts) doesn't fail.
+vi.mock("@sentry/node", () => ({
+  init: vi.fn(),
+  captureException: vi.fn(),
+  withScope: vi.fn((_cb: (scope: unknown) => void) => {}),
+  configureScope: vi.fn(),
+  addBreadcrumb: vi.fn(),
+  setTag: vi.fn(),
+  setContext: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -635,5 +651,105 @@ describe("VerbosityLevel — silent mode", () => {
       expect.stringContaining("silent"),
     );
     warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Silent mode — hook suppression integration test (Issue #317)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the minimal LifecycleContext needed to exercise createLifecycleHooks.
+ * Only cfg and a handful of refs are accessed synchronously at registration time;
+ * all other fields are only touched inside async hook callbacks and can be null/vi.fn().
+ */
+function makeMinimalLifecycleContext(
+  verbosity: "normal" | "silent",
+): LifecycleContext {
+  const cfg = hybridConfigSchema.parse({
+    embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
+    verbosity,
+    autoRecall: { enabled: true, authFailure: { enabled: true } },
+    credentials: { enabled: true, autoDetect: true },
+    activeTask: { enabled: true },
+    frustrationDetection: { enabled: true },
+  });
+
+  return {
+    cfg,
+    currentAgentIdRef: { value: null },
+    lastProgressiveIndexIds: [],
+    restartPendingClearedRef: { value: true },
+    eventLog: null,
+    credentialsDb: null,
+    aliasDb: null,
+    wal: null,
+    embeddingRegistry: null,
+    resolvedSqlitePath: "/tmp/test.sqlite",
+    vectorDb: { open: vi.fn(), close: vi.fn() } as unknown as LifecycleContext["vectorDb"],
+    factsDb: {} as unknown as LifecycleContext["factsDb"],
+    embeddings: {} as unknown as LifecycleContext["embeddings"],
+    openai: {} as unknown as LifecycleContext["openai"],
+    issueStore: null,
+    pendingLLMWarnings: { drain: () => [] } as unknown as LifecycleContext["pendingLLMWarnings"],
+    walWrite: vi.fn() as unknown as LifecycleContext["walWrite"],
+    walRemove: vi.fn() as unknown as LifecycleContext["walRemove"],
+    findSimilarByEmbedding: vi.fn() as unknown as LifecycleContext["findSimilarByEmbedding"],
+    shouldCapture: () => false,
+    detectCategory: () => "general" as const,
+  } as unknown as LifecycleContext;
+}
+
+function makeMockApi() {
+  return {
+    on: vi.fn(),
+    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+    context: { sessionId: "test-session", agentId: "test-agent" },
+  };
+}
+
+describe("silent mode — hook suppression", () => {
+  it("registers fewer before_agent_start handlers in silent mode than in normal mode", () => {
+    const silentApi = makeMockApi();
+    const normalApi = makeMockApi();
+
+    const silentHooks = createLifecycleHooks(makeMinimalLifecycleContext("silent"));
+    silentHooks.onAgentStart(silentApi as never);
+
+    const normalHooks = createLifecycleHooks(makeMinimalLifecycleContext("normal"));
+    normalHooks.onAgentStart(normalApi as never);
+
+    const countBeforeAgentStart = (api: ReturnType<typeof makeMockApi>) =>
+      (api.on as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (args: unknown[]) => args[0] === "before_agent_start",
+      ).length;
+
+    const silentCount = countBeforeAgentStart(silentApi);
+    const normalCount = countBeforeAgentStart(normalApi);
+
+    // Silent mode suppresses auto-recall, auth-failure-recall, active-task, and credential-hint
+    // before_agent_start handlers. Only the unconditional agent-detection handler should fire.
+    expect(silentCount).toBe(1);
+    // Normal mode registers all of those handlers.
+    expect(normalCount).toBeGreaterThan(1);
+  });
+
+  it("does not register the credential auto-detect agent_end handler in silent mode", () => {
+    const silentApi = makeMockApi();
+    const normalApi = makeMockApi();
+
+    const silentHooks = createLifecycleHooks(makeMinimalLifecycleContext("silent"));
+    silentHooks.onAgentEnd(silentApi as never);
+
+    const normalHooks = createLifecycleHooks(makeMinimalLifecycleContext("normal"));
+    normalHooks.onAgentEnd(normalApi as never);
+
+    const countAgentEnd = (api: ReturnType<typeof makeMockApi>) =>
+      (api.on as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (args: unknown[]) => args[0] === "agent_end",
+      ).length;
+
+    // Silent mode should register fewer agent_end handlers (credential detector is skipped).
+    expect(countAgentEnd(silentApi)).toBeLessThan(countAgentEnd(normalApi));
   });
 });
