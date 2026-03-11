@@ -538,7 +538,7 @@ function renderGit(git) {
       items.slice(0, 8).forEach(item => {
         const statColor = item.state === 'OPEN' ? 'green' : (item.state === 'MERGED' ? 'blue' : 'muted');
         html += \`<div class="pr-row">
-          <div class="pr-title"><a href="\${escHtml(item.url || '#')}" target="_blank" rel="noopener noreferrer">\${escHtml(item.kind === 'PR' ? '#' : '')}\${escHtml(String(item.number))} \${escHtml(item.title)}</a></div>
+          <div class="pr-title"><a href="\${escHtml(item.url || '#')}" target="_blank" rel="noopener noreferrer">#\${escHtml(String(item.number))} \${escHtml(item.title)}</a></div>
           <div class="pr-meta"><span class="badge badge-\${statColor}" style="font-size:10px">\${escHtml(item.state)}</span> \${escHtml(item.kind)} · \${fmtDate(item.createdAt)}</div>
         </div>\`;
       });
