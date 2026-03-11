@@ -1770,7 +1770,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   const onFrustrationDetect = (api: ClawdbotPluginApi) => {
     if (ctx.cfg.frustrationDetection?.enabled === false) return;
-    if (ctx.cfg.verbosity === "silent") return;
     const fCfg = ctx.cfg.frustrationDetection;
 
     // Capture each incoming user turn
@@ -1834,6 +1833,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             });
           }
         }
+
+        // Silent mode suppresses frustration-signal and tool-hint injection (Issue #317).
+        if (ctx.cfg.verbosity === "silent") return;
 
         // Build hint and inject if above threshold
         const hint = buildFrustrationHint(frustrationResult, fCfg);
