@@ -497,11 +497,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   };
 }
 
-/** Returns true when verbosity is "quiet" or "silent" (compact/suppressed output). */
-export function isCompactVerbosity(verbosity: import("../types/index.js").VerbosityLevel): boolean {
-  return verbosity === "quiet" || verbosity === "silent";
-}
-
 /** Parse verbosity level from config. Defaults to "normal" when not set. */
 export function parseVerbosityLevel(cfg: Record<string, unknown>): import("../types/index.js").VerbosityLevel {
   const valid = ["silent", "quiet", "normal", "verbose"] as const;
