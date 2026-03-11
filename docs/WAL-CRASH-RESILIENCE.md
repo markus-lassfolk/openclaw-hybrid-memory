@@ -36,7 +36,7 @@ The WAL implementation follows a **pre-flight commit** pattern:
 type WALEntry = {
   id: string;              // Unique identifier for this operation
   timestamp: number;       // Unix timestamp (ms) when ready to commit (after embedding)
-  operation: "store" | "delete" | "update";
+  operation: "store" | "delete" | "update"; // delete operations are skipped during recovery
   data: {
     text: string;
     category?: string;
@@ -64,6 +64,7 @@ On plugin startup, the system:
 1. Reads all entries from the WAL file
 2. Filters out stale entries (older than `maxAge`, default 5 minutes)
 3. For each valid entry:
+   - Skips `delete` operations (cannot be reliably replayed)
    - Checks if the memory already exists (idempotency)
    - If not, commits it to SQLite and LanceDB
    - Removes the entry from the WAL

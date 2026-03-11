@@ -73,7 +73,7 @@ The system degrades gracefully. Fix the key and restart to restore full function
 
 ### Can I delete a specific memory?
 
-**Agent tool:** `memory_forget(id: "fact-id")` or `memory_forget(query: "…")` — removes a fact from both SQLite and LanceDB.
+**Agent tool:** `memory_forget(memoryId: "full-uuid")` or `memory_forget(query: "…")` — removes a fact from both SQLite and LanceDB.
 
 **CLI:** Find the fact, then remove it by ID:
 
