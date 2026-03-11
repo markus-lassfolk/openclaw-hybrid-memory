@@ -395,7 +395,14 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
   // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
-  const rawGoogleKey = ((distillForEmbed?.apiKey || llmProvidersForEmbed?.google?.apiKey) || "").trim();
+  // Pick the first valid key (matching hasGoogleKey logic) to avoid using a short/invalid distill key when a valid llm key exists.
+  const rawGoogleKey = (
+    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:"))
+      ? distillApiKeyRaw
+      : (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:"))
+        ? llmGoogleApiKeyRaw
+        : ""
+  );
   const isSecretRefFormat = rawGoogleKey.startsWith("env:") || rawGoogleKey.startsWith("file:");
   let resolvedGoogleApiKey: string | undefined;
   if ((preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey) {
