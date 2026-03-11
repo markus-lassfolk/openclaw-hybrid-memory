@@ -17,6 +17,7 @@ import { UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
+import { resolveSecretRef } from "../config/parsers/core.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -175,7 +176,6 @@ export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
-  /** Resolve env:VAR / file:/path SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344). */
   const resolveApiKey = (key: string | undefined): string | undefined => {
     if (typeof key !== "string" || !key.trim()) return undefined;
     return resolveSecretRef(key.trim());
