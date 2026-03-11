@@ -177,6 +177,32 @@ openclaw hybrid-mem store --text <text> [--category <cat>] [--entity <e>] [--key
 
 ---
 
+## Sensor Sweep (Event Bus)
+
+The `sensor-sweep` CLI executes cron-based background data collection without relying on the LLM. It queries configured sensors (Tier 1 and Tier 2) and writes structured events to the Event Bus (`event-bus.db`).
+
+```bash
+openclaw hybrid-mem sensor-sweep [--tier 1|2|all] [--source <names>] [--dry-run] [--json]
+```
+
+**Options:**
+- `--tier <n>`: Sensor tier to run (1 for Tier 1 only, 2 for Tier 2, all for both). Defaults to 1.
+- `--source <names>`: Comma-separated list of sensors (e.g. `garmin,github,weather`).
+- `--dry-run`: Preview what would be collected without writing events.
+
+You can inspect the collected events using the `sensor-events` command:
+
+```bash
+openclaw hybrid-mem sensor-events [--type <type>] [--status <status>] [--limit 20] [--json]
+```
+
+**Options:**
+- `--type <type>`: Filter by event type (e.g., `sensor.garmin`).
+- `--status <status>`: Filter by event status (`raw`, `processed`, `surfaced`, `pushed`, `archived`). Defaults to `raw`.
+- `--limit <n>`: Max events to return.
+
+---
+
 ## Stats and efficiency
 
 `openclaw hybrid-mem stats` shows fact counts, LanceDB vectors, and decay breakdown.
