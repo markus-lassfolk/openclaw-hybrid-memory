@@ -1739,8 +1739,8 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(updated?.accessCount).toBe(1);
     expect(updated?.lastAccessedAt).toBeDefined();
     expect(updated?.lastAccessedAt).not.toBeNull();
-    // Should be a valid ISO 8601 date string
-    expect(new Date(updated!.lastAccessedAt!).getTime()).toBeGreaterThan(0);
+    // Must be strict UTC ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+    expect(updated!.lastAccessedAt!).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
 
   it("refreshAccessedFacts increments access_count cumulatively", () => {

@@ -883,7 +883,9 @@ export function registerMemoryTools(
           }),
         ),
         decayClass: Type.Optional(
-          stringEnum(DECAY_CLASSES as unknown as readonly string[]),
+          Object.assign(stringEnum(DECAY_CLASSES as unknown as readonly string[]), {
+            description: "Decay class defining half-life: durable (~3mo), normal (~2w), short (~2d), ephemeral (~4h), permanent (no decay). Legacy aliases: stable=durable, active=normal, session=short, checkpoint=ephemeral.",
+          }),
         ),
         tags: Type.Optional(
           Type.Array(Type.String(), {

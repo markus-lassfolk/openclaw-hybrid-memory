@@ -89,7 +89,7 @@ export class FactsDB {
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
         category TEXT NOT NULL DEFAULT 'other',
-        importance REAL NOT NULL DEFAULT 0.7,
+        importance REAL NOT NULL DEFAULT 0.5,
         entity TEXT,
         key TEXT,
         value TEXT,
@@ -475,7 +475,7 @@ export class FactsDB {
       this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_accessed_at TEXT`);
       // Backfill from last_accessed (epoch seconds → ISO 8601)
       this.liveDb.exec(
-        `UPDATE facts SET last_accessed_at = datetime(last_accessed, 'unixepoch') WHERE last_accessed IS NOT NULL`,
+        `UPDATE facts SET last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', last_accessed, 'unixepoch') WHERE last_accessed IS NOT NULL`,
       );
       this.liveDb.exec(
         `CREATE INDEX IF NOT EXISTS idx_facts_last_accessed_at ON facts(last_accessed_at) WHERE last_accessed_at IS NOT NULL`,
@@ -1424,7 +1424,7 @@ export class FactsDB {
       entry.expiresAt !== undefined
         ? entry.expiresAt
         : calculateExpiry(decayClass, nowSec);
-    const importance = entry.importance ?? 0.7;
+    const importance = entry.importance ?? 0.5;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
     const embeddingModel = entry.embeddingModel ?? null;
@@ -1548,17 +1548,17 @@ export class FactsDB {
         const batch = ids.slice(i, i + BATCH_SIZE);
         const placeholders = batch.map(() => "?").join(",");
 
-        // Extend TTL for stable/active facts that were just accessed
+        // Extend TTL for stable/active/durable/normal facts that were just accessed
         this.liveDb
           .prepare(
-            `UPDATE facts SET last_confirmed_at = ?, expires_at = CASE decay_class WHEN 'stable' THEN ? + ? WHEN 'active' THEN ? + ? ELSE expires_at END WHERE id IN (${placeholders}) AND decay_class IN ('stable', 'active')`,
+            `UPDATE facts SET last_confirmed_at = ?, expires_at = CASE decay_class WHEN 'stable' THEN ? + ? WHEN 'active' THEN ? + ? WHEN 'durable' THEN ? + ? WHEN 'normal' THEN ? + ? ELSE expires_at END WHERE id IN (${placeholders}) AND decay_class IN ('stable', 'active', 'durable', 'normal')`,
           )
-          .run(nowSec, nowSec, TTL_DEFAULTS.stable, nowSec, TTL_DEFAULTS.active, ...batch);
+          .run(nowSec, nowSec, TTL_DEFAULTS.stable, nowSec, TTL_DEFAULTS.active, nowSec, TTL_DEFAULTS.durable, nowSec, TTL_DEFAULTS.normal, ...batch);
 
         // Bump recall_count, last_accessed, access_count, and last_accessed_at for all
         this.liveDb
           .prepare(
-            `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = datetime(?, 'unixepoch') WHERE id IN (${placeholders})`,
+            `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id IN (${placeholders})`,
           )
           .run(nowSec, nowSec, ...batch);
       }
