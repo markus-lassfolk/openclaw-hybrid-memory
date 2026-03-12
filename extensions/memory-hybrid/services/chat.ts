@@ -416,6 +416,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalError = lastError ?? new Error("All models failed");
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
+  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
@@ -455,6 +456,8 @@ export async function chatCompleteWithRetry(opts: {
       `Check model names in llm.default / llm.heavy / llm.nano config. ` +
       `Run: openclaw hybrid-mem verify --test-llm`
     );
+  } else if (finalIsTimeout) {
+    // #339: timeout errors are transient — don't report to GlitchTip
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues
     capturePluginError(finalError, {
