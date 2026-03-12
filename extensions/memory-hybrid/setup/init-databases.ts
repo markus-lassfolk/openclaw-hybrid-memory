@@ -664,9 +664,11 @@ export function initializeDatabases(
 
   // Merge gateway provider keys into plugin llm.providers so the plugin can use all keys the gateway has
   // (e.g. Minimax, Anthropic, etc.) without duplicating them in plugin config.
+  // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
   const gwConfig = api.config as Record<string, unknown> | undefined;
   const gwProviders = (gwConfig?.models as Record<string, unknown> | undefined)?.providers
-    ?? (gwConfig?.llm as Record<string, unknown> | undefined)?.providers;
+    ?? (gwConfig?.llm as Record<string, unknown> | undefined)?.providers
+    ?? (gwConfig?.providers as Record<string, unknown> | undefined);
   const mergedProviderNames: string[] = [];
   if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
   const plm = cfg.llm as Record<string, unknown>;
@@ -678,10 +680,14 @@ export function initializeDatabases(
       if (!name || !gw || typeof gw !== "object") continue;
       const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
       if (typeof rawKey !== "string" || !rawKey.trim()) continue;
-      if (!prov[name]) {
+      // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
+      // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
+      const pluginHasKey = typeof prov[name]?.apiKey === "string" && (prov[name].apiKey as string).trim().length > 0;
+      if (!prov[name] || !pluginHasKey) {
         prov[name] = {
+          ...prov[name],
           apiKey: rawKey.trim(),
-          baseURL: (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
+          baseURL: prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
         };
         mergedProviderNames.push(name);
         api.logger.info?.(`memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`);

@@ -788,3 +788,184 @@ describe("OpenRouter provider routing (issue #380)", () => {
     expect(customCall).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Anthropic provider routing — issue #386
+// ---------------------------------------------------------------------------
+
+describe("Anthropic provider routing — issue #386", () => {
+  const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  let origAnthropicApiKey: string | undefined;
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-anthropic-"));
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+    ctx = undefined;
+    origAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENCLAW_GATEWAY_PORT;
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  });
+
+  afterEach(() => {
+    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    rmSync(tmpDir, { recursive: true, force: true });
+    if (origAnthropicApiKey !== undefined) process.env.ANTHROPIC_API_KEY = origAnthropicApiKey; else delete process.env.ANTHROPIC_API_KEY;
+    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
+    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  });
+
+  it("routes anthropic/* to ANTHROPIC_BASE_URL when llm.providers.anthropic.apiKey is set", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["anthropic/claude-sonnet-4-6"],
+        heavy: ["anthropic/claude-sonnet-4-6"],
+        providers: { anthropic: { apiKey: "sk-ant-direct-key-1234567890" } },
+      },
+    });
+    const api = makeMockApi({ resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)) });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "anthropic/claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const anthropicCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
+    );
+    expect(anthropicCall).toBeDefined();
+    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-direct-key-1234567890");
+  });
+
+  it("picks up Anthropic key from api.config.models.providers (standard gateway path)", async () => {
+    // When the gateway has anthropic configured at models.providers, the plugin must merge
+    // it into llm.providers so resolveClient() can use it — even if the user only set llm.heavy.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["anthropic/claude-sonnet-4-6"],
+        heavy: ["anthropic/claude-sonnet-4-6"],
+        // No providers.anthropic in plugin config — key must come from gateway
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            anthropic: { apiKey: "sk-ant-from-gateway-models-providers" },
+          },
+        },
+      },
+    });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "anthropic/claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const anthropicCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
+    );
+    expect(anthropicCall).toBeDefined();
+    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-from-gateway-models-providers");
+  });
+
+  it("picks up Anthropic key from api.config.providers (top-level gateway path, issue #386)", async () => {
+    // The gateway may store provider keys at the top-level providers object rather than
+    // under models.providers or llm.providers. This was a missing path in the merge logic.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["anthropic/claude-sonnet-4-6"],
+        heavy: ["anthropic/claude-sonnet-4-6"],
+        // No providers.anthropic in plugin config — key must come from gateway top-level
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        // Top-level providers (not nested under models.providers or llm.providers)
+        providers: {
+          anthropic: { apiKey: "sk-ant-from-gateway-top-level-providers" },
+        },
+      },
+    });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "anthropic/claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const anthropicCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
+    );
+    expect(anthropicCall).toBeDefined();
+    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-from-gateway-top-level-providers");
+  });
+
+  it("gateway key fills in when plugin provider entry has undefined apiKey (issue #386 stale placeholder)", async () => {
+    // When the plugin config has providers.anthropic: {} (entry exists but no apiKey),
+    // the gateway key must still be used — the old condition `if (!prov[name])` would skip the merge.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["anthropic/claude-sonnet-4-6"],
+        heavy: ["anthropic/claude-sonnet-4-6"],
+        providers: {
+          // Entry exists but apiKey is empty — must be filled from gateway
+          anthropic: { apiKey: undefined },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            anthropic: { apiKey: "sk-ant-gateway-fills-empty-plugin-entry" },
+          },
+        },
+      },
+    });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "anthropic/claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const anthropicCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
+    );
+    expect(anthropicCall).toBeDefined();
+    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-gateway-fills-empty-plugin-entry");
+  });
+
+  it("throws UnconfiguredProviderError when no Anthropic key is found anywhere", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["anthropic/claude-sonnet-4-6"],
+        heavy: ["anthropic/claude-sonnet-4-6"],
+        // No providers.anthropic, no claude.apiKey, no env var, no gateway key
+      },
+    });
+    const api = makeMockApi({ resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)) });
+    ctx = initializeDatabases(cfg, api as never);
+
+    expect(() =>
+      ctx!.openai.chat.completions.create({
+        model: "anthropic/claude-sonnet-4-6",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    ).toThrow("Provider 'anthropic' is not configured");
+  });
+});
