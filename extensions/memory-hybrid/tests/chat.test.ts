@@ -610,7 +610,7 @@ describe("chatCompleteWithRetry — 500 and 404 fallback (#302, #303)", () => {
   });
 });
 
-describe("chatCompleteWithRetry — 403 country/region restriction (#394)", () => {
+describe("chatCompleteWithRetry — 403 country/region restriction (#394, #395)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
@@ -673,6 +673,18 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#394)", () =
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatch(/403/);
     expect(drained[0]).toMatch(/country|region|access denied/i);
+  });
+
+  it("#395: withLLMRetry short-circuits on 403 and does not create LLMRetryError", async () => {
+    const err = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });
 
