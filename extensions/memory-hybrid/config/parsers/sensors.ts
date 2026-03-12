@@ -50,7 +50,7 @@ export function parseSensorSweepConfig(cfg: Record<string, unknown>): SensorSwee
   const dedupCooldownHours =
     typeof raw?.dedupCooldownHours === "number" && raw.dedupCooldownHours > 0
       ? raw.dedupCooldownHours
-      : 3;
+      : 5;
 
   const haRaw = raw?.homeAssistant as Record<string, unknown> | undefined;
   const homeAssistant = parseHaConfig(haRaw);
