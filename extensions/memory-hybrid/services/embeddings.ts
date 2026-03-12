@@ -844,7 +844,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         const isOOM =
           body.toLowerCase().includes("model requires more system memory") ||
           body.toLowerCase().includes("not enough memory to load") ||
-          /requires\s+[\d.]+\s*gib/i.test(body) ||
+          /\bmodel\s+requires\s+[\d.]+\s*gib/i.test(body) ||
           /\boom:/i.test(body);
         if (isOOM) {
           circuit.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;

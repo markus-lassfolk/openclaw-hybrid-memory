@@ -144,7 +144,7 @@ export function isOllamaOOM(err: unknown): boolean {
     msg.includes("model requires more system memory") ||
     msg.includes("not enough memory to load") ||
     // "requires X GiB" pattern covers variant phrasings from different Ollama versions
-    /requires\s+[\d.]+\s*gib/.test(msg) ||
+    /\bmodel\s+requires\s+[\d.]+\s*gib/i.test(err.message) ||
     // Bare OOM signal in error body (e.g. "oom: model 'qwen3:8b' ...")
     /\boom:/i.test(err.message)
   );
