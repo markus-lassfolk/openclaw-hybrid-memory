@@ -141,4 +141,28 @@ chmod +x ~/.openclaw/scripts/gateway-watchdog-cron.sh
 
 **Optional:** Set `OPENCLAW_HOME` or `OPENCLAW_GATEWAY_PORT` in crontab or in the script if your state dir or port differ. Do **not** use `openclaw gateway start` (systemd) on the same machine; use either this watchdog with `gateway run` or systemd, not both.
 
+The watchdog’s **kill_port** step now uses `ss`, then `lsof`/`fuser` as fallback to find the process on the gateway port, and sends SIGTERM then SIGKILL if the port is still in use (so stale or stuck processes are cleared).
+
 See [../docs/TROUBLESHOOTING.md](../docs/TROUBLESHOOTING.md) for WSL2 / no-systemd notes.
+
+---
+
+## Force-release gateway port
+
+When **"Port 18789 is already in use"** or the gateway won’t start because the port is held by a stale process (e.g. after OOM or crash), use the force-release script to stop the systemd service (if any), find and kill whatever is on the port, then report whether the port is free.
+
+**From repo:**
+
+```bash
+./scripts/force-release-gateway-port.sh
+```
+
+**After copying to ~/.openclaw/scripts/:**
+
+```bash
+cp scripts/force-release-gateway-port.sh ~/.openclaw/scripts/
+chmod +x ~/.openclaw/scripts/force-release-gateway-port.sh
+~/.openclaw/scripts/force-release-gateway-port.sh
+```
+
+Set `OPENCLAW_GATEWAY_PORT` if your port is not 18789. Full causes and manual steps: [../docs/TROUBLESHOOTING.md](../docs/TROUBLESHOOTING.md#port-not-releasing-gateway-port-18789-already-in-use).

@@ -108,6 +108,36 @@ export function is403Like(err: unknown): boolean {
 }
 
 /**
+ * 429 Too Many Requests / rate-limit detection helper.
+ * Checks the HTTP status code property first (reliable), then falls back to
+ * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
+ * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
+ */
+export function is429Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 429 || status === "429") return true;
+  }
+  if (err instanceof Error) {
+    return /^\b429\b/.test(err.message.trim())
+      || /\bHTTP\s+429\b|\bError\s+code:\s*429\b|\b429\s+[A-Za-z]/i.test(err.message)
+      || /\btoo\s+many\s+requests\b/i.test(err.message);
+  }
+  return false;
+}
+
+/**
+ * Returns true when the error is a 429 (rate limit) — either directly or wrapped in LLMRetryError.
+ * Used in chatCompleteWithRetry to detect 429 errors that were retried and wrapped by withLLMRetry.
+ * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
+ */
+export function is429OrWrapped(err: Error): boolean {
+  if (is429Like(err)) return true;
+  if (err instanceof LLMRetryError && is429Like(err.cause)) return true;
+  return false;
+}
+
+/**
  * Unified 5xx / internal server error detection helper.
  * Checks HTTP status code property first, then uses conservative message patterns.
  * Avoids false positives from non-HTTP "internal error" messages (e.g. JavaScript errors).
@@ -230,7 +260,7 @@ export async function chatComplete(opts: {
     const error = isAbort
       ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
       : (err instanceof Error ? err : new Error(String(err)));
-    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM) and config errors (missing provider keys) to avoid GlitchTip noise
+    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM, 429) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
@@ -238,6 +268,7 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       msg.includes("llm request timeout") ||  // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
+      is429Like(err) ||  // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err) ||  // #302: OpenAI SDK InternalServerError has no numeric prefix
@@ -317,7 +348,7 @@ export async function withLLMRetry<T>(
         console.warn(`memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`);
         throw lastError;
       }
-      const is429 = /\b429\b|too many requests/i.test(lastError.message);
+      const is429 = is429Like(lastError);
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
@@ -454,7 +485,7 @@ export async function chatCompleteWithRetry(opts: {
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
       const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
-      const is429 = /\b429\b|too many requests/i.test(lastError.message);
+      const is429 = is429OrWrapped(lastError);
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
@@ -481,6 +512,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs404 = is404Like(finalError);
   const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
   const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
+  const finalIs429 = is429OrWrapped(finalError);  // #397
   const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
@@ -505,7 +537,7 @@ export async function chatCompleteWithRetry(opts: {
     // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
     const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
-    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403) {
+    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403 && !finalIs429) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",
@@ -537,6 +569,12 @@ export async function chatCompleteWithRetry(opts: {
     );
   } else if (finalIsTimeout) {
     // #339: timeout errors are transient — don't report to GlitchTip
+  } else if (finalIs429) {
+    // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). ` +
+      `Memory features may be degraded. Try again later or upgrade your provider plan.`
+    );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues
     capturePluginError(finalError, {
