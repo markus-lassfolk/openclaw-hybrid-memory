@@ -8,7 +8,6 @@ import OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
-import { UnconfiguredProviderError } from "./chat.js";
 
 export type MemoryClassification = {
   action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
@@ -96,13 +95,11 @@ export async function classifyMemoryOperation(
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     return parseClassificationResponse(content, existingFacts);
   } catch (err) {
-    if (!(err instanceof UnconfiguredProviderError)) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'classify-memory-operation',
-        subsystem: 'openai',
-        model,
-      });
-    }
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'classify-memory-operation',
+      subsystem: 'openai',
+      model,
+    });
     logger.warn(`memory-hybrid: classify operation failed: ${err}`);
     return { action: "ADD", reason: "classification failed; defaulting to ADD" };
   }

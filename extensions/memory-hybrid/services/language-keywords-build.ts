@@ -18,7 +18,6 @@ import {
   clearKeywordCache,
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
-import { UnconfiguredProviderError } from "./chat.js";
 import {
   KEYWORD_GROUP_INTENTS,
   STRUCTURAL_TRIGGER_INTENTS,
@@ -100,13 +99,11 @@ ${block}`;
       .map((x) => x.toLowerCase().slice(0, 3))
       .filter((x) => x.length >= 2);
   } catch (err) {
-    if (!(err instanceof UnconfiguredProviderError)) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'parse-language-codes',
-        severity: 'info',
-        subsystem: 'language-keywords',
-      });
-    }
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'parse-language-codes',
+      severity: 'info',
+      subsystem: 'language-keywords',
+    });
     return [];
   }
 }
@@ -290,13 +287,11 @@ export async function generateIntentBasedLanguages(
 
     return { translations, triggerStructures, extraction };
   } catch (err) {
-    if (!(err instanceof UnconfiguredProviderError)) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'parse-intent-response',
-        severity: 'info',
-        subsystem: 'language-keywords',
-      });
-    }
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'parse-intent-response',
+      severity: 'info',
+      subsystem: 'language-keywords',
+    });
     return { translations: {}, triggerStructures: {}, extraction: {} };
   }
 }
@@ -356,13 +351,11 @@ Each value must be an array of translated strings in the same order as the Engli
     }
     return result;
   } catch (err) {
-    if (!(err instanceof UnconfiguredProviderError)) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'parse-translation-response',
-        severity: 'info',
-        subsystem: 'language-keywords',
-      });
-    }
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: 'parse-translation-response',
+      severity: 'info',
+      subsystem: 'language-keywords',
+    });
     return {};
   }
 }

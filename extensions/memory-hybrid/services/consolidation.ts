@@ -17,7 +17,6 @@ import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/
 import { extractTags } from "../utils/tags.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
-import { UnconfiguredProviderError } from "./chat.js";
 import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 import { randomUUID } from "node:crypto";
 
@@ -216,13 +215,11 @@ export async function runConsolidate(
       mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
-      if (!(err instanceof UnconfiguredProviderError)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'consolidate-llm',
-          subsystem: 'openai',
-          clusterSize: clusterIds.length,
-        });
-      }
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: 'consolidate-llm',
+        subsystem: 'openai',
+        clusterSize: clusterIds.length,
+      });
       continue;
     }
     if (!mergedText) continue;
