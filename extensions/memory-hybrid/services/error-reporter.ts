@@ -389,6 +389,10 @@ export function capturePluginError(error: Error, context: {
   /** Additional context fields for specific operations */
   [key: string]: unknown;
 }): string | undefined {
+  // UnconfiguredProviderError is a config issue (missing API key), not a code bug.
+  // Suppress here to protect all current and future call sites centrally.
+  if (error.name === "UnconfiguredProviderError") return undefined;
+
   if (!initialized || !Sentry) {
     return undefined;
   }
