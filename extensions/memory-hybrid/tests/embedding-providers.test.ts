@@ -904,12 +904,12 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
     }
   });
 
-  it("embed() skips capturePluginError for LLMRetryError wrapping an auth-phrase failure", async () => {
+  it("embed() skips capturePluginError for LLMRetryError with auth phrase in wrapper message", async () => {
     vi.useFakeTimers();
     try {
-      // Construct a LLMRetryError whose message contains an auth phrase.
-      // The message includes "401" so withLLMRetry exits early (no further wrapping).
-      // is401OrWrapped detects the auth phrase and suppresses capturePluginError.
+      // Construct a LLMRetryError whose wrapper message contains "401".
+      // withLLMRetry exits early (message contains "401") so this tests message-based detection
+      // on the wrapper error itself, not cause unwrapping (same path as the direct-status test above).
       const inner = new Error("Incorrect API key provided: AIzaSyDp...");
       const retryErr = new LLMRetryError(
         `Failed after 3 attempts: 401 Incorrect API key provided: AIzaSyDp...`,
