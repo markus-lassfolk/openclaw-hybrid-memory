@@ -510,6 +510,39 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(defaultList).not.toContain("minimax/MiniMax-Embed-02");
   });
 
+  it("filters non-chat defaultModel and falls back to knownDefault", () => {
+    // Regression test: if models[] contains only non-chat entries AND defaultModel is also
+    // a non-chat model, the fallback should skip the non-chat defaultModel and use knownDefault.
+    const cfg = getTestConfig(tmpDir);
+    cfg.llm = {
+      default: ["openai/gpt-4.1-mini"],
+      heavy: ["openai/gpt-4o"],
+    } as typeof cfg.llm;
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            minimax: {
+              apiKey: "sk-cp-non-chat-defaultmodel-test",
+              models: [
+                { id: "MiniMax-Embed-01", type: "embedding" },
+              ],
+              defaultModel: "MiniMax-Embed-01",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Should fall back to the safe knownDefault (MiniMax-Text-01), not the embedding model
+    expect(defaultList).toContain("minimax/MiniMax-Text-01");
+    expect(defaultList).not.toContain("minimax/MiniMax-Embed-01");
+  });
+
   it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
     // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
     // converts to minimax/MiniMax-M2.5 when routing), hasModelFrom should detect the minimax
