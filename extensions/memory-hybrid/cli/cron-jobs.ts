@@ -88,8 +88,8 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     featureGate: null,
   },
   {
-    pluginJobId: "hybrid-mem:sensor-sweep-tier1",
-    name: "sensor-sweep-tier1",
+    pluginJobId: "hybrid-mem:sensor-sweep",
+    name: "sensor-sweep",
     schedule: { kind: "cron", expr: "0 */4 * * *" },
     command: "hybrid-mem sensor-sweep --tier 1 && hybrid-mem sensor-sweep --tier 2",
     featureGate: "sensorSweep.enabled",
