@@ -19,6 +19,7 @@ import {
   type EmbeddingConfig,
 } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import * as glitchtip from "../services/error-reporter.js";
 import { LLMRetryError } from "../services/chat.js";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
@@ -906,6 +907,8 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
 
   it("embed() skips capturePluginError for LLMRetryError with auth phrase in wrapper message", async () => {
     vi.useFakeTimers();
+    // Spy directly on the module export to verify no GlitchTip call is made.
+    const spy = vi.spyOn(glitchtip, "capturePluginError");
     try {
       // Construct a LLMRetryError whose wrapper message contains "401".
       // withLLMRetry exits early (message contains "401") so this tests message-based detection
@@ -923,8 +926,9 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
       // withLLMRetry exits early (message contains "401") — exactly 1 attempt
       expect(mockCreate).toHaveBeenCalledTimes(1);
       // Must not report auth errors to error monitoring
-      expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+      expect(spy).not.toHaveBeenCalled();
     } finally {
+      spy.mockRestore();
       vi.useRealTimers();
     }
   });

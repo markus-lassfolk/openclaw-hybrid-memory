@@ -602,10 +602,10 @@ function is403OrWrapped(err: Error): boolean {
   return false;
 }
 
-/** Returns true when the error is a 401 (auth failure) — either directly or wrapped in LLMRetryError.
+/** Returns true when the error is a 401 (auth failure) — either directly or via message heuristics.
  * Handles both direct status and message-only auth errors (e.g. Ollama plain Error with "HTTP 401 Unauthorized").
- * Note: withLLMRetry exits early on 401 (never wraps 401s in LLMRetryError), but we include the
- * defensive LLMRetryError check for consistency with is404OrWrapped and future-proofing. */
+ * Note: withLLMRetry short-circuits on 401 and rethrows the original error directly, never wrapping
+ * it in LLMRetryError — so all 401s arrive here as direct errors, not wrapped causes. */
 function is401OrWrapped(err: Error): boolean {
   const status = (err as { status?: unknown }).status;
   if (status === 401 || status === "401") return true;
@@ -613,13 +613,6 @@ function is401OrWrapped(err: Error): boolean {
   // where .status is not set (e.g. cross-realm errors or providers that throw plain Error).
   if (/\bHTTP\s+401\b|\b401\b.*unauthorized|unauthorized.*\b401\b/i.test(err.message)) return true;
   if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
-  // Defensive check: unwrap LLMRetryError (mirrors is404OrWrapped for consistency)
-  if (err instanceof LLMRetryError) {
-    const causeStatus = (err.cause as { status?: unknown }).status;
-    if (causeStatus === 401 || causeStatus === "401") return true;
-    if (/\bHTTP\s+401\b|\b401\b.*unauthorized|unauthorized.*\b401\b/i.test(err.cause.message)) return true;
-    if (/incorrect api key|invalid api key|authentication failed/i.test(err.cause.message)) return true;
-  }
   return false;
 }
 
