@@ -358,7 +358,7 @@ describe("VectorDB issue #379 — delete() handles malformed UUIDs gracefully", 
     expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
   });
 
-  it("returns false and logs a warning for any UUID with extra hex chars appended", async () => {
+  it("returns false and logs a warning for any UUID with extra characters appended", async () => {
     const warns: string[] = [];
     db.setLogger({ warn: (msg) => warns.push(msg) });
 
