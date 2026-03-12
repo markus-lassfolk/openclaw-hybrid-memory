@@ -89,6 +89,25 @@ export function is404Like(err: unknown): boolean {
 }
 
 /**
+ * 403 Forbidden / access-denied detection helper.
+ * A 403 is a permanent operator config issue (e.g. Google country/region restriction,
+ * IP block, billing restriction) that will never be resolved by retrying.
+ * Exported so embeddings.ts can treat 403 as a config error and suppress capturePluginError.
+ */
+export function is403Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 403 || status === "403") return true;
+  }
+  if (err instanceof Error) {
+    // Match HTTP 403 patterns: "403 Forbidden", "403 Country, region, or territory not supported", etc.
+    return /^\b403\b/.test(err.message.trim())
+      || /\bHTTP\s+403\b|\bError\s+code:\s*403\b|\b403\s+[A-Za-z]/i.test(err.message);
+  }
+  return false;
+}
+
+/**
  * Unified 5xx / internal server error detection helper.
  * Checks HTTP status code property first, then uses conservative message patterns.
  * Avoids false positives from non-HTTP "internal error" messages (e.g. JavaScript errors).
@@ -197,7 +216,8 @@ export async function chatComplete(opts: {
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err);  // #302: OpenAI SDK InternalServerError has no numeric prefix
     const isConfigError = err instanceof UnconfiguredProviderError ||
-      is404Like(err);  // #303: model not found = wrong model name in config, not a bug
+      is404Like(err) ||  // #303: model not found = wrong model name in config, not a bug
+      is403Like(err);    // #394: country/region restriction = operator config issue, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -260,6 +280,10 @@ export async function withLLMRetry<T>(
       if (/\b401\b|unauthorized/i.test(lastError.message)) {
         throw lastError;
       }
+      // Don't retry 403 — access forbidden (country/region restriction, IP block, billing) won't be fixed by retrying (#394)
+      if (is403Like(lastError)) {
+        throw lastError;
+      }
       // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
       if (is404Like(lastError)) {
         const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
@@ -285,14 +309,15 @@ export async function withLLMRetry<T>(
           attempt + 1,
         );
         // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429).
-        // Note: 404 errors should never reach this branch (they exit early via the dedicated is404Like() check above),
-        // but we include is404Like(lastError) as a defensive safety net in case they slip past due to future refactors or edge cases.
+        // Note: 404 and 403 errors should never reach this branch (they exit early above),
+        // but we include them as defensive safety nets in case they slip past due to future refactors.
         const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
           isServerError ||  // #302: 5xx server errors are transient
           is404Like(lastError) ||  // #329: defensive safety net — 404 = model not found, config issue, not a bug
+          is403Like(lastError) ||  // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
@@ -416,6 +441,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalError = lastError ?? new Error("All models failed");
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
+  const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
   const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
@@ -440,7 +466,7 @@ export async function chatCompleteWithRetry(opts: {
     // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
     const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
-    if (!finalIs500 && !finalIsUnconfigured && !finalIsTimeout) {
+    if (!finalIs500 && !finalIsUnconfigured && !finalIsTimeout && !finalIs403) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",
@@ -454,6 +480,13 @@ export async function chatCompleteWithRetry(opts: {
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM model not found (404) for all configured models. ` +
       `Check model names in llm.default / llm.heavy / llm.nano config. ` +
+      `Run: openclaw hybrid-mem verify --test-llm`
+    );
+  } else if (finalIs403) {
+    // #394: country/region restriction / IP block = operator config issue, not a bug — skip GlitchTip
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: LLM access denied (403) — your API key may be restricted by country/region, ` +
+      `IP block, or billing. Check provider settings. ` +
       `Run: openclaw hybrid-mem verify --test-llm`
     );
   } else if (finalIsTimeout) {

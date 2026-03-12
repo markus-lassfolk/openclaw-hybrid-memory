@@ -9,8 +9,10 @@ import {
   Embeddings,
   OllamaEmbeddingProvider,
   FallbackEmbeddingProvider,
+  ChainEmbeddingProvider,
   OnnxEmbeddingProvider,
   createEmbeddingProvider,
+  safeEmbed,
   __setOnnxRuntimeLoaderForTests,
   _resetOllamaCircuitBreakerForTesting,
   type EmbeddingConfig,
@@ -18,6 +20,11 @@ import {
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+vi.mock("../services/error-reporter.js", () => ({
+  capturePluginError: vi.fn(),
+}));
+import * as errorReporter from "../services/error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -628,5 +635,130 @@ describe("Dimension mismatch detection via EmbeddingProvider.dimensions", () => 
     const client = makeMockOpenAI([]);
     const p = new Embeddings(client, "text-embedding-3-large", 3072);
     expect(p.dimensions).toBe(3072);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 403 country/region restriction suppression (#394)
+// ---------------------------------------------------------------------------
+
+describe("FallbackEmbeddingProvider — 403 suppression (#394)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetOllamaCircuitBreakerForTesting();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    _resetOllamaCircuitBreakerForTesting();
+  });
+
+  it("#394: does not report to GlitchTip when primary fails with 403 on embed", async () => {
+    const err403 = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const primary = {
+      embed: vi.fn().mockRejectedValue(err403),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "google/text-embedding-004",
+    };
+    const fallbackVec = [0.1, 0.2];
+    const fallback = {
+      embed: vi.fn().mockResolvedValue(fallbackVec),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "text-embedding-3-small",
+    };
+    const wrapper = new FallbackEmbeddingProvider(
+      primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+      fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+    );
+    const result = await wrapper.embed("test");
+    expect(result).toEqual(fallbackVec);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#394: does not report to GlitchTip when primary fails with 403 on embedBatch", async () => {
+    const err403 = new Error("403 Country, region, or territory not supported");
+    const primary = {
+      embed: vi.fn().mockRejectedValue(err403),
+      embedBatch: vi.fn().mockRejectedValue(err403),
+      dimensions: 768,
+      modelName: "google/text-embedding-004",
+    };
+    const fallbackVecs = [[0.1, 0.2]];
+    const fallback = {
+      embed: vi.fn(),
+      embedBatch: vi.fn().mockResolvedValue(fallbackVecs),
+      dimensions: 768,
+      modelName: "text-embedding-3-small",
+    };
+    const wrapper = new FallbackEmbeddingProvider(
+      primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+      fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+    );
+    const result = await wrapper.embedBatch(["test"]);
+    expect(result).toEqual(fallbackVecs);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChainEmbeddingProvider — 403 suppression (#394)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("#394: does not report to GlitchTip when a non-last provider fails with 403 on embed", async () => {
+    const err403 = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const p1 = { embed: vi.fn().mockRejectedValue(err403), embedBatch: vi.fn(), dimensions: 768, modelName: "p1" };
+    const p2 = { embed: vi.fn().mockResolvedValue([0.5, 0.6]), embedBatch: vi.fn(), dimensions: 768, modelName: "p2" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["provider1", "provider2"],
+    );
+    await chain.embed("test");
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#394: does not report to GlitchTip when a non-last provider fails with 403 on embedBatch", async () => {
+    const err403 = new Error("403 Country, region, or territory not supported");
+    const p1 = { embed: vi.fn(), embedBatch: vi.fn().mockRejectedValue(err403), dimensions: 768, modelName: "p1" };
+    const p2 = { embed: vi.fn(), embedBatch: vi.fn().mockResolvedValue([[0.5, 0.6]]), dimensions: 768, modelName: "p2" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["provider1", "provider2"],
+    );
+    await chain.embedBatch(["test"]);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("safeEmbed — 403 suppression (#394)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("#394: does not report to GlitchTip when embed fails with 403", async () => {
+    const err403 = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const provider = {
+      embed: vi.fn().mockRejectedValue(err403),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "google/text-embedding-004",
+    };
+    const result = await safeEmbed(
+      provider as unknown as import("../services/embeddings.js").EmbeddingProvider,
+      "test",
+    );
+    expect(result).toBeNull();
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });
