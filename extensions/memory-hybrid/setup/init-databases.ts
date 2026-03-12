@@ -4,6 +4,7 @@ import { existsSync, readFileSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import { resolveSecretRef } from "../config/parsers/core.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
@@ -31,7 +32,6 @@ import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
-import { resolveSecretRef } from "../config/parsers/core.js";
 
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
@@ -175,10 +175,12 @@ export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
  */
 function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
   const clientCache = new Map<string, OpenAI>();
-  /** Resolve env:VAR / file:/path SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344). */
+  /** Resolve env:VAR / file:/path / ${VAR} SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344).
+   *  Delegates to the shared resolveSecretRef helper from config/parsers/core.ts to avoid duplicated logic. */
   const resolveApiKey = (key: string | undefined): string | undefined => {
-    if (typeof key !== "string" || !key.trim()) return undefined;
-    return resolveSecretRef(key.trim());
+    // Reject undefined, null, and whitespace-only strings before reaching resolveSecretRef (issues #10, #11).
+    if (!key?.trim()) return undefined;
+    return resolveSecretRef(key);
   };
   const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;

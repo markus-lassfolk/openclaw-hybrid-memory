@@ -346,6 +346,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
  * Supported formats:
  *   "env:VAR_NAME"   — read from process.env[VAR_NAME]
  *   "file:/path"     — read from a file, whitespace-trimmed
+ *   "${VAR}"         — template syntax resolved via resolveEnvVars
  *   plain string     — returned as-is
  *
  * Returns undefined when the SecretRef cannot be resolved (env var unset,
@@ -366,6 +367,18 @@ export function resolveSecretRef(value: string): string | undefined {
     try {
       const contents = readFileSync(filePath, "utf-8").trim();
       return contents || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  // Handle ${VAR} template syntax (issues #6, #12).
+  // resolveEnvVars throws when any referenced variable is unset or empty, so catch → undefined.
+  // No post-resolution guard needed: if resolveEnvVars succeeds, all placeholders were expanded.
+  // Any ${...} remaining in `resolved` came from the env var's own value and is legitimate.
+  if (v.includes("${")) {
+    try {
+      const resolved = resolveEnvVars(v);
+      return resolved && resolved.trim() ? resolved.trim() : undefined;
     } catch {
       return undefined;
     }
