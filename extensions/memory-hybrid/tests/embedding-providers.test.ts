@@ -334,6 +334,44 @@ describe("OllamaEmbeddingProvider", () => {
     const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(url).toBe("http://my-server:12345/api/embed");
   });
+
+  it("#387: OOM response (HTTP 500 with OOM body) trips circuit breaker immediately", async () => {
+    const oomBody = "model requires more system memory (18.2 GiB) than is available (8.0 GiB)";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      text: async () => oomBody,
+    } as unknown as Response));
+    const p = new OllamaEmbeddingProvider({ model: "qwen3:8b", dimensions: 4096 });
+    // First call: OOM — should throw and trip circuit breaker
+    await expect(p.embed("test")).rejects.toThrow(/Ollama embed failed.*500/);
+    // Second call: circuit breaker should be open — should throw without making HTTP request
+    vi.unstubAllGlobals();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ embeddings: [[0.1]] }), text: async () => "" } as Response));
+    await expect(p.embed("test")).rejects.toThrow(/circuit breaker open/i);
+    // fetch was NOT called for the second attempt (blocked by circuit breaker)
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("#387: generic HTTP 500 (non-OOM) does not trip circuit breaker immediately", async () => {
+    const genericBody = "Internal Server Error";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      text: async () => genericBody,
+    } as unknown as Response));
+    const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 768 });
+    // Generic 500: circuit breaker should NOT be immediately tripped (only on OLLAMA_MAX_FAILS connection failures)
+    await expect(p.embed("test")).rejects.toThrow(/Ollama embed failed.*500/);
+    // Second call should still reach fetch (circuit breaker not tripped for non-OOM 500)
+    const goodVec = [0.5, 0.5];
+    vi.unstubAllGlobals();
+    vi.stubGlobal("fetch", mockOllamaFetch([[0.5, 0.5]]));
+    const result = await p.embed("test");
+    expect(result).toEqual(goodVec);
+  });
 });
 
 // ---------------------------------------------------------------------------
