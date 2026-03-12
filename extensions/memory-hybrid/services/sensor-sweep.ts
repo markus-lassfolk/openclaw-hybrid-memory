@@ -286,7 +286,7 @@ export async function sweepSessionHistory(
       })),
     };
 
-    const fp = computeFingerprint(`sensor.session-history:${limit}:${JSON.stringify(payload)}`);
+    const fp = computeFingerprint(`sensor.session-history:${limit}:${stableStringify(payload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -543,7 +543,7 @@ export async function sweepGitHub(
       })),
     };
 
-    const fp = computeFingerprint(`sensor.github:${repo}:${JSON.stringify(payload)}`);
+    const fp = computeFingerprint(`sensor.github:${repo}:${stableStringify(payload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
@@ -738,7 +738,7 @@ export async function sweepWeather(
       clearTimeout(timeout);
     }
 
-    const fp = computeFingerprint(`sensor.weather:${location}:${JSON.stringify(weatherData)}`);
+    const fp = computeFingerprint(`sensor.weather:${location}:${stableStringify(weatherData)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
