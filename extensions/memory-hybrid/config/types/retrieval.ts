@@ -124,8 +124,13 @@ export type QueryExpansionConfig = {
   maxVariants: number;
   /** LRU cache size for memoized expansions (default: 100). */
   cacheSize: number;
-  /** Timeout in ms for the LLM call; on timeout, fall back to original query (default: 15000). */
-  timeoutMs: number;
+  /**
+   * Timeout in ms for the LLM call; on timeout, fall back to original query (default: 15000).
+   * A minimum floor of 10 000 ms is enforced to prevent spurious timeouts on thinking models (#384).
+   * Set to `0` or a negative value in config to bypass the floor (chatComplete uses its own default).
+   * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
+   */
+  timeoutMs: number | undefined;
 };
 
 /** LLM re-ranking of RRF fusion results (Issue #161). */
@@ -138,8 +143,13 @@ export type RerankingConfig = {
   candidateCount: number;
   /** Number of results to return after re-ranking (default: 20). */
   outputCount: number;
-  /** Timeout in ms for the LLM call; on timeout, fall back to original RRF order (default: 10000). */
-  timeoutMs: number;
+  /**
+   * Timeout in ms for the LLM call; on timeout, fall back to original RRF order (default: 10000).
+   * A minimum floor of 5 000 ms is enforced to prevent spurious timeouts (#384).
+   * Set to `0` or a negative value in config to bypass the floor (chatComplete uses its own default).
+   * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
+   */
+  timeoutMs: number | undefined;
 };
 
 /** Contextual variant generation at index time (Issue #159). */
