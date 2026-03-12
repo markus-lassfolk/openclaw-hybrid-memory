@@ -358,7 +358,7 @@ export async function sweepMemoryPatterns(
       openLoopIds: openLoops.slice(0, 10).map((f) => f.id),
     };
 
-    const fp = computeFingerprint(`sensor.memory-patterns:${JSON.stringify(payload)}`);
+    const fp = computeFingerprint(`sensor.memory-patterns:${stableStringify(payload)}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
       return result;
