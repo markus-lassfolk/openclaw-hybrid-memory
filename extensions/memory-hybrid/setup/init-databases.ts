@@ -664,9 +664,11 @@ export function initializeDatabases(
 
   // Merge gateway provider keys into plugin llm.providers so the plugin can use all keys the gateway has
   // (e.g. Minimax, Anthropic, etc.) without duplicating them in plugin config.
+  // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
   const gwConfig = api.config as Record<string, unknown> | undefined;
   const gwProviders = (gwConfig?.models as Record<string, unknown> | undefined)?.providers
-    ?? (gwConfig?.llm as Record<string, unknown> | undefined)?.providers;
+    ?? (gwConfig?.llm as Record<string, unknown> | undefined)?.providers
+    ?? (gwConfig?.providers as Record<string, unknown> | undefined);
   const mergedProviderNames: string[] = [];
   if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
   const plm = cfg.llm as Record<string, unknown>;
@@ -678,10 +680,14 @@ export function initializeDatabases(
       if (!name || !gw || typeof gw !== "object") continue;
       const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
       if (typeof rawKey !== "string" || !rawKey.trim()) continue;
-      if (!prov[name]) {
+      // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
+      // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
+      const pluginHasKey = typeof prov[name]?.apiKey === "string" && (prov[name].apiKey as string).trim().length > 0;
+      if (!prov[name] || !pluginHasKey) {
         prov[name] = {
+          ...prov[name],
           apiKey: rawKey.trim(),
-          baseURL: (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
+          baseURL: prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
         };
         mergedProviderNames.push(name);
         api.logger.info?.(`memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`);
@@ -726,7 +732,7 @@ export function initializeDatabases(
         // Skip non-chat entries (embeddings, transcription, TTS, image generation) so that
         // chatCompleteWithRetry is never routed through an incompatible model.
         const NON_CHAT_TYPES = new Set(["embed", "embedding", "embeddings", "transcription", "speech-to-text", "text-to-speech", "tts", "image", "image-generation"]);
-        const NON_CHAT_ID_RE = /\bembed|whisper|tts\b|dall-e|transcri/i;
+        const NON_CHAT_ID_RE = /\bembed|whisper|\btts\b|dall-e|transcri|gpt-image|image-gen/i;
         const isChatEntry = (entry: unknown): boolean => {
           if (typeof entry === "object" && entry !== null) {
             const type = String((entry as Record<string, unknown>).type ?? "").toLowerCase().trim();
@@ -739,15 +745,16 @@ export function initializeDatabases(
           if (typeof entry === "string") return !NON_CHAT_ID_RE.test(entry.toLowerCase());
           return false;
         };
-        // Check models[] array first (take the first chat-compatible model).
+        // Check models[] array first: iterate to find the first chat-compatible entry that
+        // yields a non-empty trimmed model ID (skips entries with missing/empty id/name).
         if (Array.isArray(gw.models) && gw.models.length > 0) {
-          const chatEntry = gw.models.find(isChatEntry);
-          if (chatEntry !== undefined) {
+          for (const entry of gw.models) {
+            if (!isChatEntry(entry)) continue;
             const modelId =
-              typeof chatEntry === "string"
-                ? chatEntry.trim()
-                : String((chatEntry as Record<string, unknown>).id ?? (chatEntry as Record<string, unknown>).name ?? "").trim();
-            if (modelId) defaultModel = `${name}/${modelId}`;
+              typeof entry === "string"
+                ? entry.trim()
+                : String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").trim();
+            if (modelId) { defaultModel = `${name}/${modelId}`; break; }
           }
         }
         // Fall back to singular defaultModel or model field (also filter non-chat models)
@@ -1256,6 +1263,7 @@ export function closeOldDatabases(context: {
   proposalsDb?: ProposalsDB | null;
   eventLog?: EventLog | null;
   aliasDb?: AliasDB | null;
+  eventBus?: import("../backends/event-bus.js").EventBus | null;
   issueStore?: IssueStore | null;
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
@@ -1263,7 +1271,7 @@ export function closeOldDatabases(context: {
   verificationStore?: VerificationStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, eventBus, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -1307,6 +1315,13 @@ export function closeOldDatabases(context: {
       aliasDb.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "aliasDb" });
+    }
+  }
+  if (eventBus) {
+    try {
+      eventBus.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "eventBus" });
     }
   }
   if (issueStore) {

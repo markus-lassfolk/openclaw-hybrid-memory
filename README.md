@@ -61,6 +61,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 - **Session distillation** — batch-extracts durable facts from old conversation logs ([docs/SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md))
 - **Procedural memory** — extracts tool-call procedures from sessions, injects "last time this worked" in recall, auto-generates skills ([docs/PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md))
 - **Workflow crystallization & self-extension** — tool-sequence patterns, skill proposals (`memory_crystallize`), and tool proposals from usage gaps (`memory_propose_tool`); human approval required ([docs/CONFIGURATION.md](docs/CONFIGURATION.md), release notes 2026.3.70)
+- **Sensor Sweep (Event Bus)** — cron-based background data collection (GitHub, HA, System Health) without LLM overhead ([docs/CONFIGURATION.md](docs/CONFIGURATION.md))
 
 ### Reliability
 - **Write-ahead log (WAL)** — crash-resilient memory operations with automatic recovery ([docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))

@@ -1614,6 +1614,71 @@ See [ERROR-REPORTING.md](ERROR-REPORTING.md) for full privacy and audit details.
 
 ---
 
+## Sensor Sweep (sensorSweep) (#236)
+
+Enables cron-based background data collection without invoking an LLM at collection time. The system queries configured sensors and writes structured events to the Event Bus (`event-bus.db`). 
+
+Sensors are divided into tiers (e.g. Tier 1: Garmin, GitHub, memory stats; Tier 2: Anomaly detection, weather). A 3-hour deduplication cooldown is applied by default using event fingerprinting.
+
+```json
+{
+  "sensorSweep": {
+    "enabled": true,
+    "schedule": "0 */4 * * *",
+    "dedupCooldownHours": 3,
+    "homeAssistant": {
+      "baseUrl": "http://homeassistant.local:8123",
+      "token": "env:HA_TOKEN",
+      "timeoutMs": 10000
+    },
+    "garmin": {
+      "enabled": true,
+      "importance": 0.5,
+      "entityPrefix": "sensor.garmin"
+    },
+    "github": {
+      "enabled": true,
+      "repo": "markus-lassfolk/openclaw-hybrid-memory",
+      "includeReviewRequests": true,
+      "staleIssueDays": 7
+    },
+    "sessionHistory": {
+      "enabled": true,
+      "recentSessions": 10
+    },
+    "memoryPatterns": {
+      "enabled": true,
+      "hotAccessThreshold": 3,
+      "staleAfterDays": 14
+    },
+    "homeAssistantAnomaly": {
+      "enabled": true,
+      "watchEntities": ["sensor.energy_today", "binary_sensor.front_door"]
+    },
+    "systemHealth": {
+      "enabled": true
+    },
+    "weather": {
+      "enabled": true,
+      "location": "auto"
+    },
+    "yarbo": {
+      "enabled": true,
+      "entityPrefix": "sensor.yarbo"
+    }
+  }
+}
+```
+
+- **enabled**: Master toggle for all sensor sweeps.
+- **schedule**: Cron string for collection frequency (default is every 4 hours).
+- **dedupCooldownHours**: Prevents duplicate identical events from being written in the configured window.
+- **homeAssistant**: Requires a base URL and token. Used by the `garmin`, `homeAssistantAnomaly`, and `yarbo` sensors. Use `env:HA_TOKEN` to pull from the environment.
+- **Tier 1 Sensors**: `garmin`, `github`, `sessionHistory`, `memoryPatterns`.
+- **Tier 2 Sensors**: `homeAssistantAnomaly`, `systemHealth`, `weather`, `yarbo`.
+
+---
+
 ## GraphRAG retrieval (graphRetrieval)
 
 Controls BFS graph expansion in `memory_recall`. When a query returns top results, the plugin optionally traverses the link graph from those results to surface related context. Enabled by default but does **not** expand by default — pass `expandGraph: true` to the tool, or set `defaultExpand: true` to expand on every call.

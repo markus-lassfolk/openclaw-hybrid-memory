@@ -103,6 +103,10 @@ Commands by category:
     credentials migrate-to-vault
     scope list|stats|prune|promote
 
+  Sensor sweep (requires sensorSweep.enabled: true)
+    sensor-sweep         Run sensor data collection (Garmin, GitHub, memory patterns, sessions)
+    sensor-events        Query events written to the Event Bus
+
   Plugin lifecycle
     upgrade [version]    Upgrade to version or latest
     uninstall            Remove plugin (--clean-all, --leave-config)
@@ -179,6 +183,8 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem cost-report",
   "hybrid-mem tool-effectiveness",
   "hybrid-mem cross-agent-learning",
+  "hybrid-mem sensor-sweep",
+  "hybrid-mem sensor-events",
 ] as const;
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
@@ -253,6 +259,8 @@ export interface HybridMemCliRegistrationContext {
   eventLog?: import("../backends/event-log.js").EventLog | null;
   /** LLM cost tracker (Issue #270). */
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+  /** Event Bus for sensor sweep (Issue #236). Required when sensorSweep.enabled. */
+  eventBus?: import("../backends/event-bus.js").EventBus | null;
 }
 
 function buildCliContextServices(
@@ -780,6 +788,7 @@ export function createHybridMemCliContext(
     activeTask: handlerCtx.cfg.activeTask.enabled
       ? buildActiveTaskCliContext(handlerCtx)
       : undefined,
+    eventBus: handlerCtx.eventBus ?? null,
   };
 }
 
