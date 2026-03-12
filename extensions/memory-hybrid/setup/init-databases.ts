@@ -708,6 +708,7 @@ export function initializeDatabases(
               const type = String((entry as Record<string, unknown>).type ?? "").toLowerCase().trim();
               if (type && NON_CHAT_TYPES.has(type)) return false;
               // If type is explicit and non-empty, trust it (unknown types → assume chat)
+              if (type) return true;
               const id = String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").toLowerCase();
               return !NON_CHAT_ID_RE.test(id);
             }
