@@ -11,6 +11,7 @@ import {
   FallbackEmbeddingProvider,
   ChainEmbeddingProvider,
   OnnxEmbeddingProvider,
+  AllEmbeddingProvidersFailed,
   createEmbeddingProvider,
   safeEmbed,
   __setOnnxRuntimeLoaderForTests,
@@ -870,5 +871,158 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
     const calledBatch: string[] = mockCreate.mock.calls[0][0].input;
     expect(calledBatch[0].length).toBeLessThanOrEqual(32768);
     expect(calledBatch[1]).toBe("short text");
+  });
+});
+// ---------------------------------------------------------------------------
+// #385: Embedding fallback chain error handling
+// ---------------------------------------------------------------------------
+
+describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
+  it("embed() skips capturePluginError for 401 auth failure (direct status)", async () => {
+    vi.useFakeTimers();
+    try {
+      const authError = Object.assign(
+        new Error("401 Incorrect API key provided: AIzaSyDp..."),
+        { status: 401 },
+      );
+      const mockCreate = vi.fn().mockRejectedValue(authError);
+      const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+      const provider = new Embeddings(client, "text-embedding-005", 768);
+      // Should throw but NOT call capturePluginError — 401 is a config issue
+      await expect(provider.embed("test")).rejects.toThrow("401 Incorrect API key");
+      // Must not retry on auth errors
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("embed() skips capturePluginError for 401 wrapped in LLMRetryError", async () => {
+    vi.useFakeTimers();
+    try {
+      const authError = Object.assign(
+        new Error("401 Incorrect API key provided: AIzaSyDp..."),
+        { status: 401 },
+      );
+      const mockCreate = vi.fn().mockRejectedValue(authError);
+      const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+      const provider = new Embeddings(client, "text-embedding-005", 768);
+      await expect(provider.embed("test")).rejects.toThrow();
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("#385: safeEmbed does not report AllEmbeddingProvidersFailed", () => {
+  it("returns null and does not throw when chain is exhausted", async () => {
+    const p1 = { embed: vi.fn().mockRejectedValue(new Error("provider 1 failed")), embedBatch: vi.fn(), dimensions: 768, modelName: "p1" };
+    const p2 = { embed: vi.fn().mockRejectedValue(new Error("provider 2 failed")), embedBatch: vi.fn(), dimensions: 768, modelName: "p2" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["p1", "p2"],
+    );
+    const result = await safeEmbed(chain, "test");
+    expect(result).toBeNull();
+  });
+
+  it("returns null and logs warning when chain is exhausted with logWarn", async () => {
+    const p1 = { embed: vi.fn().mockRejectedValue(new Error("failed")), embedBatch: vi.fn(), dimensions: 768, modelName: "p1" };
+    const chain = new ChainEmbeddingProvider(
+      [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["p1"],
+    );
+    const logWarn = vi.fn();
+    const result = await safeEmbed(chain, "test", logWarn);
+    expect(result).toBeNull();
+    expect(logWarn).toHaveBeenCalledOnce();
+  });
+});
+
+describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", () => {
+  it("does not capturePluginError for 404 from non-last provider", async () => {
+    const notFoundErr = Object.assign(
+      new Error("404 models/text-embedding-004 is not found for API version v1beta"),
+      { status: 404 },
+    );
+    const vec = [0.1, 0.2];
+    const p1 = { embed: vi.fn().mockRejectedValue(notFoundErr), embedBatch: vi.fn(), dimensions: 2, modelName: "google" };
+    const p2 = { embed: vi.fn().mockResolvedValue(vec), embedBatch: vi.fn(), dimensions: 2, modelName: "openai" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["google", "openai"],
+    );
+    const result = await chain.embed("test");
+    expect(result).toEqual(vec);
+  });
+
+  it("does not capturePluginError for 401 from non-last provider", async () => {
+    const authErr = Object.assign(
+      new Error("401 Incorrect API key provided"),
+      { status: 401 },
+    );
+    const vec = [0.5, 0.6];
+    const p1 = { embed: vi.fn().mockRejectedValue(authErr), embedBatch: vi.fn(), dimensions: 2, modelName: "google" };
+    const p2 = { embed: vi.fn().mockResolvedValue(vec), embedBatch: vi.fn(), dimensions: 2, modelName: "openai" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["google", "openai"],
+    );
+    const result = await chain.embed("test");
+    expect(result).toEqual(vec);
+    expect(p2.embed).toHaveBeenCalledOnce();
+  });
+
+  it("throws AllEmbeddingProvidersFailed when all providers exhaust", async () => {
+    const p1 = { embed: vi.fn().mockRejectedValue(new Error("fail")), embedBatch: vi.fn(), dimensions: 2, modelName: "p1" };
+    const p2 = { embed: vi.fn().mockRejectedValue(new Error("fail")), embedBatch: vi.fn(), dimensions: 2, modelName: "p2" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["p1", "p2"],
+    );
+    await expect(chain.embed("test")).rejects.toBeInstanceOf(AllEmbeddingProvidersFailed);
+  });
+});
+
+describe("#385: createEmbeddingProvider uses text-embedding-005 as default Google model", () => {
+  it("direct Google provider uses text-embedding-005 when no model specified", () => {
+    const cfg: EmbeddingConfig = {
+      provider: "google",
+      model: "",
+      googleApiKey: "AIzaSyTestKey1234567890",
+      dimensions: 768,
+      batchSize: 50,
+    };
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider).toBeInstanceOf(Embeddings);
+    expect(provider.modelName).toBe("text-embedding-005");
+  });
+
+  it("direct Google provider respects explicitly set model", () => {
+    const cfg: EmbeddingConfig = {
+      provider: "google",
+      model: "text-embedding-005",
+      googleApiKey: "AIzaSyTestKey1234567890",
+      dimensions: 768,
+      batchSize: 50,
+    };
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider).toBeInstanceOf(Embeddings);
+    expect(provider.modelName).toBe("text-embedding-005");
+  });
+
+  it("chain with Google uses text-embedding-005 by default", () => {
+    const cfg: EmbeddingConfig = {
+      provider: "openai",
+      model: "text-embedding-3-small",
+      apiKey: "sk-test-1234567890",
+      googleApiKey: "AIzaSyTestKey1234567890",
+      dimensions: 768,
+      batchSize: 50,
+      preferredProviders: ["openai", "google"],
+    };
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider).toBeInstanceOf(ChainEmbeddingProvider);
   });
 });

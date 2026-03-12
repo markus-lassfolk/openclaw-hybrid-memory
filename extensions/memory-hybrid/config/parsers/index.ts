@@ -358,7 +358,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   } else if (embeddingProvider === "openai") {
     resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
   } else if (embeddingProvider === "google") {
-    resolvedDimensions = 768; // Google text-embedding-004 default; set embedding.dimensions to override
+    resolvedDimensions = 768; // Google text-embedding-005 default (768d); set embedding.dimensions to override (#385)
   } else {
     // For ollama/onnx: require explicit dimensions when the model is unknown to prevent
     // silent schema mismatches with existing LanceDB tables (e.g. 768 vs 1536 dimensions).

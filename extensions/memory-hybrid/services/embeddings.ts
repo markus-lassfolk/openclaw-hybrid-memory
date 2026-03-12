@@ -588,6 +588,20 @@ function is403OrWrapped(err: Error): boolean {
 }
 
 
+/** Returns true when the error is a 401 (auth failure) — either directly or wrapped in LLMRetryError.
+ * Used to suppress capturePluginError for authentication failures, which are always config issues. */
+function is401OrWrapped(err: Error): boolean {
+  const status = (err as { status?: unknown }).status;
+  if (status === 401 || status === "401") return true;
+  if (err instanceof LLMRetryError) {
+    const cause = err.cause as { status?: unknown } | undefined;
+    if (cause?.status === 401 || cause?.status === "401") return true;
+    // Also match message pattern for wrapped auth errors
+    if (err.message.includes("401") && /incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
+  }
+  return false;
+}
+
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
@@ -694,8 +708,8 @@ export class Embeddings implements EmbeddingProvider {
     // lastErr is always defined here: constructor enforces models.length >= 1, so
     // the loop always runs at least once; either it returns early (success) or
     // sets lastErr on every iteration before reaching this point.
-    // Skip reporting 404 (model not found), 403 (country/region restriction), and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397).
-    if (!is404OrWrapped(lastErr!) && !is403OrWrapped(lastErr!) && !is429OrWrapped(lastErr!)) {
+    // Skip reporting 404 (model not found), 403 (country/region restriction), 429 (rate limit), and 401 (auth failure) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+    if (!is404OrWrapped(lastErr!) && !is403OrWrapped(lastErr!) && !is429OrWrapped(lastErr!) && !is401OrWrapped(lastErr!)) {
       capturePluginError(lastErr!, {
         subsystem: "embeddings",
         operation: "embed",
@@ -745,8 +759,8 @@ export class Embeddings implements EmbeddingProvider {
         );
       }
       if (lastErr !== undefined && allResults.length === i) {
-        // Skip reporting 404 (model not found), 403 (country/region restriction), and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397).
-        if (!is404OrWrapped(lastErr) && !is403OrWrapped(lastErr) && !is429OrWrapped(lastErr)) {
+        // Skip reporting 404 (model not found), 403 (country/region restriction), 429 (rate limit), and 401 (auth failure) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+        if (!is404OrWrapped(lastErr) && !is403OrWrapped(lastErr) && !is429OrWrapped(lastErr) && !is401OrWrapped(lastErr)) {
           capturePluginError(lastErr, {
             subsystem: "embeddings",
             operation: "embedBatch",
@@ -1078,17 +1092,16 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       } catch (err) {
         // Only capture individual provider failures when there are remaining fallbacks.
         // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
+        // Skip 404 (model not found), 403 (country/region restriction), and 401 (auth failure) — config issues, not bugs (#329, #394, #385).
         const isLast = this.activeIndex + 1 >= this.providers.length;
-        if (!isLast) {
-          const asErr = err instanceof Error ? err : new Error(String(err));
-          // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
-          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
-            capturePluginError(asErr, {
-              subsystem: "embeddings",
-              operation: "chain-failover",
-              phase: "embed",
-            });
-          }
+        const asErr = err instanceof Error ? err : new Error(String(err));
+        if (!isLast && !is404OrWrapped(asErr) && !is403OrWrapped(asErr) && !is429OrWrapped(asErr) && !is401OrWrapped(asErr)) {
+          capturePluginError(asErr, {
+            subsystem: "embeddings",
+            operation: "chain-failover",
+            phase: "embed",
+          });
+        }
         }
         this.activeIndex++;
         if (this.activeIndex < this.providers.length) {
@@ -1106,17 +1119,16 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       try {
         return await this.providers[this.activeIndex].embedBatch(texts);
       } catch (err) {
+        // Skip 404 (model not found), 403 (country/region restriction), and 401 (auth failure) — config issues, not bugs (#329, #394, #385).
         const isLast = this.activeIndex + 1 >= this.providers.length;
-        if (!isLast) {
-          const asErr = err instanceof Error ? err : new Error(String(err));
-          // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
-          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
-            capturePluginError(asErr, {
-              subsystem: "embeddings",
-              operation: "chain-failover",
-              phase: "embedBatch",
-            });
-          }
+        const asErr = err instanceof Error ? err : new Error(String(err));
+        if (!isLast && !is404OrWrapped(asErr) && !is403OrWrapped(asErr) && !is429OrWrapped(asErr) && !is401OrWrapped(asErr)) {
+          capturePluginError(asErr, {
+            subsystem: "embeddings",
+            operation: "chain-failover",
+            phase: "embedBatch",
+          });
+        }
         }
         this.activeIndex++;
         if (this.activeIndex < this.providers.length) {
@@ -1149,7 +1161,7 @@ export function createEmbeddingProvider(
     const ollamaModel = model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
       ? model
       : "nomic-embed-text";
-    const googleModel = "text-embedding-004"; // Gemini API embedding model (OpenAI-compat endpoint)
+    const googleModel = "text-embedding-005"; // Gemini API embedding model (OpenAI-compat endpoint); text-embedding-005 is current stable (#385)
     for (const name of preferredProviders) {
       if (name === "ollama") {
         try {
@@ -1216,7 +1228,9 @@ export function createEmbeddingProvider(
       throw new Error("Google embedding provider requires distill.apiKey or llm.providers.google.apiKey.");
     }
     const client = new OpenAI({ apiKey: cfg.googleApiKey, baseURL: GOOGLE_EMBEDDING_BASE_URL });
-    return new Embeddings(client, "text-embedding-004", dimensions, batchSize);
+    // Use configured model when set to a Google embedding model, otherwise default to text-embedding-005 (#385).
+    const googleEmbedModel = model || "text-embedding-005";
+    return new Embeddings(client, googleEmbedModel, dimensions, batchSize);
   }
 
   if (provider === "onnx") {
@@ -1256,9 +1270,9 @@ export async function safeEmbed(
     return await provider.embed(text);
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
-    // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and AllEmbeddingProvidersFailed
-    // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #397)
-    if (!(err instanceof AllEmbeddingProvidersFailed) && !is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
+    // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), 401 (auth failure), and AllEmbeddingProvidersFailed
+    // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #397, #385)
+    if (!(err instanceof AllEmbeddingProvidersFailed) && !is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !is401OrWrapped(asErr)) {
       capturePluginError(asErr, {
         operation: 'safe-embed',
         subsystem: 'embeddings',
