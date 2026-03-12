@@ -275,7 +275,6 @@ export async function chatComplete(opts: {
       isOllamaOOM(err);  // #387: Ollama OOM — model too large for available RAM, not a bug
     const isConfigError = err instanceof UnconfiguredProviderError ||
       is404Like(err) ||  // #303: model not found = wrong model name in config, not a bug
-<<<<<<< HEAD
       is403Like(err);    // #394: country/region restriction = operator config issue, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
