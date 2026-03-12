@@ -127,6 +127,16 @@ export function is429Like(err: unknown): boolean {
 }
 
 /**
+ * Returns true when the error is a 429 (rate limit) — either directly or wrapped in LLMRetryError.
+ * Used in chatCompleteWithRetry to detect 429 errors that were retried and wrapped by withLLMRetry.
+ */
+function is429OrWrapped(err: Error): boolean {
+  if (is429Like(err)) return true;
+  if (err instanceof LLMRetryError && is429Like(err.cause)) return true;
+  return false;
+}
+
+/**
  * Unified 5xx / internal server error detection helper.
  * Checks HTTP status code property first, then uses conservative message patterns.
  * Avoids false positives from non-HTTP "internal error" messages (e.g. JavaScript errors).
@@ -474,7 +484,7 @@ export async function chatCompleteWithRetry(opts: {
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
       const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
-      const is429 = is429Like(lastError);
+      const is429 = is429OrWrapped(lastError);
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
@@ -501,7 +511,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs404 = is404Like(finalError);
   const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
   const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
-  const finalIs429 = is429Like(finalError);  // #397
+  const finalIs429 = is429OrWrapped(finalError);  // #397
   const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
