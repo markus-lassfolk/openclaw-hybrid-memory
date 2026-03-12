@@ -413,6 +413,232 @@ describe("Error Reporter", () => {
     });
   });
 
+  describe("Version Helpers", () => {
+    it("compareVersions: older patch returns -1", async () => {
+      const { compareVersions } = await import("../services/error-reporter.js");
+      expect(compareVersions("2026.3.100", "2026.3.110")).toBe(-1);
+    });
+
+    it("compareVersions: older month returns -1", async () => {
+      const { compareVersions } = await import("../services/error-reporter.js");
+      expect(compareVersions("2026.2.999", "2026.3.0")).toBe(-1);
+    });
+
+    it("compareVersions: older year returns -1", async () => {
+      const { compareVersions } = await import("../services/error-reporter.js");
+      expect(compareVersions("2025.12.999", "2026.1.0")).toBe(-1);
+    });
+
+    it("compareVersions: equal versions return 0", async () => {
+      const { compareVersions } = await import("../services/error-reporter.js");
+      expect(compareVersions("2026.3.110", "2026.3.110")).toBe(0);
+    });
+
+    it("compareVersions: newer patch returns 1", async () => {
+      const { compareVersions } = await import("../services/error-reporter.js");
+      expect(compareVersions("2026.3.111", "2026.3.110")).toBe(1);
+    });
+
+    it("compareVersions: newer year returns 1", async () => {
+      const { compareVersions } = await import("../services/error-reporter.js");
+      expect(compareVersions("2027.1.0", "2026.12.999")).toBe(1);
+    });
+
+    it("extractVersion: parses valid release string", async () => {
+      const { extractVersion } = await import("../services/error-reporter.js");
+      expect(extractVersion("openclaw-hybrid-memory@2026.3.110")).toBe("2026.3.110");
+    });
+
+    it("extractVersion: returns null when no @ sign", async () => {
+      const { extractVersion } = await import("../services/error-reporter.js");
+      expect(extractVersion("2026.3.110")).toBeNull();
+    });
+
+    it("extractVersion: returns null for empty string", async () => {
+      const { extractVersion } = await import("../services/error-reporter.js");
+      expect(extractVersion("")).toBeNull();
+    });
+
+    it("extractVersion: returns null when version part is malformed", async () => {
+      const { extractVersion } = await import("../services/error-reporter.js");
+      expect(extractVersion("openclaw-hybrid-memory@1.0")).toBeNull();
+      expect(extractVersion("openclaw-hybrid-memory@abc.def.ghi")).toBeNull();
+    });
+
+    it("extractVersion: returns null when version part is empty after @", async () => {
+      const { extractVersion } = await import("../services/error-reporter.js");
+      expect(extractVersion("openclaw-hybrid-memory@")).toBeNull();
+    });
+  });
+
+  describe("resolvedIssues version-aware filtering", () => {
+    it("drops event when fingerprint matches and version is older than fix", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      const resolvedIssues = { "Error:Connection refused": "2026.3.110" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(true);
+    });
+
+    it("lets event through when version equals fix version (regression check)", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        release: "openclaw-hybrid-memory@2026.3.110",
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      const resolvedIssues = { "Error:Connection refused": "2026.3.110" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(false);
+    });
+
+    it("lets event through when version is newer than fix (regression)", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        release: "openclaw-hybrid-memory@2026.3.120",
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      const resolvedIssues = { "Error:Connection refused": "2026.3.110" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(false);
+    });
+
+    it("lets event through when release is unparseable (safe default)", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        release: "unknown-format",
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      const resolvedIssues = { "Error:Connection refused": "2026.3.110" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(false);
+    });
+
+    it("lets event through when release is missing but fallback is also unparseable", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      const resolvedIssues = { "Error:Connection refused": "2026.3.110" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues, "bad-release")).toBe(false);
+    });
+
+    it("uses fallbackRelease when event.release is absent", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      const resolvedIssues = { "Error:Connection refused": "2026.3.110" };
+      // Old version via fallback → should drop
+      expect(shouldDropForResolvedIssue(event, resolvedIssues, "openclaw-hybrid-memory@2026.3.100")).toBe(true);
+      // New version via fallback → should let through
+      expect(shouldDropForResolvedIssue(event, resolvedIssues, "openclaw-hybrid-memory@2026.3.120")).toBe(false);
+    });
+
+    it("lets event through when fingerprint not in resolvedIssues", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "Error", value: "Some other error" }] },
+      };
+      const resolvedIssues = { "Error:Connection refused": "2026.3.110" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(false);
+    });
+
+    it("lets event through when resolvedIssues is empty", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      expect(shouldDropForResolvedIssue(event, {})).toBe(false);
+    });
+
+    it("truncates fingerprint value to 100 chars for matching", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const longMessage = "A".repeat(200);
+      const event: any = {
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "Error", value: longMessage }] },
+      };
+      // Fingerprint uses first 100 chars of value
+      const resolvedIssues = { [`Error:${"A".repeat(100)}`]: "2026.3.110" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(true);
+    });
+  });
+
+  describe("Opt-in bot identity", () => {
+    it("logs when botName IS set", async () => {
+      const { initErrorReporter } = await import("../services/error-reporter.js");
+
+      const mockLogger = { info: vi.fn(), warn: vi.fn() };
+
+      await initErrorReporter(
+        {
+          enabled: true,
+          consent: true,
+          mode: "community",
+          maxBreadcrumbs: 10,
+          sampleRate: 1.0,
+          botName: "TestBot",
+        },
+        "2026.3.110",
+        mockLogger
+      );
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Bot name set (opt-in)")
+      );
+    });
+
+    it("logs when botName is NOT set", async () => {
+      const { initErrorReporter } = await import("../services/error-reporter.js");
+
+      const mockLogger = { info: vi.fn(), warn: vi.fn() };
+
+      await initErrorReporter(
+        {
+          enabled: true,
+          consent: true,
+          mode: "community",
+          maxBreadcrumbs: 10,
+          sampleRate: 1.0,
+          // botName intentionally omitted
+        },
+        "2026.3.111",
+        mockLogger
+      );
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Bot name omitted")
+      );
+    });
+
+    it("sanitizeEvent passes bot_name tag when present in event", async () => {
+      const { sanitizeEvent } = await import("../services/error-reporter.js");
+
+      const event: any = {
+        event_id: "e1",
+        level: "error",
+        tags: { bot_name: "Maeve", bot_id: "uuid-1234" },
+      };
+      const sanitized = sanitizeEvent(event);
+      expect(sanitized?.tags?.bot_name).toBe("Maeve");
+      expect(sanitized?.tags?.bot_id).toBe("uuid-1234");
+    });
+
+    it("sanitizeEvent omits bot_name and bot_id when not in event tags", async () => {
+      const { sanitizeEvent } = await import("../services/error-reporter.js");
+
+      const event: any = {
+        event_id: "e2",
+        level: "error",
+        tags: { subsystem: "sqlite" },
+      };
+      const sanitized = sanitizeEvent(event);
+      expect(sanitized?.tags?.bot_name).toBeUndefined();
+      expect(sanitized?.tags?.bot_id).toBeUndefined();
+    });
+  });
+
   describe("New Exports", () => {
     it("should export flushErrorReporter", async () => {
       const { flushErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
