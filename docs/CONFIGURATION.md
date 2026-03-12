@@ -653,7 +653,7 @@ Opt-in **query expansion** generates a hypothetical answer (or expanded query) b
 |-----|---------|-------------|
 | `enabled` | `false` | Enable query expansion before embedding (uses nano-tier model when `model` unset) |
 | `model` | (nano tier) | Model for expansion; when omitted, uses first model from `llm.nano` |
-| `timeoutMs` | `15000` (25s when migrating from HyDE) | Timeout for expansion call in ms. Raised to 15s in #339 to accommodate thinking models (e.g. Gemini 2.5 Flash) that routinely exceed 5s. |
+| `timeoutMs` | `15000` (25s when migrating from HyDE) | Timeout for expansion call in ms. Raised to 15s in #339 to accommodate thinking models (e.g. Gemini 2.5 Flash) that routinely exceed 5s. A minimum floor of 10000ms is enforced (#384); values explicitly set below that are silently raised. Set to `0` or a negative value to remove the timeout entirely. |
 | `maxVariants` | `4` | Max query variants to generate and merge |
 | `cacheSize` | `100` | Cache size for expansion results |
 
@@ -1043,7 +1043,7 @@ After RRF fusion produces the initial ranked list, **LLM re-ranking** re-orders 
 | `model` | `openai/gpt-4.1-nano` | LLM for re-ranking |
 | `candidateCount` | `50` | Top-N RRF candidates to present to the LLM |
 | `outputCount` | `20` | Results to return after re-ranking |
-| `timeoutMs` | `10000` | LLM call timeout in ms; on timeout, falls back to original RRF order |
+| `timeoutMs` | `10000` | LLM call timeout in ms; on timeout, falls back to original RRF order. A minimum floor of 5000ms is enforced (#384); values explicitly set below that are silently raised. Set to `0` or a negative value to remove the timeout entirely. |
 
 Re-ranking runs for both `memory_recall` (explicit) and auto-recall (ambient injection) when enabled.
 
