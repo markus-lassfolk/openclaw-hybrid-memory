@@ -126,6 +126,7 @@ export function createPluginService(ctx: PluginServiceContext) {
             maxBreadcrumbs: 10,
             botId: cfg.errorReporting.botId,
             botName: cfg.errorReporting.botName,
+            resolvedIssues: cfg.errorReporting.resolvedIssues,
           },
           versionInfo.pluginVersion,
           api.logger,

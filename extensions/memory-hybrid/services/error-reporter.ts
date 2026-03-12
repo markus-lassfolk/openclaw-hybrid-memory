@@ -28,17 +28,109 @@ export interface ErrorReporterConfig {
   /** "community" (default): use hardcoded community DSN. "self-hosted": require custom DSN from config. */
   mode: "community" | "self-hosted";
   environment?: string; // "production" | "development"
-  maxBreadcrumbs: number; // PRIVACY: Always passed as 0 (breadcrumbs can contain user prompts). Not user-configurable.
+  maxBreadcrumbs: number; // PRIVACY: Hard-coded to 10 in Sentry.init (limited plugin.* breadcrumbs only). Not user-configurable.
   sampleRate: number;  // 0.0-1.0, default 1.0
   consent: boolean;    // explicit opt-in required
-  /** Optional UUID for this bot instance; sent as tag so GlitchTip can group errors by bot. */
+  /**
+   * Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+   * Optional UUID for this bot instance; sent as tag so GlitchTip can group errors by bot.
+   */
   botId?: string;
-  /** Optional friendly name (e.g. Maeve, Doris); sent as tag for readable reports. */
+  /**
+   * Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+   * Optional friendly name (e.g. Maeve, Doris); sent as tag for readable reports.
+   */
   botName?: string;
+  /**
+   * Optional map of error fingerprints to the version that fixed them.
+   * Errors matching a fingerprint from an older version are silently dropped (not regressions).
+   * Format: { "ErrorType:message prefix (first 100 chars)": "YYYY.M.NNN" }
+   * When not configured, behavior is identical to today.
+   */
+  resolvedIssues?: Record<string, string>;
 }
 
 /** Hardcoded DSN for community error reporting (anonymous telemetry) */
 const COMMUNITY_DSN = DEFAULT_GLITCHTIP_DSN;
+
+/**
+ * Extract version string from a release identifier.
+ * "openclaw-hybrid-memory@2026.3.110" → "2026.3.110"
+ * Returns null if the release string can't be parsed.
+ */
+export function extractVersion(release: string): string | null {
+  if (!release) return null;
+  const atIdx = release.indexOf('@');
+  if (atIdx < 0) return null;
+  const version = release.slice(atIdx + 1);
+  if (!version || !/^\d+\.\d+\.\d+$/.test(version)) return null;
+  return version;
+}
+
+/**
+ * Compare two version strings numerically (YYYY.M.N format).
+ * Returns:
+ *   -1 if a < b
+ *    0 if a === b
+ *    1 if a > b
+ */
+export function compareVersions(a: string, b: string): number {
+  const parseVersion = (version: string): [number, number, number] | null => {
+    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    if (!match) return null;
+    return [Number(match[1]), Number(match[2]), Number(match[3])];
+  };
+
+  const versionA = parseVersion(a);
+  const versionB = parseVersion(b);
+  
+  if (!versionA || !versionB) {
+    return 0; // Safe default for unparseable versions
+  }
+  
+  for (let i = 0; i < 3; i++) {
+    if (versionA[i] < versionB[i]) return -1;
+    if (versionA[i] > versionB[i]) return 1;
+  }
+  
+  return 0; // Equal
+}
+
+/**
+ * Check whether an event should be dropped because it matches a known-fixed issue
+ * and the event's release version is older than the fix.
+ * Returns true (drop) only when: fingerprint matches AND version < fixedInVersion.
+ * If event release can't be parsed, returns false (safe default: let through).
+ *
+ * NOTE: `errValue` is read from the event and passed through `scrubString()` before
+ * building the fingerprint. When called from `beforeSend`, the event has already been
+ * through `sanitizeEvent()` (which also applies `scrubString()`), so `resolvedIssues`
+ * keys must use the post-sanitize (scrubbed) form of the error message.
+ */
+export function shouldDropForResolvedIssue(
+  event: SentryType.Event,
+  resolvedIssues: Record<string, string>,
+  fallbackRelease?: string,
+): boolean {
+  if (!resolvedIssues || Object.keys(resolvedIssues).length === 0) return false;
+
+  const errType = event.exception?.values?.[0]?.type || "Error";
+  // Apply scrubString so the fingerprint matches post-sanitize values (same as capturePluginError dedup).
+  const errValue = scrubString(event.exception?.values?.[0]?.value || "");
+  const fingerprint = `${errType}:${errValue.slice(0, 100)}`;
+
+  const fixedInVersion = resolvedIssues[fingerprint];
+  if (!fixedInVersion || typeof fixedInVersion !== "string") return false;
+
+  // Reject malformed fixedInVersion to avoid silently suppressing real errors.
+  if (!/^\d+\.\d+\.\d+/.test(fixedInVersion)) return false;
+
+  const releaseStr = event.release || fallbackRelease || "";
+  const eventVersion = extractVersion(releaseStr);
+  if (!eventVersion) return false;
+
+  return compareVersions(eventVersion, fixedInVersion) < 0;
+}
 
 const Sentry: typeof SentryType | null = SentryType;
 let initialized = false;
@@ -83,9 +175,12 @@ export async function initErrorReporter(
 
   if (!Sentry) return;
 
+  const releaseStr = `openclaw-hybrid-memory@${pluginVersion}`;
+  const resolvedIssues = config.resolvedIssues;
+
   Sentry.init({
     dsn: resolvedDsn,
-    release: `openclaw-hybrid-memory@${pluginVersion}`,
+    release: releaseStr,
     environment: config.environment || "production",
     sampleRate: config.sampleRate ?? 1.0,
     maxBreadcrumbs: 10,          // Limited safe breadcrumbs for plugin operations
@@ -93,7 +188,16 @@ export async function initErrorReporter(
     autoSessionTracking: false,  // NO session tracking
     integrations: (defaults) => defaults.filter(i => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name)), // Keep only safe integrations
     beforeSend(event): SentryType.ErrorEvent | PromiseLike<SentryType.ErrorEvent | null> | null {
-      return sanitizeEvent(event) as SentryType.ErrorEvent | null;
+      // Sanitize first (allowlist rebuild; event.release is preserved from Sentry.init)
+      const sanitized = sanitizeEvent(event) as SentryType.ErrorEvent | null;
+      if (!sanitized) return null;
+
+      // Version-aware filtering: drop events already fixed in a newer release
+      if (resolvedIssues && shouldDropForResolvedIssue(sanitized, resolvedIssues, releaseStr)) {
+        return null;
+      }
+
+      return sanitized;
     },
     beforeBreadcrumb(breadcrumb) {
       // Only allow breadcrumbs with category starting with "plugin."
@@ -118,6 +222,9 @@ export async function initErrorReporter(
   }
   if (botName) {
     Sentry.setTag("bot_name", botName);
+    logger.debug?.('[ErrorReporter] Bot name set (opt-in)');
+  } else {
+    logger.debug?.('[ErrorReporter] Bot name omitted (not configured — privacy default)');
   }
 
   initialized = true;
