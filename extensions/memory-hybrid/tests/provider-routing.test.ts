@@ -543,6 +543,41 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(defaultList).not.toContain("minimax/MiniMax-Embed-01");
   });
 
+  it("skips image-generation string IDs (e.g. gpt-image-1) when inferring chat model from models[]", () => {
+    // Regression: NON_CHAT_ID_RE must match image-gen model IDs like "gpt-image-1" so that
+    // chatCompleteWithRetry is never routed through an image generation endpoint.
+    const cfg = getTestConfig(tmpDir);
+    cfg.llm = {
+      default: ["anthropic/claude-3.5-sonnet"],
+      heavy: ["anthropic/claude-opus-4-6"],
+    } as typeof cfg.llm;
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            openai: {
+              apiKey: "sk-cp-image-skip-test",
+              // First entry is an image generation model — must be skipped.
+              models: ["gpt-image-1", "gpt-4o"],
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
+    // Must use the chat model gpt-4o, not the image model
+    expect(defaultList).toContain("openai/gpt-4o");
+    expect(heavyList).toContain("openai/gpt-4o");
+    expect(defaultList).not.toContain("openai/gpt-image-1");
+    expect(heavyList).not.toContain("openai/gpt-image-1");
+  });
+
+
   it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
     // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
     // converts to minimax/MiniMax-M2.5 when routing), hasModelFrom should detect the minimax
