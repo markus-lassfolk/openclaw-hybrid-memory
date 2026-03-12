@@ -372,13 +372,12 @@ export function resolveSecretRef(value: string): string | undefined {
     }
   }
   // Handle ${VAR} template syntax (issues #6, #12).
-  // resolveEnvVars throws when the variable is unset or empty, so catch → undefined.
-  // After resolution, guard against malformed/partially-resolved templates.
+  // resolveEnvVars throws when any referenced variable is unset or empty, so catch → undefined.
+  // No post-resolution guard needed: if resolveEnvVars succeeds, all placeholders were expanded.
+  // Any ${...} remaining in `resolved` came from the env var's own value and is legitimate.
   if (v.includes("${")) {
     try {
       const resolved = resolveEnvVars(v);
-      // Guard: if any ${...} placeholder survived, the template is malformed or unresolved.
-      if (/\$\{[^}]+\}/.test(resolved)) return undefined;
       return resolved && resolved.trim() ? resolved.trim() : undefined;
     } catch {
       return undefined;

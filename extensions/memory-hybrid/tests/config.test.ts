@@ -971,6 +971,54 @@ describe("hybridConfigSchema.parse", () => {
     }
   });
 
+  // ── hasGoogleKey recognises ${VAR} template format (Issue #2921626583) ──────────────────────────
+
+  it("hasGoogleKey: short ${VAR} template (< 10 chars) is recognised and key is resolved (Issue #2921626583)", () => {
+    // "${KEY}" is only 6 chars — previously below the length threshold and incorrectly skipped.
+    vi.stubEnv("KEY", "AIzaSy-short-template-key-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "${KEY}", defaultModel: "gemini-2.0-flash" },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-short-template-key-long-enough-to-pass");
+  });
+
+  // ── validity-based fallback: invalid distill.apiKey falls back to llm google key (#2921626579) ──
+
+  it("falls back to llm.providers.google.apiKey when distill.apiKey is short/invalid (Issue #2921626579)", () => {
+    vi.stubEnv("LLM_GOOGLE_KEY_373", "AIzaSy-llm-google-key-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      // distill.apiKey is 3 chars — not a valid key and not a SecretRef; should NOT win
+      distill: { apiKey: "bad", defaultModel: "gemini-2.0-flash" },
+      llm: { providers: { google: { apiKey: "env:LLM_GOOGLE_KEY_373" } } },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-llm-google-key-long-enough-to-pass");
+  });
+
+  it("malformed template distill.apiKey (no closing brace) falls back to llm.providers.google.apiKey (Issue #2921658704)", () => {
+    vi.stubEnv("LLM_GOOGLE_FALLBACK_373", "AIzaSy-llm-fallback-key-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      // "${BROKEN" has ${ but no } — not a valid SecretRef, must not win over a valid llm key
+      distill: { apiKey: "${BROKEN", defaultModel: "gemini-2.0-flash" },
+      llm: { providers: { google: { apiKey: "env:LLM_GOOGLE_FALLBACK_373" } } },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-llm-fallback-key-long-enough-to-pass");
+  });
+
+  // ── resolveSecretRef: resolved value containing ${...} is not rejected (#2921445142) ──────────
+
+  it("resolveSecretRef returns env var value even when it contains a literal ${ sequence (Issue #2921445142)", () => {
+    // The env var's value contains "${" — this should NOT be treated as an unresolved template.
+    vi.stubEnv("GEMINI_KEY_WITH_DOLLAR_BRACE", "AIzaSy-value-containing-${literal}-suffix-123456");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "${GEMINI_KEY_WITH_DOLLAR_BRACE}", defaultModel: "gemini-2.0-flash" },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-value-containing-${literal}-suffix-123456");
+  });
+
   it("no mode applies full preset: distill is defined with preset defaults", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeDefined();

@@ -186,9 +186,14 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
   const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
   const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
-  const hasGoogleKey =
-    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || /\$\{[^}]+\}/.test(distillApiKeyRaw)) ||
-    (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:") || /\$\{[^}]+\}/.test(llmGoogleApiKeyRaw));
+  // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
+  // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
+  const looksLikeSecretRefOrKey = (k: string) =>
+    k.length >= 10 ||
+    k.startsWith("env:") ||
+    k.startsWith("file:") ||
+    (k.includes("${") && k.includes("}"));
+  const hasGoogleKey = looksLikeSecretRefOrKey(distillApiKeyRaw) || looksLikeSecretRefOrKey(llmGoogleApiKeyRaw);
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;
@@ -395,11 +400,10 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
   // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
-  // Pick the first valid key to avoid using a short/invalid distill key when a valid llm key exists.
-  const rawGoogleKey = (() => {
-    const isDistillKeyValid = distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || /\$\{[^}]+\}/.test(distillApiKeyRaw);
-    return isDistillKeyValid ? distillApiKeyRaw : (llmGoogleApiKeyRaw || "");
-  })();
+  // Use distillApiKeyRaw (already trimmed) only when it looks like a real key or valid SecretRef; otherwise fall
+  // back to llmGoogleApiKeyRaw so a short/malformed distill.apiKey never silently blocks a valid llm google key
+  // (Issues #2921626579 / #2921640291 / #2921658704 — reuses already-computed trimmed vars, avoids IIFE).
+  const rawGoogleKey = looksLikeSecretRefOrKey(distillApiKeyRaw) ? distillApiKeyRaw : llmGoogleApiKeyRaw;
   const resolvedGoogleApiKey =
     (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
       ? resolveSecretRef(rawGoogleKey)
@@ -408,7 +412,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const isSecretRef =
       rawGoogleKey.startsWith("env:") ||
       rawGoogleKey.startsWith("file:") ||
-      /\$\{[^}]+\}/.test(rawGoogleKey);
+      (rawGoogleKey.includes("${") && rawGoogleKey.includes("}"));
     const hint = isSecretRef
       ? ` (SecretRef could not be resolved — check the referenced env var, file, or template placeholder is set and non-empty.)`
       : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
