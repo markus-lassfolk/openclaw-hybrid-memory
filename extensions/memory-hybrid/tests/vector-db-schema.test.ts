@@ -317,3 +317,66 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
     await db.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// VectorDB issue #379 — malformed UUID suffix duplication
+// delete() must log + return false instead of throwing when the UUID has a
+// doubled suffix (e.g. "...831c1c1" instead of "...831c1").
+// ---------------------------------------------------------------------------
+
+describe("VectorDB issue #379 — delete() handles malformed UUIDs gracefully", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+  let db: InstanceType<typeof VectorDB>;
+
+  const DIM = 3;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-379-test-"));
+    lanceDir = join(tmpDir, "lance");
+    db = new VectorDB(lanceDir, DIM);
+    await db.store({ text: "seed fact", vector: [0.1, 0.2, 0.3], importance: 0.7, category: "fact" });
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns false and logs a warning for the specific doubled-suffix UUID from issue #379", async () => {
+    const warns: string[] = [];
+    db.setLogger({ warn: (msg) => warns.push(msg) });
+
+    // Exact malformed UUID from GlitchTip report: valid UUID with 'c1' appended
+    const malformedId = "4d062d33-e366-4498-9233-4b78040831c1c1";
+    const result = await db.delete(malformedId);
+
+    expect(result).toBe(false);
+    expect(warns.some((w) => w.includes("invalid UUID") && w.includes(malformedId))).toBe(true);
+    // capturePluginError must NOT be called — this is a graceful skip, not an error
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+  });
+
+  it("returns false and logs a warning for any UUID with extra characters appended", async () => {
+    const warns: string[] = [];
+    db.setLogger({ warn: (msg) => warns.push(msg) });
+
+    const malformedId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeeeXX";
+    const result = await db.delete(malformedId);
+
+    expect(result).toBe(false);
+    expect(warns.some((w) => w.includes("invalid UUID"))).toBe(true);
+  });
+
+  it("still deletes valid UUIDs correctly", async () => {
+    const id = await db.store({
+      text: "to be deleted",
+      vector: [0.5, 0.5, 0.5],
+      importance: 0.8,
+      category: "fact",
+    });
+    const result = await db.delete(id);
+    expect(result).toBe(true);
+  });
+});

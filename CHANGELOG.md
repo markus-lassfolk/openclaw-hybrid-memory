@@ -8,7 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-(Nothing yet.)
+### Security
+
+- **Override @hono/node-server to >=1.19.10 <2 (GHSA-wc8c-qw6v-h7f6):** Added npm `overrides` to force `@hono/node-server` to a patched version. The unbounded range is capped at `<2` to prevent accidental major-version upgrades.
 
 ---
 

@@ -161,6 +161,9 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 /** Built-in OpenAI-compatible base URL for MiniMax API (global endpoint). */
 export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
 
+/** OpenRouter OpenAI-compatible base URL. */
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
 /**
  * Builds a multi-provider OpenAI-compatible proxy that routes each model to the correct provider API.
  * All existing call sites use `openai.chat.completions.create({ model, ... })` unchanged — this
@@ -348,6 +351,30 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, baseURL })),
         bareModel,
         ollamaBaseUrl,
+      };
+    }
+
+    if (prefix === "openrouter") {
+      // OpenRouter exposes an OpenAI-compatible API at https://openrouter.ai/api/v1.
+      // Model names are passed as-is after stripping the "openrouter/" prefix
+      // (e.g. "openrouter/anthropic/claude-3.5-sonnet" → bareModel "anthropic/claude-3.5-sonnet").
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (process.env.OPENROUTER_API_KEY?.trim() || undefined);
+      if (!apiKey) throw new UnconfiguredProviderError("openrouter", trimmed);
+      const baseURL = providerCfg?.baseURL ?? OPENROUTER_BASE_URL;
+      // Include apiKey prefix in cache key so key rotation takes effect without restart.
+      // defaultHeaders follow OpenRouter's recommendations for attribution and rate-limit priority.
+      const cacheKey = `openrouter:${baseURL}:${apiKey.slice(0, 8)}`;
+      return {
+        client: getOrCreate(cacheKey, () => new OpenAI({
+          apiKey,
+          baseURL,
+          defaultHeaders: {
+            "HTTP-Referer": "https://github.com/markus-lassfolk/openclaw-hybrid-memory",
+            "X-Title": "openclaw-hybrid-memory",
+          },
+        })),
+        bareModel,
       };
     }
 
