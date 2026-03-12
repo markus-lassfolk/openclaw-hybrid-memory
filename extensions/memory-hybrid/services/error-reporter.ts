@@ -12,6 +12,7 @@
  */
 
 import * as SentryType from "@sentry/node";
+import { isVersionAtLeast } from "../utils/version-check.js";
 
 /**
  * Default GlitchTip DSN for anonymous crash reporting.
@@ -68,22 +69,6 @@ export function extractVersion(release: string): string | null {
 }
 
 /**
- * Compare two version strings in "YYYY.M.NNN" format.
- * Returns -1 if a < b, 0 if equal, 1 if a > b.
- */
-export function compareVersions(a: string, b: string): number {
-  const partsA = a.split('.').map(Number);
-  const partsB = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    const pa = partsA[i] ?? 0;
-    const pb = partsB[i] ?? 0;
-    if (pa < pb) return -1;
-    if (pa > pb) return 1;
-  }
-  return 0;
-}
-
-/**
  * Check whether an event should be dropped because it matches a known-fixed issue
  * and the event's release version is older than the fix.
  * Returns true (drop) only when: fingerprint matches AND version < fixedInVersion.
@@ -101,13 +86,13 @@ export function shouldDropForResolvedIssue(
   const fingerprint = `${errType}:${errValue.slice(0, 100)}`;
 
   const fixedInVersion = resolvedIssues[fingerprint];
-  if (!fixedInVersion) return false;
+  if (!fixedInVersion || typeof fixedInVersion !== "string") return false;
 
   const releaseStr = event.release || fallbackRelease || "";
   const eventVersion = extractVersion(releaseStr);
-  if (!eventVersion) return false; // Can't parse → safe default: let through
+  if (!eventVersion) return false;
 
-  return compareVersions(eventVersion, fixedInVersion) < 0;
+  return !isVersionAtLeast(eventVersion, fixedInVersion);
 }
 
 const Sentry: typeof SentryType | null = SentryType;

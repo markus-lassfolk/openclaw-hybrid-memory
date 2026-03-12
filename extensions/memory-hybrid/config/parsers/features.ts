@@ -375,7 +375,9 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
 
   // Optional resolvedIssues map for version-aware filtering
   const resolvedIssues = errorReportingRaw.resolvedIssues && typeof errorReportingRaw.resolvedIssues === "object" && !Array.isArray(errorReportingRaw.resolvedIssues)
-    ? (errorReportingRaw.resolvedIssues as Record<string, string>)
+    ? Object.fromEntries(
+        Object.entries(errorReportingRaw.resolvedIssues).filter(([_, v]) => typeof v === "string")
+      )
     : undefined;
 
   return {
