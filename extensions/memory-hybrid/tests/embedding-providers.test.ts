@@ -974,6 +974,20 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
     expect(p2.embed).toHaveBeenCalledOnce();
   });
 
+  it("does not capturePluginError for 401 message-based (Ollama HTTP 401 Unauthorized)", async () => {
+    const ollamaAuthErr = new Error("Ollama embed failed: HTTP 401 Unauthorized");
+    const vec = [0.7, 0.8];
+    const p1 = { embed: vi.fn().mockRejectedValue(ollamaAuthErr), embedBatch: vi.fn(), dimensions: 2, modelName: "ollama" };
+    const p2 = { embed: vi.fn().mockResolvedValue(vec), embedBatch: vi.fn(), dimensions: 2, modelName: "openai" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["ollama", "openai"],
+    );
+    const result = await chain.embed("test");
+    expect(result).toEqual(vec);
+    expect(p2.embed).toHaveBeenCalledOnce();
+  });
+
   it("throws AllEmbeddingProvidersFailed when all providers exhaust", async () => {
     const p1 = { embed: vi.fn().mockRejectedValue(new Error("fail")), embedBatch: vi.fn(), dimensions: 2, modelName: "p1" };
     const p2 = { embed: vi.fn().mockRejectedValue(new Error("fail")), embedBatch: vi.fn(), dimensions: 2, modelName: "p2" };

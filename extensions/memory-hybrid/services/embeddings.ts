@@ -593,6 +593,9 @@ function is403OrWrapped(err: Error): boolean {
 function is401OrWrapped(err: Error): boolean {
   const status = (err as { status?: unknown }).status;
   if (status === 401 || status === "401") return true;
+  // Match HTTP 401 patterns in message for direct errors (e.g., Ollama throws plain Error with "HTTP 401 Unauthorized")
+  if (/\bHTTP\s+401\b|\b401\b.*unauthorized|unauthorized.*\b401\b/i.test(err.message)) return true;
+  if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
   if (err instanceof LLMRetryError) {
     const cause = err.cause as { status?: unknown } | undefined;
     if (cause?.status === 401 || cause?.status === "401") return true;
