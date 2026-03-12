@@ -161,6 +161,9 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 /** Built-in OpenAI-compatible base URL for MiniMax API (global endpoint). */
 export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
 
+/** OpenRouter OpenAI-compatible base URL. */
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
 /**
  * Builds a multi-provider OpenAI-compatible proxy that routes each model to the correct provider API.
  * All existing call sites use `openai.chat.completions.create({ model, ... })` unchanged — this
@@ -349,6 +352,17 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         bareModel,
         ollamaBaseUrl,
       };
+    }
+
+    if (prefix === "openrouter") {
+      // OpenRouter exposes an OpenAI-compatible API at https://openrouter.ai/api/v1.
+      // Model names are passed as-is after stripping the "openrouter/" prefix
+      // (e.g. "openrouter/anthropic/claude-3.5-sonnet" → bareModel "anthropic/claude-3.5-sonnet").
+      const apiKey = resolveApiKey(providerCfg?.apiKey)
+        ?? (process.env.OPENROUTER_API_KEY?.trim() || undefined);
+      if (!apiKey) throw new UnconfiguredProviderError("openrouter", trimmed);
+      const baseURL = providerCfg?.baseURL ?? OPENROUTER_BASE_URL;
+      return { client: getOrCreate(`openrouter:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
     }
 
     if (prefix === "minimax") {

@@ -410,7 +410,11 @@ export class VectorDB {
       // SECURITY: UUID validation is the security boundary for delete().
       // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
       // Regex validates UUID v1-v5 format (case-insensitive), then we normalize to lowercase before interpolation.
-      if (!UUID_REGEX.test(id)) throw new Error(`Invalid UUID format: ${id}`);
+      // Defensive: skip (log + return false) rather than throw on malformed UUIDs (issue #379).
+      if (!UUID_REGEX.test(id)) {
+        this.logWarn(`memory-hybrid: skipping LanceDB delete for invalid UUID: ${id}`);
+        return false;
+      }
       await this.getTable().delete(`id = '${id.toLowerCase()}'`);
       return true;
     } catch (err) {
