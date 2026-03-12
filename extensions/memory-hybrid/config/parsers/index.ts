@@ -187,8 +187,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
   const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
   const hasGoogleKey =
-    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || distillApiKeyRaw.includes("${")) ||
-    (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:") || llmGoogleApiKeyRaw.includes("${"));
+    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || /\$\{[^}]+\}/.test(distillApiKeyRaw)) ||
+    (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:") || /\$\{[^}]+\}/.test(llmGoogleApiKeyRaw));
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;
@@ -397,7 +397,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
   // Pick the first valid key to avoid using a short/invalid distill key when a valid llm key exists.
   const rawGoogleKey = (() => {
-    const isDistillKeyValid = distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || distillApiKeyRaw.includes("${");
+    const isDistillKeyValid = distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || /\$\{[^}]+\}/.test(distillApiKeyRaw);
     return isDistillKeyValid ? distillApiKeyRaw : (llmGoogleApiKeyRaw || "");
   })();
   const resolvedGoogleApiKey =
@@ -408,7 +408,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const isSecretRef =
       rawGoogleKey.startsWith("env:") ||
       rawGoogleKey.startsWith("file:") ||
-      rawGoogleKey.includes("${");
+      /\$\{[^}]+\}/.test(rawGoogleKey);
     const hint = isSecretRef
       ? ` (SecretRef could not be resolved — check the referenced env var, file, or template placeholder is set and non-empty.)`
       : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
