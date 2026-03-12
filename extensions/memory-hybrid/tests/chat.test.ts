@@ -300,6 +300,37 @@ describe("withLLMRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
+
+  it("#393: does not retry Google 403 country/region restriction (status property)", async () => {
+    vi.clearAllMocks();
+    const googleError = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const fn = vi.fn().mockRejectedValue(googleError);
+    // Throws the raw 403 error (not an LLMRetryError), called exactly once — exits before retry loop
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#393: does not retry 403 without status property (message-only detection)", async () => {
+    vi.clearAllMocks();
+    const err = new Error("403 Country, region, or territory not supported");
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#393: does not retry '403 Forbidden' errors", async () => {
+    vi.clearAllMocks();
+    const err = Object.assign(new Error("403 Forbidden"), { status: 403 });
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Forbidden");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
 });
 
 describe("is404Like", () => {
@@ -331,6 +362,41 @@ describe("is404Like", () => {
     expect(is404Like(new Error("500 Internal Server Error"))).toBe(false);
     expect(is404Like(new Error("file not found"))).toBe(false);
     expect(is404Like(new Error("module not found"))).toBe(false);
+  });
+});
+
+describe("is403Like", () => {
+  it("returns true for error with numeric status 403", () => {
+    const err = Object.assign(new Error("Forbidden"), { status: 403 });
+    expect(is403Like(err)).toBe(true);
+  });
+
+  it("returns true for error with string status '403'", () => {
+    const err = Object.assign(new Error("Forbidden"), { status: "403" });
+    expect(is403Like(err)).toBe(true);
+  });
+
+  it("returns true for '403 Forbidden' message", () => {
+    expect(is403Like(new Error("403 Forbidden"))).toBe(true);
+  });
+
+  it("returns true for Google '403 Country, region, or territory not supported'", () => {
+    expect(is403Like(new Error("403 Country, region, or territory not supported"))).toBe(true);
+  });
+
+  it("returns true for 'HTTP 403' in message", () => {
+    expect(is403Like(new Error("HTTP 403 Forbidden"))).toBe(true);
+  });
+
+  it("returns true for 'Error code: 403' format", () => {
+    expect(is403Like(new Error("Error code: 403 - access denied"))).toBe(true);
+  });
+
+  it("returns false for non-403 errors", () => {
+    expect(is403Like(new Error("Connection refused"))).toBe(false);
+    expect(is403Like(new Error("401 Unauthorized"))).toBe(false);
+    expect(is403Like(new Error("404 Not Found"))).toBe(false);
+    expect(is403Like(new Error("500 Internal Server Error"))).toBe(false);
   });
 });
 
