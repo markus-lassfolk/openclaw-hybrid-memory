@@ -405,16 +405,19 @@ export class VectorDB {
   }
 
   async delete(id: string): Promise<boolean> {
+    // SECURITY: UUID validation is the security boundary for delete().
+    // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
+    // Regex validates UUID v1-v5 format (case-insensitive), then we normalize to lowercase before interpolation.
+    // Defensive: skip (log + return false) rather than throw on malformed UUIDs (issue #379).
+    // logWarn is intentionally outside the try block so a logWarn failure cannot trigger capturePluginError
+    // in the catch — that would contradict the graceful-skip intent for malformed input.
+    if (!UUID_REGEX.test(id)) {
+      const safeId = String(id).slice(0, 50);
+      this.logWarn(`memory-hybrid: skipping LanceDB delete for invalid UUID: ${safeId}`);
+      return false;
+    }
     try {
       await this.ensureInitialized();
-      // SECURITY: UUID validation is the security boundary for delete().
-      // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
-      // Regex validates UUID v1-v5 format (case-insensitive), then we normalize to lowercase before interpolation.
-      // Defensive: skip (log + return false) rather than throw on malformed UUIDs (issue #379).
-      if (!UUID_REGEX.test(id)) {
-        this.logWarn(`memory-hybrid: skipping LanceDB delete for invalid UUID: ${id}`);
-        return false;
-      }
       await this.getTable().delete(`id = '${id.toLowerCase()}'`);
       return true;
     } catch (err) {

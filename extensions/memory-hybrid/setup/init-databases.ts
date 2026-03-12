@@ -362,7 +362,20 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         ?? (process.env.OPENROUTER_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("openrouter", trimmed);
       const baseURL = providerCfg?.baseURL ?? OPENROUTER_BASE_URL;
-      return { client: getOrCreate(`openrouter:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
+      // Include apiKey prefix in cache key so key rotation takes effect without restart.
+      // defaultHeaders follow OpenRouter's recommendations for attribution and rate-limit priority.
+      const cacheKey = `openrouter:${baseURL}:${apiKey.slice(0, 8)}`;
+      return {
+        client: getOrCreate(cacheKey, () => new OpenAI({
+          apiKey,
+          baseURL,
+          defaultHeaders: {
+            "HTTP-Referer": "https://github.com/markus-lassfolk/openclaw-hybrid-memory",
+            "X-Title": "openclaw-hybrid-memory",
+          },
+        })),
+        bareModel,
+      };
     }
 
     if (prefix === "minimax") {
