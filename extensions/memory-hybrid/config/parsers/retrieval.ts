@@ -286,6 +286,13 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout.
   // Default 15s for new configs — thinking models like Gemini 2.5 Flash often exceed 5s (#339).
   const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 15000;
+  // Minimum floor (#384): Gemini 2.5 Flash uses thinking mode and routinely exceeds 5s.
+  // Enforce at least 10s even when explicitly configured lower to prevent spurious timeouts.
+  const MIN_QE_TIMEOUT_MS = 10_000;
+
+  const rawQeTimeout = typeof qeRaw?.timeoutMs === "number" && qeRaw.timeoutMs > 0
+    ? Math.floor(qeRaw.timeoutMs)
+    : null;
 
   return {
     enabled,
@@ -300,15 +307,17 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       typeof qeRaw?.cacheSize === "number" && qeRaw.cacheSize > 0
         ? Math.floor(qeRaw.cacheSize)
         : 100,
-    timeoutMs:
-      typeof qeRaw?.timeoutMs === "number" && qeRaw.timeoutMs > 0
-        ? Math.floor(qeRaw.timeoutMs)
-        : defaultTimeout,
+    timeoutMs: rawQeTimeout !== null ? Math.max(MIN_QE_TIMEOUT_MS, rawQeTimeout) : defaultTimeout,
   };
 }
 
 export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingConfig {
   const rrRaw = cfg.reranking as Record<string, unknown> | undefined;
+  // Minimum floor (#384): prevent very short timeouts from misconfigured or old configs.
+  const MIN_RERANK_TIMEOUT_MS = 5_000;
+  const rawRerankTimeout = typeof rrRaw?.timeoutMs === "number" && rrRaw.timeoutMs > 0
+    ? Math.floor(rrRaw.timeoutMs)
+    : null;
   return {
     enabled: rrRaw?.enabled === true,
     model: typeof rrRaw?.model === "string" && rrRaw.model.trim().length > 0 ? rrRaw.model.trim() : undefined,
@@ -320,10 +329,7 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
       typeof rrRaw?.outputCount === "number" && rrRaw.outputCount > 0
         ? Math.floor(rrRaw.outputCount)
         : 20,
-    timeoutMs:
-      typeof rrRaw?.timeoutMs === "number" && rrRaw.timeoutMs > 0
-        ? Math.floor(rrRaw.timeoutMs)
-        : 10000,
+    timeoutMs: rawRerankTimeout !== null ? Math.max(MIN_RERANK_TIMEOUT_MS, rawRerankTimeout) : 10000,
   };
 }
 

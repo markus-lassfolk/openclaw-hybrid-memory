@@ -1397,6 +1397,41 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.model).toBe("legacy-hyde-model");
   });
+  it("queryExpansion.timeoutMs (#384): enforces minimum 10000ms floor when explicitly configured too low", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      queryExpansion: { enabled: true, timeoutMs: 5000 },
+    });
+    expect(result.queryExpansion.timeoutMs).toBe(10000);
+  });
+  it("queryExpansion.timeoutMs (#384): preserves value above minimum floor", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      queryExpansion: { enabled: true, timeoutMs: 20000 },
+    });
+    expect(result.queryExpansion.timeoutMs).toBe(20000);
+  });
+  it("queryExpansion.timeoutMs (#384): defaults to 15000ms when not configured", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      queryExpansion: { enabled: true },
+    });
+    expect(result.queryExpansion.timeoutMs).toBe(15000);
+  });
+  it("reranking.timeoutMs (#384): enforces minimum 5000ms floor when explicitly configured too low", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      reranking: { enabled: true, timeoutMs: 1000 },
+    });
+    expect(result.reranking.timeoutMs).toBe(5000);
+  });
+  it("reranking.timeoutMs (#384): preserves value above minimum floor", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      reranking: { enabled: true, timeoutMs: 15000 },
+    });
+    expect(result.reranking.timeoutMs).toBe(15000);
+  });
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.multiAgent).toBeDefined();
