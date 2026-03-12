@@ -421,6 +421,7 @@ export async function chatCompleteWithRetry(opts: {
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       const is404 = is404Like(lastError);
+      const is403 = is403Like(lastError);
       const is500 = is500Like(lastError);  // #302
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
@@ -428,6 +429,7 @@ export async function chatCompleteWithRetry(opts: {
           const reason = is429 ? "rate limited (429)"
             : isTimeout ? "timed out"
             : is404 ? "model not found (404)"
+            : is403 ? "access denied (403)"
             : is500 ? "server error (500)"  // #302
             : "failed after retries";
           console.warn(
