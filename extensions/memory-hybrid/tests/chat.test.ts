@@ -8,6 +8,7 @@ import {
   chatCompleteWithRetry,
   createPendingLLMWarnings,
   is404Like,
+  is403Like,
   UnconfiguredProviderError,
 } from "../services/chat.js";
 
@@ -604,6 +605,72 @@ describe("chatCompleteWithRetry — 500 and 404 fallback (#302, #303)", () => {
     const drained = warnings.drain();
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatch(/404/);
+  });
+});
+
+describe("chatCompleteWithRetry — 403 country/region restriction (#394)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#394: does not report to GlitchTip when all models fail with plain 403 Error", async () => {
+    const err = new Error("403 Country, region, or territory not supported");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(err),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash"],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("403 Country");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#394: queues user warning and does not report to GlitchTip when all models return 403", async () => {
+    const err = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(err),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow("403");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/403/);
+    expect(drained[0]).toMatch(/country|region|access denied/i);
   });
 });
 
