@@ -1106,6 +1106,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    this.activeIndex = 0;
     const collectedErrors: Error[] = [];
     while (this.activeIndex < this.providers.length) {
       try {
@@ -1136,6 +1137,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
+    this.activeIndex = 0;
     const collectedErrors: Error[] = [];
     while (this.activeIndex < this.providers.length) {
       try {
