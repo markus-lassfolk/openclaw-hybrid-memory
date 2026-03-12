@@ -747,7 +747,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       const installScheduleOverrides: Record<string, string> = {};
       if (schedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = schedule;
       if (dreamCycleSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = dreamCycleSchedule;
-      if (sensorSweepSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep-tier1"] = sensorSweepSchedule;
+      if (sensorSweepSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep"] = sensorSweepSchedule;
       ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
@@ -1631,7 +1631,7 @@ export async function runVerifyForCli(
             scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
           }
           if (typeof cfg.sensorSweep?.schedule === "string" && cfg.sensorSweep.schedule.trim().length > 0) {
-            scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep-tier1"] = cfg.sensorSweep.schedule;
+            scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep"] = cfg.sensorSweep.schedule;
           }
           const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(cfg), {
             normalizeExisting: true,
@@ -4115,7 +4115,7 @@ export async function runUpgradeForCli(
       scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
     }
     if (typeof cfg.sensorSweep?.schedule === "string" && cfg.sensorSweep.schedule.trim().length > 0) {
-      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep-tier1"] = cfg.sensorSweep.schedule;
+      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep"] = cfg.sensorSweep.schedule;
     }
     const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
       normalizeExisting: true,
