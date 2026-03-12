@@ -841,7 +841,7 @@ export async function sweepAll(
   factsDb: FactsDB,
   opts: SweepAllOpts = {},
 ): Promise<SweepAllResult> {
-  const cooldown = cfg.dedupCooldownHours ?? 5;
+  const cooldown = cfg.dedupCooldownHours ?? 4;
   const tier = opts.tier ?? 1;
   const sources = opts.sources ?? null;
 

@@ -67,7 +67,7 @@ describe("parseSensorSweepConfig", () => {
     const result = parseSensorSweepConfig({ sensorSweep: { enabled: true } });
     expect(result.enabled).toBe(true);
     expect(result.schedule).toBe("0 */4 * * *");
-    expect(result.dedupCooldownHours).toBe(3);
+    expect(result.dedupCooldownHours).toBe(4);
     expect(result.garmin?.enabled).toBe(true);
     expect(result.garmin?.entityPrefix).toBe("sensor.garmin");
     expect(result.github?.enabled).toBe(true);

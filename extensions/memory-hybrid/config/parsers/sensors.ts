@@ -50,7 +50,7 @@ export function parseSensorSweepConfig(cfg: Record<string, unknown>): SensorSwee
   const dedupCooldownHours =
     typeof raw?.dedupCooldownHours === "number" && raw.dedupCooldownHours > 0
       ? raw.dedupCooldownHours
-      : 5;
+      : 4; // Default matches the 4-hour cron interval so the dedup window covers at least one full cycle
 
   const haRaw = raw?.homeAssistant as Record<string, unknown> | undefined;
   const homeAssistant = parseHaConfig(haRaw);

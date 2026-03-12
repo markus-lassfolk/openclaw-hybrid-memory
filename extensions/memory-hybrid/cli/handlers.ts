@@ -221,17 +221,22 @@ function ensureMaintenanceCronJobs(
     const name = def.name as string;
     const scheduleExpr = scheduleOverrides?.[id];
     const existing = jobsArr.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
-    // If feature gate is explicitly disabled, disable existing job (if any) and skip installation.
+    // If feature gate is explicitly disabled, disable existing job (if any) and mark it as
+    // feature-gate-disabled so we can re-enable it later when the gate turns back on.
+    // This distinguishes system-controlled disable from user-controlled disable.
     if (def.featureGate && featureGates && featureGates[def.featureGate] !== true) {
       if (existing && existing.enabled !== false) {
         existing.enabled = false;
+        existing.featureGateDisabled = true;
         jobsChanged = true;
       }
       continue;
     }
-    // Feature gate evaluates to true: re-enable the job if it was previously disabled (feature gates are system-controlled, not user-controlled).
-    if (reEnableDisabled && def.featureGate && featureGates && featureGates[def.featureGate] === true && existing && existing.enabled === false) {
+    // Feature gate evaluates to true: re-enable the job ONLY if it was previously disabled by the
+    // feature gate (featureGateDisabled === true). Never re-enable jobs the user disabled manually.
+    if (def.featureGate && featureGates && featureGates[def.featureGate] === true && existing && existing.enabled === false && existing.featureGateDisabled === true) {
       existing.enabled = true;
+      delete existing.featureGateDisabled;
       jobsChanged = true;
     }
     if (!existing) {

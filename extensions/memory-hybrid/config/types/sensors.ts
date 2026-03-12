@@ -75,7 +75,7 @@ export type SensorSweepConfig = {
   enabled: boolean;
   /** Cron schedule for Tier 1 sweeps (default: every 4 hours). */
   schedule?: string;
-  /** Dedup cooldown hours — skip re-writing same fingerprint within this window (default: 3). */
+  /** Dedup cooldown hours — skip re-writing same fingerprint within this window (default: 4, matching the default 4-hour cron interval). */
   dedupCooldownHours?: number;
   /** Home Assistant connection (required for Garmin, HA anomaly, Yarbo sensors). */
   homeAssistant?: HomeAssistantSensorConfig;
