@@ -288,6 +288,16 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       ? qeRaw.model.trim()
       : (enabled ? hydeModel : undefined);
 
+  const maxVariants =
+    typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0
+      ? Math.min(10, Math.floor(qeRaw.maxVariants))
+      : 4;
+
+  const cacheSize =
+    typeof qeRaw?.cacheSize === "number" && qeRaw.cacheSize > 0
+      ? Math.floor(qeRaw.cacheSize)
+      : 100;
+
   // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout for pure legacy
   // migrations (i.e. no queryExpansion key in the merged config, including via preset). Once a preset
   // or explicit queryExpansion config is present, the new 15s default applies — this is intentional
@@ -304,14 +314,8 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       mode,
       threshold,
       model,
-      maxVariants:
-        typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0
-          ? Math.min(10, Math.floor(qeRaw.maxVariants))
-          : 4,
-      cacheSize:
-        typeof qeRaw?.cacheSize === "number" && qeRaw.cacheSize > 0
-          ? Math.floor(qeRaw.cacheSize)
-          : 100,
+      maxVariants,
+      cacheSize,
       timeoutMs: undefined,
     };
   }
@@ -333,36 +337,36 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
     mode,
     threshold,
     model,
-    maxVariants:
-      typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0
-        ? Math.min(10, Math.floor(qeRaw.maxVariants))
-        : 4,
-    cacheSize:
-      typeof qeRaw?.cacheSize === "number" && qeRaw.cacheSize > 0
-        ? Math.floor(qeRaw.cacheSize)
-        : 100,
+    maxVariants,
+    cacheSize,
     timeoutMs: rawQeTimeout !== null ? Math.max(MIN_QE_TIMEOUT_MS, rawQeTimeout) : defaultTimeout,
   };
 }
 
 export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingConfig {
   const rrRaw = cfg.reranking as Record<string, unknown> | undefined;
+
+  const enabled = rrRaw?.enabled === true;
+  const model = typeof rrRaw?.model === "string" && rrRaw.model.trim().length > 0 ? rrRaw.model.trim() : undefined;
+  const candidateCount =
+    typeof rrRaw?.candidateCount === "number" && rrRaw.candidateCount > 0
+      ? Math.floor(rrRaw.candidateCount)
+      : 50;
+  const outputCount =
+    typeof rrRaw?.outputCount === "number" && rrRaw.outputCount > 0
+      ? Math.floor(rrRaw.outputCount)
+      : 20;
+
   const rawRerankTimeoutRaw = rrRaw?.timeoutMs;
   // Treat 0 or negative as an explicit "no config-level floor" bypass: caller receives undefined
   // and chatComplete falls back to its own internal default timeout. Use Number.isFinite to reject
   // Infinity (which would pass > 0 but cannot be safely used with setTimeout).
   if (typeof rawRerankTimeoutRaw === "number" && rawRerankTimeoutRaw <= 0) {
     return {
-      enabled: rrRaw?.enabled === true,
-      model: typeof rrRaw?.model === "string" && rrRaw.model.trim().length > 0 ? rrRaw.model.trim() : undefined,
-      candidateCount:
-        typeof rrRaw?.candidateCount === "number" && rrRaw.candidateCount > 0
-          ? Math.floor(rrRaw.candidateCount)
-          : 50,
-      outputCount:
-        typeof rrRaw?.outputCount === "number" && rrRaw.outputCount > 0
-          ? Math.floor(rrRaw.outputCount)
-          : 20,
+      enabled,
+      model,
+      candidateCount,
+      outputCount,
       timeoutMs: undefined,
     };
   }
@@ -377,16 +381,10 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
     );
   }
   return {
-    enabled: rrRaw?.enabled === true,
-    model: typeof rrRaw?.model === "string" && rrRaw.model.trim().length > 0 ? rrRaw.model.trim() : undefined,
-    candidateCount:
-      typeof rrRaw?.candidateCount === "number" && rrRaw.candidateCount > 0
-        ? Math.floor(rrRaw.candidateCount)
-        : 50,
-    outputCount:
-      typeof rrRaw?.outputCount === "number" && rrRaw.outputCount > 0
-        ? Math.floor(rrRaw.outputCount)
-        : 20,
+    enabled,
+    model,
+    candidateCount,
+    outputCount,
     timeoutMs: rawRerankTimeout !== null ? Math.max(MIN_RERANK_TIMEOUT_MS, rawRerankTimeout) : 10000,
   };
 }
