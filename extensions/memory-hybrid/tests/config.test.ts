@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   DECAY_CLASSES,
   TTL_DEFAULTS,
@@ -171,6 +171,8 @@ describe("CREDENTIAL_TYPES", () => {
 // ---------------------------------------------------------------------------
 
 describe("hybridConfigSchema.parse", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   const validBase = {
     embedding: {
       apiKey: "sk-test-key-that-is-long-enough-to-pass",
@@ -238,6 +240,102 @@ describe("hybridConfigSchema.parse", () => {
         embedding: { provider: "openai", apiKey: "short" },
       }),
     ).toThrow(/missing or a placeholder/);
+  });
+
+  // ── embedding.apiKey SecretRef (env:VAR) resolution — Issue #333 ─────────────
+
+  it("resolves embedding.apiKey when set as env:VAR_NAME SecretRef (openai provider)", () => {
+    vi.stubEnv("TEST_EMBED_API_KEY_333", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "openai", apiKey: "env:TEST_EMBED_API_KEY_333", model: "text-embedding-3-small" },
+      });
+      // Resolved value must be the actual key, not the literal "env:..." string
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+      expect(result.embedding.apiKey).not.toMatch(/^env:/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("throws when embedding.apiKey env: SecretRef references an unset env var", () => {
+    delete process.env.TEST_EMBED_KEY_UNSET_333;
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "openai", apiKey: "env:TEST_EMBED_KEY_UNSET_333", model: "text-embedding-3-small" },
+      }),
+    ).toThrow(/could not be resolved/);
+  });
+
+  it("resolves embedding.apiKey env: SecretRef for non-openai provider fallback (ollama)", () => {
+    vi.stubEnv("TEST_EMBED_FALLBACK_KEY_333", "sk-fallback-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "ollama", model: "nomic-embed-text", apiKey: "env:TEST_EMBED_FALLBACK_KEY_333" },
+      });
+      expect(result.embedding.apiKey).toBe("sk-fallback-key-that-is-long-enough");
+      expect(result.embedding.apiKey).not.toMatch(/^env:/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 1: resolved SecretRef value is re-validated for placeholder/length
+  it("throws when embedding.apiKey SecretRef resolves to a placeholder value", () => {
+    vi.stubEnv("TEST_EMBED_PLACEHOLDER_333", "YOUR_OPENAI_API_KEY");
+    try {
+      expect(() =>
+        hybridConfigSchema.parse({
+          embedding: { provider: "openai", apiKey: "env:TEST_EMBED_PLACEHOLDER_333", model: "text-embedding-3-small" },
+        }),
+      ).toThrow(/missing or a placeholder/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 2: short env var names (raw string < 10 chars) must not be blocked by the raw-length check
+  it("accepts env: SecretRef with a short env var name (raw string < 10 chars)", () => {
+    vi.stubEnv("KEY", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "openai", apiKey: "env:KEY", model: "text-embedding-3-small" },
+      });
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Provider inference must recognize env:/file: SecretRef format as valid apiKey
+  it("infers openai provider when apiKey is env: SecretRef with short env var name", () => {
+    vi.stubEnv("KEY", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { apiKey: "env:KEY", model: "text-embedding-3-small" },
+      });
+      expect(result.embedding.provider).toBe("openai");
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
+  it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
+    delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "ollama", model: "nomic-embed-text", apiKey: "env:TEST_EMBED_FALLBACK_UNSET_333" },
+      });
+      // Should not throw — fallback apiKey is optional
+      expect(result.embedding.apiKey).toBeUndefined();
+      // Should have warned about the unresolvable SecretRef
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/could not be resolved/));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("throws on null/array/string config", () => {
@@ -785,6 +883,140 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill).toBeDefined();
     expect(result.distill?.apiKey).toBe("env:GOOGLE_API_KEY");
     expect(result.distill?.defaultModel).toBe("gemini-2.0-flash");
+  });
+
+  // ── Google embedding.googleApiKey SecretRef resolution — Issue #344 ──────────
+  // distill.apiKey / llm.providers.google.apiKey stored as literal "env:VAR" or "file:/path"
+  // when resolveEnvVars() was called — it only handles ${VAR} template syntax, not the env:/file:
+  // SecretRef format. Fixed by using resolveSecretRef() so embedding.googleApiKey holds the
+  // actual resolved key, not the literal SecretRef string.
+
+  it("resolves embedding.googleApiKey when distill.apiKey is env:VAR SecretRef (Issue #344)", () => {
+    vi.stubEnv("TEST_GEMINI_API_KEY_344", "test-google-key-resolved-long-enough-00000001");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "env:TEST_GEMINI_API_KEY_344", defaultModel: "gemini-2.0-flash" },
+    });
+    // embedding.googleApiKey must be the resolved value, not the literal "env:..." string
+    expect(result.embedding.googleApiKey).toBe("test-google-key-resolved-long-enough-00000001");
+    expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
+    // distill.apiKey stays raw (resolved at runtime by resolveApiKey() in init-databases)
+    expect(result.distill?.apiKey).toBe("env:TEST_GEMINI_API_KEY_344");
+  });
+
+  it("throws when distill.apiKey env: SecretRef for google embedding references an unset env var (Issue #344)", () => {
+    delete process.env.TEST_GEMINI_KEY_UNSET_344;
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+        distill: { apiKey: "env:TEST_GEMINI_KEY_UNSET_344" },
+      }),
+    ).toThrow(/SecretRef.*could not be resolved/);
+  });
+
+  it("resolves embedding.googleApiKey when llm.providers.google.apiKey is env:VAR SecretRef (Issue #344)", () => {
+    vi.stubEnv("TEST_GEMINI_PROVIDER_KEY_344", "test-google-key-provider-long-enough-000000002");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      llm: { default: ["google/gemini-2.0-flash"], providers: { google: { apiKey: "env:TEST_GEMINI_PROVIDER_KEY_344" } } },
+    });
+    expect(result.embedding.googleApiKey).toBe("test-google-key-provider-long-enough-000000002");
+    expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
+  });
+
+  it("resolves short SecretRef like env:GKEY (9 chars) for google embedding (Issue #344 edge case)", () => {
+    vi.stubEnv("GKEY", "test-google-key-short-ref-resolved-long-enough");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "env:GKEY" },
+    });
+    expect(result.embedding.googleApiKey).toBe("test-google-key-short-ref-resolved-long-enough");
+    expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
+  });
+
+  // ── ${VAR} template syntax for Google API key (Issue #373 review comment #15) ─────────────────
+
+  it("resolves embedding.googleApiKey when distill.apiKey uses ${VAR} template syntax (Issue #373)", () => {
+    vi.stubEnv("TEST_GEMINI_TMPL_KEY_373", "AIzaSy-template-key-that-is-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "${TEST_GEMINI_TMPL_KEY_373}", defaultModel: "gemini-2.0-flash" },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-template-key-that-is-long-enough-to-pass");
+    expect(result.embedding.googleApiKey).not.toContain("${");
+  });
+
+  it("throws when distill.apiKey ${VAR} template references an unset env var (Issue #373)", () => {
+    delete process.env.TEST_GEMINI_TMPL_UNSET_373;
+    expect(() =>
+      hybridConfigSchema.parse({
+        embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+        distill: { apiKey: "${TEST_GEMINI_TMPL_UNSET_373}" },
+      }),
+    ).toThrow(/SecretRef.*could not be resolved/);
+  });
+
+  it("resolves embedding.googleApiKey when distill.apiKey is a file: SecretRef (Issue #373)", () => {
+    const tmpFile = require("node:os").tmpdir() + "/test-gemini-key-373.txt";
+    require("node:fs").writeFileSync(tmpFile, "AIzaSy-file-key-that-is-long-enough-to-pass\n");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+        distill: { apiKey: `file:${tmpFile}`, defaultModel: "gemini-2.0-flash" },
+      });
+      expect(result.embedding.googleApiKey).toBe("AIzaSy-file-key-that-is-long-enough-to-pass");
+      expect(result.embedding.googleApiKey).not.toMatch(/^file:/);
+    } finally {
+      require("node:fs").unlinkSync(tmpFile);
+    }
+  });
+
+  // ── hasGoogleKey recognises ${VAR} template format (Issue #2921626583) ──────────────────────────
+
+  it("hasGoogleKey: short ${VAR} template (< 10 chars) is recognised and key is resolved (Issue #2921626583)", () => {
+    // "${KEY}" is only 6 chars — previously below the length threshold and incorrectly skipped.
+    vi.stubEnv("KEY", "AIzaSy-short-template-key-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "${KEY}", defaultModel: "gemini-2.0-flash" },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-short-template-key-long-enough-to-pass");
+  });
+
+  // ── validity-based fallback: invalid distill.apiKey falls back to llm google key (#2921626579) ──
+
+  it("falls back to llm.providers.google.apiKey when distill.apiKey is short/invalid (Issue #2921626579)", () => {
+    vi.stubEnv("LLM_GOOGLE_KEY_373", "AIzaSy-llm-google-key-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      // distill.apiKey is 3 chars — not a valid key and not a SecretRef; should NOT win
+      distill: { apiKey: "bad", defaultModel: "gemini-2.0-flash" },
+      llm: { providers: { google: { apiKey: "env:LLM_GOOGLE_KEY_373" } } },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-llm-google-key-long-enough-to-pass");
+  });
+
+  it("malformed template distill.apiKey (no closing brace) falls back to llm.providers.google.apiKey (Issue #2921658704)", () => {
+    vi.stubEnv("LLM_GOOGLE_FALLBACK_373", "AIzaSy-llm-fallback-key-long-enough-to-pass");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      // "${BROKEN" has ${ but no } — not a valid SecretRef, must not win over a valid llm key
+      distill: { apiKey: "${BROKEN", defaultModel: "gemini-2.0-flash" },
+      llm: { providers: { google: { apiKey: "env:LLM_GOOGLE_FALLBACK_373" } } },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-llm-fallback-key-long-enough-to-pass");
+  });
+
+  // ── resolveSecretRef: resolved value containing ${...} is not rejected (#2921445142) ──────────
+
+  it("resolveSecretRef returns env var value even when it contains a literal ${ sequence (Issue #2921445142)", () => {
+    // The env var's value contains "${" — this should NOT be treated as an unresolved template.
+    vi.stubEnv("GEMINI_KEY_WITH_DOLLAR_BRACE", "AIzaSy-value-containing-${literal}-suffix-123456");
+    const result = hybridConfigSchema.parse({
+      embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
+      distill: { apiKey: "${GEMINI_KEY_WITH_DOLLAR_BRACE}", defaultModel: "gemini-2.0-flash" },
+    });
+    expect(result.embedding.googleApiKey).toBe("AIzaSy-value-containing-${literal}-suffix-123456");
   });
 
   it("no mode applies full preset: distill is defined with preset defaults", () => {

@@ -7,6 +7,7 @@ import {
   EMBEDDING_DIMENSIONS,
   OPENAI_MODELS,
   resolveEnvVars,
+  resolveSecretRef,
   parseStoreConfig,
   parseWALConfig,
   parseEventLogConfig,
@@ -183,9 +184,16 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   type EmbeddingProviderName = "openai" | "ollama" | "onnx" | "google";
   const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
   const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
-  const hasGoogleKey =
-    (typeof distillForEmbed?.apiKey === "string" && distillForEmbed.apiKey.trim().length >= 10) ||
-    (typeof llmProvidersForEmbed?.google?.apiKey === "string" && llmProvidersForEmbed.google.apiKey.trim().length >= 10);
+  const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
+  const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
+  // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
+  // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
+  const looksLikeSecretRefOrKey = (k: string) =>
+    k.length >= 10 ||
+    k.startsWith("env:") ||
+    k.startsWith("file:") ||
+    (k.includes("${") && k.includes("}"));
+  const hasGoogleKey = looksLikeSecretRefOrKey(distillApiKeyRaw) || looksLikeSecretRefOrKey(llmGoogleApiKeyRaw);
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;
@@ -193,12 +201,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx, google.`);
   } else {
     // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
+    const rawApiKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
     const hasApiKey =
-      embedding &&
-      typeof embedding.apiKey === "string" &&
-      (embedding.apiKey as string).trim().length >= 10 &&
-      (embedding.apiKey as string).trim() !== "YOUR_OPENAI_API_KEY" &&
-      (embedding.apiKey as string).trim() !== "<OPENAI_API_KEY>";
+      rawApiKey &&
+      (rawApiKey.startsWith("env:") || rawApiKey.startsWith("file:") || rawApiKey.length >= 10) &&
+      rawApiKey !== "YOUR_OPENAI_API_KEY" &&
+      rawApiKey !== "<OPENAI_API_KEY>";
     const modelStr = typeof embedding?.model === "string" ? (embedding.model as string).trim() : "";
     const llm = cfg.llm as { nano?: string[]; default?: string[]; heavy?: string[] } | undefined;
     const llmListsForProvider = [llm?.nano, llm?.default, llm?.heavy].filter(Array.isArray) as string[][];
@@ -222,13 +230,67 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
     const rawKey = (embedding.apiKey as string).trim();
-    if (rawKey.length < 10 || rawKey === "YOUR_OPENAI_API_KEY" || rawKey === "<OPENAI_API_KEY>") {
+    // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
+    let resolvedKey: string;
+    if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
+      const resolved = resolveSecretRef(rawKey);
+      if (!resolved) {
+        const refDesc = rawKey.startsWith("env:")
+          ? `environment variable '${rawKey.slice(4)}'`
+          : `file '${rawKey.slice(5)}'`;
+        throw new Error(`embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`);
+      }
+      resolvedKey = resolved;
+    } else {
+      resolvedKey = resolveEnvVars(rawKey);
+    }
+    // Validate the resolved key — catches placeholders/short values originating from SecretRefs too.
+    if (resolvedKey.length < 10 || resolvedKey === "YOUR_OPENAI_API_KEY" || resolvedKey === "<OPENAI_API_KEY>") {
       throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
     }
-    resolvedApiKey = resolveEnvVars(rawKey);
-  } else if (embedding && typeof embedding.apiKey === "string" && (embedding.apiKey as string).trim().length >= 10) {
+    resolvedApiKey = resolvedKey;
+  } else if (embedding && typeof embedding.apiKey === "string") {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
-    resolvedApiKey = resolveEnvVars((embedding.apiKey as string).trim());
+    const rawKey = (embedding.apiKey as string).trim();
+    if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
+      const resolved = resolveSecretRef(rawKey);
+      if (!resolved) {
+        // Do not throw — this apiKey is optional fallback; warn so the misconfiguration is diagnosable.
+        // Intentionally omit the SecretRef path from the message to avoid clear-text logging (CWE-312).
+        console.warn(
+          "Warning: embedding.apiKey fallback SecretRef could not be resolved. " +
+          "Fallback to OpenAI embeddings will be disabled. " +
+          'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.',
+        );
+      } else if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
+        console.warn(
+          `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
+          "Fallback to OpenAI embeddings will be disabled. " +
+          `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+        );
+      } else {
+        resolvedApiKey = resolved;
+      }
+    } else if (rawKey.length >= 10) {
+      try {
+        const resolved = resolveEnvVars(rawKey);
+        if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
+          console.warn(
+            `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
+            "Fallback to OpenAI embeddings will be disabled. " +
+            `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+          );
+        } else {
+          resolvedApiKey = resolved;
+        }
+      } catch {
+        console.warn(
+          "Warning: embedding.apiKey fallback contains unresolved environment variable references. " +
+          "Fallback to OpenAI embeddings will be disabled. " +
+          'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.',
+        );
+      }
+    }
   }
 
   // Resolve model from explicit 'model' field or provider-specific aliases (ollamaModel, onnxModelPath)
@@ -336,12 +398,25 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     if (hasGoogleKey) inferred.push("google");
     preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
   }
+  // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
+  // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
+  // Use distillApiKeyRaw (already trimmed) only when it looks like a real key or valid SecretRef; otherwise fall
+  // back to llmGoogleApiKeyRaw so a short/malformed distill.apiKey never silently blocks a valid llm google key
+  // (Issues #2921626579 / #2921640291 / #2921658704 — reuses already-computed trimmed vars, avoids IIFE).
+  const rawGoogleKey = looksLikeSecretRefOrKey(distillApiKeyRaw) ? distillApiKeyRaw : llmGoogleApiKeyRaw;
   const resolvedGoogleApiKey =
     (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
-      ? resolveEnvVars((distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim())
+      ? resolveSecretRef(rawGoogleKey)
       : undefined;
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
-    throw new Error("embedding.provider is 'google' but no valid key found. Set distill.apiKey or llm.providers.google.apiKey in plugin config.");
+    const isSecretRef =
+      rawGoogleKey.startsWith("env:") ||
+      rawGoogleKey.startsWith("file:") ||
+      (rawGoogleKey.includes("${") && rawGoogleKey.includes("}"));
+    const hint = isSecretRef
+      ? ` (SecretRef could not be resolved — check the referenced env var, file, or template placeholder is set and non-empty.)`
+      : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
+    throw new Error(`embedding.provider is 'google' but no valid key found.${hint}`);
   }
 
   // Parse multi-model embedding config (Issue #158)
