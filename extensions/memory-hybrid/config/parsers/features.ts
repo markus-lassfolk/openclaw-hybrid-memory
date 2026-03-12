@@ -373,6 +373,11 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const botNameRaw = typeof errorReportingRaw.botName === "string" ? errorReportingRaw.botName.trim() : "";
   const botName = botNameRaw.length > 0 ? botNameRaw.slice(0, 64) : undefined;
 
+  // Optional resolvedIssues map for version-aware filtering
+  const resolvedIssues = errorReportingRaw.resolvedIssues && typeof errorReportingRaw.resolvedIssues === "object" && !Array.isArray(errorReportingRaw.resolvedIssues)
+    ? (errorReportingRaw.resolvedIssues as Record<string, string>)
+    : undefined;
+
   return {
     enabled,
     consent,
@@ -384,6 +389,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
       : 1.0,
     botId,
     botName,
+    resolvedIssues,
   };
 }
 
