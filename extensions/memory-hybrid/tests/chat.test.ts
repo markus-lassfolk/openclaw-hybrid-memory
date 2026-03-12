@@ -676,6 +676,114 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#394)", () =
   });
 });
 
+describe("chatCompleteWithRetry — 429 rate limiting (#397)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#397: does not report 429 to GlitchTip when all models are rate limited", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(
+            new Error("429 429 Too Many Requests: you (clawout) have reached your weekly usage limit"),
+          ),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#397: queues user-visible warning when rate limited (429)", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(
+            new Error("429 Too Many Requests: you have reached your weekly usage limit"),
+          ),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/429|rate.?limit/i);
+  });
+
+  it("#397: falls back to next model after primary is rate limited (429)", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn()
+            // Primary: rate limited (4x = initial + 3 retries; but 429 uses exponential backoff)
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            // Fallback: succeeds
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: "fallback ok" } }],
+            }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+      label: "test",
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result).toBe("fallback ok");
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(5);
+  });
+
+  it("#397: withLLMRetry does not report 429 to GlitchTip (isTransient)", async () => {
+    vi.clearAllMocks();
+    const fn = vi.fn().mockRejectedValue(
+      new Error("429 429 Too Many Requests: weekly limit reached"),
+    );
+    const promise = withLLMRetry(fn, { maxRetries: 1 });
+    const expectation = expect(promise).rejects.toThrow(LLMRetryError);
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
 describe("chatCompleteWithRetry — UnconfiguredProviderError (#328)", () => {
   beforeEach(() => {
     vi.useFakeTimers();

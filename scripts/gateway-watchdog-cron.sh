@@ -39,15 +39,33 @@ gateway_healthy() {
 }
 
 # ─── Kill whatever is listening on the gateway port ───
+# Uses ss, then lsof/fuser fallback; SIGTERM first, then SIGKILL if still in use.
 kill_port() {
-    local pids
+    local pids pids2
     pids=$(ss -tlnp 2>/dev/null | grep ":$PORT " | grep -oP 'pid=\K[0-9]+' | sort -u || true)
+    [ -z "$pids" ] && command -v lsof &>/dev/null && pids=$(lsof -ti ":$PORT" 2>/dev/null | sort -u || true)
+    [ -z "$pids" ] && command -v fuser &>/dev/null && pids=$(fuser "$PORT/tcp" 2>&1 | sed 's/.*://; s/^ *//' | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u || true)
     if [ -n "$pids" ]; then
         for pid in $pids; do
-            log "  Killing PID $pid on port $PORT"
-            kill "$pid" 2>/dev/null || true
+            [ -z "$pid" ] && continue
+            if kill -0 "$pid" 2>/dev/null; then
+                log "  Killing PID $pid on port $PORT"
+                kill "$pid" 2>/dev/null || true
+            fi
         done
         sleep 3
+        # If port still in use, force kill (stale process not responding to SIGTERM)
+        pids2=$(ss -tlnp 2>/dev/null | grep ":$PORT " | grep -oP 'pid=\K[0-9]+' | sort -u || true)
+        [ -z "$pids2" ] && command -v lsof &>/dev/null && pids2=$(lsof -ti ":$PORT" 2>/dev/null || true)
+        [ -z "$pids2" ] && command -v fuser &>/dev/null && pids2=$(fuser "$PORT/tcp" 2>&1 | sed 's/.*://; s/^ *//' | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u || true)
+        if [ -n "$pids2" ]; then
+            for pid in $pids2; do
+                [ -z "$pid" ] && continue
+                log "  Force killing PID $pid (SIGKILL) on port $PORT"
+                kill -9 "$pid" 2>/dev/null || true
+            done
+            sleep 2
+        fi
     fi
 }
 

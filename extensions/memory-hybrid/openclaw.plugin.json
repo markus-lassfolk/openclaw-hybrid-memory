@@ -1195,6 +1195,114 @@
           }
         },
         "description": "Search tweaks: HyDE query expansion"
+      },
+      "nightlyCycle": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "schedule": { "type": "string" },
+          "reflectWindowDays": { "type": "number" },
+          "pruneMode": { "type": "string", "enum": ["expired", "decay", "both"] },
+          "model": { "type": "string" },
+          "consolidateAfterDays": { "type": "number" },
+          "eventLogArchivalDays": { "type": "number" },
+          "eventLogArchivePath": { "type": "string" },
+          "maxUnconsolidatedAgeDays": { "type": "number" }
+        },
+        "description": "Nightly dream cycle: prune, consolidate, reflect"
+      },
+      "passiveObserver": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "intervalMinutes": { "type": "number" },
+          "model": { "type": "string" },
+          "maxCharsPerChunk": { "type": "number" },
+          "minImportance": { "type": "number" },
+          "deduplicationThreshold": { "type": "number" },
+          "sessionsDir": { "type": "string" }
+        },
+        "description": "Background fact extraction from session transcripts"
+      },
+      "extraction": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "extractionPasses": { "type": "boolean" },
+          "verificationPass": { "type": "boolean" },
+          "extractionModel": { "type": "string" },
+          "implicitModel": { "type": "string" },
+          "verificationModel": { "type": "string" },
+          "extractionModelTier": { "type": "string", "enum": ["nano", "default", "heavy"] },
+          "preFilter": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "model": { "type": "string" },
+              "endpoint": { "type": "string" },
+              "maxCharsPerSession": { "type": "number" }
+            }
+          }
+        },
+        "description": "Multi-pass extraction with LLM verification"
+      },
+      "selfExtension": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "minGapFrequency": { "type": "number" },
+          "minToolSavings": { "type": "number" },
+          "maxProposals": { "type": "number" }
+        },
+        "description": "Tool proposals from usage-pattern gaps"
+      },
+      "crystallization": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "minUsageCount": { "type": "number" },
+          "minSuccessRate": { "type": "number" },
+          "autoApprove": { "type": "boolean" },
+          "outputDir": { "type": "string" },
+          "maxCrystallized": { "type": "number" },
+          "pruneUnusedDays": { "type": "number" }
+        },
+        "description": "Auto-generate SKILL.md from repeated patterns"
+      },
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "default": { "type": "array", "items": { "type": "string" } },
+          "heavy": { "type": "array", "items": { "type": "string" } },
+          "nano": { "type": "array", "items": { "type": "string" } },
+          "fallbackToDefault": { "type": "boolean" },
+          "fallbackModel": { "type": "string" },
+          "providers": { "type": "object" },
+          "localAutoStart": { "type": "boolean" }
+        },
+        "description": "LLM model preference lists per tier (default, heavy, nano)"
+      },
+      "implicitFeedback": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "trajectoryLLMAnalysis": { "type": "boolean" },
+          "feedToSelfCorrection": { "type": "boolean" },
+          "feedToReinforcement": { "type": "boolean" },
+          "minConfidence": { "type": "number" },
+          "signalTypes": { "type": "array", "items": { "type": "string" } },
+          "rephraseThreshold": { "type": "number" },
+          "topicChangeThreshold": { "type": "number" },
+          "terseResponseRatio": { "type": "number" }
+        },
+        "description": "Implicit feedback detection and routing"
       }
     },
     "required": ["embedding"]

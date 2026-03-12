@@ -230,7 +230,7 @@ export async function chatComplete(opts: {
     const error = isAbort
       ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
       : (err instanceof Error ? err : new Error(String(err)));
-    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM) and config errors (missing provider keys) to avoid GlitchTip noise
+    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM, 429) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
@@ -238,6 +238,7 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       msg.includes("llm request timeout") ||  // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
+      /\b429\b|too many requests/i.test(error.message) ||  // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err) ||  // #302: OpenAI SDK InternalServerError has no numeric prefix
@@ -481,6 +482,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs404 = is404Like(finalError);
   const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
   const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
+  const finalIs429 = /\b429\b|too many requests/i.test(finalError.message);  // #397
   const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
@@ -505,7 +507,7 @@ export async function chatCompleteWithRetry(opts: {
     // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
     const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
-    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403) {
+    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403 && !finalIs429) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",
@@ -537,6 +539,12 @@ export async function chatCompleteWithRetry(opts: {
     );
   } else if (finalIsTimeout) {
     // #339: timeout errors are transient — don't report to GlitchTip
+  } else if (finalIs429) {
+    // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). ` +
+      `Memory features may be degraded. Try again later or upgrade your provider plan.`
+    );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues
     capturePluginError(finalError, {
