@@ -24,7 +24,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
+import { chatCompleteWithRetry, type PendingLLMWarnings, UnconfiguredProviderError } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
@@ -1297,10 +1297,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 );
               }
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "summarize-when-over-budget",
-                subsystem: "auto-recall",
-              });
+              if (!(err instanceof UnconfiguredProviderError)) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "summarize-when-over-budget",
+                  subsystem: "auto-recall",
+                });
+              }
               api.logger.warn(`memory-hybrid: summarize-when-over-budget failed: ${err}`);
             }
           }

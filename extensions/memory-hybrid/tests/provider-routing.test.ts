@@ -969,3 +969,181 @@ describe("Anthropic provider routing — issue #386", () => {
     ).toThrow("Provider 'anthropic' is not configured");
   });
 });
+
+// ---------------------------------------------------------------------------
+// OpenRouter gateway merge — issue #392
+// ---------------------------------------------------------------------------
+
+describe("OpenRouter gateway merge — issue #392", () => {
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  let origOpenrouterApiKey: string | undefined;
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-openrouter-merge-"));
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+    ctx = undefined;
+    origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
+    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCLAW_GATEWAY_PORT;
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  });
+
+  afterEach(() => {
+    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    rmSync(tmpDir, { recursive: true, force: true });
+    if (origOpenrouterApiKey !== undefined) process.env.OPENROUTER_API_KEY = origOpenrouterApiKey; else delete process.env.OPENROUTER_API_KEY;
+    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
+    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  });
+
+  it("picks up OpenRouter key from api.config.models.providers (standard gateway path)", async () => {
+    // When the gateway has openrouter configured at models.providers, the plugin must merge
+    // it into llm.providers so resolveClient() can use it — even if the user only set llm.default.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/qwen/qwen3-14b"],
+        heavy: ["openrouter/qwen/qwen3-14b"],
+        // No providers.openrouter in plugin config — key must come from gateway
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            openrouter: { apiKey: "sk-or-from-gateway-models-providers" },
+          },
+        },
+      },
+    });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/qwen/qwen3-14b",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const openrouterCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
+    );
+    expect(openrouterCall).toBeDefined();
+    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-from-gateway-models-providers");
+  });
+
+  it("picks up OpenRouter key from api.config.providers (top-level gateway path)", async () => {
+    // The gateway may store provider keys at the top-level providers object rather than
+    // under models.providers or llm.providers. Same pattern as the Anthropic fix in #386.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/qwen/qwen3-14b"],
+        heavy: ["openrouter/qwen/qwen3-14b"],
+        // No providers.openrouter in plugin config — key must come from gateway top-level
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        // Top-level providers (not nested under models.providers or llm.providers)
+        providers: {
+          openrouter: { apiKey: "sk-or-from-gateway-top-level-providers" },
+        },
+      },
+    });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/qwen/qwen3-14b",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const openrouterCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
+    );
+    expect(openrouterCall).toBeDefined();
+    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-from-gateway-top-level-providers");
+  });
+
+  it("gateway key fills in when plugin provider entry has undefined apiKey (stale placeholder)", async () => {
+    // When the plugin config has providers.openrouter: {} (entry exists but no apiKey),
+    // the gateway key must still be used — same fix as #386 for the merge condition.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/qwen/qwen3-14b"],
+        heavy: ["openrouter/qwen/qwen3-14b"],
+        providers: {
+          // Entry exists but apiKey is empty — must be filled from gateway
+          openrouter: { apiKey: undefined },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            openrouter: { apiKey: "sk-or-gateway-fills-empty-plugin-entry" },
+          },
+        },
+      },
+    });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/qwen/qwen3-14b",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const openrouterCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
+    );
+    expect(openrouterCall).toBeDefined();
+    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-gateway-fills-empty-plugin-entry");
+  });
+
+  it("strips openrouter/ prefix correctly for multi-segment models like openrouter/qwen/qwen3-14b", async () => {
+    // The GlitchTip error was for openrouter/qwen/qwen3... which has two slashes.
+    // Verify that prefix extraction (first slash only) gives "openrouter" and bareModel "qwen/qwen3-14b".
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/qwen/qwen3-14b"],
+        heavy: ["openrouter/qwen/qwen3-14b"],
+        providers: {
+          openrouter: { apiKey: "sk-or-qwen-test-key" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/qwen/qwen3-14b",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const openrouterClientIdx = MockOpenAI.mock.calls.findIndex(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
+    );
+    expect(openrouterClientIdx).toBeGreaterThanOrEqual(0);
+
+    const openrouterInstance = MockOpenAI.mock.results[openrouterClientIdx];
+    expect(openrouterInstance?.type).toBe("return");
+
+    const instance = openrouterInstance?.value as { chat: { completions: { create: ReturnType<typeof vi.fn> } } };
+    const createCalls = instance?.chat?.completions?.create?.mock?.calls ?? [];
+
+    // The proxy strips only "openrouter/" prefix; bareModel must be "qwen/qwen3-14b" (not "qwen3-14b")
+    const callWithBareModel = createCalls.find(
+      ([body]) => (body as { model?: string })?.model === "qwen/qwen3-14b",
+    );
+    expect(callWithBareModel).toBeDefined();
+  });
+});
