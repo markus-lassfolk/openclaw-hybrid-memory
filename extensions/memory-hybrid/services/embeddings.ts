@@ -1307,7 +1307,7 @@ export async function safeEmbed(
         });
       }
     } else if (!isConfigError(asErr)) {
-      // Single-provider path (plain Embeddings): suppress 404/403/401 config errors.
+      // Single-provider path: suppress 404/403/401 config errors to avoid double-reporting.
       capturePluginError(asErr, {
         operation: "safe-embed",
         subsystem: "embeddings",
