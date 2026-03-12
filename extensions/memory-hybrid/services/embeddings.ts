@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { capturePluginError } from "./error-reporter.js";
-import { withLLMRetry, is404Like, is403Like, is429Like, LLMRetryError } from "./chat.js";
+import { withLLMRetry, is404Like, is403Like, is429OrWrapped, LLMRetryError } from "./chat.js";
 
 /**
  * Thrown by ChainEmbeddingProvider when every provider in the chain has failed.
@@ -568,12 +568,6 @@ function is403OrWrapped(err: Error): boolean {
   return false;
 }
 
-/** Returns true when the error is a 429 (rate limit) — either directly or wrapped in LLMRetryError. */
-function is429OrWrapped(err: Error): boolean {
-  if (is429Like(err)) return true;
-  if (err instanceof LLMRetryError && is429Like(err.cause)) return true;
-  return false;
-}
 
 /**
  * OpenAI-based embedding provider.

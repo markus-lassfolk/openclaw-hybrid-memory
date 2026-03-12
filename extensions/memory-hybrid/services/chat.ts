@@ -129,8 +129,9 @@ export function is429Like(err: unknown): boolean {
 /**
  * Returns true when the error is a 429 (rate limit) — either directly or wrapped in LLMRetryError.
  * Used in chatCompleteWithRetry to detect 429 errors that were retried and wrapped by withLLMRetry.
+ * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
  */
-function is429OrWrapped(err: Error): boolean {
+export function is429OrWrapped(err: Error): boolean {
   if (is429Like(err)) return true;
   if (err instanceof LLMRetryError && is429Like(err.cause)) return true;
   return false;
