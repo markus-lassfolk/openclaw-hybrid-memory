@@ -4,6 +4,7 @@ export * from "./capture.js";
 export * from "./maintenance.js";
 export * from "./features.js";
 export * from "./agents.js";
+export * from "./sensors.js";
 
 // Re-export all types from domain files and define HybridMemoryConfig and other shared types
 
@@ -71,6 +72,8 @@ import type {
   PersonaProposalsConfig,
   MemoryToSkillsConfig,
 } from "./agents.js";
+
+import type { SensorSweepConfig } from "./sensors.js";
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 /** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
@@ -519,6 +522,8 @@ export type HybridMemoryConfig = {
   costTracking: CostTrackingConfig;
   /** Mission Control dashboard HTTP server (Issue #309, default: enabled on port 7700). */
   dashboard: DashboardConfig;
+  /** Sensor sweep — cron-based data collection writing to Event Bus, no LLM (Issue #236, default: disabled). */
+  sensorSweep: SensorSweepConfig;
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.
