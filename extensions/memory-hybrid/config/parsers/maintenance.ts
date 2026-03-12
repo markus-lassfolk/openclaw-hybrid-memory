@@ -69,6 +69,14 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
       typeof nightlyCycleRaw?.maxUnconsolidatedAgeDays === "number" && nightlyCycleRaw.maxUnconsolidatedAgeDays >= 1
         ? Math.min(3650, Math.floor(nightlyCycleRaw.maxUnconsolidatedAgeDays))
         : 90,
+    eventLogArchivalDays:
+      typeof nightlyCycleRaw?.eventLogArchivalDays === "number" && nightlyCycleRaw.eventLogArchivalDays >= 0
+        ? Math.floor(nightlyCycleRaw.eventLogArchivalDays)
+        : undefined,
+    eventLogArchivePath:
+      typeof nightlyCycleRaw?.eventLogArchivePath === "string" && nightlyCycleRaw.eventLogArchivePath.trim().length > 0
+        ? nightlyCycleRaw.eventLogArchivePath.trim()
+        : undefined,
   };
 }
 

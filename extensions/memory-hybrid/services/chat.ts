@@ -108,6 +108,25 @@ export function is403Like(err: unknown): boolean {
 }
 
 /**
+ * 429 Too Many Requests / rate-limit detection helper.
+ * Checks the HTTP status code property first (reliable), then falls back to
+ * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
+ * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
+ */
+export function is429Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 429 || status === "429") return true;
+  }
+  if (err instanceof Error) {
+    return /^\b429\b/.test(err.message.trim())
+      || /\bHTTP\s+429\b|\bError\s+code:\s*429\b|\b429\s+[A-Za-z]/i.test(err.message)
+      || /\btoo\s+many\s+requests\b/i.test(err.message);
+  }
+  return false;
+}
+
+/**
  * Unified 5xx / internal server error detection helper.
  * Checks HTTP status code property first, then uses conservative message patterns.
  * Avoids false positives from non-HTTP "internal error" messages (e.g. JavaScript errors).
@@ -238,7 +257,7 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       msg.includes("llm request timeout") ||  // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
-      /\b429\b|too many requests/i.test(error.message) ||  // #397: rate limit is transient
+      is429Like(error) ||  // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err) ||  // #302: OpenAI SDK InternalServerError has no numeric prefix
@@ -318,7 +337,7 @@ export async function withLLMRetry<T>(
         console.warn(`memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`);
         throw lastError;
       }
-      const is429 = /\b429\b|too many requests/i.test(lastError.message);
+      const is429 = is429Like(lastError);
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
@@ -455,7 +474,7 @@ export async function chatCompleteWithRetry(opts: {
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
       const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
-      const is429 = /\b429\b|too many requests/i.test(lastError.message);
+      const is429 = is429Like(lastError);
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
@@ -482,7 +501,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs404 = is404Like(finalError);
   const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
   const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
-  const finalIs429 = /\b429\b|too many requests/i.test(finalError.message);  // #397
+  const finalIs429 = is429Like(finalError);  // #397
   const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning

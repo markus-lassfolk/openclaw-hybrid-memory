@@ -105,5 +105,9 @@ export function parseExtractionConfig(cfg: Record<string, unknown>): ExtractionC
       ? extractionRaw.verificationModel.trim()
       : undefined,
     preFilter: parsePreFilterConfig(extractionRaw?.preFilter as Record<string, unknown> | undefined),
+    extractionModelTier: (() => {
+      const v = typeof extractionRaw?.extractionModelTier === "string" ? extractionRaw.extractionModelTier.trim().toLowerCase() : "";
+      return (v === "nano" || v === "default" || v === "heavy") ? (v as "nano" | "default" | "heavy") : undefined;
+    })(),
   };
 }
