@@ -698,7 +698,7 @@ export function initializeDatabases(
         // Define chat-compatibility filter (used for both models[] and defaultModel/model fields).
         // Skip non-chat entries (embeddings, transcription, TTS, image generation) so that
         // chatCompleteWithRetry is never routed through an incompatible model.
-        const NON_CHAT_TYPES = new Set(["embedding", "embeddings", "transcription", "speech-to-text", "text-to-speech", "tts", "image", "image-generation"]);
+        const NON_CHAT_TYPES = new Set(["embed", "embedding", "embeddings", "transcription", "speech-to-text", "text-to-speech", "tts", "image", "image-generation"]);
         const NON_CHAT_ID_RE = /\bembed|whisper|tts\b|dall-e|transcri/i;
         const isChatEntry = (entry: unknown): boolean => {
           if (typeof entry === "object" && entry !== null) {
