@@ -187,8 +187,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
   const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
   const hasGoogleKey =
-    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:")) ||
-    (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:"));
+    (distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || distillApiKeyRaw.includes("${")) ||
+    (llmGoogleApiKeyRaw.length >= 10 || llmGoogleApiKeyRaw.startsWith("env:") || llmGoogleApiKeyRaw.startsWith("file:") || llmGoogleApiKeyRaw.includes("${"));
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;
@@ -395,7 +395,13 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
   // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
-  const rawGoogleKey = (distillForEmbed?.apiKey ?? llmProvidersForEmbed?.google?.apiKey ?? "").trim();
+  // Pick the first valid key to avoid using a short/invalid distill key when a valid llm key exists.
+  const rawGoogleKey = (() => {
+    const distillKey = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
+    const llmKey = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
+    const isDistillKeyValid = distillKey.length >= 10 || distillKey.startsWith("env:") || distillKey.startsWith("file:") || distillKey.includes("${");
+    return isDistillKeyValid ? distillKey : (llmKey || "");
+  })();
   const resolvedGoogleApiKey =
     (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
       ? resolveSecretRef(rawGoogleKey)
