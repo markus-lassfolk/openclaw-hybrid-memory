@@ -42,6 +42,7 @@ import {
   parseHealthConfig,
   parseMaintenanceConfig,
 } from "./maintenance.js";
+import { parseSensorSweepConfig } from "./sensors.js";
 import {
   parseGraphConfig,
   parseGraphRetrievalConfig,
@@ -572,6 +573,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     provenance: parseProvenanceConfig(cfg),
     costTracking: parseCostTrackingConfig(cfg),
     dashboard: parseDashboardConfig(cfg),
+    sensorSweep: parseSensorSweepConfig(cfg),
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),

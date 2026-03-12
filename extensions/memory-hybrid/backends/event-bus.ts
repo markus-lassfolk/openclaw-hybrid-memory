@@ -170,7 +170,7 @@ export class EventBus {
    * Check if a recent duplicate exists for the given fingerprint within a cooldown window.
    * Returns true if a duplicate was found (caller should skip inserting).
    */
-  dedup(fingerprint: string, cooldownHours = 6): boolean {
+  dedup(fingerprint: string, cooldownHours = 3): boolean {
     const cutoff = new Date(Date.now() - cooldownHours * 3600 * 1000).toISOString();
     const row = this.liveDb
       .prepare(

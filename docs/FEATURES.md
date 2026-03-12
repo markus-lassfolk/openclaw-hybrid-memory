@@ -37,6 +37,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Episodic event log (Layer 1)** | [event-log.md](../extensions/memory-hybrid/docs/event-log.md) | Append-only session event journal; raw capture layer for Dream Cycle consolidation. (#150) |
 | **Local embeddings (Ollama/ONNX)** | [CONFIGURATION.md](CONFIGURATION.md#local-embedding-providers-153) | Run embeddings locally without an API key using Ollama or ONNX providers. (#153) |
 | **Local LLM pre-filtering (Ollama)** | [CONFIGURATION.md](CONFIGURATION.md#local-llm-session-pre-filtering) | Two-tier session triage: uses a local model (e.g. qwen3) to filter out uninteresting sessions before sending to the cloud LLM. (#290) |
+| **Sensor Sweep (Event Bus)** | [CONFIGURATION.md](CONFIGURATION.md#sensor-sweep-sensorsweep-236) | Cron-based background data collection (Garmin, GitHub, Session History, System Health, HA anomalies, Weather, Yarbo) without LLM overhead. Events stored in `event-bus.db`. (#236) |
 | **Multi-model embedding registry** | [CONFIGURATION.md](CONFIGURATION.md#multi-model-embedding-registry-158) | Embed each fact with multiple models in parallel; merge results via RRF at recall. (#158) |
 | **Contextual variants at index time** | [CONFIGURATION.md](CONFIGURATION.md#contextual-variants-at-index-time-159) | LLM-generated alternative phrasings embedded alongside facts to improve recall. (#159) |
 | **LLM re-ranking** | [CONFIGURATION.md](CONFIGURATION.md#llm-re-ranking-161) | Re-order RRF fusion results with an LLM for higher-precision recall. (#161) |

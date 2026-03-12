@@ -1256,6 +1256,7 @@ export function closeOldDatabases(context: {
   proposalsDb?: ProposalsDB | null;
   eventLog?: EventLog | null;
   aliasDb?: AliasDB | null;
+  eventBus?: import("../backends/event-bus.js").EventBus | null;
   issueStore?: IssueStore | null;
   workflowStore?: WorkflowStore | null;
   crystallizationStore?: CrystallizationStore | null;
@@ -1263,7 +1264,7 @@ export function closeOldDatabases(context: {
   verificationStore?: VerificationStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService } = context;
+  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, eventBus, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService } = context;
 
   invalidateClusterCache();
 
@@ -1307,6 +1308,13 @@ export function closeOldDatabases(context: {
       aliasDb.close();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "aliasDb" });
+    }
+  }
+  if (eventBus) {
+    try {
+      eventBus.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "eventBus" });
     }
   }
   if (issueStore) {

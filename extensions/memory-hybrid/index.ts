@@ -225,6 +225,7 @@ let wal: WriteAheadLog | null = null;
 let proposalsDb: ProposalsDB | null = null;
 let eventLog: EventLog | null = null;
 let aliasDb: AliasDB | null = null;
+let eventBus: EventBus | null = null;
 
 let costTracker: import("./backends/cost-tracker.js").CostTracker | null = null;
 let issueStore: IssueStore | null = null;
@@ -297,11 +298,12 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService });
+    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, eventBus, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
     aliasDb = null;
+    eventBus = null;
 
     issueStore = null;
     workflowStore = null;
@@ -353,6 +355,27 @@ const memoryHybridPlugin = {
     api.logger.info(
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
     );
+
+    // ========================================================================
+    // Event Bus for Sensor Sweep (Issue #236)
+    // ========================================================================
+
+    if (cfg.sensorSweep.enabled) {
+      try {
+        const eventBusPath = join(dirname(resolvedSqlitePath), "event-bus.db");
+        eventBus = new EventBus(eventBusPath);
+        api.logger.info(`memory-hybrid: event bus initialized at ${eventBusPath}`);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "registration",
+          operation: "plugin-register:event-bus-init",
+          severity: "warning",
+        });
+        eventBus = null;
+      }
+    } else {
+      eventBus = null;
+    }
 
     // ========================================================================
     // Python Bridge (lazy — only when documents.enabled, spawns on first use)
@@ -433,6 +456,7 @@ const memoryHybridPlugin = {
       verificationStore,
       provenanceService,
       costTracker,
+      eventBus,
       resolvedSqlitePath,
       resolvedLancePath,
       pluginId: PLUGIN_ID,
