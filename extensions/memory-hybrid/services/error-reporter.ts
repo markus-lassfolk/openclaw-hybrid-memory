@@ -69,6 +69,35 @@ export function extractVersion(release: string): string | null {
 }
 
 /**
+ * Compare two version strings numerically (YYYY.M.N format).
+ * Returns:
+ *   -1 if a < b
+ *    0 if a === b
+ *    1 if a > b
+ */
+export function compareVersions(a: string, b: string): number {
+  const parseVersion = (version: string): [number, number, number] | null => {
+    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    if (!match) return null;
+    return [Number(match[1]), Number(match[2]), Number(match[3])];
+  };
+
+  const versionA = parseVersion(a);
+  const versionB = parseVersion(b);
+  
+  if (!versionA || !versionB) {
+    return 0; // Safe default for unparseable versions
+  }
+  
+  for (let i = 0; i < 3; i++) {
+    if (versionA[i] < versionB[i]) return -1;
+    if (versionA[i] > versionB[i]) return 1;
+  }
+  
+  return 0; // Equal
+}
+
+/**
  * Check whether an event should be dropped because it matches a known-fixed issue
  * and the event's release version is older than the fix.
  * Returns true (drop) only when: fingerprint matches AND version < fixedInVersion.
