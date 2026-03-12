@@ -34,7 +34,7 @@ vi.mock("../services/error-reporter.js", async (importOriginal) => {
 });
 
 import OpenAI from "openai";
-import { initializeDatabases, closeOldDatabases, MINIMAX_BASE_URL } from "../setup/init-databases.js";
+import { initializeDatabases, closeOldDatabases, MINIMAX_BASE_URL, OPENROUTER_BASE_URL } from "../setup/init-databases.js";
 import { hybridConfigSchema } from "../config.js";
 
 // ---------------------------------------------------------------------------
@@ -568,5 +568,188 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     // The tier lists should NOT have MiniMax-Text-01 appended since minimax is already present.
     const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
     expect(defaultList.filter((m) => m.startsWith("minimax/")).length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenRouter provider routing (issue #380)
+// ---------------------------------------------------------------------------
+
+describe("OpenRouter provider routing (issue #380)", () => {
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  let origOpenrouterApiKey: string | undefined;
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-openrouter-"));
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+    ctx = undefined;
+    origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
+    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCLAW_GATEWAY_PORT;
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  });
+
+  afterEach(() => {
+    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    rmSync(tmpDir, { recursive: true, force: true });
+    if (origOpenrouterApiKey !== undefined) process.env.OPENROUTER_API_KEY = origOpenrouterApiKey; else delete process.env.OPENROUTER_API_KEY;
+    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
+    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  });
+
+  it("exports OPENROUTER_BASE_URL as the canonical OpenRouter endpoint", () => {
+    expect(OPENROUTER_BASE_URL).toBe("https://openrouter.ai/api/v1");
+  });
+
+  it("routes openrouter/* models to OPENROUTER_BASE_URL when apiKey is configured", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/anthropic/claude-3.5-sonnet"],
+        heavy: ["openrouter/anthropic/claude-3.5-sonnet"],
+        providers: {
+          openrouter: { apiKey: "sk-or-test-key-1234" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/anthropic/claude-3.5-sonnet",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const openrouterCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
+    );
+    expect(openrouterCall).toBeDefined();
+    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-test-key-1234");
+  });
+
+  it("strips the openrouter/ prefix and sends bare model name to the API", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/anthropic/claude-3.5-sonnet"],
+        heavy: ["openrouter/anthropic/claude-3.5-sonnet"],
+        providers: {
+          openrouter: { apiKey: "sk-or-bare-model-test" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/anthropic/claude-3.5-sonnet",
+      messages: [{ role: "user", content: "test" }],
+    });
+
+    // Find the openrouter client instance
+    const openrouterClientIdx = MockOpenAI.mock.calls.findIndex(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
+    );
+    expect(openrouterClientIdx).toBeGreaterThanOrEqual(0);
+
+    const openrouterInstance = MockOpenAI.mock.results[openrouterClientIdx];
+    expect(openrouterInstance?.type).toBe("return");
+
+    const instance = openrouterInstance?.value as { chat: { completions: { create: ReturnType<typeof vi.fn> } } };
+    const createCalls = instance?.chat?.completions?.create?.mock?.calls ?? [];
+
+    // The proxy strips "openrouter/" prefix; the bare model is "anthropic/claude-3.5-sonnet"
+    const callWithBareModel = createCalls.find(
+      ([body]) => (body as { model?: string })?.model === "anthropic/claude-3.5-sonnet",
+    );
+    expect(callWithBareModel).toBeDefined();
+  });
+
+  it("uses OPENROUTER_API_KEY env var as fallback when no apiKey in config", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-from-env-key";
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/openai/gpt-4o"],
+        heavy: ["openrouter/openai/gpt-4o"],
+        // No openrouter provider config — should fall back to OPENROUTER_API_KEY env var
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/openai/gpt-4o",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const openrouterCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
+    );
+    expect(openrouterCall).toBeDefined();
+    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-from-env-key");
+  });
+
+  it("throws UnconfiguredProviderError when no apiKey is available for openrouter", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/anthropic/claude-3.5-sonnet"],
+        heavy: ["openrouter/anthropic/claude-3.5-sonnet"],
+        // No openrouter config and no OPENROUTER_API_KEY env var
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    expect(() =>
+      ctx!.openai.chat.completions.create({
+        model: "openrouter/anthropic/claude-3.5-sonnet",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    ).toThrow("Provider 'openrouter' is not configured");
+  });
+
+  it("uses a custom baseURL when explicitly overridden in llm.providers.openrouter", async () => {
+    const customURL = "https://custom.openrouter.example.com/v1";
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["openrouter/meta-llama/llama-3.1-8b-instruct"],
+        heavy: ["openrouter/meta-llama/llama-3.1-8b-instruct"],
+        providers: {
+          openrouter: { apiKey: "sk-or-custom-url", baseURL: customURL },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openrouter/meta-llama/llama-3.1-8b-instruct",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const customCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === customURL,
+    );
+    expect(customCall).toBeDefined();
   });
 });
