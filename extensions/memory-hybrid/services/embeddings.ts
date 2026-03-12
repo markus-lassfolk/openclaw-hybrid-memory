@@ -839,7 +839,23 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       }
       if (!resp.ok) {
         const body = await resp.text().catch(() => "");
-        throw new Error(`Ollama embed failed: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`);
+        const errMsg = `Ollama embed failed: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`;
+        // OOM: trip circuit breaker immediately — retrying the same model won't free memory.
+        const isOOM =
+          body.toLowerCase().includes("model requires more system memory") ||
+          body.toLowerCase().includes("not enough memory to load") ||
+          /requires\s+[\d.]+\s*gib/i.test(body) ||
+          /\boom:/i.test(body);
+        if (isOOM) {
+          circuit.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
+          circuit.failCount = OLLAMA_MAX_FAILS;
+          console.warn(
+            `memory-hybrid: Ollama model OOM (${this.modelName}) — model requires more memory than available. ` +
+            `Circuit breaker tripped; disabling endpoint ${this.endpoint} for 5min. ` +
+            `Consider using a smaller model or configuring a cloud embedding fallback.`
+          );
+        }
+        throw new Error(errMsg);
       }
       const data = await resp.json() as { embeddings: number[][] };
       if (!Array.isArray(data.embeddings)) {

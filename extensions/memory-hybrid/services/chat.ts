@@ -111,8 +111,11 @@ export function is403Like(err: unknown): boolean {
  * Unified 5xx / internal server error detection helper.
  * Checks HTTP status code property first, then uses conservative message patterns.
  * Avoids false positives from non-HTTP "internal error" messages (e.g. JavaScript errors).
+ *
+ * Exported so other modules (lifecycle/hooks, auto-classifier) can suppress
+ * capturePluginError for transient server errors.
  */
-function is500Like(err: unknown): boolean {
+export function is500Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (typeof status === "number" && status >= 500 && status < 600) return true;
@@ -122,6 +125,29 @@ function is500Like(err: unknown): boolean {
     return /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(err.message);
   }
   return false;
+}
+
+/**
+ * Detect Ollama out-of-memory (OOM) errors from the model server.
+ * Ollama returns HTTP 500 with a body like:
+ *   "model requires more system memory (18.2 GiB) than is available (8.0 GiB)"
+ * These are expected failures when the configured model is too large for the host —
+ * not bugs — so callers should skip capturePluginError and warn the user instead.
+ *
+ * Exported so other modules (lifecycle/hooks, auto-classifier, embeddings) can
+ * detect OOM specifically for user-visible warnings and circuit-breaker decisions.
+ */
+export function isOllamaOOM(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("model requires more system memory") ||
+    msg.includes("not enough memory to load") ||
+    // "requires X GiB" pattern covers variant phrasings from different Ollama versions
+    /requires\s+[\d.]+\s*gib/.test(msg) ||
+    // Bare OOM signal in error body (e.g. "oom: model 'qwen3:8b' ...")
+    /\boom:/i.test(err.message)
+  );
 }
 
 /**
@@ -204,7 +230,7 @@ export async function chatComplete(opts: {
     const error = isAbort
       ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
       : (err instanceof Error ? err : new Error(String(err)));
-    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx) and config errors (missing provider keys) to avoid GlitchTip noise
+    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
@@ -214,7 +240,8 @@ export async function chatComplete(opts: {
       msg.includes("econnrefused") ||
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
-      is500Like(err);  // #302: OpenAI SDK InternalServerError has no numeric prefix
+      is500Like(err) ||  // #302: OpenAI SDK InternalServerError has no numeric prefix
+      isOllamaOOM(err);  // #387: Ollama OOM — model too large for available RAM, not a bug
     const isConfigError = err instanceof UnconfiguredProviderError ||
       is404Like(err) ||  // #303: model not found = wrong model name in config, not a bug
       is403Like(err);    // #394: country/region restriction = operator config issue, not a bug
@@ -295,6 +322,15 @@ export async function withLLMRetry<T>(
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       if (isTimeout && attempt >= 1) {
+        throw lastError;
+      }
+      // Ollama OOM: never retry — model requires more memory than available, won't be fixed by retrying.
+      // chatCompleteWithRetry will try the next fallback model (e.g. Gemini, OpenAI).
+      if (isOllamaOOM(lastError)) {
+        console.warn(
+          `memory-hybrid: Ollama model OOM — model requires more memory than is available. ` +
+          `Skipping retries; will try next fallback model.`
+        );
         throw lastError;
       }
       // 5xx / internal server error: only retry once
@@ -444,6 +480,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
   const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
+  const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
   const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
@@ -468,15 +505,16 @@ export async function chatCompleteWithRetry(opts: {
     // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
     const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
-    if (!finalIs500 && !finalIsUnconfigured && !finalIsTimeout && !finalIs403) {
+    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",
         phase: "fallback-exhausted",
       });
     }
-  } else if (finalIs500) {
+  } else if (finalIs500 || finalIsOOM) {
     // #302: 500 server errors are transient — don't report to GlitchTip; request will be retried naturally
+    // #387: OOM is expected when model too large for available RAM — not a bug
   } else if (finalIs404) {
     // #303: model not found across all fallbacks = misconfigured model name — surface to user, skip Sentry
     pendingWarnings?.add(
