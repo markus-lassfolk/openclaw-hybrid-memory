@@ -512,9 +512,15 @@ export async function chatCompleteWithRetry(opts: {
         phase: "fallback-exhausted",
       });
     }
-  } else if (finalIs500 || finalIsOOM) {
+  } else if (finalIsOOM) {
+    // #387: OOM is a persistent condition (model too large for RAM), not transient — warn user to use smaller model
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: LLM model requires more memory than available (OOM). ` +
+      `Consider using a smaller model or configuring a cloud fallback. ` +
+      `Run: openclaw hybrid-mem verify --test-llm`
+    );
+  } else if (finalIs500) {
     // #302: 500 server errors are transient — don't report to GlitchTip; request will be retried naturally
-    // #387: OOM is expected when model too large for available RAM — not a bug
   } else if (finalIs404) {
     // #303: model not found across all fallbacks = misconfigured model name — surface to user, skip Sentry
     pendingWarnings?.add(
