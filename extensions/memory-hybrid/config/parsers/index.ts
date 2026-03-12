@@ -397,10 +397,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   // resolveEnvVars() only handles ${VAR} template syntax; resolveSecretRef() also handles env:VAR and file:/path.
   // Pick the first valid key to avoid using a short/invalid distill key when a valid llm key exists.
   const rawGoogleKey = (() => {
-    const distillKey = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
-    const llmKey = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
-    const isDistillKeyValid = distillKey.length >= 10 || distillKey.startsWith("env:") || distillKey.startsWith("file:") || distillKey.includes("${");
-    return isDistillKeyValid ? distillKey : (llmKey || "");
+    const isDistillKeyValid = distillApiKeyRaw.length >= 10 || distillApiKeyRaw.startsWith("env:") || distillApiKeyRaw.startsWith("file:") || distillApiKeyRaw.includes("${");
+    return isDistillKeyValid ? distillApiKeyRaw : (llmGoogleApiKeyRaw || "");
   })();
   const resolvedGoogleApiKey =
     (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
