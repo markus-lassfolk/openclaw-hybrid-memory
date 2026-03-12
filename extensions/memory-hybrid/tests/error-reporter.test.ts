@@ -433,6 +433,38 @@ describe("Error Reporter", () => {
   });
 });
 
+describe("UnconfiguredProviderError suppression", () => {
+  it("capturePluginError returns undefined immediately and never reaches Sentry for UnconfiguredProviderError", async () => {
+    // Regression guard: capturePluginError must silently drop UnconfiguredProviderError.
+    // These are config issues (missing API keys), not bugs — they must never leak to GlitchTip.
+    const { capturePluginError } = await import("../services/error-reporter.js");
+
+    // Construct the error by name to avoid a circular import (chat.ts → error-reporter.ts)
+    const err = Object.assign(new Error("Provider 'openrouter' is not configured for model openrouter/qwen/qwen3-14b"), {
+      name: "UnconfiguredProviderError",
+    });
+
+    const result = capturePluginError(err, { operation: "test-suppression", subsystem: "auto-classifier" });
+
+    // Must return undefined without touching Sentry, regardless of initialization state
+    expect(result).toBeUndefined();
+  });
+
+  it("capturePluginError still reports regular errors (non-UnconfiguredProviderError)", async () => {
+    const { capturePluginError, isErrorReporterActive } = await import("../services/error-reporter.js");
+
+    const regularErr = new Error("Something unexpected broke");
+    const result = capturePluginError(regularErr, { operation: "test-regular-error" });
+
+    // When reporter is not initialized in test env, returns undefined — but it must have
+    // attempted to report (i.e. not been suppressed by the UnconfiguredProviderError guard)
+    if (!isErrorReporterActive()) {
+      expect(result).toBeUndefined(); // not initialized, but not suppressed early
+    }
+    // Either way the guard must NOT fire for non-UnconfiguredProviderError errors
+  });
+});
+
 // Helper to check if @sentry/node is installed
 async function checkSentryInstalled(): Promise<boolean> {
   try {

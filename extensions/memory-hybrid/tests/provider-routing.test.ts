@@ -37,6 +37,12 @@ import OpenAI from "openai";
 import { initializeDatabases, closeOldDatabases, MINIMAX_BASE_URL, OPENROUTER_BASE_URL } from "../setup/init-databases.js";
 import { hybridConfigSchema } from "../config.js";
 
+/** Restore an env var to its original value, or delete it if it was originally unset. */
+function restoreEnv(key: string, orig: string | undefined): void {
+  if (orig !== undefined) process.env[key] = orig;
+  else delete process.env[key];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -116,9 +122,9 @@ describe("MiniMax provider routing — direct API key", () => {
     if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
     rmSync(tmpDir, { recursive: true, force: true });
     // Restore original env vars
-    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
-    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    if (origMinimaxApiKey !== undefined) process.env.MINIMAX_API_KEY = origMinimaxApiKey; else delete process.env.MINIMAX_API_KEY;
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
+    restoreEnv("MINIMAX_API_KEY", origMinimaxApiKey);
   });
 
   it("routes minimax/MiniMax-M2.5 to MINIMAX_BASE_URL when apiKey is configured but no explicit baseURL", async () => {
@@ -336,9 +342,9 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
   afterEach(() => {
     if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
     rmSync(tmpDir, { recursive: true, force: true });
-    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
-    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    if (origMinimaxApiKey !== undefined) process.env.MINIMAX_API_KEY = origMinimaxApiKey; else delete process.env.MINIMAX_API_KEY;
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
+    restoreEnv("MINIMAX_API_KEY", origMinimaxApiKey);
   });
 
   it("uses MINIMAX_BASE_URL (not OpenAI default) when gateway provides apiKey but no baseURL", async () => {
@@ -634,9 +640,9 @@ describe("OpenRouter provider routing (issue #380)", () => {
   afterEach(() => {
     if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
     rmSync(tmpDir, { recursive: true, force: true });
-    if (origOpenrouterApiKey !== undefined) process.env.OPENROUTER_API_KEY = origOpenrouterApiKey; else delete process.env.OPENROUTER_API_KEY;
-    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
-    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    restoreEnv("OPENROUTER_API_KEY", origOpenrouterApiKey);
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
   });
 
   it("exports OPENROUTER_BASE_URL as the canonical OpenRouter endpoint", () => {
@@ -818,9 +824,9 @@ describe("Anthropic provider routing — issue #386", () => {
   afterEach(() => {
     if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
     rmSync(tmpDir, { recursive: true, force: true });
-    if (origAnthropicApiKey !== undefined) process.env.ANTHROPIC_API_KEY = origAnthropicApiKey; else delete process.env.ANTHROPIC_API_KEY;
-    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
-    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    restoreEnv("ANTHROPIC_API_KEY", origAnthropicApiKey);
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
   });
 
   it("routes anthropic/* to ANTHROPIC_BASE_URL when llm.providers.anthropic.apiKey is set", async () => {
@@ -998,9 +1004,9 @@ describe("OpenRouter gateway merge — issue #392", () => {
   afterEach(() => {
     if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
     rmSync(tmpDir, { recursive: true, force: true });
-    if (origOpenrouterApiKey !== undefined) process.env.OPENROUTER_API_KEY = origOpenrouterApiKey; else delete process.env.OPENROUTER_API_KEY;
-    if (origGatewayPort !== undefined) process.env.OPENCLAW_GATEWAY_PORT = origGatewayPort; else delete process.env.OPENCLAW_GATEWAY_PORT;
-    if (origGatewayToken !== undefined) process.env.OPENCLAW_GATEWAY_TOKEN = origGatewayToken; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    restoreEnv("OPENROUTER_API_KEY", origOpenrouterApiKey);
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
   });
 
   it("picks up OpenRouter key from api.config.models.providers (standard gateway path)", async () => {

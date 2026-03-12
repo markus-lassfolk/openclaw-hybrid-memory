@@ -180,7 +180,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
     return map;
   } catch (err) {
     if (!(err instanceof UnconfiguredProviderError)) {
-      capturePluginError(err as Error, {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: 'classify-batch',
         severity: 'info',
         subsystem: 'classifier',
