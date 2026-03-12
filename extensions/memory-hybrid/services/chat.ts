@@ -191,6 +191,7 @@ export async function chatComplete(opts: {
       msg.includes("request was aborted") ||
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
+      msg.includes("llm request timeout") ||  // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
@@ -268,7 +269,7 @@ export async function withLLMRetry<T>(
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
-      const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       if (isTimeout && attempt >= 1) {
         throw lastError;
       }
@@ -298,6 +299,8 @@ export async function withLLMRetry<T>(
           fullMsg.includes("request timed out") ||
           causeMsg.includes("timed out") ||
           fullMsg.includes("timed out") ||
+          causeMsg.includes("llm request timeout") ||  // #339: our own timeout message uses "timeout" not "timed out"
+          fullMsg.includes("llm request timeout") ||
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
@@ -391,7 +394,7 @@ export async function chatCompleteWithRetry(opts: {
       const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = /\b429\b|too many requests/i.test(lastError.message);
-      const isTimeout = /timed out|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       const is404 = is404Like(lastError);
       const is500 = is500Like(lastError);  // #302
       if (isUnconfigured) unconfiguredCount++;
@@ -413,6 +416,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalError = lastError ?? new Error("All models failed");
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
+  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
@@ -436,7 +440,7 @@ export async function chatCompleteWithRetry(opts: {
     // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
     const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
-    if (!finalIs500 && !finalIsUnconfigured) {
+    if (!finalIs500 && !finalIsUnconfigured && !finalIsTimeout) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",
@@ -452,6 +456,8 @@ export async function chatCompleteWithRetry(opts: {
       `Check model names in llm.default / llm.heavy / llm.nano config. ` +
       `Run: openclaw hybrid-mem verify --test-llm`
     );
+  } else if (finalIsTimeout) {
+    // #339: timeout errors are transient — don't report to GlitchTip
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues
     capturePluginError(finalError, {

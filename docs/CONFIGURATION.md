@@ -640,7 +640,7 @@ Opt-in **query expansion** generates a hypothetical answer (or expanded query) b
           "queryExpansion": {
             "enabled": true,
             "model": "google/gemini-2.5-flash-lite",
-            "timeoutMs": 5000
+            "timeoutMs": 15000
           }
         }
       }
@@ -653,7 +653,7 @@ Opt-in **query expansion** generates a hypothetical answer (or expanded query) b
 |-----|---------|-------------|
 | `enabled` | `false` | Enable query expansion before embedding (uses nano-tier model when `model` unset) |
 | `model` | (nano tier) | Model for expansion; when omitted, uses first model from `llm.nano` |
-| `timeoutMs` | `5000` (25s when migrating from HyDE) | Timeout for expansion call in ms |
+| `timeoutMs` | `15000` (25s when migrating from HyDE) | Timeout for expansion call in ms. Raised to 15s in #339 to accommodate thinking models (e.g. Gemini 2.5 Flash) that routinely exceed 5s. |
 | `maxVariants` | `4` | Max query variants to generate and merge |
 | `cacheSize` | `100` | Cache size for expansion results |
 

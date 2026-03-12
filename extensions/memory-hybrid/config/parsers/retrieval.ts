@@ -283,8 +283,9 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       ? qeRaw.model.trim()
       : (enabled ? hydeModel : undefined);
 
-  // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout
-  const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 5000;
+  // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout.
+  // Default 15s for new configs — thinking models like Gemini 2.5 Flash often exceed 5s (#339).
+  const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 15000;
 
   return {
     enabled,

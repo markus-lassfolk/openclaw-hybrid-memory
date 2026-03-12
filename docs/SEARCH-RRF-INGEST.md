@@ -195,7 +195,7 @@ Indexing a `skills/` folder can give ~+10% recall in benchmarks by making capabi
   "queryExpansion": {
     "enabled": true,
     "model": "openai/gpt-4.1-nano",
-    "timeoutMs": 5000
+    "timeoutMs": 15000
   }
 }
 ```
@@ -204,7 +204,7 @@ Indexing a `skills/` folder can give ~+10% recall in benchmarks by making capabi
 |-----|---------|-------------|
 | `enabled` | `false` | Enable query expansion for vector search |
 | `model` | (nano tier) | Model for expansion; when omitted, uses `llm.nano[0]` or legacy default |
-| `timeoutMs` | `5000` (25s when migrating from HyDE) | Timeout for expansion call in ms |
+| `timeoutMs` | `15000` (25s when migrating from HyDE) | Timeout for expansion call in ms. Raised to 15s in #339 to accommodate thinking models (e.g. Gemini 2.5 Flash). |
 
 See [CONFIGURATION.md](CONFIGURATION.md#query-expansion-queryexpansion) for the full `queryExpansion` block.
 

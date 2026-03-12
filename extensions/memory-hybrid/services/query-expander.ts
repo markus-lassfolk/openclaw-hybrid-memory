@@ -7,7 +7,7 @@
  *
  * Key design:
  * - LRU cache to memoize expansions for identical queries.
- * - Timeout: if LLM takes >5s, fall back to original query only.
+ * - Timeout: if LLM takes >15s (default), fall back to original query only.
  * - Graceful degradation: any failure returns [original query].
  * - Optional context parameter improves expansion quality.
  */
