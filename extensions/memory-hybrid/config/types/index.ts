@@ -186,10 +186,19 @@ export type ErrorReportingConfig = {
   mode: "community" | "self-hosted";
   environment?: string;
   sampleRate?: number;
-  /** Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
+  /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+   * Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
   botId?: string;
-  /** Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag for readable reports. */
+  /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+   * Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag for readable reports. */
   botName?: string;
+  /**
+   * Optional map of error fingerprints to the version that fixed them.
+   * Errors matching a fingerprint from an older version are silently dropped (not regressions).
+   * Format: { "ErrorType:message prefix (first 100 chars)": "YYYY.M.NNN" }
+   * When not configured, behavior is identical to today.
+   */
+  resolvedIssues?: Record<string, string>;
 };
 
 /** Configuration for a single embedding model in a multi-model setup (Issue #158). */
