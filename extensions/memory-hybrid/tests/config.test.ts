@@ -1432,6 +1432,55 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(result.reranking.timeoutMs).toBe(15000);
   });
+  it("queryExpansion.timeoutMs (#384): passes through unchanged at exactly the floor value (10000)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      queryExpansion: { enabled: true, timeoutMs: 10000 },
+    });
+    expect(result.queryExpansion.timeoutMs).toBe(10000);
+  });
+  it("reranking.timeoutMs (#384): passes through unchanged at exactly the floor value (5000)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      reranking: { enabled: true, timeoutMs: 5000 },
+    });
+    expect(result.reranking.timeoutMs).toBe(5000);
+  });
+  it("reranking.timeoutMs (#384): defaults to 10000ms when omitted", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      reranking: { enabled: true },
+    });
+    expect(result.reranking.timeoutMs).toBe(10000);
+  });
+  it("queryExpansion.timeoutMs (#384): treats 0 as bypass — returns undefined (no config-level floor)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      queryExpansion: { enabled: true, timeoutMs: 0 },
+    });
+    expect(result.queryExpansion.timeoutMs).toBeUndefined();
+  });
+  it("reranking.timeoutMs (#384): treats 0 as bypass — returns undefined (no config-level floor)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      reranking: { enabled: true, timeoutMs: 0 },
+    });
+    expect(result.reranking.timeoutMs).toBeUndefined();
+  });
+  it("queryExpansion.timeoutMs (#384): rejects Infinity — falls back to default 15000ms", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      queryExpansion: { enabled: true, timeoutMs: Infinity },
+    });
+    expect(result.queryExpansion.timeoutMs).toBe(15000);
+  });
+  it("reranking.timeoutMs (#384): rejects Infinity — falls back to default 10000ms", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      reranking: { enabled: true, timeoutMs: Infinity },
+    });
+    expect(result.reranking.timeoutMs).toBe(10000);
+  });
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.multiAgent).toBeDefined();
