@@ -12,7 +12,6 @@
  */
 
 import * as SentryType from "@sentry/node";
-import { isVersionAtLeast } from "../utils/version-check.js";
 
 /**
  * Default GlitchTip DSN for anonymous crash reporting.
@@ -29,7 +28,7 @@ export interface ErrorReporterConfig {
   /** "community" (default): use hardcoded community DSN. "self-hosted": require custom DSN from config. */
   mode: "community" | "self-hosted";
   environment?: string; // "production" | "development"
-  maxBreadcrumbs: number; // PRIVACY: Always passed as 0 (breadcrumbs can contain user prompts). Not user-configurable.
+  maxBreadcrumbs: number; // PRIVACY: Hard-coded to 10 in Sentry.init (limited plugin.* breadcrumbs only). Not user-configurable.
   sampleRate: number;  // 0.0-1.0, default 1.0
   consent: boolean;    // explicit opt-in required
   /**
@@ -102,6 +101,11 @@ export function compareVersions(a: string, b: string): number {
  * and the event's release version is older than the fix.
  * Returns true (drop) only when: fingerprint matches AND version < fixedInVersion.
  * If event release can't be parsed, returns false (safe default: let through).
+ *
+ * NOTE: `errValue` is read from the event and passed through `scrubString()` before
+ * building the fingerprint. When called from `beforeSend`, the event has already been
+ * through `sanitizeEvent()` (which also applies `scrubString()`), so `resolvedIssues`
+ * keys must use the post-sanitize (scrubbed) form of the error message.
  */
 export function shouldDropForResolvedIssue(
   event: SentryType.Event,
@@ -111,17 +115,21 @@ export function shouldDropForResolvedIssue(
   if (!resolvedIssues || Object.keys(resolvedIssues).length === 0) return false;
 
   const errType = event.exception?.values?.[0]?.type || "Error";
-  const errValue = event.exception?.values?.[0]?.value || "";
+  // Apply scrubString so the fingerprint matches post-sanitize values (same as capturePluginError dedup).
+  const errValue = scrubString(event.exception?.values?.[0]?.value || "");
   const fingerprint = `${errType}:${errValue.slice(0, 100)}`;
 
   const fixedInVersion = resolvedIssues[fingerprint];
   if (!fixedInVersion || typeof fixedInVersion !== "string") return false;
 
+  // Reject malformed fixedInVersion to avoid silently suppressing real errors.
+  if (!/^\d+\.\d+\.\d+/.test(fixedInVersion)) return false;
+
   const releaseStr = event.release || fallbackRelease || "";
   const eventVersion = extractVersion(releaseStr);
   if (!eventVersion) return false;
 
-  return !isVersionAtLeast(eventVersion, fixedInVersion);
+  return compareVersions(eventVersion, fixedInVersion) < 0;
 }
 
 const Sentry: typeof SentryType | null = SentryType;
@@ -214,9 +222,9 @@ export async function initErrorReporter(
   }
   if (botName) {
     Sentry.setTag("bot_name", botName);
-    logger.info?.('[ErrorReporter] Bot name set (opt-in)');
+    logger.debug?.('[ErrorReporter] Bot name set (opt-in)');
   } else {
-    logger.info?.('[ErrorReporter] Bot name omitted (not configured — privacy default)');
+    logger.debug?.('[ErrorReporter] Bot name omitted (not configured — privacy default)');
   }
 
   initialized = true;

@@ -563,13 +563,102 @@ describe("Error Reporter", () => {
       const resolvedIssues = { [`Error:${"A".repeat(100)}`]: "2026.3.110" };
       expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(true);
     });
+
+    it("lets event through when fixedInVersion is malformed (safe default)", async () => {
+      const { shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+      const event: any = {
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "Error", value: "Connection refused" }] },
+      };
+      // Malformed version — should never drop
+      const resolvedIssues = { "Error:Connection refused": "not-a-version" };
+      expect(shouldDropForResolvedIssue(event, resolvedIssues)).toBe(false);
+    });
+  });
+
+  describe("beforeSend integration: version-aware filtering pipeline", () => {
+    it("drops event matching a resolved issue on an older release (beforeSend pipeline)", async () => {
+      const { sanitizeEvent, shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+
+      // Simulate an event as Sentry fires beforeSend
+      const rawEvent: any = {
+        event_id: "int-test-1",
+        level: "error",
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "TypeError", value: "Cannot read properties of null" }] },
+        tags: { subsystem: "sqlite" },
+      };
+      const resolvedIssues = { "TypeError:Cannot read properties of null": "2026.3.110" };
+
+      // Step 1: sanitize (as beforeSend does first)
+      const sanitized = sanitizeEvent(rawEvent);
+      expect(sanitized).not.toBeNull();
+
+      // Step 2: version-aware filter (as beforeSend does second)
+      const shouldDrop = shouldDropForResolvedIssue(sanitized!, resolvedIssues, rawEvent.release);
+      expect(shouldDrop).toBe(true); // old release → should be dropped
+    });
+
+    it("passes event that matches a resolved issue but is on the exact fix release (regression guard)", async () => {
+      const { sanitizeEvent, shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+
+      const rawEvent: any = {
+        event_id: "int-test-2",
+        level: "error",
+        release: "openclaw-hybrid-memory@2026.3.110",
+        exception: { values: [{ type: "TypeError", value: "Cannot read properties of null" }] },
+      };
+      const resolvedIssues = { "TypeError:Cannot read properties of null": "2026.3.110" };
+
+      const sanitized = sanitizeEvent(rawEvent);
+      expect(sanitized).not.toBeNull();
+      const shouldDrop = shouldDropForResolvedIssue(sanitized!, resolvedIssues, rawEvent.release);
+      expect(shouldDrop).toBe(false); // exactly the fix version → pass (regression check)
+    });
+
+    it("passes event when resolvedIssues is empty (beforeSend pipeline)", async () => {
+      const { sanitizeEvent, shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+
+      const rawEvent: any = {
+        event_id: "int-test-3",
+        level: "error",
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "TypeError", value: "Cannot read properties of null" }] },
+      };
+
+      const sanitized = sanitizeEvent(rawEvent);
+      expect(sanitized).not.toBeNull();
+      // Empty resolvedIssues — no filtering applied
+      const shouldDrop = shouldDropForResolvedIssue(sanitized!, {}, rawEvent.release);
+      expect(shouldDrop).toBe(false);
+    });
+
+    it("scrubs sensitive value before fingerprint match (beforeSend pipeline)", async () => {
+      const { sanitizeEvent, shouldDropForResolvedIssue } = await import("../services/error-reporter.js");
+
+      // Error value contains a home path that scrubString will replace with $HOME
+      const rawEvent: any = {
+        event_id: "int-test-4",
+        level: "error",
+        release: "openclaw-hybrid-memory@2026.3.100",
+        exception: { values: [{ type: "Error", value: "File not found: /home/user/.openclaw/config.yaml" }] },
+      };
+      // Fingerprint key uses the scrubbed form
+      const resolvedIssues = { "Error:File not found: $HOME/.openclaw/config.yaml": "2026.3.110" };
+
+      const sanitized = sanitizeEvent(rawEvent);
+      expect(sanitized).not.toBeNull();
+      // sanitizeEvent already scrubs the value; shouldDropForResolvedIssue also applies scrubString
+      const shouldDrop = shouldDropForResolvedIssue(sanitized!, resolvedIssues, rawEvent.release);
+      expect(shouldDrop).toBe(true); // scrubbed fingerprint matches → dropped
+    });
   });
 
   describe("Opt-in bot identity", () => {
     it("logs when botName IS set", async () => {
       const { initErrorReporter } = await import("../services/error-reporter.js");
 
-      const mockLogger = { info: vi.fn(), warn: vi.fn() };
+      const mockLogger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
       await initErrorReporter(
         {
@@ -584,7 +673,7 @@ describe("Error Reporter", () => {
         mockLogger
       );
 
-      expect(mockLogger.info).toHaveBeenCalledWith(
+      expect(mockLogger.debug).toHaveBeenCalledWith(
         expect.stringContaining("Bot name set (opt-in)")
       );
     });
@@ -592,7 +681,7 @@ describe("Error Reporter", () => {
     it("logs when botName is NOT set", async () => {
       const { initErrorReporter } = await import("../services/error-reporter.js");
 
-      const mockLogger = { info: vi.fn(), warn: vi.fn() };
+      const mockLogger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
       await initErrorReporter(
         {
@@ -607,7 +696,7 @@ describe("Error Reporter", () => {
         mockLogger
       );
 
-      expect(mockLogger.info).toHaveBeenCalledWith(
+      expect(mockLogger.debug).toHaveBeenCalledWith(
         expect.stringContaining("Bot name omitted")
       );
     });

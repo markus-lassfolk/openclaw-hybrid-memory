@@ -374,9 +374,17 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const botName = botNameRaw.length > 0 ? botNameRaw.slice(0, 64) : undefined;
 
   // Optional resolvedIssues map for version-aware filtering
+  const validVersionPattern = /^\d+\.\d+\.\d+/;
   const resolvedIssues = errorReportingRaw.resolvedIssues && typeof errorReportingRaw.resolvedIssues === "object" && !Array.isArray(errorReportingRaw.resolvedIssues)
     ? Object.fromEntries(
-        Object.entries(errorReportingRaw.resolvedIssues).filter(([_, v]) => typeof v === "string")
+        Object.entries(errorReportingRaw.resolvedIssues).filter((entry): entry is [string, string] => {
+          if (typeof entry[1] !== "string") return false;
+          if (!validVersionPattern.test(entry[1])) {
+            console.warn(`memory-hybrid: errorReporting.resolvedIssues["${entry[0]}"] has invalid version "${entry[1]}" — skipped.`);
+            return false;
+          }
+          return true;
+        })
       )
     : undefined;
 
