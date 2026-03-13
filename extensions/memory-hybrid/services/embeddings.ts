@@ -1300,11 +1300,11 @@ export async function safeEmbed(
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
     if (err instanceof AllEmbeddingProvidersFailed) {
-      // Only suppress when all individual causes are config errors (404/401/403).
+      // Only suppress when all individual causes are config errors (404/401/403) or 429 rate-limit errors.
       // If any cause is a transient failure (network, 5xx, etc.), still report so operators are informed.
       // When causes is empty (e.g. from non-chain providers), default to reporting.
-      const allConfigErrors = err.causes.length > 0 && err.causes.every(isConfigError);
-      if (!allConfigErrors) {
+      const allConfigOrRateLimitErrors = err.causes.length > 0 && err.causes.every(e => isConfigError(e) || is429OrWrapped(e));
+      if (!allConfigOrRateLimitErrors) {
         capturePluginError(asErr, {
           operation: "safe-embed",
           subsystem: "embeddings",
