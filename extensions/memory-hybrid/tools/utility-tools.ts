@@ -175,6 +175,7 @@ export function registerUtilityTools(
 
         let hardPruned = 0;
         let softPruned = 0;
+        let linksPruned = 0;
 
         if (mode === "hard" || mode === "both") {
           hardPruned = factsDb.pruneExpired();
@@ -182,6 +183,9 @@ export function registerUtilityTools(
         if (mode === "soft" || mode === "both") {
           softPruned = factsDb.decayConfidence();
         }
+
+        // Always prune orphaned links (fast, no-op if none exist)
+        linksPruned = factsDb.pruneOrphanedLinks();
 
         const breakdown = factsDb.statsBreakdown();
         const expired = factsDb.countExpired();
@@ -192,16 +196,18 @@ export function registerUtilityTools(
           // Quiet: compact one-liner — statsBreakdown and countExpired are still computed above
           // and included in the `details` field for programmatic consumers; they're intentionally
           // omitted from the human-readable text to reduce noise in quiet sessions.
-          text = `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).`;
+          const linksNote = linksPruned > 0 ? ` ${linksPruned} orphaned links.` : "";
+          text = `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).${linksNote}`;
         } else {
-          const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;
+          const linksNote = linksPruned > 0 ? `\nOrphaned links removed: ${linksPruned}` : "";
+          const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.${linksNote}\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;
           const verboseExtra = verbosity === "verbose" ? `\nMode: ${mode}` : "";
           text = baseText + verboseExtra;
         }
 
         return {
           content: [{ type: "text", text }],
-          details: { hardPruned, softPruned, breakdown, pendingExpired: expired },
+          details: { hardPruned, softPruned, linksPruned, breakdown, pendingExpired: expired },
         };
       },
     },

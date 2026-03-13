@@ -777,6 +777,58 @@ describe("FactsDB.decayConfidence", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Prune orphaned links
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.pruneOrphanedLinks", () => {
+  it("returns 0 when no orphaned links exist", () => {
+    const a = db.store({ text: "Fact A", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const b = db.store({ text: "Fact B", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    db.createLink(a.id, b.id, "RELATED_TO");
+    const deleted = db.pruneOrphanedLinks();
+    expect(deleted).toBe(0);
+  });
+
+  it("deletes links where target_fact_id references a non-existent fact", () => {
+    const a = db.store({ text: "Fact A (target test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const b = db.store({ text: "Fact B (target test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    db.createLink(a.id, b.id, "RELATED_TO");
+    // Delete the target fact directly — no CASCADE on target_fact_id, so the link remains orphaned
+    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb.prepare("DELETE FROM facts WHERE id = ?").run(b.id);
+    const deleted = db.pruneOrphanedLinks();
+    expect(deleted).toBe(1);
+  });
+
+  it("deletes links where source_fact_id references a non-existent fact", () => {
+    const b = db.store({ text: "Fact B (source test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const fakeSourceId = "00000000-0000-0000-0000-000000000001";
+    // Insert a link with a non-existent source_fact_id directly, bypassing FK constraints
+    const rawDb = (db as unknown as { liveDb: { pragma: (s: string) => void; prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb;
+    rawDb.pragma("foreign_keys = OFF");
+    rawDb.prepare("INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?,?,?,?,?,?)").run(
+      "00000000-0000-0000-0000-dead00000001", fakeSourceId, b.id, "RELATED_TO", 1.0, Math.floor(Date.now() / 1000)
+    );
+    rawDb.pragma("foreign_keys = ON");
+    const deleted = db.pruneOrphanedLinks();
+    expect(deleted).toBe(1);
+  });
+
+  it("preserves valid links when orphaned links also exist", () => {
+    const a = db.store({ text: "Fact A (preserve test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const b = db.store({ text: "Fact B (preserve test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const c = db.store({ text: "Fact C (preserve test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    db.createLink(a.id, b.id, "RELATED_TO"); // valid link — should be kept
+    db.createLink(a.id, c.id, "RELATED_TO"); // will become orphaned (target deleted, no cascade)
+    // Delete fact C so the a→c link becomes orphaned (no cascade on target_fact_id)
+    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb.prepare("DELETE FROM facts WHERE id = ?").run(c.id);
+    const linksBefore = db.linksCount();
+    const deleted = db.pruneOrphanedLinks();
+    expect(deleted).toBe(1); // only the orphaned link deleted
+    expect(db.linksCount()).toBe(linksBefore - 1); // valid a→b link still present
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Confirm fact
 // ---------------------------------------------------------------------------
 

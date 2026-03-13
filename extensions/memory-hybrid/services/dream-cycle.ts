@@ -53,6 +53,8 @@ export interface DreamCycleResult {
   factsPruned: number;
   /** Facts whose confidence was decayed. */
   factsDecayed: number;
+  /** Orphaned memory_links rows removed. */
+  linksPruned: number;
   /** Episodic event log entries successfully consolidated. */
   eventsConsolidated: number;
   /** New consolidated facts created from episodic events. */
@@ -113,6 +115,7 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
 export function buildDigestSummary(counts: {
   factsPruned: number;
   factsDecayed: number;
+  linksPruned?: number;
   eventsConsolidated: number;
   factsCreated: number;
   patternsFound: number;
@@ -121,6 +124,7 @@ export function buildDigestSummary(counts: {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
   if (counts.factsDecayed > 0) parts.push(`${counts.factsDecayed} facts decayed`);
+  if (counts.linksPruned && counts.linksPruned > 0) parts.push(`${counts.linksPruned} orphaned links removed`);
   if (counts.eventsConsolidated > 0) {
     parts.push(`${counts.eventsConsolidated} events consolidated into ${counts.factsCreated} facts`);
   }
@@ -303,6 +307,7 @@ export async function runDreamCycle(
     return {
       factsPruned: 0,
       factsDecayed: 0,
+      linksPruned: 0,
       eventsConsolidated: 0,
       factsCreated: 0,
       patternsFound: 0,
@@ -340,6 +345,21 @@ export async function runDreamCycle(
         subsystem: "facts-db",
       });
     }
+  }
+
+  // ── Step 1b: Prune orphaned links ────────────────────────────────────────
+  let linksPruned = 0;
+  try {
+    linksPruned = factsDb.pruneOrphanedLinks();
+    if (linksPruned > 0) {
+      logger.info(`memory-hybrid: dream-cycle — pruned ${linksPruned} orphaned link(s)`);
+    }
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — pruneOrphanedLinks failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-prune-orphaned-links",
+      subsystem: "facts-db",
+    });
   }
 
   // ── Step 2: Episodic consolidation ───────────────────────────────────────
@@ -464,6 +484,7 @@ export async function runDreamCycle(
   const digestSummary = buildDigestSummary({
     factsPruned,
     factsDecayed,
+    linksPruned,
     eventsConsolidated,
     factsCreated,
     patternsFound,
@@ -475,6 +496,7 @@ export async function runDreamCycle(
   return {
     factsPruned,
     factsDecayed,
+    linksPruned,
     eventsConsolidated,
     factsCreated,
     patternsFound,
