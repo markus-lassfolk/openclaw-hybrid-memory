@@ -602,17 +602,27 @@ function is403OrWrapped(err: Error): boolean {
   return false;
 }
 
-/** Returns true when the error is a 401 (auth failure) — either directly or via message heuristics.
+/** Helper: check if an error is a 401 auth failure.
+ * Uses the same regex as withLLMRetry (/\b401\b|unauthorized/i) to ensure consistency. */
+function is401Like(err: unknown): boolean {
+  if (err instanceof Error) {
+    const status = (err as { status?: unknown }).status;
+    if (status === 401 || status === "401") return true;
+    // Match the same pattern as withLLMRetry: bare "401" as word boundary OR "unauthorized"
+    if (/\b401\b|unauthorized/i.test(err.message)) return true;
+    // Also match specific auth failure phrases for robustness
+    if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
+  }
+  return false;
+}
+
+/** Returns true when the error is a 401 (auth failure) — either directly or wrapped in LLMRetryError.
  * Handles both direct status and message-only auth errors (e.g. Ollama plain Error with "HTTP 401 Unauthorized").
- * Note: withLLMRetry short-circuits on 401 and rethrows the original error directly, never wrapping
- * it in LLMRetryError — so all 401s arrive here as direct errors, not wrapped causes. */
+ * Note: withLLMRetry short-circuits on 401 and rethrows directly, so 401s rarely arrive wrapped,
+ * but we handle both forms for robustness (consistent with is404OrWrapped and is403OrWrapped). */
 function is401OrWrapped(err: Error): boolean {
-  const status = (err as { status?: unknown }).status;
-  if (status === 401 || status === "401") return true;
-  // Match HTTP 401 patterns in message — covers plain errors from Ollama and message-only auth failures
-  // where .status is not set (e.g. cross-realm errors or providers that throw plain Error).
-  if (/\bHTTP\s+401\b|\b401\b.*unauthorized|unauthorized.*\b401\b/i.test(err.message)) return true;
-  if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
+  if (is401Like(err)) return true;
+  if (err instanceof LLMRetryError && is401Like(err.cause)) return true;
   return false;
 }
 
