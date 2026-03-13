@@ -15,3 +15,16 @@ export function expandTilde(p: string): string {
   }
   return p;
 }
+
+/**
+ * Expand home directory placeholders in a path.
+ * Handles both leading "~" and literal "$HOME" prefixes.
+ * Use this when reading path values from user configuration files.
+ */
+export function expandHomePlaceholders(p: string): string {
+  const home = process.env.HOME ?? homedir();
+  if (p === "$HOME" || p.startsWith("$HOME/")) {
+    return home + p.slice("$HOME".length);
+  }
+  return expandTilde(p);
+}
