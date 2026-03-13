@@ -1310,8 +1310,8 @@ export async function safeEmbed(
           subsystem: "embeddings",
         });
       }
-    } else if (!isConfigError(asErr)) {
-      // Single-provider path: suppress 404/403/401 config errors to avoid double-reporting.
+    } else if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
+      // Single-provider path: suppress 404/403/401 config errors and 429 rate-limit errors to avoid double-reporting.
       capturePluginError(asErr, {
         operation: "safe-embed",
         subsystem: "embeddings",
