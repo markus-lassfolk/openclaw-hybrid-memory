@@ -167,7 +167,7 @@ export function isContextLengthError(err: unknown): boolean {
     const status = (err as { status?: unknown }).status;
     if (typeof status === "number" && status === 400) {
       const msg = ((err as { message?: string }).message ?? "").toLowerCase();
-      if (msg.includes("context length") || msg.includes("maximum context") || msg.includes("tokens")) {
+      if (msg.includes("context length") || msg.includes("maximum context") || /max.*token/i.test(msg)) {
         return true;
       }
     }
