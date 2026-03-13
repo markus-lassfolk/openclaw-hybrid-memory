@@ -800,6 +800,7 @@ export async function createDashboardServer(
     log(
       `[dashboard-server] Port ${port} in use (EADDRINUSE), falling back to OS-assigned port`,
     )
+    server.removeAllListeners('listening')
     boundPort = await tryListen(0)
   }
 
