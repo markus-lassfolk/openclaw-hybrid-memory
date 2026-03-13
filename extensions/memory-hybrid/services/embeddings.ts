@@ -1085,6 +1085,11 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   private readonly providers: EmbeddingProvider[];
   private readonly labels: string[];
   private activeIndex = 0;
+  /** Per-provider cooldown: maps provider index → timestamp until which it should be skipped.
+   *  Config errors (401/403/404) mark a provider as failed for CHAIN_PROVIDER_COOLDOWN_MS so we
+   *  don't waste a round-trip retrying a known-broken provider on every call (#385 Bug 4). */
+  private readonly failedUntil = new Map<number, number>();
+  private static readonly COOLDOWN_MS = 60_000; // 60s, matches FallbackEmbeddingProvider.retryIntervalMs
   readonly dimensions: number;
   modelName: string;
   get activeProvider(): string {
@@ -1109,16 +1114,37 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     this.activeIndex = 0;
     this.modelName = this.providers[0].modelName;
     const collectedErrors: Error[] = [];
+    const now = Date.now();
     while (this.activeIndex < this.providers.length) {
+      // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
+      const cooldownExpiry = this.failedUntil.get(this.activeIndex);
+      if (cooldownExpiry !== undefined) {
+        if (now < cooldownExpiry) {
+          this.activeIndex++;
+          if (this.activeIndex < this.providers.length) {
+            this.modelName = this.providers[this.activeIndex].modelName;
+          }
+          continue;
+        }
+        // Cooldown expired — let this provider retry
+        this.failedUntil.delete(this.activeIndex);
+      }
       try {
-        return await this.providers[this.activeIndex].embed(text);
+        const result = await this.providers[this.activeIndex].embed(text);
+        // Success — clear any lingering cooldown (belt-and-suspenders)
+        this.failedUntil.delete(this.activeIndex);
+        return result;
       } catch (err) {
         // Only capture individual provider failures when there are remaining fallbacks.
         // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
         // Skip config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) — always operator issues (#329, #394, #385).
-        const isLast = this.activeIndex + 1 >= this.providers.length;
         const asErr = err instanceof Error ? err : new Error(String(err));
         collectedErrors.push(asErr);
+        // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
+        if (isConfigError(asErr)) {
+          this.failedUntil.set(this.activeIndex, now + ChainEmbeddingProvider.COOLDOWN_MS);
+        }
+        const isLast = this.activeIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
@@ -1141,14 +1167,34 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     this.activeIndex = 0;
     this.modelName = this.providers[0].modelName;
     const collectedErrors: Error[] = [];
+    const now = Date.now();
     while (this.activeIndex < this.providers.length) {
+      // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
+      const cooldownExpiry = this.failedUntil.get(this.activeIndex);
+      if (cooldownExpiry !== undefined) {
+        if (now < cooldownExpiry) {
+          this.activeIndex++;
+          if (this.activeIndex < this.providers.length) {
+            this.modelName = this.providers[this.activeIndex].modelName;
+          }
+          continue;
+        }
+        // Cooldown expired — let this provider retry
+        this.failedUntil.delete(this.activeIndex);
+      }
       try {
-        return await this.providers[this.activeIndex].embedBatch(texts);
+        const result = await this.providers[this.activeIndex].embedBatch(texts);
+        this.failedUntil.delete(this.activeIndex);
+        return result;
       } catch (err) {
         // Skip config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) — always operator issues (#329, #394, #385).
-        const isLast = this.activeIndex + 1 >= this.providers.length;
         const asErr = err instanceof Error ? err : new Error(String(err));
         collectedErrors.push(asErr);
+        // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
+        if (isConfigError(asErr)) {
+          this.failedUntil.set(this.activeIndex, now + ChainEmbeddingProvider.COOLDOWN_MS);
+        }
+        const isLast = this.activeIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
