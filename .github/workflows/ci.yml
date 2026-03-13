@@ -254,7 +254,7 @@ jobs:
         run: |
           cd extensions/memory-hybrid
           npm pack
-          TARBALL=$(ls openclaw-hybrid-memory-*.tgz | head -1)
+          TARBALL=$(find . -maxdepth 1 -name "openclaw-hybrid-memory-*.tgz" | head -1)
           TARBALL_PATH="$(pwd)/$TARBALL"
           mkdir -p /tmp/smoke-test && cd /tmp/smoke-test
           npm init -y
