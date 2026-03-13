@@ -766,33 +766,57 @@ export async function createDashboardServer(
     }
   })
 
-  return new Promise((resolve, reject) => {
-    // Reject on startup errors (e.g. EADDRINUSE). This handler is replaced
-    // with a logging handler after successful bind so post-bind errors are not
-    // silently swallowed.
-    function onStartupError(err: NodeJS.ErrnoException) {
-      reject(err)
-    }
-    server.once('error', onStartupError)
+  /** Attempt to bind `server` to the given port; resolves with the bound port. */
+  function tryListen(targetPort: number): Promise<number> {
+    return new Promise((resolve, reject) => {
+      function onStartupError(err: NodeJS.ErrnoException) {
+        reject(err)
+      }
+      server.once('error', onStartupError)
 
-    server.listen(port, '127.0.0.1', () => {
-      const addr = server.address()
-      const boundPort = typeof addr === 'object' && addr ? addr.port : port
-      server.removeAllListeners('error')
-      server.on('error', (err: NodeJS.ErrnoException) => {
-        if (ctx.logger?.error) {
-          ctx.logger.error(`[dashboard-server] Server error: ${err}`)
-        } else {
-          console.error('[dashboard-server] Server error:', err)
-        }
-      })
-      resolve({
-        server,
-        port: boundPort,
-        close() {
-          server.close()
-        },
+      server.listen(targetPort, '127.0.0.1', () => {
+        const addr = server.address()
+        const boundPort = typeof addr === 'object' && addr ? addr.port : targetPort
+        server.removeAllListeners('error')
+        resolve(boundPort)
       })
     })
+  }
+
+  let boundPort: number
+  try {
+    boundPort = await tryListen(port)
+  } catch (err: unknown) {
+    const isAddrInUse =
+      err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
+    if (!isAddrInUse) throw err
+
+    // Port is occupied (likely a previous instance that didn't shut down
+    // cleanly). Fall back to an OS-assigned ephemeral port so the dashboard
+    // remains available rather than failing entirely.
+    const log = ctx.logger?.error
+      ? (m: string) => ctx.logger!.error!(m)
+      : (m: string) => console.warn(m)
+    log(
+      `[dashboard-server] Port ${port} in use (EADDRINUSE), falling back to OS-assigned port`,
+    )
+    boundPort = await tryListen(0)
+  }
+
+  // Install permanent error handler now that the server is bound.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (ctx.logger?.error) {
+      ctx.logger.error(`[dashboard-server] Server error: ${err}`)
+    } else {
+      console.error('[dashboard-server] Server error:', err)
+    }
   })
+
+  return {
+    server,
+    port: boundPort,
+    close() {
+      server.close()
+    },
+  }
 }
