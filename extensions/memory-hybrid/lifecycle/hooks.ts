@@ -386,6 +386,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   /** Record activity for a session (called on before_agent_start). */
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
+    // Clear any stale swept marker from a previous session that used the same key.
+    // This prevents the agent_end handler from incorrectly skipping removeSession()
+    // when a session key is reused (e.g., periodic cron jobs or "default" fallback).
+    sweptSessions.delete(sessionKey);
   }
 
   /**
