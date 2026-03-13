@@ -11,6 +11,7 @@ import {
   is403Like,
   is500Like,
   isOllamaOOM,
+  isContextLengthError,
   UnconfiguredProviderError,
 } from "../services/chat.js";
 
@@ -1222,5 +1223,54 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#395)", () =
     expect(fn).toHaveBeenCalledTimes(1);
     // Must not report to GlitchTip
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("isContextLengthError (#442)", () => {
+  it("detects the exact OpenAI error message", () => {
+    const err = Object.assign(
+      new Error("400 Invalid 'input': maximum context length is 8192 tokens."),
+      { status: 400 },
+    );
+    expect(isContextLengthError(err)).toBe(true);
+  });
+
+  it("detects status=400 with context length in message", () => {
+    const err = Object.assign(
+      new Error("400 Bad Request: context length exceeded"),
+      { status: 400 },
+    );
+    expect(isContextLengthError(err)).toBe(true);
+  });
+
+  it("does not match a generic 400 error", () => {
+    const err = Object.assign(
+      new Error("400 Bad Request: invalid model name"),
+      { status: 400 },
+    );
+    expect(isContextLengthError(err)).toBe(false);
+  });
+
+  it("does not match a 404 or 5xx error", () => {
+    expect(isContextLengthError(new Error("404 Not Found"))).toBe(false);
+    expect(isContextLengthError(new Error("500 Internal Server Error"))).toBe(false);
+  });
+});
+
+describe("withLLMRetry — context-length error (#442)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("#442: does not retry 400 context-length errors", async () => {
+    const err = Object.assign(
+      new Error("400 Invalid 'input': maximum context length is 8192 tokens."),
+      { status: 400 },
+    );
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("maximum context length");
+    // Must not have retried — short-circuits immediately
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
