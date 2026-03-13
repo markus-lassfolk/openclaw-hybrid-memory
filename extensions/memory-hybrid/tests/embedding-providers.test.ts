@@ -818,3 +818,57 @@ describe("safeEmbed — 403 suppression (#394)", () => {
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });
+
+describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("#442: truncates text > 32768 chars before calling the API", async () => {
+    const vector = [0.1, 0.2, 0.3];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string }) => {
+      return Promise.resolve({ data: [{ embedding: vector }] });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+
+    const longText = "a".repeat(40000); // exceeds 32768 char limit
+    await provider.embed(longText);
+
+    const calledInput: string = mockCreate.mock.calls[0][0].input;
+    expect(calledInput.length).toBeLessThanOrEqual(32768);
+  });
+
+  it("#442: does not truncate text within the limit", async () => {
+    const vector = [0.1, 0.2, 0.3];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string }) => {
+      return Promise.resolve({ data: [{ embedding: vector }] });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+
+    const shortText = "hello world";
+    await provider.embed(shortText);
+
+    const calledInput: string = mockCreate.mock.calls[0][0].input;
+    expect(calledInput).toBe(shortText);
+  });
+
+  it("#442: truncates batch items > 32768 chars in embedBatch", async () => {
+    const vector = [0.1, 0.2, 0.3];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string[] }) => {
+      return Promise.resolve({
+        data: params.input.map((_, i) => ({ index: i, embedding: vector })),
+      });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+
+    const texts = ["a".repeat(40000), "short text"];
+    await provider.embedBatch(texts);
+
+    const calledBatch: string[] = mockCreate.mock.calls[0][0].input;
+    expect(calledBatch[0].length).toBeLessThanOrEqual(32768);
+    expect(calledBatch[1]).toBe("short text");
+  });
+});

@@ -158,6 +158,31 @@ export function is500Like(err: unknown): boolean {
 }
 
 /**
+ * Detect 400 errors caused by exceeding the model's context length.
+ * These are unrecoverable without truncating the input — retrying is wasteful (#442).
+ * Pattern matches OpenAI's error: "400 Invalid 'input': maximum context length is 8192 tokens."
+ */
+export function isContextLengthError(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === "number" && status === 400) {
+      const msg = ((err as { message?: string }).message ?? "").toLowerCase();
+      if (msg.includes("context length") || msg.includes("maximum context") || msg.includes("tokens")) {
+        return true;
+      }
+    }
+  }
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return (
+      (msg.includes("400") || msg.includes("bad request")) &&
+      (msg.includes("context length") || msg.includes("maximum context") || msg.includes("max.*token"))
+    ) || /\b400\b.*maximum context length/i.test(err.message);
+  }
+  return false;
+}
+
+/**
  * Detect Ollama out-of-memory (OOM) errors from the model server.
  * Ollama returns HTTP 500 with a body like:
  *   "model requires more system memory (18.2 GiB) than is available (8.0 GiB)"
@@ -346,6 +371,11 @@ export async function withLLMRetry<T>(
       if (is404Like(lastError)) {
         const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
         console.warn(`memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`);
+        throw lastError;
+      }
+      // Don't retry 400 context-length errors — input was too long; retrying won't fix it (#442)
+      if (isContextLengthError(lastError)) {
+        console.warn(`memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling`);
         throw lastError;
       }
       const is429 = is429Like(lastError);
