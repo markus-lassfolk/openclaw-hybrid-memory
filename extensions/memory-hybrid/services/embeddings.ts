@@ -1122,7 +1122,10 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     this.modelName = providers[0].modelName;
   }
 
-  async embed(text: string): Promise<number[]> {
+  private async tryProviders<T>(
+    fn: (provider: EmbeddingProvider) => Promise<T>,
+    phase: string,
+  ): Promise<T> {
     let currentIndex = 0;
     this.modelName = this.providers[0].modelName;
     const collectedErrors: Error[] = [];
@@ -1144,7 +1147,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         this.failedUntil.delete(currentIndex);
       }
       try {
-        const result = await this.providers[currentIndex].embed(text);
+        const result = await fn(this.providers[currentIndex]);
         // Success — clear any lingering cooldown (belt-and-suspenders)
         this.failedUntil.delete(currentIndex);
         this.activeIndex = currentIndex;
@@ -1164,7 +1167,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "chain-failover",
-            phase: "embed",
+            phase,
           });
         }
         currentIndex++;
@@ -1178,55 +1181,12 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     throw new AllEmbeddingProvidersFailed(collectedErrors);
   }
 
+  async embed(text: string): Promise<number[]> {
+    return this.tryProviders((provider) => provider.embed(text), "embed");
+  }
+
   async embedBatch(texts: string[]): Promise<number[][]> {
-    let currentIndex = 0;
-    this.modelName = this.providers[0].modelName;
-    const collectedErrors: Error[] = [];
-    const now = Date.now();
-    while (currentIndex < this.providers.length) {
-      // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
-      const cooldownEntry = this.failedUntil.get(currentIndex);
-      if (cooldownEntry !== undefined) {
-        if (now < cooldownEntry.expiry) {
-          // Still in cooldown — add the original error to collectedErrors so safeEmbed can suppress correctly
-          collectedErrors.push(cooldownEntry.error);
-          currentIndex++;
-          if (currentIndex < this.providers.length) {
-            this.modelName = this.providers[currentIndex].modelName;
-          }
-          continue;
-        }
-        // Cooldown expired — let this provider retry
-        this.failedUntil.delete(currentIndex);
-      }
-      try {
-        const result = await this.providers[currentIndex].embedBatch(texts);
-        this.failedUntil.delete(currentIndex);
-        this.activeIndex = currentIndex;
-        return result;
-      } catch (err) {
-        // Skip config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) — always operator issues (#329, #394, #385).
-        const asErr = err instanceof Error ? err : new Error(String(err));
-        collectedErrors.push(asErr);
-        // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
-        if (isConfigError(asErr)) {
-          this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
-        }
-        const isLast = currentIndex + 1 >= this.providers.length;
-        if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
-          capturePluginError(asErr, {
-            subsystem: "embeddings",
-            operation: "chain-failover",
-            phase: "embedBatch",
-          });
-        }
-        currentIndex++;
-        if (currentIndex < this.providers.length) {
-          this.modelName = this.providers[currentIndex].modelName;
-        }
-      }
-    }
-    throw new AllEmbeddingProvidersFailed(collectedErrors);
+    return this.tryProviders((provider) => provider.embedBatch(texts), "embedBatch");
   }
 }
 
