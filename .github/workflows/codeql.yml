@@ -9,6 +9,10 @@ on:
     # Weekly on Monday at 08:00 UTC
     - cron: '0 8 * * 1'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
