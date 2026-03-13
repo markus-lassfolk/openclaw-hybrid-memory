@@ -1121,30 +1121,31 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
-    this.activeIndex = 0;
+    let currentIndex = 0;
     this.modelName = this.providers[0].modelName;
     const collectedErrors: Error[] = [];
     const now = Date.now();
-    while (this.activeIndex < this.providers.length) {
+    while (currentIndex < this.providers.length) {
       // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
-      const cooldownEntry = this.failedUntil.get(this.activeIndex);
+      const cooldownEntry = this.failedUntil.get(currentIndex);
       if (cooldownEntry !== undefined) {
         if (now < cooldownEntry.expiry) {
           // Still in cooldown — add the original error to collectedErrors so safeEmbed can suppress correctly
           collectedErrors.push(cooldownEntry.error);
-          this.activeIndex++;
-          if (this.activeIndex < this.providers.length) {
-            this.modelName = this.providers[this.activeIndex].modelName;
+          currentIndex++;
+          if (currentIndex < this.providers.length) {
+            this.modelName = this.providers[currentIndex].modelName;
           }
           continue;
         }
         // Cooldown expired — let this provider retry
-        this.failedUntil.delete(this.activeIndex);
+        this.failedUntil.delete(currentIndex);
       }
       try {
-        const result = await this.providers[this.activeIndex].embed(text);
+        const result = await this.providers[currentIndex].embed(text);
         // Success — clear any lingering cooldown (belt-and-suspenders)
-        this.failedUntil.delete(this.activeIndex);
+        this.failedUntil.delete(currentIndex);
+        this.activeIndex = currentIndex;
         return result;
       } catch (err) {
         // Only capture individual provider failures when there are remaining fallbacks.
@@ -1154,9 +1155,9 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         collectedErrors.push(asErr);
         // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
         if (isConfigError(asErr)) {
-          this.failedUntil.set(this.activeIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
+          this.failedUntil.set(currentIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
         }
-        const isLast = this.activeIndex + 1 >= this.providers.length;
+        const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
@@ -1164,9 +1165,9 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
             phase: "embed",
           });
         }
-        this.activeIndex++;
-        if (this.activeIndex < this.providers.length) {
-          this.modelName = this.providers[this.activeIndex].modelName;
+        currentIndex++;
+        if (currentIndex < this.providers.length) {
+          this.modelName = this.providers[currentIndex].modelName;
         }
       }
     }
@@ -1176,29 +1177,30 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    this.activeIndex = 0;
+    let currentIndex = 0;
     this.modelName = this.providers[0].modelName;
     const collectedErrors: Error[] = [];
     const now = Date.now();
-    while (this.activeIndex < this.providers.length) {
+    while (currentIndex < this.providers.length) {
       // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
-      const cooldownEntry = this.failedUntil.get(this.activeIndex);
+      const cooldownEntry = this.failedUntil.get(currentIndex);
       if (cooldownEntry !== undefined) {
         if (now < cooldownEntry.expiry) {
           // Still in cooldown — add the original error to collectedErrors so safeEmbed can suppress correctly
           collectedErrors.push(cooldownEntry.error);
-          this.activeIndex++;
-          if (this.activeIndex < this.providers.length) {
-            this.modelName = this.providers[this.activeIndex].modelName;
+          currentIndex++;
+          if (currentIndex < this.providers.length) {
+            this.modelName = this.providers[currentIndex].modelName;
           }
           continue;
         }
         // Cooldown expired — let this provider retry
-        this.failedUntil.delete(this.activeIndex);
+        this.failedUntil.delete(currentIndex);
       }
       try {
-        const result = await this.providers[this.activeIndex].embedBatch(texts);
-        this.failedUntil.delete(this.activeIndex);
+        const result = await this.providers[currentIndex].embedBatch(texts);
+        this.failedUntil.delete(currentIndex);
+        this.activeIndex = currentIndex;
         return result;
       } catch (err) {
         // Skip config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) — always operator issues (#329, #394, #385).
@@ -1206,9 +1208,9 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         collectedErrors.push(asErr);
         // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
         if (isConfigError(asErr)) {
-          this.failedUntil.set(this.activeIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
+          this.failedUntil.set(currentIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
         }
-        const isLast = this.activeIndex + 1 >= this.providers.length;
+        const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
@@ -1216,9 +1218,9 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
             phase: "embedBatch",
           });
         }
-        this.activeIndex++;
-        if (this.activeIndex < this.providers.length) {
-          this.modelName = this.providers[this.activeIndex].modelName;
+        currentIndex++;
+        if (currentIndex < this.providers.length) {
+          this.modelName = this.providers[currentIndex].modelName;
         }
       }
     }
