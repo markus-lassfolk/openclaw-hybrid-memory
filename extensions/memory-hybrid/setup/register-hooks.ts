@@ -107,6 +107,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     hooks.onFrustrationDetect?.(api);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:attach" });
+    hooks.dispose();
     throw err;
   }
 

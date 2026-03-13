@@ -382,14 +382,20 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   /** Track sessions that were swept to prevent double-decrement of VectorDB refcount. */
   const sweptSessions = new Set<string>();
+  /** Counter to generate unique session instance IDs. */
+  let sessionInstanceCounter = 0;
+  /** Map session keys to their current instance ID to distinguish reused keys. */
+  const sessionKeyToInstance = new Map<string, number>();
 
   /** Record activity for a session (called on before_agent_start). */
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
-    // Clear any stale swept marker from a previous session that used the same key.
-    // This prevents the agent_end handler from incorrectly skipping removeSession()
-    // when a session key is reused (e.g., periodic cron jobs or "default" fallback).
-    sweptSessions.delete(sessionKey);
+    // Assign a new instance ID when a session key is reused.
+    // This allows swept markers to distinguish between the old session instance
+    // and the new one, preventing late agent_end from the old instance from
+    // incorrectly triggering removeSession() for the new instance.
+    sessionInstanceCounter++;
+    sessionKeyToInstance.set(sessionKey, sessionInstanceCounter);
   }
 
   /**
@@ -399,6 +405,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
    */
   function clearSessionState(sessionKey: string): void {
     sessionStartSeen.delete(sessionKey);
+    sessionKeyToInstance.delete(sessionKey);
     ambientSeenFactsMap.delete(sessionKey);
     ambientLastEmbeddingMap.delete(sessionKey);
     frustrationStateMap.delete(sessionKey);
@@ -468,6 +475,26 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         if (value) sessionLastActivity.delete(value);
       }
     }
+
+    // Issue #463: Bound sweptSessions
+    if (sweptSessions.size > MAX_TRACKED_SESSIONS) {
+      const excess = sweptSessions.size - MAX_TRACKED_SESSIONS;
+      const keys = sweptSessions.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) sweptSessions.delete(value);
+      }
+    }
+
+    // Issue #463: Bound sessionKeyToInstance
+    if (sessionKeyToInstance.size > MAX_TRACKED_SESSIONS) {
+      const excess = sessionKeyToInstance.size - MAX_TRACKED_SESSIONS;
+      const keys = sessionKeyToInstance.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) sessionKeyToInstance.delete(value);
+      }
+    }
   }
 
   /**
@@ -482,14 +509,19 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     for (const [sessionKey, lastActive] of sessionLastActivity) {
       if (lastActive < cutoff) {
+        // Capture the instance ID before clearing state
+        const instanceId = sessionKeyToInstance.get(sessionKey);
         clearSessionState(sessionKey);
         // Decrement VectorDB refcount for orphaned sessions (open() was called
         // on before_agent_start but removeSession() never fired on agent_end)
         try {
           ctx.vectorDb.removeSession();
-          // Track that this session's refcount was already decremented to prevent
+          // Track that this session instance's refcount was already decremented to prevent
           // double-decrement if agent_end fires later for a long-running turn.
-          sweptSessions.add(sessionKey);
+          // Use composite key (sessionKey:instanceId) to distinguish reused session keys.
+          if (instanceId !== undefined) {
+            sweptSessions.add(`${sessionKey}:${instanceId}`);
+          }
         } catch {
           // Non-fatal — refcount may already be 0
         }
@@ -2502,14 +2534,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // guarantees this fires only after the async handlers above have fully resolved.
     api.on("agent_end", async (event: unknown) => {
       const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-      // Only decrement if this session wasn't already swept by sweepStaleSessions().
-      // A long-running turn (>30min) could be swept and then later fire agent_end,
-      // causing a double-decrement of the VectorDB refcount.
-      if (!sweptSessions.has(sessionKey)) {
+      // Only decrement if this session instance wasn't already swept by sweepStaleSessions().
+      // Use composite key (sessionKey:instanceId) to distinguish reused session keys.
+      const instanceId = sessionKeyToInstance.get(sessionKey);
+      const compositeKey = instanceId !== undefined ? `${sessionKey}:${instanceId}` : sessionKey;
+      if (!sweptSessions.has(compositeKey)) {
         ctx.vectorDb.removeSession();
       } else {
         // Clean up the swept marker now that agent_end has fired
-        sweptSessions.delete(sessionKey);
+        sweptSessions.delete(compositeKey);
       }
     });
   };
@@ -2525,6 +2558,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
     // Clear all session state to release memory
     sessionStartSeen.clear();
+    sessionKeyToInstance.clear();
     ambientSeenFactsMap.clear();
     ambientLastEmbeddingMap.clear();
     frustrationStateMap.clear();
