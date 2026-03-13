@@ -740,6 +740,7 @@ export interface DashboardServer {
 function bindServerToPort(server: Server, port: number, ctx: DashboardContext): Promise<number> {
   return new Promise((resolve, reject) => {
     function onStartupError(err: NodeJS.ErrnoException) {
+      server.removeAllListeners('listening')
       reject(err)
     }
     server.once('error', onStartupError)
@@ -837,7 +838,7 @@ export async function createDashboardServer(
           `[dashboard-server] Port ${tryPort} already in use (EADDRINUSE); retrying on port ${nextPort}`,
         )
       } else {
-        console.warn(
+        console.error(
           `[dashboard-server] Port ${tryPort} already in use (EADDRINUSE); retrying on port ${nextPort}`,
         )
       }
