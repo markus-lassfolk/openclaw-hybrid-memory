@@ -3828,6 +3828,22 @@ export class FactsDB {
     return this.pruneExpired();
   }
 
+  /**
+   * Remove orphaned rows from memory_links where source_fact_id or
+   * target_fact_id no longer reference an existing fact.
+   * Returns the number of deleted rows.
+   */
+  pruneOrphanedLinks(): number {
+    const result = this.liveDb
+      .prepare(
+        `DELETE FROM memory_links
+         WHERE source_fact_id NOT IN (SELECT id FROM facts)
+            OR target_fact_id NOT IN (SELECT id FROM facts)`,
+      )
+      .run();
+    return result.changes;
+  }
+
   /** Alias for backfillDecayClasses() for backward compatibility */
   backfillDecay(): Record<string, number> {
     return this.backfillDecayClasses();
