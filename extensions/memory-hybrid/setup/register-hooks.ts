@@ -52,11 +52,20 @@ export interface HooksContext {
   issueStore: import("../backends/issue-store.js").IssueStore | null;
 }
 
+/** Issue #463: Returned handle for lifecycle hook cleanup and diagnostics. */
+export interface LifecycleHooksHandle {
+  /** Dispose all timers and clear per-session state (call on plugin stop). */
+  dispose: () => void;
+  /** Get current per-session map sizes for memory diagnostics. */
+  getSessionStats: () => Record<string, number>;
+}
+
 /**
  * Register all lifecycle hooks with the OpenClaw API.
  * Creates and attaches before_agent_start and agent_end event handlers.
+ * Returns a handle for cleanup (dispose) and diagnostics (getSessionStats).
  */
-export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi): void {
+export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi): LifecycleHooksHandle {
   let lifecycleContext: LifecycleContext;
   try {
     lifecycleContext = {
@@ -324,4 +333,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Note: This is a workaround for the fact that the hooks need to update these values
   // but we can't easily pass them by reference in TypeScript without using objects.
   // The hooks update ctx.currentAgentId and ctx.lastProgressiveIndexIds internally.
+
+  // Issue #463: Return handle for cleanup and diagnostics
+  return {
+    dispose: hooks.dispose,
+    getSessionStats: hooks.getSessionStats,
+  };
 }

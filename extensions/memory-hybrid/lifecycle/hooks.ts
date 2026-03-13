@@ -364,14 +364,52 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const authFailureRecallsThisSession = new Map<string, number>();
   // Track session starts for retrieval directives
   const sessionStartSeen = new Set<string>();
+  // Per-session frustration state (Issue #263, moved here by #463 for centralized cleanup)
+  const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
   // Ambient retrieval session state (Issue #156) — scoped per session key.
   // Bounded to MAX_TRACKED_SESSIONS to prevent memory leak from long-running agents.
   const MAX_TRACKED_SESSIONS = 200;
   const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
   const ambientLastEmbeddingMap = new Map<string, number[] | null>();
 
-  /** Evict oldest entries if maps exceed the session limit. */
+  // Issue #463: Track last activity time per session for stale session sweep.
+  // When agent_end doesn't fire (timeout, crash, isolated session cleanup failure),
+  // sessions leak indefinitely. This map enables TTL-based eviction.
+  const sessionLastActivity = new Map<string, number>();
+  /** Maximum age (ms) for a session entry before it's considered stale and swept. */
+  const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  /** How often to run the stale session sweep (ms). */
+  const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+  /** Record activity for a session (called on before_agent_start). */
+  function touchSession(sessionKey: string): void {
+    sessionLastActivity.set(sessionKey, Date.now());
+  }
+
+  /**
+   * Clear ALL per-session state for a given session key.
+   * Centralizes cleanup that was previously scattered across many agent_end handlers.
+   * Issue #463: prevents leaks when agent_end doesn't fire.
+   */
+  function clearSessionState(sessionKey: string): void {
+    sessionStartSeen.delete(sessionKey);
+    ambientSeenFactsMap.delete(sessionKey);
+    ambientLastEmbeddingMap.delete(sessionKey);
+    frustrationStateMap.delete(sessionKey);
+    sessionLastActivity.delete(sessionKey);
+    // Auth failure map uses compound keys with session prefix
+    const prefix = `${sessionKey}:`;
+    for (const key of authFailureRecallsThisSession.keys()) {
+      if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
+    }
+  }
+
+  /**
+   * Evict oldest entries if maps exceed the session limit.
+   * Issue #463: now covers ALL per-session maps, not just ambient maps.
+   */
   function pruneSessionMaps(): void {
+    // Bound ambient maps (existing behavior)
     if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
       const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
       const keys = ambientSeenFactsMap.keys();
@@ -383,7 +421,91 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
       }
     }
+
+    // Issue #463: Bound frustrationStateMap (was unbounded — each entry holds up to 20 turns)
+    if (frustrationStateMap.size > MAX_TRACKED_SESSIONS) {
+      const excess = frustrationStateMap.size - MAX_TRACKED_SESSIONS;
+      const keys = frustrationStateMap.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) frustrationStateMap.delete(value);
+      }
+    }
+
+    // Issue #463: Bound sessionStartSeen
+    if (sessionStartSeen.size > MAX_TRACKED_SESSIONS) {
+      const excess = sessionStartSeen.size - MAX_TRACKED_SESSIONS;
+      const keys = sessionStartSeen.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) sessionStartSeen.delete(value);
+      }
+    }
+
+    // Issue #463: Bound authFailureRecallsThisSession
+    if (authFailureRecallsThisSession.size > MAX_TRACKED_SESSIONS * 3) {
+      // Auth failure map has compound keys (session:target), so allow 3x headroom
+      const excess = authFailureRecallsThisSession.size - MAX_TRACKED_SESSIONS * 3;
+      const keys = authFailureRecallsThisSession.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) authFailureRecallsThisSession.delete(value);
+      }
+    }
+
+    // Issue #463: Bound sessionLastActivity
+    if (sessionLastActivity.size > MAX_TRACKED_SESSIONS) {
+      const excess = sessionLastActivity.size - MAX_TRACKED_SESSIONS;
+      const keys = sessionLastActivity.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) sessionLastActivity.delete(value);
+      }
+    }
   }
+
+  /**
+   * Issue #463: Sweep sessions that haven't had activity within STALE_SESSION_TTL_MS.
+   * This catches sessions where agent_end never fired (timeout, crash, orphaned cron/sub-agent).
+   * Also decrements VectorDB refcount for swept sessions to prevent refcount leak.
+   */
+  function sweepStaleSessions(): number {
+    const now = Date.now();
+    const cutoff = now - STALE_SESSION_TTL_MS;
+    let swept = 0;
+
+    for (const [sessionKey, lastActive] of sessionLastActivity) {
+      if (lastActive < cutoff) {
+        clearSessionState(sessionKey);
+        // Decrement VectorDB refcount for orphaned sessions (open() was called
+        // on before_agent_start but removeSession() never fired on agent_end)
+        try {
+          ctx.vectorDb.removeSession();
+        } catch {
+          // Non-fatal — refcount may already be 0
+        }
+        swept++;
+      }
+    }
+
+    return swept;
+  }
+
+  // Issue #463: Periodic stale session sweep timer.
+  // Cleans up leaked sessions from cron/sub-agent runs where agent_end never fired.
+  let staleSweepTimer: ReturnType<typeof setInterval> | null = null;
+  staleSweepTimer = setInterval(() => {
+    try {
+      const swept = sweepStaleSessions();
+      if (swept > 0) {
+        // Log using a simple approach — the api logger isn't directly available here,
+        // but the sweep count will be visible when agent_end handlers check map sizes.
+        // The actual logging happens in the plugin service's prune timer.
+      }
+    } catch {
+      // Non-fatal
+    }
+  }, STALE_SWEEP_INTERVAL_MS);
 
   const resolveSessionKey = (event: unknown, api?: ClawdbotPluginApi): string | null => {
     const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
@@ -411,6 +533,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       // Increment VectorDB refcount so a concurrent session teardown does not prematurely
       // close the shared singleton while this session is still active (fixes issue #106).
       ctx.vectorDb.open();
+
+      // Issue #463: Track session activity for stale session sweep.
+      const touchKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+      touchSession(touchKey);
 
       if (!restartPendingClearedRef.value && existsSync(getRestartPendingPath())) {
         restartPendingClearedRef.value = true; // Set flag before unlink to prevent race
@@ -1773,7 +1899,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   // ---- Phase 1: Frustration detection (Issue #263) ----
   // Per-session frustration state: maps sessionKey → { level, turns[] }
-  const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
+  // NOTE: frustrationStateMap is declared at the top of createLifecycleHooks() alongside
+  // other per-session maps (moved there by Issue #463 for centralized session cleanup).
 
   // Shared tool effectiveness store (lazy-initialized, reused across messages)
   let cachedToolStore: ToolEffectivenessStore | null = null;
@@ -1959,40 +2086,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    // Clear session-start dedup state on session end to avoid unbounded growth over long-lived gateways.
-    if (ctx.cfg.autoRecall.enabled) {
-      api.on("agent_end", async (event: unknown) => {
-        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-        sessionStartSeen.delete(sessionKey);
-      });
-    }
-
-    if (ctx.cfg.ambient.enabled) {
-      api.on("agent_end", async (event: unknown) => {
-        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-        ambientSeenFactsMap.delete(sessionKey);
-        ambientLastEmbeddingMap.delete(sessionKey);
-      });
-    }
-
-    if (ctx.cfg.frustrationDetection?.enabled !== false) {
-      api.on("agent_end", async (event: unknown) => {
-        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-        frustrationStateMap.delete(sessionKey);
-      });
-    }
-
-    // Clear auth failure dedup map on session end
-    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
-      api.on("agent_end", async (event: unknown) => {
-        const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-        const prefix = `${sessionKey}:`;
-        for (const key of authFailureRecallsThisSession.keys()) {
-          if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
-        }
-        api.logger.info?.("memory-hybrid: cleared auth failure recall dedup map for ended session");
-      });
-    }
+    // Issue #463: Centralized session state cleanup on session end.
+    // Replaces individual per-map cleanup handlers with a single clearSessionState() call.
+    // This ensures ALL per-session state is freed even if individual feature flags change.
+    api.on("agent_end", async (event: unknown) => {
+      const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+      clearSessionState(sessionKey);
+      api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
+    });
 
     // Compaction on session end — migrate completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT
     if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.compactionOnSessionEnd) {
@@ -2395,5 +2496,35 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     });
   };
 
-  return { onAgentStart, onAgentEnd, onFrustrationDetect };
+  /**
+   * Issue #463: Dispose function to clean up the stale session sweep timer.
+   * Must be called when the plugin stops to prevent the timer from outliving the plugin.
+   */
+  const dispose = (): void => {
+    if (staleSweepTimer) {
+      clearInterval(staleSweepTimer);
+      staleSweepTimer = null;
+    }
+    // Clear all session state to release memory
+    sessionStartSeen.clear();
+    ambientSeenFactsMap.clear();
+    ambientLastEmbeddingMap.clear();
+    frustrationStateMap.clear();
+    authFailureRecallsThisSession.clear();
+    sessionLastActivity.clear();
+  };
+
+  /**
+   * Issue #463: Get current session state sizes for memory diagnostics.
+   */
+  const getSessionStats = (): Record<string, number> => ({
+    sessionStartSeen: sessionStartSeen.size,
+    ambientSeenFacts: ambientSeenFactsMap.size,
+    ambientLastEmbedding: ambientLastEmbeddingMap.size,
+    frustrationState: frustrationStateMap.size,
+    authFailureRecalls: authFailureRecallsThisSession.size,
+    sessionLastActivity: sessionLastActivity.size,
+  });
+
+  return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose, getSessionStats };
 }
