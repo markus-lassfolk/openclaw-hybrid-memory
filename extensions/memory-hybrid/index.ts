@@ -158,7 +158,7 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
 import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.js";
 import { registerTools } from "./setup/register-tools.js";
-import { registerLifecycleHooks, type HooksContext } from "./setup/register-hooks.js";
+import { registerLifecycleHooks, type HooksContext, type LifecycleHooksHandle } from "./setup/register-hooks.js";
 import { capturePluginError } from "./services/error-reporter.js";
 import { PythonBridge } from "./services/python-bridge.js";
 import type { EmbeddingRegistry } from "./services/embedding-registry.js";
@@ -235,6 +235,8 @@ let toolProposalStore: import("./backends/tool-proposal-store.js").ToolProposalS
 let provenanceService: ProvenanceService | null = null;
 let verificationStore: VerificationStore | null = null;
 let pythonBridge: PythonBridge | null = null;
+/** Issue #463: Handle for lifecycle hook cleanup (stale session sweep timer, etc.) */
+let lifecycleHooksHandle: LifecycleHooksHandle | null = null;
 let variantQueue: VariantGenerationQueue | null = null;
 let pendingLLMWarnings = createPendingLLMWarnings();
 
@@ -311,6 +313,11 @@ const memoryHybridPlugin = {
     toolProposalStore = null;
     provenanceService = null;
     verificationStore = null;
+    // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
+    if (lifecycleHooksHandle) {
+      lifecycleHooksHandle.dispose();
+      lifecycleHooksHandle = null;
+    }
     // pythonBridge shutdown will be added by #206
     if (pythonBridge) {
       pythonBridge.shutdown().catch(() => {});
@@ -487,7 +494,7 @@ const memoryHybridPlugin = {
 
     // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
     try {
-      registerLifecycleHooks({
+      lifecycleHooksHandle = registerLifecycleHooks({
         factsDb,
         vectorDb,
         embeddings,
