@@ -1085,10 +1085,10 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   private readonly providers: EmbeddingProvider[];
   private readonly labels: string[];
   private activeIndex = 0;
-  /** Per-provider cooldown: maps provider index → timestamp until which it should be skipped.
+  /** Per-provider cooldown: maps provider index → { timestamp until which it should be skipped, original error }.
    *  Config errors (401/403/404) mark a provider as failed for CHAIN_PROVIDER_COOLDOWN_MS so we
    *  don't waste a round-trip retrying a known-broken provider on every call (#385 Bug 4). */
-  private readonly failedUntil = new Map<number, number>();
+  private readonly failedUntil = new Map<number, { expiry: number; error: Error }>();
   private static readonly COOLDOWN_MS = 60_000; // 60s, matches FallbackEmbeddingProvider.retryIntervalMs
   readonly dimensions: number;
   modelName: string;
@@ -1117,9 +1117,11 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     const now = Date.now();
     while (this.activeIndex < this.providers.length) {
       // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
-      const cooldownExpiry = this.failedUntil.get(this.activeIndex);
-      if (cooldownExpiry !== undefined) {
-        if (now < cooldownExpiry) {
+      const cooldownEntry = this.failedUntil.get(this.activeIndex);
+      if (cooldownEntry !== undefined) {
+        if (now < cooldownEntry.expiry) {
+          // Still in cooldown — add the original error to collectedErrors so safeEmbed can suppress correctly
+          collectedErrors.push(cooldownEntry.error);
           this.activeIndex++;
           if (this.activeIndex < this.providers.length) {
             this.modelName = this.providers[this.activeIndex].modelName;
@@ -1142,7 +1144,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         collectedErrors.push(asErr);
         // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
         if (isConfigError(asErr)) {
-          this.failedUntil.set(this.activeIndex, now + ChainEmbeddingProvider.COOLDOWN_MS);
+          this.failedUntil.set(this.activeIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
         }
         const isLast = this.activeIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
@@ -1170,9 +1172,11 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     const now = Date.now();
     while (this.activeIndex < this.providers.length) {
       // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
-      const cooldownExpiry = this.failedUntil.get(this.activeIndex);
-      if (cooldownExpiry !== undefined) {
-        if (now < cooldownExpiry) {
+      const cooldownEntry = this.failedUntil.get(this.activeIndex);
+      if (cooldownEntry !== undefined) {
+        if (now < cooldownEntry.expiry) {
+          // Still in cooldown — add the original error to collectedErrors so safeEmbed can suppress correctly
+          collectedErrors.push(cooldownEntry.error);
           this.activeIndex++;
           if (this.activeIndex < this.providers.length) {
             this.modelName = this.providers[this.activeIndex].modelName;
@@ -1192,7 +1196,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         collectedErrors.push(asErr);
         // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
         if (isConfigError(asErr)) {
-          this.failedUntil.set(this.activeIndex, now + ChainEmbeddingProvider.COOLDOWN_MS);
+          this.failedUntil.set(this.activeIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
         }
         const isLast = this.activeIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
