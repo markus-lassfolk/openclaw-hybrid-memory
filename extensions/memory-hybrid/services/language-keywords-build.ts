@@ -102,7 +102,7 @@ ${block}`;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'parse-language-codes',
       severity: 'info',
-      subsystem: 'language-keywords'
+      subsystem: 'language-keywords',
     });
     return [];
   }
@@ -290,7 +290,7 @@ export async function generateIntentBasedLanguages(
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'parse-intent-response',
       severity: 'info',
-      subsystem: 'language-keywords'
+      subsystem: 'language-keywords',
     });
     return { translations: {}, triggerStructures: {}, extraction: {} };
   }
@@ -354,7 +354,7 @@ Each value must be an array of translated strings in the same order as the Engli
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: 'parse-translation-response',
       severity: 'info',
-      subsystem: 'language-keywords'
+      subsystem: 'language-keywords',
     });
     return {};
   }

@@ -19,7 +19,6 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { chunkMarkdown } from "../services/document-chunker.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { UnconfiguredProviderError } from "../services/chat.js";
 import { getCronModelConfig, getLLMModelPreference, getMemoryCategories, type HybridMemoryConfig, type MemoryCategory } from "../config.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "openclaw/plugin-sdk";
@@ -256,14 +255,11 @@ async function describeImageWithVision(opts: {
   }
 
   const finalError = lastError ?? new Error("Vision model failed");
-  // UnconfiguredProviderError = config issue (missing API key), not a code bug — don't report to GlitchTip.
-  if (!(finalError instanceof UnconfiguredProviderError)) {
-    capturePluginError(finalError, {
-      subsystem: "documents",
-      operation: "vision-describe",
-      phase: "runtime",
-    });
-  }
+  capturePluginError(finalError, {
+    subsystem: "documents",
+    operation: "vision-describe",
+    phase: "runtime",
+  });
   throw finalError;
 }
 

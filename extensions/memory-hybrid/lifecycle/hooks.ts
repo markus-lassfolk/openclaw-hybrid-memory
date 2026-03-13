@@ -24,7 +24,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
+import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, type PendingLLMWarnings } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
@@ -637,11 +637,28 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     if (hydeText.length > 10) textToEmbed = hydeText;
                   } catch (err) {
                     if (!directiveAbort.signal.aborted) {
-                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                        operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-                        subsystem: "auto-recall",
-                      });
-                      api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
+                      const hydeErr = err instanceof Error ? err : new Error(String(err));
+                      // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
+                      // OOM: Ollama model too large for available RAM — not a bug, fall back gracefully.
+                      const isTransient =
+                        isOllamaOOM(hydeErr) ||
+                        is500Like(hydeErr) ||
+                        is404Like(hydeErr) ||
+                        /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
+                      if (!isTransient) {
+                        capturePluginError(hydeErr, {
+                          operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
+                          subsystem: "auto-recall",
+                        });
+                      }
+                      if (isOllamaOOM(hydeErr)) {
+                        api.logger.warn(
+                          `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
+                          `Using raw query. Consider using a smaller model or configuring a cloud fallback.`
+                        );
+                      } else {
+                        api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
+                      }
                     }
                   }
                 }

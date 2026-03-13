@@ -8,6 +8,9 @@ import {
   chatCompleteWithRetry,
   createPendingLLMWarnings,
   is404Like,
+  is403Like,
+  is500Like,
+  isOllamaOOM,
   UnconfiguredProviderError,
 } from "../services/chat.js";
 
@@ -607,6 +610,192 @@ describe("chatCompleteWithRetry — 500 and 404 fallback (#302, #303)", () => {
   });
 });
 
+describe("chatCompleteWithRetry — 403 country/region restriction (#394, #395)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#394: does not report to GlitchTip when all models fail with plain 403 Error", async () => {
+    const err = new Error("403 Country, region, or territory not supported");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(err),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash"],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("403 Country");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#394: queues user warning and does not report to GlitchTip when all models return 403", async () => {
+    const err = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(err),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow("403");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/403/);
+    expect(drained[0]).toMatch(/country|region|access denied/i);
+  });
+
+  it("#395: withLLMRetry short-circuits on 403 and does not create LLMRetryError", async () => {
+    const err = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("chatCompleteWithRetry — 429 rate limiting (#397)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#397: does not report 429 to GlitchTip when all models are rate limited", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(
+            new Error("429 429 Too Many Requests: you (clawout) have reached your weekly usage limit"),
+          ),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#397: queues user-visible warning when rate limited (429)", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(
+            new Error("429 Too Many Requests: you have reached your weekly usage limit"),
+          ),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/429|rate.?limit/i);
+  });
+
+  it("#397: falls back to next model after primary is rate limited (429)", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn()
+            // Primary: rate limited (4x = initial + 3 retries; but 429 uses exponential backoff)
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            // Fallback: succeeds
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: "fallback ok" } }],
+            }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+      label: "test",
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result).toBe("fallback ok");
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(5);
+  });
+
+  it("#397: withLLMRetry does not report 429 to GlitchTip (isTransient)", async () => {
+    vi.clearAllMocks();
+    const fn = vi.fn().mockRejectedValue(
+      new Error("429 429 Too Many Requests: weekly limit reached"),
+    );
+    const promise = withLLMRetry(fn, { maxRetries: 1 });
+    const expectation = expect(promise).rejects.toThrow(LLMRetryError);
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
 describe("chatCompleteWithRetry — UnconfiguredProviderError (#328)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -677,5 +866,295 @@ describe("chatCompleteWithRetry — UnconfiguredProviderError (#328)", () => {
     const drained = warnings.drain();
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatch(/provider keys/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isOllamaOOM (#387)
+// ---------------------------------------------------------------------------
+
+describe("isOllamaOOM (#387)", () => {
+  it("matches standard Ollama OOM error message", () => {
+    expect(isOllamaOOM(new Error("model requires more system memory (18.2 GiB) than is available (8.0 GiB)"))).toBe(true);
+  });
+
+  it("matches 'not enough memory to load' phrasing", () => {
+    expect(isOllamaOOM(new Error("not enough memory to load model qwen3:8b"))).toBe(true);
+  });
+
+  it("matches 'requires X GiB' pattern", () => {
+    expect(isOllamaOOM(new Error("model requires 18.2 GiB of system memory"))).toBe(true);
+  });
+
+  it("matches bare OOM: prefix from Ollama", () => {
+    expect(isOllamaOOM(new Error("OOM: model 'qwen3:8b' cannot be loaded"))).toBe(true);
+  });
+
+  it("does not match generic 500 errors", () => {
+    expect(isOllamaOOM(new Error("HTTP 500 Internal Server Error"))).toBe(false);
+  });
+
+  it("does not match connection errors", () => {
+    expect(isOllamaOOM(new Error("ECONNREFUSED http://localhost:11434"))).toBe(false);
+  });
+
+  it("does not match 404 errors", () => {
+    expect(isOllamaOOM(new Error("404 model not found"))).toBe(false);
+  });
+
+  it("returns false for non-Error values", () => {
+    expect(isOllamaOOM("some string")).toBe(false);
+    expect(isOllamaOOM(null)).toBe(false);
+    expect(isOllamaOOM(500)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// is500Like — exported (#387)
+// ---------------------------------------------------------------------------
+
+describe("is500Like (#387)", () => {
+  it("matches HTTP 500 error message", () => {
+    expect(is500Like(new Error("HTTP 500 Internal Server Error"))).toBe(true);
+  });
+
+  it("matches OpenAI SDK InternalServerError with .status property", () => {
+    const err = Object.assign(new Error("InternalServerError"), { status: 500 });
+    expect(is500Like(err)).toBe(true);
+  });
+
+  it("does not match generic errors without 5xx", () => {
+    expect(is500Like(new Error("Something went wrong"))).toBe(false);
+  });
+
+  it("does not match connection errors", () => {
+    expect(is500Like(new Error("ECONNREFUSED"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withLLMRetry — OOM does not retry (#387)
+// ---------------------------------------------------------------------------
+
+describe("withLLMRetry — OOM does not retry (#387)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#387: does not retry Ollama OOM error (model requires more memory than available)", async () => {
+    const oomErr = new Error("model requires more system memory (18.2 GiB) than is available (8.0 GiB)");
+    const fn = vi.fn().mockRejectedValue(oomErr);
+
+    const promise = withLLMRetry(fn, { maxRetries: 3 });
+    const expectation = expect(promise).rejects.toThrow("model requires more system memory");
+    await vi.runAllTimersAsync();
+    await expectation;
+    // Must NOT retry — called exactly once
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("#387: does not report OOM to GlitchTip (thrown directly, not wrapped in LLMRetryError)", async () => {
+    const oomErr = new Error("model requires more system memory (18.2 GiB) than is available (8.0 GiB)");
+    const fn = vi.fn().mockRejectedValue(oomErr);
+
+    const promise = withLLMRetry(fn);
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chatCompleteWithRetry — OOM falls through to next model (#387)
+// ---------------------------------------------------------------------------
+
+describe("chatCompleteWithRetry — OOM falls through to next model (#387)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#387: falls through to next fallback model immediately when primary model OOMs", async () => {
+    const oomErr = new Error("model requires more system memory (18.2 GiB) than is available (8.0 GiB)");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn()
+            .mockRejectedValueOnce(oomErr)  // primary: OOM
+            .mockResolvedValueOnce({ choices: [{ message: { content: "fallback success" } }] }),  // fallback: ok
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "ollama/qwen3:8b",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash-lite"],
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result).toBe("fallback success");
+    // Primary called once (OOM, no retry), fallback called once
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("#387: does not report to GlitchTip when all models fail with OOM", async () => {
+    const oomErr = new Error("model requires more system memory (18.2 GiB) than is available (8.0 GiB)");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(oomErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "ollama/qwen3:8b",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["ollama/qwen3:4b"],
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    // OOM is a 500-like transient error — must NOT be reported to GlitchTip
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// is403Like (#395)
+// ---------------------------------------------------------------------------
+
+describe("is403Like", () => {
+  it("returns true for error with status 403", () => {
+    const err = Object.assign(new Error("Forbidden"), { status: 403 });
+    expect(is403Like(err)).toBe(true);
+  });
+
+  it("returns true for error with status '403' (string)", () => {
+    const err = Object.assign(new Error("Forbidden"), { status: "403" });
+    expect(is403Like(err)).toBe(true);
+  });
+
+  it("returns true for message starting with '403 Country, region, or territory not supported'", () => {
+    expect(is403Like(new Error("403 Country, region, or territory not supported"))).toBe(true);
+  });
+
+  it("returns true for message matching 'HTTP 403'", () => {
+    expect(is403Like(new Error("HTTP 403 Forbidden"))).toBe(true);
+  });
+
+  it("returns true for message matching '403 Forbidden'", () => {
+    expect(is403Like(new Error("403 Forbidden"))).toBe(true);
+  });
+
+  it("returns false for 404 error", () => {
+    expect(is403Like(new Error("404 Not Found"))).toBe(false);
+  });
+
+  it("returns false for unrelated error", () => {
+    expect(is403Like(new Error("Network error"))).toBe(false);
+  });
+
+  it("returns false for null", () => {
+    expect(is403Like(null)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chatCompleteWithRetry — 403 country/region restriction (#395)
+// ---------------------------------------------------------------------------
+
+describe("chatCompleteWithRetry — 403 country/region restriction (#395)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#395: does not report to GlitchTip when all models fail with LLMRetryError wrapping 403", async () => {
+    const err = new Error("403 Country, region, or territory not supported");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(err),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash"],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("403 Country");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#395: queues user warning and does not report to GlitchTip when all models return 403 with status", async () => {
+    const err = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(err),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow("403");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/403/);
+    expect(drained[0]).toMatch(/country|region|access denied/i);
+  });
+
+  it("#395: withLLMRetry short-circuits on 403 and does not create LLMRetryError", async () => {
+    const err = Object.assign(
+      new Error("403 Country, region, or territory not supported"),
+      { status: 403 },
+    );
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
+    // Must not have retried — short-circuits immediately
+    expect(fn).toHaveBeenCalledTimes(1);
+    // Must not report to GlitchTip
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });
