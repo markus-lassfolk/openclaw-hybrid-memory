@@ -605,9 +605,11 @@ function is403OrWrapped(err: Error): boolean {
 /** Helper: check if an error is a 401 auth failure.
  * Uses the same regex as withLLMRetry (/\b401\b|unauthorized/i) to ensure consistency. */
 function is401Like(err: unknown): boolean {
-  if (err instanceof Error) {
+  if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 401 || status === "401") return true;
+  }
+  if (err instanceof Error) {
     // Match the same pattern as withLLMRetry: bare "401" as word boundary OR "unauthorized"
     if (/\b401\b|unauthorized/i.test(err.message)) return true;
     // Also match specific auth failure phrases for robustness
