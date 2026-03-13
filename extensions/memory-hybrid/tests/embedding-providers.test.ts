@@ -185,6 +185,24 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     }
   });
 
+  it("#393: Google 403 country/region restriction fails fast and does not report to GlitchTip", async () => {
+    vi.useFakeTimers();
+    try {
+      const googleError = Object.assign(
+        new Error("403 Country, region, or territory not supported"),
+        { status: 403 },
+      );
+      const mockCreate = vi.fn().mockRejectedValue(googleError);
+      const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+      const provider = new Embeddings(client, "text-embedding-004", 768);
+      await expect(provider.embed("test")).rejects.toThrow("403 Country");
+      // Must NOT retry — is403Like should exit withLLMRetry on first attempt
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("updates modelName when a fallback model succeeds", async () => {
     vi.useFakeTimers();
     try {
