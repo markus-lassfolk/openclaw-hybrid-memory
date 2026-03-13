@@ -3837,8 +3837,9 @@ export class FactsDB {
     const result = this.liveDb
       .prepare(
         `DELETE FROM memory_links
-         WHERE source_fact_id NOT IN (SELECT id FROM facts)
-            OR target_fact_id NOT IN (SELECT id FROM facts)`,
+         WHERE (source_fact_id NOT IN (SELECT id FROM facts)
+            OR target_fact_id NOT IN (SELECT id FROM facts))
+           AND link_type != 'DERIVED_FROM'`,
       )
       .run();
     return result.changes;
