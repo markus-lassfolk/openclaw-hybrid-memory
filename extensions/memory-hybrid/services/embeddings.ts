@@ -992,8 +992,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
-        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
+        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+        if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -1010,8 +1010,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embed(text);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
-      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
+      // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -1041,8 +1041,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
-        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
+        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+        if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -1059,8 +1059,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embedBatch(texts);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
-      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
+      // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
