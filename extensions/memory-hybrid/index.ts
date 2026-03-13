@@ -391,6 +391,19 @@ const memoryHybridPlugin = {
     // Initialized lazily — PythonBridge only spawns the subprocess on first convert() call
     pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
 
+    // Eagerly check Python dependencies at startup so missing packages surface
+    // immediately (in logs) rather than on first document conversion (issue #422).
+    if (pythonBridge) {
+      const { ok, missing } = pythonBridge.checkDependencies();
+      if (!ok) {
+        const pkgs = missing.join(", ");
+        api.logger.warn(
+          `memory-hybrid: documents.enabled but required Python package(s) not installed: ${pkgs}. ` +
+            `Run: pip install ${missing.join(" ")}  (see extensions/memory-hybrid/scripts/requirements.txt)`,
+        );
+      }
+    }
+
     // ========================================================================
     // Contextual Variant Generator (Issue #159)
     // ========================================================================
