@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { capturePluginError } from "./error-reporter.js";
-import { withLLMRetry, is404Like, is403Like, LLMRetryError } from "./chat.js";
+import { withLLMRetry, is404Like, is403Like, is429OrWrapped, LLMRetryError } from "./chat.js";
 
 /**
  * Thrown by ChainEmbeddingProvider when every provider in the chain has failed.
@@ -568,6 +568,7 @@ function is403OrWrapped(err: Error): boolean {
   return false;
 }
 
+
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
@@ -672,8 +673,8 @@ export class Embeddings implements EmbeddingProvider {
     // lastErr is always defined here: constructor enforces models.length >= 1, so
     // the loop always runs at least once; either it returns early (success) or
     // sets lastErr on every iteration before reaching this point.
-    // Skip reporting 404 (model not found) and 403 (country/region restriction) — operator config issues, not bugs (#329, #394).
-    if (!is404OrWrapped(lastErr!) && !is403OrWrapped(lastErr!)) {
+    // Skip reporting 404 (model not found), 403 (country/region restriction), and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397).
+    if (!is404OrWrapped(lastErr!) && !is403OrWrapped(lastErr!) && !is429OrWrapped(lastErr!)) {
       capturePluginError(lastErr!, {
         subsystem: "embeddings",
         operation: "embed",
@@ -721,8 +722,8 @@ export class Embeddings implements EmbeddingProvider {
         );
       }
       if (lastErr !== undefined && allResults.length === i) {
-        // Skip reporting 404 (model not found) and 403 (country/region restriction) — operator config issues, not bugs (#329, #394).
-        if (!is404OrWrapped(lastErr) && !is403OrWrapped(lastErr)) {
+        // Skip reporting 404 (model not found), 403 (country/region restriction), and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397).
+        if (!is404OrWrapped(lastErr) && !is403OrWrapped(lastErr) && !is429OrWrapped(lastErr)) {
           capturePluginError(lastErr, {
             subsystem: "embeddings",
             operation: "embedBatch",
@@ -839,7 +840,23 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       }
       if (!resp.ok) {
         const body = await resp.text().catch(() => "");
-        throw new Error(`Ollama embed failed: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`);
+        const errMsg = `Ollama embed failed: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`;
+        // OOM: trip circuit breaker immediately — retrying the same model won't free memory.
+        const isOOM =
+          body.toLowerCase().includes("model requires more system memory") ||
+          body.toLowerCase().includes("not enough memory to load") ||
+          /\bmodel\s+requires\s+[\d.]+\s*gib/i.test(body) ||
+          /\boom:/i.test(body);
+        if (isOOM) {
+          circuit.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
+          circuit.failCount = OLLAMA_MAX_FAILS;
+          console.warn(
+            `memory-hybrid: Ollama model OOM (${this.modelName}) — model requires more memory than available. ` +
+            `Circuit breaker tripped; disabling endpoint ${this.endpoint} for 5min. ` +
+            `Consider using a smaller model or configuring a cloud embedding fallback.`
+          );
+        }
+        throw new Error(errMsg);
       }
       const data = await resp.json() as { embeddings: number[][] };
       if (!Array.isArray(data.embeddings)) {
@@ -918,8 +935,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting 403 (country/region restriction) and 404 (model not found) — operator config issues, not bugs (#394, #329)
-        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr)) {
+        // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
+        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -936,8 +953,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embed(text);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting 403 (country/region restriction) and 404 (model not found) — operator config issues, not bugs (#394, #329)
-      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr)) {
+      // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
+      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -967,8 +984,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting 403 (country/region restriction) and 404 (model not found) — operator config issues, not bugs (#394, #329)
-        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr)) {
+        // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
+        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -985,8 +1002,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embedBatch(texts);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting 403 (country/region restriction) and 404 (model not found) — operator config issues, not bugs (#394, #329)
-      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr)) {
+      // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
+      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -1041,8 +1058,8 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         const isLast = this.activeIndex + 1 >= this.providers.length;
         if (!isLast) {
           const asErr = err instanceof Error ? err : new Error(String(err));
-          // Skip reporting 403 (country/region restriction) and 404 (model not found) — operator config issues, not bugs (#394, #329)
-          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr)) {
+          // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
+          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
             capturePluginError(asErr, {
               subsystem: "embeddings",
               operation: "chain-failover",
@@ -1069,8 +1086,8 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         const isLast = this.activeIndex + 1 >= this.providers.length;
         if (!isLast) {
           const asErr = err instanceof Error ? err : new Error(String(err));
-          // Skip reporting 403 (country/region restriction) and 404 (model not found) — operator config issues, not bugs (#394, #329)
-          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr)) {
+          // Skip reporting 403 (country/region restriction), 404 (model not found), and 429 (rate limit) — operator config issues or transient errors, not bugs (#394, #329, #397)
+          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
             capturePluginError(asErr, {
               subsystem: "embeddings",
               operation: "chain-failover",
@@ -1216,9 +1233,9 @@ export async function safeEmbed(
     return await provider.embed(text);
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
-    // Skip reporting 403 (country/region restriction), 404 (model not found), and AllEmbeddingProvidersFailed
-    // — all are operator config issues or expected degradation, not bugs (#394, #329)
-    if (!(err instanceof AllEmbeddingProvidersFailed) && !is403OrWrapped(asErr) && !is404OrWrapped(asErr)) {
+    // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and AllEmbeddingProvidersFailed
+    // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #397)
+    if (!(err instanceof AllEmbeddingProvidersFailed) && !is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr)) {
       capturePluginError(asErr, {
         operation: 'safe-embed',
         subsystem: 'embeddings',

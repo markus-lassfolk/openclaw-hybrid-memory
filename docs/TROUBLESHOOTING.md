@@ -29,6 +29,197 @@ On **WSL2** or in **containers**, `systemctl --user` is often unavailable (`Fail
 
 ---
 
+## Gateway crashes / CLI: "gateway closed (1006 abnormal closure)"
+
+If the CLI fails with **"Failed to start CLI: Error: gateway closed (1006 abnormal closure (no close frame))"** and gateway target `ws://127.0.0.1:18789`, the gateway process is either **not running** or is crashing (often immediately after start or when loading plugins). **Most often the gateway simply isn't running** — start it first in a separate terminal (see below), then run your CLI command.
+
+### Step 1: Run the gateway in the foreground to see the real error
+
+In a **dedicated terminal**, run the gateway in the foreground so you see stdout/stderr:
+
+```bash
+openclaw gateway run
+```
+
+Leave this terminal open. Watch for:
+
+- **"Listening: 127.0.0.1:18789"** and **"web gateway heartbeat"** — gateway is up; the earlier CLI error was likely "gateway not running". In a second terminal run your CLI command (e.g. `openclaw hybrid-mem verify`).
+- **Crash or stack trace** — note the last lines (e.g. missing module, config error, native bindings).
+
+Common crash causes and fixes:
+
+| What you see | Cause | Fix |
+|--------------|--------|-----|
+| `Cannot find module 'better-sqlite3'` or `Could not locate bindings file (better_sqlite3.node)` | Extension native deps not built or wrong path | `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm install && npm rebuild better-sqlite3 @lancedb/lancedb`. Then run `openclaw gateway run` again from the gateway install (e.g. same Node as `openclaw`). |
+| `Cannot find module '@lancedb/lancedb'` or `@sinclair/typebox` | Extension deps not installed | `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm install`. Restart gateway. |
+| `embedding.apiKey is required` or plugin config error | Plugin throws at load | Edit `~/.openclaw/openclaw.json`: add valid `embedding.apiKey` and `embedding.model` under `plugins.entries["openclaw-hybrid-memory"].config`. Or temporarily set `plugins.entries["openclaw-hybrid-memory"].enabled` to `false` to confirm the rest of the gateway starts. |
+| `invalid config` / schema validation error | Core or plugin config schema | Fix or simplify the offending key in `openclaw.json`; if you use hybrid-memory, ensure the plugin's `openclaw.plugin.json` has `additionalProperties: true` in `configSchema` (see [Common issues](#common-issues)). |
+| **"non-loopback Control UI requires gateway.controlUi.allowedOrigins"** or **"set gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true"** | Gateway treats the host as non-loopback (e.g. WSL2 hostname) and refuses to start the Control UI without explicit CORS/origin config | Add to `openclaw.json` at the top level: `"gateway": { "controlUi": { "dangerouslyAllowHostHeaderOriginFallback": true } }` for local-only use, or set `"allowedOrigins": ["http://localhost:18789", "http://127.0.0.1:18789", "…"]` with your actual origins. Then run `openclaw gateway run` again. |
+| Process exits with no message | Possible crash in native code or during plugin init | Run `openclaw gateway run` under Node with more visibility: `NODE_OPTIONS='--trace-warnings' openclaw gateway run` or check `~/.openclaw/logs/` if your setup writes logs there. |
+| **"another gateway instance is already listening on ws://..."** then process exits | Duplicate-start detection or stale lock; gateway exits shortly after binding the port | Stop everything: `openclaw gateway stop`. In a **single** terminal run `openclaw gateway run` and leave it running (do not use both systemd and watchdog, or multiple `gateway run`). Use a **second** terminal for `openclaw status -deep`, `openclaw hybrid-mem verify`, etc. |
+| **"FATAL ERROR: Reached heap limit" / "JavaScript heap out of memory"** (often with ~4 GB in "Last few GCs") | Node.js process (gateway or CLI) exceeded V8 heap limit; can cause abrupt exit → CLI sees 1006 | **Immediate:** Run the gateway with a higher heap: `NODE_OPTIONS='--max-old-space-size=8192' openclaw gateway run` (8 GB). Reduce memory pressure: lower `agents.defaults.bootstrapMaxChars` / `bootstrapTotalMaxChars`, `contextTokens`, or auto-recall token budget in plugin config. See [Gateway or CLI runs out of memory (OOM)](#gateway-or-cli-runs-out-of-memory-oom) below. |
+
+### Step 2: WSL2 / no systemd — don’t use `gateway start`
+
+On **WSL2**, `openclaw gateway start` may try systemd and fail; the gateway never stays running, so the CLI gets 1006 when it connects.
+
+- **Use the foreground gateway:** In one terminal run `openclaw gateway run` and leave it running; use a second terminal for CLI/agent.
+- **Or use the cron watchdog:** It starts the gateway with `openclaw gateway run` in the background and restores last-known-good config if the gateway doesn’t come up. See [Gateway watchdog (cron-only, no systemd)](../scripts/README.md#gateway-watchdog-cron-only-no-systemd).
+
+### Step 3: After the gateway stays up
+
+Once `openclaw gateway run` shows "Listening: 127.0.0.1:18789" and doesn’t crash:
+
+- **In a second terminal** run `openclaw status -deep`, `openclaw hybrid-mem verify`, or any other CLI command. The 1006 error goes away as long as the gateway is still running in the first terminal.
+- To run the gateway in the background without cron: `nohup openclaw gateway run >> ~/.openclaw/logs/gateway.log 2>&1 &` (create `~/.openclaw/logs` if needed). If the gateway then exits (e.g. "another instance already listening"), use the cron watchdog or keep it in the foreground instead.
+
+### Gateway or CLI runs out of memory (OOM)
+
+If you see **"FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"** and a **"Last few GCs"** block showing the heap near ~4 GB (e.g. `4093.4 (4098.2) MB`), the Node process (gateway or CLI) hit the V8 heap limit and was killed. That can cause the gateway to exit abruptly, so the CLI then reports **1006 (gateway closed)**.
+
+- **Raise the heap for the gateway** so it has more headroom:
+  ```bash
+  export NODE_OPTIONS='--max-old-space-size=8192'
+  openclaw gateway run
+  ```
+  (8 GB; use 6144 for 6 GB if 8 is too much.) If you start the gateway via systemd or a script, set `NODE_OPTIONS` in that environment.
+
+- **Reduce memory pressure** so the process stays under the limit:
+  - In `openclaw.json`: lower `agents.defaults.bootstrapMaxChars` and `bootstrapTotalMaxChars`, and optionally `contextTokens`.
+  - In the memory-hybrid plugin config: lower auto-recall token budget (e.g. `autoRecall.limit` or the token cap) so less context is loaded per turn.
+
+- The stack trace may show **`ValueDeserializer::ReadValue`** / **`Message::Deserialize`** — that indicates a **very large message** (e.g. huge session or bootstrap) being deserialized. Trimming bootstrap files (e.g. `MEMORY.md`, identity files) and lowering the config limits above helps.
+
+---
+
+## Port not releasing (gateway port 18789 already in use)
+
+When the gateway exits (crash, OOM, or `gateway stop`) the port can stay in use so the next start fails with **"Port 18789 is already in use"** or **"another gateway instance is already listening"**. Common causes and what to do:
+
+### Why the port may not release
+
+1. **Stale process** — The Node process didn’t exit (e.g. stuck in GC during OOM, or not handling SIGTERM). The OS keeps the socket open until the process dies.
+2. **socat or other forwarder** — A **socat** (or similar) process is listening on the gateway port to forward LAN → localhost (e.g. `socat TCP-LISTEN:18789,bind=192.168.1.240,fork,reuseaddr TCP:127.0.0.1:18789`). The gateway then can’t bind. Stop the forwarder so the gateway can start; if you need LAN access, run socat **after** the gateway is up, e.g. on another port: `socat TCP-LISTEN:18790,bind=192.168.1.240,fork,reuseaddr TCP:127.0.0.1:18789`.
+3. **TIME_WAIT** — After the process closes the socket, the kernel keeps the port in TIME_WAIT for 60–120 seconds so in-flight packets can finish. You can’t bind to the same port until it’s released (unless the server sets SO_REUSEADDR; that’s up to OpenClaw).
+4. **Two supervisors** — Both systemd and the cron watchdog (or two manual `gateway run` invocations) can start the gateway; one may exit while the other or a child still holds the port.
+5. **Lock file / “another instance”** — OpenClaw may use an internal lock and report “port in use” even when nothing is listening; stopping all gateway processes and clearing locks fixes that.
+
+### Find what is using the port
+
+```bash
+# One of these should show the PID (or that the port is free)
+ss -tlnp | grep 18789
+lsof -i :18789
+fuser 18789/tcp
+```
+
+If you see a PID, that process is holding the port. OpenClaw sometimes prints it explicitly, e.g. **`pid 1688 markus: /usr/bin/socat TCP-LISTEN:18789,bind=192.168.1.240,...`** — then stop that process (e.g. `kill 1688` or `kill -9 1688`). If the port appears in use but no PID is listed, it’s often TIME_WAIT (wait 1–2 minutes and try again).
+
+### Force-release the port
+
+1. **Stop the gateway cleanly first:**
+   ```bash
+   openclaw gateway stop
+   ```
+   Wait a few seconds.
+
+2. **Run the force-release script** (from this repo or from `~/.openclaw/scripts/` if you copied it):
+   ```bash
+   ./scripts/force-release-gateway-port.sh
+   ```
+   It stops the systemd service (if any), finds any process on the gateway port (via `ss`, `lsof`, or `fuser`), sends SIGTERM then SIGKILL if needed, and reports whether the port is free. See [scripts/README.md](../scripts/README.md#force-release-gateway-port).
+
+3. **Manual kill** if you don’t use the script:
+   ```bash
+   openclaw gateway stop
+   # Replace PID with the number from ss/lsof/fuser
+   kill -TERM <PID>
+   sleep 3
+   kill -9 <PID>   # only if still running
+   ```
+
+4. **If the port is still “in use” but no process is listed** — Likely TIME_WAIT. Wait 60–120 seconds, then run `openclaw gateway run` again. Optionally reduce TIME_WAIT (requires root): `sysctl -w net.ipv4.tcp_fin_timeout=30` (default is often 60).
+
+### Avoid port-not-releasing in the future
+
+- Use **one** way to run the gateway: either **systemd** (`openclaw gateway start`/`stop`) **or** the **cron watchdog** with `openclaw gateway run`, not both.
+- After an OOM or crash, run the force-release script (or manual kill) before starting again.
+- Give the gateway enough heap so it’s less likely to OOM and leave a stuck process: `NODE_OPTIONS='--max-old-space-size=8192'` when starting the gateway.
+
+### WSL2 and Windows port conflict (e.g. 18789 on Windows)
+
+On **WSL2**, Windows and Linux share localhost in a way that can cause port clashes. If you see **"another gateway instance is already listening"** or the gateway won’t start, check **Windows** as well as WSL.
+
+**Check Windows:**
+
+```cmd
+netstat -ano | findstr 18789
+```
+
+If you see **LISTENING** with a PID (e.g. `TCP 0.0.0.0:18789 ... LISTENING 4700`), something on **Windows** is using 18789. Often that PID is **svchost.exe** — a Windows service is holding the port. Common causes: **IP Helper (iphlpsvc)** implementing a **portproxy** rule, or WSL’s localhost forwarding.
+
+**See portproxy rules (IP Helper / netsh)** — run in an **elevated** Command Prompt or PowerShell:
+
+```cmd
+netsh interface portproxy show all
+```
+
+If 18789 appears there, it’s a **port forwarding rule** (e.g. Windows → WSL). The **IP Helper service (iphlpsvc)** is what actually listens on the port for portproxy. To see which service is behind a PID:
+
+```powershell
+tasklist /FI "PID eq 4700" /V
+Get-Service | Where-Object { $_.Status -eq 'Running' -and $_.Name -match 'iphlp|winnat' }
+```
+
+**See excluded port ranges** (Hyper-V / WSL sometimes reserve blocks):
+
+```cmd
+netsh int ipv4 show excludedportrange protocol=tcp
+```
+
+If 18789 falls inside a range listed there, that’s why the port is “taken” from the system’s point of view. Restarting the **Windows NAT** driver can sometimes free ranges (run as Administrator: `net stop winnat` then `net start winnat`; WSL will be briefly affected).
+
+**Option A: Remove the Windows portproxy rule (if 18789 is in `portproxy show all` or `netsh dump`)**
+
+If you see a rule like `add v4tov4 listenport=18789 connectaddress=127.0.0.1 connectport=18789` (e.g. from `netsh dump | findstr 18789`), the **IP Helper service** is listening on 18789 to forward Windows → WSL. To free the port, run in an **elevated** Command Prompt (Admin):
+
+```cmd
+netsh interface portproxy delete v4tov4 listenport=18789 listenaddress=0.0.0.0 protocol=tcp
+netsh interface portproxy delete v4tov4 listenport=18789 listenaddress=127.0.0.1 protocol=tcp
+```
+
+Run both; the one that matches your rule will succeed. Then run `netsh interface portproxy show all` to confirm 18789 is gone, and restart the gateway in WSL. If WSL or a script re-creates the rule after a reboot, use **Option B** (different port) instead.
+
+**Option B: Use a different port (recommended)**
+
+Switch the gateway to a port that Windows is not using (e.g. **18790**), and use it everywhere:
+
+1. **WSL – systemd:** override the port in a drop-in (create `~/.config/systemd/user/openclaw-gateway.service.d/port.conf`):
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=/home/linuxbrew/.linuxbrew/opt/node/bin/node /home/markus/.npm-global/lib/node_modules/openclaw/dist/index.js gateway --port 18790
+   Environment=OPENCLAW_GATEWAY_PORT=18790
+   ```
+   Then `systemctl --user daemon-reload` and `openclaw gateway start` (or `systemctl --user start openclaw-gateway.service`).
+
+2. **WSL – manual/cron:** start with `OPENCLAW_GATEWAY_PORT=18790 openclaw gateway run --port 18790`.
+
+3. **CLI / agents:** set the same port when calling the gateway, e.g. in your shell profile or before commands:
+   ```bash
+   export OPENCLAW_GATEWAY_PORT=18790
+   openclaw status -deep
+   openclaw hybrid-mem verify
+   ```
+
+4. **Cron watchdog:** set `OPENCLAW_GATEWAY_PORT=18790` in the crontab or inside `~/.openclaw/scripts/gateway-watchdog-cron.sh`.
+
+5. **Force-release script:** if you use 18790, run `OPENCLAW_GATEWAY_PORT=18790 ./scripts/force-release-gateway-port.sh` when cleaning the port.
+
+After switching, the CLI uses the new port via `OPENCLAW_GATEWAY_PORT`; no change to `openclaw.json` is usually needed unless OpenClaw documents a gateway port setting there.
+
+---
+
 ## Install warning: "dangerous code patterns" / "credential harvesting"
 
 When you run `openclaw plugins install openclaw-hybrid-memory`, the OpenClaw plugin scanner may show:
@@ -66,6 +257,7 @@ This is a **false positive**. The plugin only uses your configured API keys (Ope
 | "Unrecognized keys: autoCapture, autoRecall, embedding" | Config keys placed at wrong nesting level | Move those keys under `config`. Correct structure: `plugins.entries["openclaw-hybrid-memory"]` = `{ enabled: true, config: { autoCapture, autoRecall, embedding, ... } }`. See [Config nesting](#config-nesting) below. |
 | `invalid config: must NOT have additional properties` (plugin entry) | Newer OpenClaw validates plugin config using the plugin's `configSchema`; with `additionalProperties: false` any key not listed was rejected. | The plugin's `openclaw.plugin.json` now sets **`additionalProperties: true`** at the root of `configSchema` so the core accepts all config keys. The plugin still parses and validates config at runtime. If you see this error, ensure you're using a plugin version that has this change (copy `extensions/memory-hybrid/openclaw.plugin.json` from this repo to `~/.openclaw/extensions/openclaw-hybrid-memory/` or upgrade the plugin). |
 | `No vector column found` / `Failed to execute query stream` | The LanceDB table was created with an embedding model of a different dimension (e.g. 1536 vs 3072). | Set `vector.autoRepair: true` in your plugin config and restart the gateway. The plugin will drop the incompatible LanceDB table and re-embed all facts from SQLite. See [CONFIGURATION.md](CONFIGURATION.md). |
+| **Port 18789 already in use** / gateway won't start | Stale process, TIME_WAIT, two supervisors, or **Windows (WSL2) holding 18789** (e.g. `netstat -ano` shows LISTENING with svchost) | Run `openclaw gateway stop`, then `./scripts/force-release-gateway-port.sh`. If Windows has 18789 (WSL2), [use a different port](#wsl2-and-windows-port-conflict-eg-18789-on-windows) (e.g. 18790). Use only one supervisor (systemd or cron watchdog). |
 | Agent doesn't answer chat / tools do nothing | Gateway down, plugin failed to load, or before_agent_start blocking | See [Agent not responding](#agent-not-responding--chat-or-tools-do-nothing) below. |
 | Cron agents using `ollama/qwen3:*` time out or return empty responses | Qwen3 thinking mode places reply in `message.reasoning` instead of `message.content` | Fixed in plugin v2026.3.101+. Upgrade the plugin. The fix is automatic - no config change needed. |
 
