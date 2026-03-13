@@ -269,4 +269,32 @@ describe("createDashboardServer", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await expect(httpGet(port, "/")).rejects.toThrow();
   });
+
+  it("falls back to ephemeral port on EADDRINUSE (issue #428)", async () => {
+    // Occupy the port that the second server will try to bind to
+    const { createServer } = await import("node:http");
+    const blocker = createServer();
+    const blockerPort = await new Promise<number>((resolve) => {
+      blocker.listen(0, "127.0.0.1", () => {
+        const addr = blocker.address();
+        resolve(typeof addr === "object" && addr ? addr.port : 0);
+      });
+    });
+
+    try {
+      // Attempt to start dashboard on the occupied port — should fall back
+      const fallback = await createDashboardServer(ctx, blockerPort);
+      try {
+        expect(fallback.port).not.toBe(blockerPort);
+        expect(fallback.port).toBeGreaterThan(0);
+        // Verify the fallback server actually works
+        const { status } = await httpGet(fallback.port, "/");
+        expect(status).toBe(200);
+      } finally {
+        fallback.close();
+      }
+    } finally {
+      blocker.close();
+    }
+  });
 });
