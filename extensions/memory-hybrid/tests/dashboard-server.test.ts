@@ -21,6 +21,7 @@
  *   - createDashboardServer: GET /api/status returns JSON with memory field
  *   - createDashboardServer: GET /unknown returns 404
  *   - createDashboardServer: close() shuts down the server
+ *   - createDashboardServer: retries on EADDRINUSE and binds to next available port (issue #428)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -268,5 +269,34 @@ describe("createDashboardServer", () => {
     // Give the underlying HTTP server time to finish closing before asserting failure
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await expect(httpGet(port, "/")).rejects.toThrow();
+  });
+
+  it("retries on EADDRINUSE and binds to the next available port (issue #428)", async () => {
+    // Occupy `port` so the next createDashboardServer call gets EADDRINUSE on it.
+    // The implementation should transparently fall back to port+1 (or higher).
+    const blockerServer = await createDashboardServer(ctx, port);
+    const blockedPort = blockerServer.port;
+    try {
+      // Use a fresh context for the second server to avoid shared-db issues.
+      const tmpDir2 = mkdtempSync(join(tmpdir(), "dashboard-retry-test-"));
+      const ctx2 = makeContext(tmpDir2);
+      try {
+        const retryServer = await createDashboardServer(ctx2, blockedPort);
+        try {
+          expect(retryServer.port).toBeGreaterThan(blockedPort);
+          // Verify it actually serves requests on the new port
+          const { status } = await httpGet(retryServer.port, "/");
+          expect(status).toBe(200);
+        } finally {
+          retryServer.close();
+        }
+      } finally {
+        try { ctx2.factsDb.close(); } catch { /* ignore */ }
+        try { ctx2.vectorDb.close(); } catch { /* ignore */ }
+        rmSync(tmpDir2, { recursive: true, force: true });
+      }
+    } finally {
+      blockerServer.close();
+    }
   });
 });

@@ -724,12 +724,53 @@ setInterval(refresh, 60000);
 // HTTP Server
 // ---------------------------------------------------------------------------
 
+/** Maximum number of alternative ports to try when the preferred port is in use. */
+const MAX_PORT_RETRIES = 3
+
 export interface DashboardServer {
   server: Server
   port: number
   close(): void
 }
 
+/**
+ * Attempt to bind `server` to a single port. Resolves with the bound port on
+ * success; rejects with the raw error (caller decides whether to retry).
+ */
+function bindServerToPort(server: Server, port: number, ctx: DashboardContext): Promise<number> {
+  return new Promise((resolve, reject) => {
+    function onStartupError(err: NodeJS.ErrnoException) {
+      reject(err)
+    }
+    server.once('error', onStartupError)
+
+    server.listen(port, '127.0.0.1', () => {
+      const addr = server.address()
+      const boundPort = typeof addr === 'object' && addr ? addr.port : port
+      server.removeAllListeners('error')
+      // Replace the startup-error handler with a post-bind error logger so
+      // runtime errors are not silently swallowed.
+      server.on('error', (err: NodeJS.ErrnoException) => {
+        if (ctx.logger?.error) {
+          ctx.logger.error(`[dashboard-server] Server error: ${err}`)
+        } else {
+          console.error('[dashboard-server] Server error:', err)
+        }
+      })
+      resolve(boundPort)
+    })
+  })
+}
+
+/**
+ * Creates and starts the Mission Control dashboard HTTP server.
+ *
+ * When `port` is already in use (EADDRINUSE — e.g. after an unclean restart
+ * where the previous process still holds the socket), this function
+ * transparently retries on up to {@link MAX_PORT_RETRIES} consecutive ports
+ * before giving up.  The caller receives the actual bound port via
+ * `DashboardServer.port`.
+ */
 export async function createDashboardServer(
   ctx: DashboardContext,
   port: number,
@@ -766,33 +807,42 @@ export async function createDashboardServer(
     }
   })
 
-  return new Promise((resolve, reject) => {
-    // Reject on startup errors (e.g. EADDRINUSE). This handler is replaced
-    // with a logging handler after successful bind so post-bind errors are not
-    // silently swallowed.
-    function onStartupError(err: NodeJS.ErrnoException) {
-      reject(err)
-    }
-    server.once('error', onStartupError)
+  let lastError: NodeJS.ErrnoException | null = null
 
-    server.listen(port, '127.0.0.1', () => {
-      const addr = server.address()
-      const boundPort = typeof addr === 'object' && addr ? addr.port : port
-      server.removeAllListeners('error')
-      server.on('error', (err: NodeJS.ErrnoException) => {
-        if (ctx.logger?.error) {
-          ctx.logger.error(`[dashboard-server] Server error: ${err}`)
-        } else {
-          console.error('[dashboard-server] Server error:', err)
-        }
-      })
-      resolve({
+  for (let attempt = 0; attempt <= MAX_PORT_RETRIES; attempt++) {
+    // port 0 means "let the OS pick" — pass through as-is without incrementing
+    const tryPort = port === 0 ? 0 : port + attempt
+
+    try {
+      const boundPort = await bindServerToPort(server, tryPort, ctx)
+      return {
         server,
         port: boundPort,
         close() {
           server.close()
         },
-      })
-    })
-  })
+      }
+    } catch (err) {
+      const errnoErr = err as NodeJS.ErrnoException
+      lastError = errnoErr
+
+      // Only retry on EADDRINUSE; surface all other errors immediately
+      if (errnoErr.code !== 'EADDRINUSE' || attempt >= MAX_PORT_RETRIES) {
+        break
+      }
+
+      const nextPort = tryPort + 1
+      if (ctx.logger?.error) {
+        ctx.logger.error(
+          `[dashboard-server] Port ${tryPort} already in use (EADDRINUSE); retrying on port ${nextPort}`,
+        )
+      } else {
+        console.warn(
+          `[dashboard-server] Port ${tryPort} already in use (EADDRINUSE); retrying on port ${nextPort}`,
+        )
+      }
+    }
+  }
+
+  throw lastError ?? new Error('[dashboard-server] Failed to bind to any available port')
 }
