@@ -1155,7 +1155,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         collectedErrors.push(asErr);
         // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
         if (isConfigError(asErr)) {
-          this.failedUntil.set(currentIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
+          this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
         }
         const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
@@ -1208,7 +1208,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         collectedErrors.push(asErr);
         // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
         if (isConfigError(asErr)) {
-          this.failedUntil.set(currentIndex, { expiry: now + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
+          this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
         }
         const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
