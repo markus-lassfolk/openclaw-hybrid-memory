@@ -380,6 +380,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
   /** How often to run the stale session sweep (ms). */
   const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  /** Track sessions that were swept to prevent double-decrement of VectorDB refcount. */
+  const sweptSessions = new Set<string>();
 
   /** Record activity for a session (called on before_agent_start). */
   function touchSession(sessionKey: string): void {
@@ -481,6 +483,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         // on before_agent_start but removeSession() never fired on agent_end)
         try {
           ctx.vectorDb.removeSession();
+          // Track that this session's refcount was already decremented to prevent
+          // double-decrement if agent_end fires later for a long-running turn.
+          sweptSessions.add(sessionKey);
         } catch {
           // Non-fatal — refcount may already be 0
         }
@@ -2491,8 +2496,17 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // before they run, causing an unnecessary close-reconnect cycle and DB left open with refcount zero.
     // OpenClaw's event emitter awaits each handler in registration order, so being registered last
     // guarantees this fires only after the async handlers above have fully resolved.
-    api.on("agent_end", async () => {
-      ctx.vectorDb.removeSession();
+    api.on("agent_end", async (event: unknown) => {
+      const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+      // Only decrement if this session wasn't already swept by sweepStaleSessions().
+      // A long-running turn (>30min) could be swept and then later fire agent_end,
+      // causing a double-decrement of the VectorDB refcount.
+      if (!sweptSessions.has(sessionKey)) {
+        ctx.vectorDb.removeSession();
+      } else {
+        // Clean up the swept marker now that agent_end has fired
+        sweptSessions.delete(sessionKey);
+      }
     });
   };
 
@@ -2512,19 +2526,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     frustrationStateMap.clear();
     authFailureRecallsThisSession.clear();
     sessionLastActivity.clear();
+    sweptSessions.clear();
   };
 
-  /**
-   * Issue #463: Get current session state sizes for memory diagnostics.
-   */
-  const getSessionStats = (): Record<string, number> => ({
-    sessionStartSeen: sessionStartSeen.size,
-    ambientSeenFacts: ambientSeenFactsMap.size,
-    ambientLastEmbedding: ambientLastEmbeddingMap.size,
-    frustrationState: frustrationStateMap.size,
-    authFailureRecalls: authFailureRecallsThisSession.size,
-    sessionLastActivity: sessionLastActivity.size,
-  });
-
-  return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose, getSessionStats };
+  return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose };
 }
