@@ -113,6 +113,8 @@ const COMMON_STOP_WORDS = new Set([
 const ENTITY_PREFIX_LEN = 3;
 const entityCache = new Map<string, { prefixMap: Map<string, string[]>; timestamp: number }>();
 const ENTITY_CACHE_TTL_MS = 5 * 60 * 1000;
+/** Issue #463: Maximum entity cache entries to prevent unbounded growth. */
+const ENTITY_CACHE_MAX_SIZE = 50;
 
 function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
   const cacheKey = knownEntities.join("\x00");
@@ -147,6 +149,15 @@ function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
   // Evict stale entries to prevent unbounded growth when entity lists change over time.
   for (const [k, v] of entityCache) {
     if (now - v.timestamp >= ENTITY_CACHE_TTL_MS) entityCache.delete(k);
+  }
+  // Issue #463: Hard cap on cache size to prevent unbounded growth
+  if (entityCache.size > ENTITY_CACHE_MAX_SIZE) {
+    const excess = entityCache.size - ENTITY_CACHE_MAX_SIZE;
+    const keys = entityCache.keys();
+    for (let i = 0; i < excess; i++) {
+      const { value } = keys.next();
+      if (value) entityCache.delete(value);
+    }
   }
   return prefixMap;
 }
