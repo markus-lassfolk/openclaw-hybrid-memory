@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { expandHomePlaceholders } from "../../utils/path.js";
 import type {
   PassiveObserverConfig,
   ReflectionConfig,
@@ -31,7 +32,7 @@ export function parsePassiveObserverConfig(cfg: Record<string, unknown>): Passiv
         : 0.92,
     sessionsDir:
       typeof observerRaw?.sessionsDir === "string" && observerRaw.sessionsDir.trim().length > 0
-        ? observerRaw.sessionsDir.trim()
+        ? expandHomePlaceholders(observerRaw.sessionsDir.trim())
         : undefined,
   };
 }
@@ -56,7 +57,7 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
   return {
     enabled: proceduresRaw?.enabled !== false,
     sessionsDir: typeof proceduresRaw?.sessionsDir === "string" && proceduresRaw.sessionsDir.length > 0
-      ? proceduresRaw.sessionsDir
+      ? expandHomePlaceholders(proceduresRaw.sessionsDir)
       : defaultSessionsDir,
     minSteps: typeof proceduresRaw?.minSteps === "number" && proceduresRaw.minSteps >= 1
       ? Math.floor(proceduresRaw.minSteps)

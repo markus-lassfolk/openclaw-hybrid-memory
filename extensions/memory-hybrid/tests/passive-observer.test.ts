@@ -745,6 +745,46 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     });
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
+
+  it("expands $HOME in passiveObserver.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = process.env.HOME ?? require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      passiveObserver: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.passiveObserver.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
+
+  it("expands ~ in passiveObserver.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      passiveObserver: { sessionsDir: "~/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.passiveObserver.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
+
+  it("expands $HOME in procedures.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = process.env.HOME ?? require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      procedures: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.procedures.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
+
+  it("expands ~ in procedures.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      procedures: { sessionsDir: "~/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.procedures.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
 });
 
 // ---------------------------------------------------------------------------
