@@ -57,6 +57,25 @@ const GOOGLE_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.com/v1b
 /** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
 const EMBEDDING_CACHE_MAX = 500;
 
+/**
+ * OpenAI embedding models have a hard limit of 8192 tokens per input.
+ * Using ~4 chars/token heuristic (consistent with estimateTokens in utils/text.ts),
+ * we clamp inputs to this character ceiling before hitting the API.
+ * Overshooting the estimate slightly is harmless; undershooting wastes a round trip.
+ */
+const OPENAI_EMBEDDING_MAX_TOKENS = 8192;
+const OPENAI_EMBEDDING_MAX_CHARS = OPENAI_EMBEDDING_MAX_TOKENS * 4; // ~32 768 chars
+
+/**
+ * Truncate text to fit within the OpenAI embedding token limit.
+ * Uses the same ~4 chars/token heuristic as estimateTokens() so behaviour is
+ * consistent across the codebase without adding a tokenizer dependency here.
+ */
+function truncateForEmbedding(text: string): string {
+  if (text.length <= OPENAI_EMBEDDING_MAX_CHARS) return text;
+  return text.slice(0, OPENAI_EMBEDDING_MAX_CHARS).trimEnd();
+}
+
 // ---------------------------------------------------------------------------
 // ONNX embedding provider (local)
 // ---------------------------------------------------------------------------
@@ -648,10 +667,12 @@ export class Embeddings implements EmbeddingProvider {
       }
       try {
         const supportsDimensions = model.startsWith("text-embedding-3-");
+        // Truncate to stay within the 8192-token OpenAI embedding limit (#442)
+        const input = truncateForEmbedding(text);
         const resp = await withLLMRetry(
           () => this.client.embeddings.create({
             model,
-            input: text,
+            input,
             ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
           }),
           { maxRetries: 2 },
@@ -696,10 +717,12 @@ export class Embeddings implements EmbeddingProvider {
       for (const model of this.models) {
         try {
           const supportsDimensions = model.startsWith("text-embedding-3-");
+          // Truncate each item to stay within the 8192-token OpenAI embedding limit (#442)
+          const truncatedBatch = batch.map(truncateForEmbedding);
           resp = await withLLMRetry(
             () => this.client.embeddings.create({
               model,
-              input: batch,
+              input: truncatedBatch,
               ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
             }),
             { maxRetries: 2 },
