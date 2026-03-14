@@ -7,7 +7,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseSuggestedChange, buildAppliedContent, capProposalConfidence, applyApprovedProposal } from "../cli/proposals.js";
+import {
+  parseSuggestedChange,
+  buildAppliedContent,
+  capProposalConfidence,
+  applyApprovedProposal,
+} from "../cli/proposals.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 
 describe("parseSuggestedChange", () => {

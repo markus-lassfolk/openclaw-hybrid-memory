@@ -117,11 +117,7 @@ describe("migrateEmbeddings — basic behavior", () => {
     const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
     const vectorDb = makeVectorDB();
     const embeddings = makeEmbeddings(1536, {
-      embedBatch: vi.fn().mockResolvedValue([
-        Array(1536).fill(0.1),
-        Array(1536).fill(0.2),
-        Array(1536).fill(0.3),
-      ]),
+      embedBatch: vi.fn().mockResolvedValue([Array(1536).fill(0.1), Array(1536).fill(0.2), Array(1536).fill(0.3)]),
     });
 
     const result = await migrateEmbeddings({
@@ -206,9 +202,7 @@ describe("migrateEmbeddings — duplicate handling", () => {
     });
 
     expect(vectorDb.delete).toHaveBeenCalledWith("x");
-    expect(vectorDb.store).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "x" }),
-    );
+    expect(vectorDb.store).toHaveBeenCalledWith(expect.objectContaining({ id: "x" }));
   });
 
   it("continues when delete throws (entry not found)", async () => {
@@ -264,10 +258,7 @@ describe("migrateEmbeddings — error handling", () => {
     const vec = Array(1536).fill(0.5);
     const embeddings = makeEmbeddings(1536, {
       embedBatch: vi.fn().mockRejectedValue(new Error("batch fail")),
-      embed: vi
-        .fn()
-        .mockRejectedValueOnce(new Error("embed error"))
-        .mockResolvedValueOnce(vec),
+      embed: vi.fn().mockRejectedValueOnce(new Error("embed error")).mockResolvedValueOnce(vec),
     });
 
     const result = await migrateEmbeddings({
@@ -481,10 +472,7 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     });
     const vectorDb = makeVectorDB();
     const embeddings = makeEmbeddings(1536, {
-      embedBatch: vi.fn().mockResolvedValue([
-        Array(1536).fill(0.1),
-        Array(1536).fill(0.2),
-      ]),
+      embedBatch: vi.fn().mockResolvedValue([Array(1536).fill(0.1), Array(1536).fill(0.2)]),
     });
 
     const result = await runEmbeddingMaintenance({
@@ -564,9 +552,7 @@ describe("migrateEmbeddings — batch processing", () => {
     const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
     const vectorDb = makeVectorDB();
     const embeddings = makeEmbeddings(384, {
-      embedBatch: vi.fn().mockImplementation(async (texts: string[]) =>
-        texts.map(() => Array(384).fill(0.1)),
-      ),
+      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => texts.map(() => Array(384).fill(0.1))),
     });
 
     const progressCalls: number[] = [];
@@ -591,9 +577,7 @@ describe("migrateEmbeddings — batch processing", () => {
     const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
     const vectorDb = makeVectorDB();
     const embeddings = makeEmbeddings(384, {
-      embedBatch: vi.fn().mockImplementation(async (texts: string[]) =>
-        texts.map(() => Array(384).fill(0.1)),
-      ),
+      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => texts.map(() => Array(384).fill(0.1))),
     });
 
     await migrateEmbeddings({

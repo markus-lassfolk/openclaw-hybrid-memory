@@ -63,6 +63,7 @@ describe("memory_provenance tool", () => {
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
       provenance: { enabled: true },
     });
+    cfg.provenance!.enabled = true; // 2026.3.140 migration forces off; override to test feature
     const api = makeMockApi("sess-123");
 
     registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
@@ -110,7 +111,7 @@ describe("memory_provenance tool", () => {
       sourceText: sourceFact.text,
     });
 
-    const result = await api.callTool("memory_provenance", { factId: consolidatedFact.id }) as any;
+    const result = (await api.callTool("memory_provenance", { factId: consolidatedFact.id })) as any;
     const chain = result.details.provenance;
 
     expect(chain.fact.id).toBe(consolidatedFact.id);
@@ -128,6 +129,7 @@ describe("memory_provenance tool", () => {
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
       provenance: { enabled: true },
     });
+    cfg.provenance!.enabled = true; // 2026.3.140 migration forces off; override to test feature
     const api = makeMockApi("sess-abc");
 
     registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
@@ -188,7 +190,7 @@ describe("memory_provenance tool", () => {
       sourceText: factD.text,
     });
 
-    const result = await api.callTool("memory_provenance", { factId: factA.id }) as any;
+    const result = (await api.callTool("memory_provenance", { factId: factA.id })) as any;
     const chain = result.details.provenance;
 
     expect(chain.derivedFrom).toHaveLength(1);
@@ -196,9 +198,7 @@ describe("memory_provenance tool", () => {
     expect(derived.event_id).toBe(factB.id);
     expect(derived.fact_chain?.fact.id).toBe(factB.id);
     expect(derived.fact_chain?.consolidationChain).toHaveLength(2);
-    const consolidationIds = (derived.fact_chain?.consolidationChain ?? [])
-      .map((entry: any) => entry.fact.id)
-      .sort();
+    const consolidationIds = (derived.fact_chain?.consolidationChain ?? []).map((entry: any) => entry.fact.id).sort();
     expect(consolidationIds).toEqual([factC.id, factD.id].sort());
   });
 });
@@ -212,6 +212,7 @@ describe("memory_store provenance", () => {
       aliases: { enabled: false },
       store: { classifyBeforeWrite: false },
     });
+    cfg.provenance!.enabled = true; // 2026.3.140 migration forces off; override to test feature
 
     const api = makeMockApi("sess-999");
     const vectorDb = {
@@ -246,10 +247,10 @@ describe("memory_store provenance", () => {
       async () => [],
     );
 
-    const result = await api.callTool("memory_store", {
+    const result = (await api.callTool("memory_store", {
       text: "Remember this test fact",
       importance: 0.7,
-    }) as any;
+    })) as any;
 
     const factId = result.details.id as string;
     const edges = provenanceService.getEdges(factId);

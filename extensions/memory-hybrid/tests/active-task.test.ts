@@ -436,9 +436,7 @@ describe("buildStaleWarningInjection", () => {
   });
 
   it("does not generate subagent hint for non-in-progress tasks", () => {
-    const tasks = [
-      makeEntry({ status: "Waiting", subagent: "forge-session-xyz", stale: false }),
-    ];
+    const tasks = [makeEntry({ status: "Waiting", subagent: "forge-session-xyz", stale: false })];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
     // No stale, no in-progress-with-subagent → empty
     expect(result).toBe("");
@@ -531,11 +529,7 @@ describe("upsertTask", () => {
   });
 
   it("preserves order for non-matching tasks", () => {
-    const existing = [
-      makeEntry({ label: "a" }),
-      makeEntry({ label: "b" }),
-      makeEntry({ label: "c" }),
-    ];
+    const existing = [makeEntry({ label: "a" }), makeEntry({ label: "b" }), makeEntry({ label: "c" })];
     const result = upsertTask(existing, makeEntry({ label: "b", status: "Waiting" }));
     expect(result.map((t) => t.label)).toEqual(["a", "b", "c"]);
   });
@@ -589,11 +583,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
 
   it("reads and parses existing file", async () => {
     const filePath = join(tmpDir, "ACTIVE-TASK.md");
-    await writeActiveTaskFile(
-      filePath,
-      [makeEntry({ label: "test-task" })],
-      [],
-    );
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "test-task" })], []);
     const result = await readActiveTaskFile(filePath, 1440);
     expect(result).not.toBeNull();
     expect(result!.active).toHaveLength(1);
@@ -602,9 +592,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
 
   it("writes and reads back correctly (round-trip)", async () => {
     const filePath = join(tmpDir, "ACTIVE-TASK.md");
-    const active = [
-      makeEntry({ label: "forge-99", status: "In progress", branch: "feature/test", next: "Run tests" }),
-    ];
+    const active = [makeEntry({ label: "forge-99", status: "In progress", branch: "feature/test", next: "Run tests" })];
     const completed = [makeEntry({ label: "old-task", status: "Done" })];
     await writeActiveTaskFile(filePath, active, completed);
     const result = await readActiveTaskFile(filePath, 1440);
@@ -625,11 +613,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
   it("applies stale detection on read", async () => {
     const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const filePath = join(tmpDir, "ACTIVE-TASK.md");
-    await writeActiveTaskFile(
-      filePath,
-      [makeEntry({ updated: staleTime })],
-      [],
-    );
+    await writeActiveTaskFile(filePath, [makeEntry({ updated: staleTime })], []);
     const result = await readActiveTaskFile(filePath, 1440);
     expect(result!.active[0].stale).toBe(true);
   });
@@ -722,10 +706,7 @@ describe("runActiveTaskList", () => {
   it("lists active tasks from file", async () => {
     await writeActiveTaskFile(
       ctx.activeTaskFilePath,
-      [
-        makeEntry({ label: "task-1", status: "In progress" }),
-        makeEntry({ label: "task-2", status: "Waiting" }),
-      ],
+      [makeEntry({ label: "task-1", status: "In progress" }), makeEntry({ label: "task-2", status: "Waiting" })],
       [],
     );
     const result = await runActiveTaskList(ctx);
@@ -739,10 +720,7 @@ describe("runActiveTaskList", () => {
     const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     await writeActiveTaskFile(
       ctx.activeTaskFilePath,
-      [
-        makeEntry({ label: "stale", updated: staleTime }),
-        makeEntry({ label: "fresh" }),
-      ],
+      [makeEntry({ label: "stale", updated: staleTime }), makeEntry({ label: "fresh" })],
       [],
     );
     const result = await runActiveTaskList(ctx);
@@ -824,10 +802,7 @@ describe("runActiveTaskComplete", () => {
   it("marks task as Done and removes from active list", async () => {
     await writeActiveTaskFile(
       ctx.activeTaskFilePath,
-      [
-        makeEntry({ label: "target-task" }),
-        makeEntry({ label: "other-task" }),
-      ],
+      [makeEntry({ label: "target-task" }), makeEntry({ label: "other-task" })],
       [],
     );
     const result = await runActiveTaskComplete(ctx, "target-task");
@@ -911,11 +886,7 @@ describe("runActiveTaskAdd", () => {
   });
 
   it("updates existing task when label matches", async () => {
-    await writeActiveTaskFile(
-      ctx.activeTaskFilePath,
-      [makeEntry({ label: "existing", next: "old next" })],
-      [],
-    );
+    await writeActiveTaskFile(ctx.activeTaskFilePath, [makeEntry({ label: "existing", next: "old next" })], []);
     const result = await runActiveTaskAdd(ctx, {
       label: "existing",
       description: "Updated description",
@@ -948,10 +919,7 @@ describe("runActiveTaskAdd", () => {
 
 describe("buildActiveTaskInjection (integration)", () => {
   it("filters out Done tasks from injection", () => {
-    const tasks = [
-      makeEntry({ label: "done", status: "Done" }),
-      makeEntry({ label: "active", status: "In progress" }),
-    ];
+    const tasks = [makeEntry({ label: "done", status: "Done" }), makeEntry({ label: "active", status: "In progress" })];
     const result = buildActiveTaskInjection(tasks, 500);
     expect(result).toContain("[active]");
     expect(result).not.toContain("[done]");
@@ -1195,9 +1163,7 @@ describe("writeActiveTaskFileGuarded", () => {
   });
 
   it("writes normally when orchestrator session key is provided", async () => {
-    const result = await writeActiveTaskFileGuarded(
-      filePath, [makeEntry()], [], "agent:main:main"
-    );
+    const result = await writeActiveTaskFileGuarded(filePath, [makeEntry()], [], "agent:main:main");
     expect(result.skipped).toBe(false);
     const taskFile = await readActiveTaskFile(filePath);
     expect(taskFile!.active).toHaveLength(1);
@@ -1218,9 +1184,7 @@ describe("writeActiveTaskFileGuarded", () => {
   });
 
   it("provides a reason when skipped", async () => {
-    const result = await writeActiveTaskFileGuarded(
-      filePath, [makeEntry()], [], "agent:x:subagent:y"
-    );
+    const result = await writeActiveTaskFileGuarded(filePath, [makeEntry()], [], "agent:x:subagent:y");
     expect(result.reason).toBeDefined();
     expect(result.reason!.length).toBeGreaterThan(0);
   });
@@ -1250,13 +1214,10 @@ describe("writeActiveTaskFileOptimistic", () => {
 
     const newActive = [makeEntry({ label: "updated" })];
     let mergeCalled = false;
-    await writeActiveTaskFileOptimistic(
-      filePath,
-      newActive,
-      [],
-      read!.mtime,
-      async () => { mergeCalled = true; return null; },
-    );
+    await writeActiveTaskFileOptimistic(filePath, newActive, [], read!.mtime, async () => {
+      mergeCalled = true;
+      return null;
+    });
 
     // No conflict — merge should NOT have been called
     expect(mergeCalled).toBe(false);

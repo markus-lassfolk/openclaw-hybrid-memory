@@ -4,22 +4,22 @@ import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export interface MonthlyReviewReport {
-  generatedAt: string;                    // ISO date
+  generatedAt: string; // ISO date
   coverageAnalysis: {
     totalFacts: number;
     factsByCategory: Record<string, number>;
     topEntities: Array<{ entity: string; count: number }>;
     sparseEntities: Array<{ entity: string; count: number }>;
-    uncoveredDomains: string[];           // suggested by LLM
+    uncoveredDomains: string[]; // suggested by LLM
   };
   qualityTrends: {
     averageConfidence: number;
     averageConfidencePreviousMonth: number;
     contradictionCount: number;
-    staleFacts: number;                   // facts not accessed in 90+ days
+    staleFacts: number; // facts not accessed in 90+ days
     recentlySuperseded: number;
   };
-  recommendations: string[];             // LLM-generated actionable suggestions
+  recommendations: string[]; // LLM-generated actionable suggestions
 }
 
 const RECOMMENDATION_PROMPT =
@@ -61,18 +61,18 @@ export class MonthlyReviewService {
       .all() as Array<{ entity: string; cnt: number }>;
 
     const topEntities = [...entityRows]
-      .sort((a, b) => (b.cnt - a.cnt) || a.entity.localeCompare(b.entity))
+      .sort((a, b) => b.cnt - a.cnt || a.entity.localeCompare(b.entity))
       .slice(0, 10)
       .map((row) => ({ entity: row.entity, count: row.cnt }));
 
     const sparseEntities = [...entityRows]
-      .sort((a, b) => (a.cnt - b.cnt) || a.entity.localeCompare(b.entity))
+      .sort((a, b) => a.cnt - b.cnt || a.entity.localeCompare(b.entity))
       .slice(0, 10)
       .map((row) => ({ entity: row.entity, count: row.cnt }));
 
-    const avgRow = rawDb
-      .prepare(`SELECT AVG(confidence) as avg FROM facts WHERE superseded_at IS NULL`)
-      .get() as { avg: number | null } | undefined;
+    const avgRow = rawDb.prepare(`SELECT AVG(confidence) as avg FROM facts WHERE superseded_at IS NULL`).get() as
+      | { avg: number | null }
+      | undefined;
     const averageConfidence = normalizeAverage(avgRow?.avg ?? 0);
 
     const prevStart = nowSec - 60 * 86_400;

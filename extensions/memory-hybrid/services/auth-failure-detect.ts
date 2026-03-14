@@ -1,7 +1,7 @@
 /**
  * Authentication Failure Detection Service
  * Auto-Recall on Authentication Failures
- * 
+ *
  * Detects authentication failures in tool results and extracts target identifiers
  * (hostname, IP, URL domain, service name) for memory recall.
  */
@@ -19,13 +19,13 @@ export const DEFAULT_AUTH_FAILURE_PATTERNS: AuthFailurePattern[] = [
   { regex: /Authentication failed/i, type: "ssh", hint: "SSH authentication failed" },
   { regex: /publickey,password/i, type: "ssh", hint: "SSH auth methods exhausted" },
   { regex: /Host key verification failed/i, type: "ssh", hint: "SSH host key verification failed" },
-  
+
   // HTTP patterns
   { regex: /\b401\b/, type: "http", hint: "HTTP 401 Unauthorized" },
   { regex: /\b403\b/, type: "http", hint: "HTTP 403 Forbidden" },
   { regex: /Unauthorized/i, type: "http", hint: "HTTP Unauthorized" },
   { regex: /Forbidden/i, type: "http", hint: "HTTP Forbidden" },
-  
+
   // API patterns
   { regex: /Invalid API key/i, type: "api", hint: "Invalid API key" },
   { regex: /token expired/i, type: "api", hint: "Token expired" },
@@ -52,31 +52,31 @@ export type AuthFailureDetection = {
  */
 export function extractTarget(text: string, type: "ssh" | "http" | "api" | "generic"): string | undefined {
   // Try IP address first (highest priority) - this should match across all types
-  // Note: Regex is intentionally loose (matches 999.999.999.999) for simplicity; 
+  // Note: Regex is intentionally loose (matches 999.999.999.999) for simplicity;
   // invalid IPs will fail at connection time, not here
   const ipMatch = text.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
   if (ipMatch) return ipMatch[1];
-  
+
   // Try URL/domain patterns (for http/api types)
   if (type === "http" || type === "api") {
     const urlMatch = text.match(/https?:\/\/([\w.-]+)/i);
     if (urlMatch) return urlMatch[1];
-    
+
     // Try domain-like patterns without protocol
     const domainMatch = text.match(/(?:to|from|at|@)\s+([\w.-]+\.\w{2,})/i);
     if (domainMatch) return domainMatch[1];
   }
-  
+
   // Try SSH patterns: user@host
   if (type === "ssh") {
     const sshUserHostMatch = text.match(/(?:ssh\s+)?[\w.-]+@([\w.-]+)/i);
     if (sshUserHostMatch && sshUserHostMatch[1]) return sshUserHostMatch[1];
   }
-  
+
   // Try to find hostname-like strings (at least 3 chars, contains dot or dash)
   const hostnameMatch = text.match(/\b([\w-]{3,}(?:\.[\w-]+)+)\b/);
   if (hostnameMatch) return hostnameMatch[1];
-  
+
   // Try to find service names mentioned after "to/from/at/for" (excluding common words)
   const serviceMatch = text.match(/(?:to|from|at|for)\s+["']?([\w-]{4,})["']?/i);
   if (serviceMatch && serviceMatch[1]) {
@@ -87,7 +87,7 @@ export function extractTarget(text: string, type: "ssh" | "http" | "api" | "gene
       return serviceName;
     }
   }
-  
+
   return undefined;
 }
 
@@ -102,7 +102,7 @@ export function detectAuthFailure(
   if (!text || text.length < 10) {
     return { detected: false };
   }
-  
+
   for (const pattern of patterns) {
     if (pattern.regex.test(text)) {
       const target = extractTarget(text, pattern.type);
@@ -115,7 +115,7 @@ export function detectAuthFailure(
       };
     }
   }
-  
+
   return { detected: false };
 }
 
@@ -125,10 +125,10 @@ export function detectAuthFailure(
  */
 export function buildCredentialQuery(detection: AuthFailureDetection): string | null {
   if (!detection.detected || !detection.target) return null;
-  
+
   const target = detection.target;
   const terms = ["credential", "password", "token", "key", "auth"];
-  
+
   // Build query with target + credential terms
   return `${target} ${terms.join(" ")}`;
 }
@@ -136,7 +136,7 @@ export function buildCredentialQuery(detection: AuthFailureDetection): string | 
 /**
  * Format system hint for injection into agent context.
  * Returns a user-friendly message pointing to relevant credentials in memory.
- * 
+ *
  * SECURITY: Does not include fact.text to prevent credential leaks.
  * Shows only safe metadata (entity, category, key).
  */
@@ -145,12 +145,10 @@ export function formatCredentialHint(
   facts: Array<{ text: string; category: string; entity?: string | null; key?: string | null }>,
 ): string {
   if (facts.length === 0) return "";
-  
+
   const target = detection.target || "this service";
-  const lines: string[] = [
-    `💡 Memory has credentials for ${target}:`,
-  ];
-  
+  const lines: string[] = [`💡 Memory has credentials for ${target}:`];
+
   for (let i = 0; i < Math.min(facts.length, 3); i++) {
     const f = facts[i];
     // Show only metadata to prevent credential leaks
@@ -158,10 +156,10 @@ export function formatCredentialHint(
     if (f.entity) parts.push(`entity: ${f.entity}`);
     if (f.key) parts.push(`key: ${f.key}`);
     if (f.category && f.category !== "technical") parts.push(`[${f.category}]`);
-    
+
     const metadata = parts.length > 0 ? parts.join(", ") : "stored credential";
     lines.push(`  ${i + 1}. ${metadata}`);
   }
-  
+
   return lines.join("\n");
 }

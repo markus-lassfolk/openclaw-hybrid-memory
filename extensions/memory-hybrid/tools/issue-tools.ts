@@ -15,14 +15,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { isCompactVerbosity } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-const ISSUE_STATUSES = [
-  "open",
-  "diagnosed",
-  "fix-attempted",
-  "resolved",
-  "verified",
-  "wont-fix",
-] as const;
+const ISSUE_STATUSES = ["open", "diagnosed", "fix-attempted", "resolved", "verified", "wont-fix"] as const;
 
 const ISSUE_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 
@@ -50,12 +43,8 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
         symptoms: Type.Array(Type.String(), {
           description: "Observable symptoms or error messages",
         }),
-        severity: Type.Optional(
-          stringEnum(ISSUE_SEVERITIES as unknown as readonly string[]),
-        ),
-        tags: Type.Optional(
-          Type.Array(Type.String(), { description: "Optional tags for categorization" }),
-        ),
+        severity: Type.Optional(stringEnum(ISSUE_SEVERITIES as unknown as readonly string[])),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Optional tags for categorization" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { title, symptoms, severity, tags } = params as {
@@ -103,21 +92,11 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
         "Update an issue's fields or advance its status through the lifecycle. Status changes validate allowed transitions. Setting status to 'resolved' auto-sets resolvedAt; 'verified' auto-sets verifiedAt.",
       parameters: Type.Object({
         id: Type.String({ description: "Issue ID to update" }),
-        status: Type.Optional(
-          stringEnum(ISSUE_STATUSES as unknown as readonly string[]),
-        ),
-        rootCause: Type.Optional(
-          Type.String({ description: "Root cause diagnosis" }),
-        ),
-        fix: Type.Optional(
-          Type.String({ description: "Description of the applied fix" }),
-        ),
-        rollback: Type.Optional(
-          Type.String({ description: "Rollback procedure if fix fails" }),
-        ),
-        symptoms: Type.Optional(
-          Type.Array(Type.String(), { description: "Updated list of symptoms" }),
-        ),
+        status: Type.Optional(stringEnum(ISSUE_STATUSES as unknown as readonly string[])),
+        rootCause: Type.Optional(Type.String({ description: "Root cause diagnosis" })),
+        fix: Type.Optional(Type.String({ description: "Description of the applied fix" })),
+        rollback: Type.Optional(Type.String({ description: "Rollback procedure if fix fails" })),
+        symptoms: Type.Optional(Type.Array(Type.String(), { description: "Updated list of symptoms" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { id, status, rootCause, fix, rollback, symptoms } = params as {
@@ -173,23 +152,17 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
       description: "List tracked issues with optional filters by status, severity, and tags.",
       parameters: Type.Object({
         status: Type.Optional(
-          Type.Array(
-            stringEnum(ISSUE_STATUSES as unknown as readonly string[]),
-            { description: "Filter by status values" },
-          ),
+          Type.Array(stringEnum(ISSUE_STATUSES as unknown as readonly string[]), {
+            description: "Filter by status values",
+          }),
         ),
         severity: Type.Optional(
-          Type.Array(
-            stringEnum(ISSUE_SEVERITIES as unknown as readonly string[]),
-            { description: "Filter by severity values" },
-          ),
+          Type.Array(stringEnum(ISSUE_SEVERITIES as unknown as readonly string[]), {
+            description: "Filter by severity values",
+          }),
         ),
-        tags: Type.Optional(
-          Type.Array(Type.String(), { description: "Filter by tags (any match)" }),
-        ),
-        limit: Type.Optional(
-          Type.Number({ description: "Maximum number of results (default: 50)" }),
-        ),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags (any match)" })),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of results (default: 50)" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { status, severity, tags, limit } = params as {
@@ -202,20 +175,14 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
         try {
           const issues = issueStore.list({ status, severity, tags, limit });
           const summary = issues
-            .map(
-              (i) =>
-                `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`,
-            )
+            .map((i) => `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`)
             .join("\n");
 
           return {
             content: [
               {
                 type: "text",
-                text:
-                  issues.length === 0
-                    ? "No issues found."
-                    : `${issues.length} issue(s):\n${summary}`,
+                text: issues.length === 0 ? "No issues found." : `${issues.length} issue(s):\n${summary}`,
               },
             ],
             details: issues,
@@ -250,10 +217,7 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
         try {
           const issues = issueStore.search(query);
           const summary = issues
-            .map(
-              (i) =>
-                `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`,
-            )
+            .map((i) => `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`)
             .join("\n");
 
           return {

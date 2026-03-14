@@ -70,9 +70,7 @@ describe("auth-failure-detect", () => {
     });
 
     it("supports custom patterns", () => {
-      const customPatterns = [
-        { regex: /access.denied/i, type: "generic" as const, hint: "Custom access denied" },
-      ];
+      const customPatterns = [{ regex: /access.denied/i, type: "generic" as const, hint: "Custom access denied" }];
       const text = "Error: Access Denied for resource";
       const result = detectAuthFailure(text, customPatterns);
       expect(result.detected).toBe(true);

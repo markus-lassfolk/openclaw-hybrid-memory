@@ -437,12 +437,7 @@ describe("generateAmbientQueries — multiQuery enabled", () => {
   });
 
   it("uses knownEntities to produce entity queries from plain words", () => {
-    const result = generateAmbientQueries(
-      "Let's discuss production",
-      DEFAULT_CFG,
-      {},
-      ["production"],
-    );
+    const result = generateAmbientQueries("Let's discuss production", DEFAULT_CFG, {}, ["production"]);
     const entityQ = result.find((q) => q.type === "entity" && q.entity === "production");
     expect(entityQ).toBeDefined();
   });
@@ -455,8 +450,14 @@ describe("generateAmbientQueries — multiQuery enabled", () => {
 describe("deduplicateResultsById", () => {
   it("deduplicates by custom id extractor", () => {
     type Item = { id: string; val: number };
-    const s1: Item[] = [{ id: "a", val: 1 }, { id: "b", val: 2 }];
-    const s2: Item[] = [{ id: "b", val: 99 }, { id: "c", val: 3 }];
+    const s1: Item[] = [
+      { id: "a", val: 1 },
+      { id: "b", val: 2 },
+    ];
+    const s2: Item[] = [
+      { id: "b", val: 99 },
+      { id: "c", val: 3 },
+    ];
     const result = deduplicateResultsById([s1, s2], (r) => r.id);
     const ids = result.map((r) => r.id);
     expect(ids).toEqual(["a", "b", "c"]);

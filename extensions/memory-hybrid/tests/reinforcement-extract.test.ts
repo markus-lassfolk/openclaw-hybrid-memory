@@ -18,7 +18,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -40,7 +41,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -60,7 +62,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -80,7 +83,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it|thanks?|thank you)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it|thanks?|thank you)\b/i,
     });
 
     // "Thanks" alone should be filtered out by confidence threshold (< 0.4)
@@ -99,7 +103,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -119,7 +124,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -141,7 +147,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBe(0);
@@ -159,7 +166,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -181,7 +189,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -205,7 +214,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -224,7 +234,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -244,7 +255,8 @@ describe("reinforcement-extract", () => {
 
     const result = runReinforcementExtract({
       filePaths: [sessionFile],
-      reinforcementRegex: /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);

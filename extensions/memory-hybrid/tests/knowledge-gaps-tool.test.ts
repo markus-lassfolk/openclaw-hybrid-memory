@@ -26,7 +26,9 @@ describe("memory_gaps tool registration", () => {
   it("registers memory_gaps tool", () => {
     const registered: string[] = [];
     const fakeApi = {
-      registerTool: (def: { name: string }) => { registered.push(def.name); },
+      registerTool: (def: { name: string }) => {
+        registered.push(def.name);
+      },
       logger: { info: () => {}, warn: () => {} },
     } as unknown as Parameters<typeof registerUtilityTools>[1];
 
@@ -43,7 +45,9 @@ describe("memory_gaps tool registration", () => {
         vectorDb: {} as unknown as import("../backends/vector-db.js").VectorDB,
         embeddings: fakeEmbeddings,
         openai: {} as unknown as import("openai").default,
-        cfg: { gaps: { enabled: true, similarityThreshold: 0.8 } } as unknown as import("../config.js").HybridMemoryConfig,
+        cfg: {
+          gaps: { enabled: true, similarityThreshold: 0.8 },
+        } as unknown as import("../config.js").HybridMemoryConfig,
         wal: null,
         resolvedSqlitePath: join(tmpDir, "facts.db"),
       },

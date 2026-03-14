@@ -19,11 +19,7 @@ import type OpenAI from "openai";
 import type { EventLog, EventLogEntry } from "../backends/event-log.js";
 import type { MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
-import {
-  runReflection,
-  runReflectionRules,
-  type ReflectionConfig,
-} from "./reflection.js";
+import { runReflection, runReflectionRules, type ReflectionConfig } from "./reflection.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Prune modes for the dream cycle. */
@@ -168,15 +164,16 @@ export async function runEpisodicConsolidation(
     if (groupEvents.length === 0) continue;
 
     // Collect text from all events in this group
-    const eventTexts = groupEvents
-      .map((e) => extractEventText(e))
-      .filter((t) => t.length >= 3);
+    const eventTexts = groupEvents.map((e) => extractEventText(e)).filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
       // Mark events as consolidated with a namespaced skip sentinel to prevent re-processing.
       // 'SKIP:no_text' is clearly not a real fact UUID — no UUID-based query will match it.
       try {
-        eventLog.markConsolidated(groupEvents.map((e) => e.id), "SKIP:no_text");
+        eventLog.markConsolidated(
+          groupEvents.map((e) => e.id),
+          "SKIP:no_text",
+        );
         eventsConsolidated += groupEvents.length;
       } catch (err) {
         logger.warn(`memory-hybrid: dream-cycle — failed to mark no-text events as consolidated: ${err}`);
@@ -252,7 +249,10 @@ export async function runEpisodicConsolidation(
 
     // Mark all events in the group as consolidated into the new fact
     try {
-      eventLog.markConsolidated(groupEvents.map((e) => e.id), consolidatedFact.id);
+      eventLog.markConsolidated(
+        groupEvents.map((e) => e.id),
+        consolidatedFact.id,
+      );
       factsCreated++;
       eventsConsolidated += groupEvents.length;
     } catch (err) {
@@ -264,7 +264,9 @@ export async function runEpisodicConsolidation(
       try {
         factsDb.delete(consolidatedFact.id);
       } catch (cleanupErr) {
-        logger.warn(`memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`);
+        logger.warn(
+          `memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`,
+        );
       }
       continue;
     }
@@ -387,10 +389,7 @@ export async function runDreamCycle(
   // ── Step 2b: Archive stale event log entries ─────────────────────────────
   if (eventLog && config.eventLogArchivalDays > 0) {
     try {
-      const result = await eventLog.archiveConsolidated(
-        config.eventLogArchivalDays,
-        config.eventLogArchivePath,
-      );
+      const result = await eventLog.archiveConsolidated(config.eventLogArchivalDays, config.eventLogArchivePath);
       if (result.archived > 0) {
         logger.info(
           `memory-hybrid: dream-cycle — archived ${result.archived} consolidated event log entries older than ${config.eventLogArchivalDays} days`,

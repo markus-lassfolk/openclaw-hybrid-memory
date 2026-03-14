@@ -91,9 +91,7 @@ describe("VerbosityLevel — hybridConfigSchema", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const cfg = parseWithVerbosity("loud");
     expect(cfg.verbosity).toBe("normal");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("invalid verbosity"),
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("invalid verbosity"));
     warnSpy.mockRestore();
   });
 });
@@ -255,7 +253,10 @@ describe("runVerifyForCli — quiet-mode sink filtering", () => {
         statsBreakdown: () => ({}),
         listRecent: () => [],
       },
-      vectorDb: { checkHealth: () => Promise.resolve({ ok: false, error: "lance error" }), count: () => Promise.resolve(0) },
+      vectorDb: {
+        checkHealth: () => Promise.resolve({ ok: false, error: "lance error" }),
+        count: () => Promise.resolve(0),
+      },
       embeddings: { embed: () => Promise.reject(new Error("no key")), modelName: "x" },
       credentialsDb: null,
       resolvedSqlitePath: ":memory:",
@@ -345,13 +346,21 @@ describe("memory_prune — verbosity output", () => {
       context: { sessionId: "test" },
     };
     const ctx = { factsDb, cfg } as any;
-    registerUtilityTools(ctx, api as any, vi.fn() as any, vi.fn() as any, vi.fn() as any, vi.fn() as any, vi.fn() as any);
+    registerUtilityTools(
+      ctx,
+      api as any,
+      vi.fn() as any,
+      vi.fn() as any,
+      vi.fn() as any,
+      vi.fn() as any,
+      vi.fn() as any,
+    );
     const pruneTool = tools.get("memory_prune");
     return await pruneTool.execute("call-1", { mode: "both" });
   }
 
   it("quiet: single-line count only, but includes all details fields", async () => {
-    const result = await testPruneVerbosity("quiet") as { content: { text: string }[]; details: any };
+    const result = (await testPruneVerbosity("quiet")) as { content: { text: string }[]; details: any };
     expect(result.content[0].text).toMatch(/^Pruned: \d+ \(\d+ expired, \d+ low-confidence\)\./);
     expect(result.content[0].text).not.toContain("Remaining by class");
     expect(result.details.hardPruned).toBeDefined();
@@ -361,7 +370,7 @@ describe("memory_prune — verbosity output", () => {
   });
 
   it("normal: full breakdown text and all details fields", async () => {
-    const result = await testPruneVerbosity("normal") as { content: { text: string }[]; details: any };
+    const result = (await testPruneVerbosity("normal")) as { content: { text: string }[]; details: any };
     expect(result.content[0].text).toContain("Pruned:");
     expect(result.content[0].text).toContain("expired");
     expect(result.content[0].text).toContain("low-confidence");
@@ -374,7 +383,7 @@ describe("memory_prune — verbosity output", () => {
   });
 
   it("verbose: includes mode information and all details fields", async () => {
-    const result = await testPruneVerbosity("verbose") as { content: { text: string }[]; details: any };
+    const result = (await testPruneVerbosity("verbose")) as { content: { text: string }[]; details: any };
     expect(result.content[0].text).toContain("Mode: both");
     expect(result.details.hardPruned).toBeDefined();
     expect(result.details.softPruned).toBeDefined();
@@ -411,7 +420,11 @@ describe("memory_reflect — verbosity output", () => {
 
   async function testReflectVerbosity(verbosity: VerbosityLevel) {
     const { registerUtilityTools } = await import("../tools/utility-tools.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, verbosity, reflection: { enabled: true, defaultWindow: 7, minObservations: 1 } });
+    const cfg = hybridConfigSchema.parse({
+      ...BASE_CONFIG,
+      verbosity,
+      reflection: { enabled: true, defaultWindow: 7, minObservations: 1 },
+    });
     const tools = new Map();
     const api = {
       registerTool(def: any, opts: any) {
@@ -420,24 +433,34 @@ describe("memory_reflect — verbosity output", () => {
       logger: { info: vi.fn(), warn: vi.fn() },
       context: { sessionId: "test" },
     };
-    const mockRunReflection = vi.fn().mockResolvedValue({ factsAnalyzed: 10, patternsExtracted: 3, patternsStored: 2, window: 7 });
+    const mockRunReflection = vi
+      .fn()
+      .mockResolvedValue({ factsAnalyzed: 10, patternsExtracted: 3, patternsStored: 2, window: 7 });
     const embeddings = { embed: vi.fn(), modelName: "test-model" };
     const openai = {} as any;
     const ctx = { factsDb, vectorDb, embeddings, openai, cfg } as any;
-    registerUtilityTools(ctx, api as any, mockRunReflection, vi.fn() as any, vi.fn() as any, vi.fn() as any, vi.fn() as any);
+    registerUtilityTools(
+      ctx,
+      api as any,
+      mockRunReflection,
+      vi.fn() as any,
+      vi.fn() as any,
+      vi.fn() as any,
+      vi.fn() as any,
+    );
     const reflectTool = tools.get("memory_reflect");
     return await reflectTool.execute("call-1", { window: 7 });
   }
 
   it("quiet: only stored count", async () => {
-    const result = await testReflectVerbosity("quiet") as { content: { text: string }[] };
+    const result = (await testReflectVerbosity("quiet")) as { content: { text: string }[] };
     expect(result.content[0].text).toBe("Reflected: 2 patterns stored.");
     expect(result.content[0].text).not.toContain("factsAnalyzed");
     expect(result.content[0].text).not.toContain("window");
   });
 
   it("normal: full summary without model", async () => {
-    const result = await testReflectVerbosity("normal") as { content: { text: string }[] };
+    const result = (await testReflectVerbosity("normal")) as { content: { text: string }[] };
     expect(result.content[0].text).toContain("10 facts analyzed");
     expect(result.content[0].text).toContain("3 patterns extracted");
     expect(result.content[0].text).toContain("2 stored");
@@ -446,7 +469,7 @@ describe("memory_reflect — verbosity output", () => {
   });
 
   it("verbose: includes model info", async () => {
-    const result = await testReflectVerbosity("verbose") as { content: { text: string }[] };
+    const result = (await testReflectVerbosity("verbose")) as { content: { text: string }[] };
     expect(result.content[0].text).toContain("model:");
   });
 });
@@ -477,9 +500,18 @@ describe("memory_store — verbosity output", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  async function testStoreVerbosity(verbosity: VerbosityLevel, text: string, extraParams: Record<string, unknown> = {}) {
+  async function testStoreVerbosity(
+    verbosity: VerbosityLevel,
+    text: string,
+    extraParams: Record<string, unknown> = {},
+  ) {
     const { registerMemoryTools } = await import("../tools/memory-tools.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, verbosity, store: { classifyBeforeWrite: false }, graph: { enabled: false } });
+    const cfg = hybridConfigSchema.parse({
+      ...BASE_CONFIG,
+      verbosity,
+      store: { classifyBeforeWrite: false },
+      graph: { enabled: false },
+    });
     const tools = new Map();
     const api = {
       registerTool(def: any, opts: any) {
@@ -513,42 +545,58 @@ describe("memory_store — verbosity output", () => {
   }
 
   it("quiet: only ID, no text preview", async () => {
-    const result = await testStoreVerbosity("quiet", "Hello world") as { content: { text: string }[]; details: { id: string } };
+    const result = (await testStoreVerbosity("quiet", "Hello world")) as {
+      content: { text: string }[];
+      details: { id: string };
+    };
     expect(result.content[0].text).toMatch(/^Stored: [a-f0-9-]+$/);
     expect(result.content[0].text).not.toContain("Hello world");
     expect(result.content[0].text).not.toContain("decay");
   });
 
   it("normal: shows text preview and decay class", async () => {
-    const result = await testStoreVerbosity("normal", "Some fact about the world", { decayClass: "permanent" }) as { content: { text: string }[] };
+    const result = (await testStoreVerbosity("normal", "Some fact about the world", { decayClass: "permanent" })) as {
+      content: { text: string }[];
+    };
     expect(result.content[0].text).toContain("Some fact about the world");
     expect(result.content[0].text).toContain("[decay: permanent]");
     expect(result.content[0].text).not.toContain("[id:");
   });
 
   it("normal: shows entity if present", async () => {
-    const result = await testStoreVerbosity("normal", "Markus lives in Stockholm", { entity: "Markus", decayClass: "stable" }) as { content: { text: string }[] };
+    const result = (await testStoreVerbosity("normal", "Markus lives in Stockholm", {
+      entity: "Markus",
+      decayClass: "stable",
+    })) as { content: { text: string }[] };
     expect(result.content[0].text).toContain("[entity: Markus]");
   });
 
   it("verbose: appends [id: ...] to message", async () => {
-    const result = await testStoreVerbosity("verbose", "Test fact") as { content: { text: string }[]; details: { id: string } };
+    const result = (await testStoreVerbosity("verbose", "Test fact")) as {
+      content: { text: string }[];
+      details: { id: string };
+    };
     expect(result.content[0].text).toContain(`[id: ${result.details.id}]`);
   });
 
   it("verbose: appends [scope: ...] when scope is set", async () => {
-    const result = await testStoreVerbosity("verbose", "Agent-scoped fact", { scope: "agent", scopeTarget: "main" }) as { content: { text: string }[] };
+    const result = (await testStoreVerbosity("verbose", "Agent-scoped fact", {
+      scope: "agent",
+      scopeTarget: "main",
+    })) as { content: { text: string }[] };
     expect(result.content[0].text).toContain("[scope: agent/main]");
   });
 
   it("verbose: shows scope even when global", async () => {
-    const result = await testStoreVerbosity("verbose", "Global fact", { scope: "global" }) as { content: { text: string }[] };
+    const result = (await testStoreVerbosity("verbose", "Global fact", { scope: "global" })) as {
+      content: { text: string }[];
+    };
     expect(result.content[0].text).toContain("[scope: global]");
   });
 
   it("truncates long text at 100 chars for normal/verbose", async () => {
     const longText = "a".repeat(150);
-    const result = await testStoreVerbosity("normal", longText) as { content: { text: string }[] };
+    const result = (await testStoreVerbosity("normal", longText)) as { content: { text: string }[] };
     expect(result.content[0].text).toContain("...");
     expect(result.content[0].text).not.toContain("a".repeat(150));
   });
@@ -647,9 +695,7 @@ describe("VerbosityLevel — silent mode", () => {
   it("parseVerbosityLevel includes 'silent' in valid values warning message", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     parseVerbosityLevel({ verbosity: "supersecret" });
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("silent"),
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("silent"));
     warnSpy.mockRestore();
   });
 });
@@ -663,9 +709,7 @@ describe("VerbosityLevel — silent mode", () => {
  * Only cfg and a handful of refs are accessed synchronously at registration time;
  * all other fields are only touched inside async hook callbacks and can be null/vi.fn().
  */
-function makeMinimalLifecycleContext(
-  verbosity: VerbosityLevel,
-): LifecycleContext {
+function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContext {
   const cfg = hybridConfigSchema.parse({
     embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
     verbosity,
@@ -720,9 +764,8 @@ describe("silent mode — hook suppression", () => {
     normalHooks.onAgentStart(normalApi as never);
 
     const countBeforeAgentStart = (api: ReturnType<typeof makeMockApi>) =>
-      (api.on as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (args: unknown[]) => args[0] === "before_agent_start",
-      ).length;
+      (api.on as ReturnType<typeof vi.fn>).mock.calls.filter((args: unknown[]) => args[0] === "before_agent_start")
+        .length;
 
     const silentCount = countBeforeAgentStart(silentApi);
     const normalCount = countBeforeAgentStart(normalApi);
@@ -747,9 +790,7 @@ describe("silent mode — hook suppression", () => {
     normalHooks.onAgentEnd(normalApi as never);
 
     const countAgentEnd = (api: ReturnType<typeof makeMockApi>) =>
-      (api.on as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (args: unknown[]) => args[0] === "agent_end",
-      ).length;
+      (api.on as ReturnType<typeof vi.fn>).mock.calls.filter((args: unknown[]) => args[0] === "agent_end").length;
 
     // Silent mode should register fewer agent_end handlers (credential detector is skipped).
     expect(countAgentEnd(silentApi)).toBeLessThan(countAgentEnd(normalApi));

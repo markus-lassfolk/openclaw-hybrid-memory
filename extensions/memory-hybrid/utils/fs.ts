@@ -10,14 +10,22 @@ import { join } from "node:path";
  * Returns the byte size of a file, or 0 if it cannot be read.
  */
 export function getFileSize(filePath: string): number {
-  try { return statSync(filePath).size; } catch { return 0; }
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return 0;
+  }
 }
 
 /**
  * Returns the byte size of a file asynchronously, or 0 if it cannot be read.
  */
 export async function getFileSizeAsync(filePath: string): Promise<number> {
-  try { return (await stat(filePath)).size; } catch { return 0; }
+  try {
+    return (await stat(filePath)).size;
+  } catch {
+    return 0;
+  }
 }
 
 /**

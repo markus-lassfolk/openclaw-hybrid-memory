@@ -142,11 +142,7 @@ class AliasVectorIndex {
     }
   }
 
-  async search(
-    vector: number[],
-    limit: number,
-    minScore: number,
-  ): Promise<AliasSearchResult[]> {
+  async search(vector: number[], limit: number, minScore: number): Promise<AliasSearchResult[]> {
     try {
       await this.ensureInitialized();
       const searchLimit = Math.max(limit * 6, 50);
@@ -232,9 +228,7 @@ export class AliasDB {
         embedding BLOB NOT NULL
       )
     `);
-    this.db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_fact_aliases_factId ON fact_aliases(factId)`,
-    );
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_fact_aliases_factId ON fact_aliases(factId)`);
     this.aliasIndex = new AliasVectorIndex(aliasLancePath, vectorDim);
   }
 
@@ -247,9 +241,7 @@ export class AliasDB {
     const floatArray = Float32Array.from(embedding);
     const blob = Buffer.from(floatArray.buffer.slice(0));
     this.db
-      .prepare(
-        `INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`,
-      )
+      .prepare(`INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`)
       .run(id, normalizedFactId, aliasText, blob);
     if (this.aliasCountCache != null) this.aliasCountCache += 1;
     void this.aliasIndex.store({ id, factId: normalizedFactId, aliasText, vector: embedding });
@@ -262,9 +254,7 @@ export class AliasDB {
     // can use the idx_fact_aliases_factId index (COLLATE NOCASE would bypass it).
     const normalizedFactId = factId.toLowerCase();
     return this.db
-      .prepare(
-        `SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`,
-      )
+      .prepare(`SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`)
       .all(normalizedFactId) as AliasRow[];
   }
 
@@ -282,9 +272,7 @@ export class AliasDB {
   /** Total alias count (cached to avoid COUNT(*) on every search call). */
   count(): number {
     if (this.aliasCountCache != null) return this.aliasCountCache;
-    const row = this.db
-      .prepare(`SELECT COUNT(*) as n FROM fact_aliases`)
-      .get() as { n: number };
+    const row = this.db.prepare(`SELECT COUNT(*) as n FROM fact_aliases`).get() as { n: number };
     this.aliasCountCache = row.n;
     return row.n;
   }
@@ -296,11 +284,7 @@ export class AliasDB {
    * deduplicates by factId (keeps best score per fact), and returns up to
    * `limit` results above `minScore`, sorted descending by score.
    */
-  async search(
-    queryVector: number[],
-    limit: number,
-    minScore: number,
-  ): Promise<AliasSearchResult[]> {
+  async search(queryVector: number[], limit: number, minScore: number): Promise<AliasSearchResult[]> {
     const aliasCount = this.count();
     if (aliasCount >= 1000) {
       // Prefer LanceDB vector search for larger datasets; fallback to linear scan on errors.
@@ -313,11 +297,7 @@ export class AliasDB {
     return this.linearSearch(queryVector, limit, minScore);
   }
 
-  private linearSearch(
-    queryVector: number[],
-    limit: number,
-    minScore: number,
-  ): AliasSearchResult[] {
+  private linearSearch(queryVector: number[], limit: number, minScore: number): AliasSearchResult[] {
     // Track best score per factId to deduplicate across aliases for the same fact
     const bestByFact = new Map<string, number>();
     const queryNormSq = queryVector.reduce((sum, v) => sum + v * v, 0);
@@ -327,10 +307,7 @@ export class AliasDB {
     for (const row of stmt.iterate() as Iterable<{ factId: string; embedding: Buffer }>) {
       if (row.embedding.byteLength % 4 !== 0) continue;
       const floats = new Float32Array(
-        row.embedding.buffer.slice(
-          row.embedding.byteOffset,
-          row.embedding.byteOffset + row.embedding.byteLength,
-        ),
+        row.embedding.buffer.slice(row.embedding.byteOffset, row.embedding.byteOffset + row.embedding.byteLength),
       );
       if (floats.length !== queryVector.length) continue;
       let dot = 0;
@@ -399,10 +376,10 @@ export async function generateAliases(
       .filter((l) => l.length > 0 && l !== factText);
     return [...new Set(lines)].slice(0, maxAliases);
   } catch (err) {
-    capturePluginError(
-      err instanceof Error ? err : new Error(String(err)),
-      { subsystem: "aliases", operation: "generate-aliases" },
-    );
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "aliases",
+      operation: "generate-aliases",
+    });
     return [];
   }
 }
@@ -441,10 +418,10 @@ export async function storeAliases(
       const vec = await embeddings.embed(alias);
       aliasDb.store(factId, alias, vec);
     } catch (err) {
-      capturePluginError(
-        err instanceof Error ? err : new Error(String(err)),
-        { subsystem: "aliases", operation: "store-alias-embedding" },
-      );
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "aliases",
+        operation: "store-alias-embedding",
+      });
       logWarn?.(`memory-hybrid: alias embedding failed: ${err}`);
     }
   }

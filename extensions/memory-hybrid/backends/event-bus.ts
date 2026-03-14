@@ -157,9 +157,7 @@ export class EventBus {
   updateStatus(id: number, newStatus: EventStatus): void {
     const processedAt = newStatus !== "raw" ? new Date().toISOString() : null;
     const result = this.liveDb
-      .prepare(
-        `UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?`,
-      )
+      .prepare(`UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?`)
       .run(newStatus, processedAt, id);
     if (result.changes === 0) {
       throw new Error(`EventBus: no event found with id ${id}`);

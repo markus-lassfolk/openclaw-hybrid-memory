@@ -100,8 +100,7 @@ function buildMockDb(
     getLinksFrom: (id: string) => linksFrom[id] ?? [],
     getLinksTo: (id: string) => linksTo[id] ?? [],
     lookup: lookupMap
-      ? (entity: string) =>
-          (lookupMap[entity] ?? []).map((e) => ({ entry: e, score: 1.0 }))
+      ? (entity: string) => (lookupMap[entity] ?? []).map((e) => ({ entry: e, score: 1.0 }))
       : undefined,
   };
 }
@@ -155,8 +154,10 @@ describe("findShortestPath: trivial cases", () => {
     const db = buildMockDb(
       [a, b, c, d],
       { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      { b: [{ id: "l1", sourceFactId: "a", linkType: "RELATED_TO", strength: 1.0 }],
-        d: [{ id: "l2", sourceFactId: "c", linkType: "RELATED_TO", strength: 1.0 }] },
+      {
+        b: [{ id: "l1", sourceFactId: "a", linkType: "RELATED_TO", strength: 1.0 }],
+        d: [{ id: "l2", sourceFactId: "c", linkType: "RELATED_TO", strength: 1.0 }],
+      },
     );
     const result = findShortestPath(db, "a", "d");
     expect(result).toBeNull();
@@ -171,11 +172,7 @@ describe("findShortestPath: 1-hop paths", () => {
   it("finds direct path via outgoing edge (A→B)", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 0.9 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 0.9 }] }, {});
     const result = findShortestPath(db, "a", "b");
     expect(result).not.toBeNull();
     expect(result!.hops).toBe(1);
@@ -190,11 +187,7 @@ describe("findShortestPath: 1-hop paths", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
     // A has an incoming link from B (B is source, A is target)
-    const db = buildMockDb(
-      [a, b],
-      {},
-      { a: [{ id: "l1", sourceFactId: "b", linkType: "CAUSED_BY", strength: 0.8 }] },
-    );
+    const db = buildMockDb([a, b], {}, { a: [{ id: "l1", sourceFactId: "b", linkType: "CAUSED_BY", strength: 0.8 }] });
     // Path from b to a: b→a via the link (b is source, a is target)
     const result = findShortestPath(db, "b", "a");
     expect(result).not.toBeNull();
@@ -205,11 +198,7 @@ describe("findShortestPath: 1-hop paths", () => {
   it("returns correct chain for 1-hop path", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "PART_OF", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "PART_OF", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b");
     expect(result!.chain).toHaveLength(2);
     expect(result!.chain[0].id).toBe("a");
@@ -219,11 +208,7 @@ describe("findShortestPath: 1-hop paths", () => {
   it("hops equals steps.length", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "DEPENDS_ON", strength: 0.5 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "DEPENDS_ON", strength: 0.5 }] }, {});
     const result = findShortestPath(db, "a", "b");
     expect(result!.hops).toBe(result!.steps.length);
   });
@@ -304,11 +289,7 @@ describe("findShortestPath: multi-hop paths", () => {
   it("fromFactId and toFactId are preserved in result", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b");
     expect(result!.fromFactId).toBe("a");
     expect(result!.toFactId).toBe("b");
@@ -323,11 +304,7 @@ describe("findShortestPath: maxDepth enforcement", () => {
   it("maxDepth=0 returns null even for nodes that are neighbors", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b", { maxDepth: 0 });
     expect(result).toBeNull();
   });
@@ -335,11 +312,7 @@ describe("findShortestPath: maxDepth enforcement", () => {
   it("maxDepth=1 finds 1-hop path", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b", { maxDepth: 1 });
     expect(result).not.toBeNull();
     expect(result!.hops).toBe(1);
@@ -452,11 +425,7 @@ describe("findShortestPath: link types and strengths", () => {
   it("traverses SUPERSEDES links", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "SUPERSEDES", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "SUPERSEDES", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b");
     expect(result!.steps[0].linkType).toBe("SUPERSEDES");
   });
@@ -509,12 +478,12 @@ describe("resolveInput", () => {
 
   it("resolves entity name via db.lookup", () => {
     const a = makeEntry("entity-fact-id");
-    const db = buildMockDb([a], {}, {}, { "myEntity": [a] });
+    const db = buildMockDb([a], {}, {}, { myEntity: [a] });
     expect(resolveInput(db, "myEntity")).toBe("entity-fact-id");
   });
 
   it("returns null when entity name not found via lookup", () => {
-    const db = buildMockDb([], {}, {}, { "other": [] });
+    const db = buildMockDb([], {}, {}, { other: [] });
     expect(resolveInput(db, "unknown-entity")).toBeNull();
   });
 
@@ -587,8 +556,24 @@ describe("findShortestPath: integration with FactsDB", () => {
   });
 
   it("finds direct path in real DB", () => {
-    const aId = factsDb.store({ text: "Fact A", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
-    const bId = factsDb.store({ text: "Fact B", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
+    const aId = factsDb.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bId = factsDb.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
     factsDb.createLink(aId, bId, "RELATED_TO", 1.0);
 
     const result = findShortestPath(factsDb, aId, bId, { maxDepth: 5 });
@@ -598,9 +583,33 @@ describe("findShortestPath: integration with FactsDB", () => {
   });
 
   it("finds 2-hop path in real DB", () => {
-    const aId = factsDb.store({ text: "Fact A", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
-    const bId = factsDb.store({ text: "Fact B", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
-    const cId = factsDb.store({ text: "Fact C", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
+    const aId = factsDb.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bId = factsDb.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const cId = factsDb.store({
+      text: "Fact C",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
     factsDb.createLink(aId, bId, "PART_OF", 1.0);
     factsDb.createLink(bId, cId, "CAUSED_BY", 0.8);
 
@@ -610,16 +619,48 @@ describe("findShortestPath: integration with FactsDB", () => {
   });
 
   it("returns null when no path in real DB", () => {
-    const aId = factsDb.store({ text: "Fact A", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
-    const bId = factsDb.store({ text: "Fact B", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
+    const aId = factsDb.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bId = factsDb.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
 
     const result = findShortestPath(factsDb, aId, bId, { maxDepth: 5 });
     expect(result).toBeNull();
   });
 
   it("chain contains correct MemoryEntry objects in real DB", () => {
-    const aId = factsDb.store({ text: "Fact A", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
-    const bId = factsDb.store({ text: "Fact B", category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null }).id;
+    const aId = factsDb.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bId = factsDb.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
     factsDb.createLink(aId, bId, "RELATED_TO", 1.0);
 
     const result = findShortestPath(factsDb, aId, bId, { maxDepth: 5 });

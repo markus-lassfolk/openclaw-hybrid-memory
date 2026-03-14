@@ -60,37 +60,37 @@ afterEach(() => {
 
 describe("schema", () => {
   it("facts_fts virtual table exists after FactsDB init", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='facts_fts'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_fts");
   });
 
   it("facts_fts schema includes tags column", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`)
-      .get() as { sql: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+      | { sql: string }
+      | undefined;
     expect(row?.sql).toContain("tags");
   });
 
   it("insert trigger exists", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ai'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ai'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_ai");
   });
 
   it("update trigger exists", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_au'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_au'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_au");
   });
 
   it("delete trigger exists", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ad'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ad'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_ad");
   });
 });
@@ -584,7 +584,7 @@ describe("edge cases", () => {
 
     expect(() => searchFts(rawDb(db), "SELECT * FROM facts; DROP TABLE facts;--")).not.toThrow();
     expect(() => searchFts(rawDb(db), "'; DROP TABLE facts_fts;--")).not.toThrow();
-    expect(() => searchFts(rawDb(db), "hello \"world\" (test)")).not.toThrow();
+    expect(() => searchFts(rawDb(db), 'hello "world" (test)')).not.toThrow();
     expect(() => searchFts(rawDb(db), "* AND OR NOT")).not.toThrow();
   });
 
@@ -623,7 +623,7 @@ describe("buildFts5Query", () => {
 
   it("passes through FTS5 boolean operators", () => {
     const q = buildFts5Query("foo AND bar");
-    expect(q).toBe("\"foo\" AND \"bar\"");
+    expect(q).toBe('"foo" AND "bar"');
   });
 
   it("passes through prefix operator *", () => {
@@ -654,11 +654,7 @@ describe("performance", () => {
       const now = Math.floor(Date.now() / 1000);
       for (let i = 0; i < 1100; i++) {
         const topic = i % 2 === 0 ? "database" : "networking";
-        insert.run(
-          randomUUID(),
-          `Fact about ${topic} number ${i}: various details and information stored here`,
-          now,
-        );
+        insert.run(randomUUID(), `Fact about ${topic} number ${i}: various details and information stored here`, now);
       }
     });
 

@@ -118,9 +118,9 @@ export class ToolProposalStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): ToolProposal | null {
-    const row = this.db
-      .prepare("SELECT * FROM tool_proposals WHERE id = ?")
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM tool_proposals WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
     if (!row) return null;
     return this.rowToProposal(row);
   }
@@ -159,13 +159,12 @@ export class ToolProposalStore {
 
   updateStatus(id: string, status: ToolProposalStatus, fromStatus?: ToolProposalStatus): ToolProposal | null {
     const now = new Date().toISOString();
-    const result = fromStatus !== undefined
-      ? this.db
-          .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-          .run(status, now, id, fromStatus)
-      : this.db
-          .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?")
-          .run(status, now, id);
+    const result =
+      fromStatus !== undefined
+        ? this.db
+            .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
+            .run(status, now, id, fromStatus)
+        : this.db.prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?").run(status, now, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);
@@ -177,12 +176,8 @@ export class ToolProposalStore {
 
   count(status?: ToolProposalStatus): number {
     const row = status
-      ? (this.db
-          .prepare("SELECT COUNT(*) as n FROM tool_proposals WHERE status = ?")
-          .get(status) as { n: number })
-      : (this.db
-          .prepare("SELECT COUNT(*) as n FROM tool_proposals")
-          .get() as { n: number });
+      ? (this.db.prepare("SELECT COUNT(*) as n FROM tool_proposals WHERE status = ?").get(status) as { n: number })
+      : (this.db.prepare("SELECT COUNT(*) as n FROM tool_proposals").get() as { n: number });
     return row.n;
   }
 
@@ -192,9 +187,7 @@ export class ToolProposalStore {
 
   existsByName(name: string): boolean {
     const row = this.db
-      .prepare(
-        "SELECT id FROM tool_proposals WHERE name = ? AND status IN ('proposed', 'approved') LIMIT 1",
-      )
+      .prepare("SELECT id FROM tool_proposals WHERE name = ? AND status IN ('proposed', 'approved') LIMIT 1")
       .get(name) as { id: string } | undefined;
     return row !== undefined;
   }

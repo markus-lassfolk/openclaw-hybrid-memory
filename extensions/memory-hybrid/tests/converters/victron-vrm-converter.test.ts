@@ -2,8 +2,7 @@ import { describe, it, expect } from "vitest";
 import { victronVrmConverter } from "../../tools/converters/victron-vrm-converter.js";
 
 const SAMPLE_CSV_HEADERS = "Timestamp,Battery Voltage (V),SOC (%),PV Power (W),AC Output (W)";
-const makeCsvRow = (ts: string, bv: number, soc: number, pv: number, ac: number) =>
-  `${ts},${bv},${soc},${pv},${ac}`;
+const makeCsvRow = (ts: string, bv: number, soc: number, pv: number, ac: number) => `${ts},${bv},${soc},${pv},${ac}`;
 
 function makeCsv(rowCount: number): string {
   const rows = [SAMPLE_CSV_HEADERS];
@@ -50,11 +49,7 @@ describe("victronVrmConverter (CSV)", () => {
   });
 
   it("includes PV power statistics", () => {
-    const csv = [
-      SAMPLE_CSV_HEADERS,
-      "2024-01-01,48.0,80,1000,400",
-      "2024-01-02,48.5,85,2000,450",
-    ].join("\n");
+    const csv = [SAMPLE_CSV_HEADERS, "2024-01-01,48.0,80,1000,400", "2024-01-02,48.5,85,2000,450"].join("\n");
 
     const result = victronVrmConverter.convert(csv, "/exports/pv.csv");
     expect(result.markdown).toContain("PV Power:");
@@ -110,9 +105,7 @@ describe("victronVrmConverter (JSON)", () => {
 
   it("shows field names from first record", () => {
     const json = JSON.stringify({
-      records: [
-        { battery_voltage: 48.5, soc: 80, pv_power: 1000 },
-      ],
+      records: [{ battery_voltage: 48.5, soc: 80, pv_power: 1000 }],
     });
 
     const result = victronVrmConverter.convert(json, "/exports/fields.json");

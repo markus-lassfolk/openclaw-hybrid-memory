@@ -312,7 +312,11 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     });
     const results = db.searchProceduresRanked("check API", 10);
     // FTS query won't match unrelated procedures
-    expect(results.every((r) => r.taskPattern.toLowerCase().includes("api") || r.taskPattern.toLowerCase().includes("check"))).toBe(true);
+    expect(
+      results.every(
+        (r) => r.taskPattern.toLowerCase().includes("api") || r.taskPattern.toLowerCase().includes("check"),
+      ),
+    ).toBe(true);
   });
 
   it("returns positive procedures before negative", () => {
@@ -401,10 +405,10 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     });
 
     // Search with Forge scope filter
-    const forgeResults = db.searchProcedures("procedure", 10, 0.1, { 
-      userId: null, 
-      agentId: "forge", 
-      sessionId: null 
+    const forgeResults = db.searchProcedures("procedure", 10, 0.1, {
+      userId: null,
+      agentId: "forge",
+      sessionId: null,
     });
     // Should see: global + forge-specific (NOT hearth)
     expect(forgeResults.some((p) => p.taskPattern.includes("Global"))).toBe(true);

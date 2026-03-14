@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.140] - 2026-03-14
+
+### Changed
+
+- **Version 2026.3.140:** Bump for Phase 1 remodeling release.
+- **Upgrade migration (core-only baseline):** When running plugin version **2026.3.140 or later**, config parsing applies a **Phase 1 core-only migration**. The plugin **overrides** every listed option to the disabled value, **including values the user had set**, so all installations get the same baseline. Affected areas: `queryExpansion`, `frustrationDetection`, `nightlyCycle`, `passiveObserver`, `workflowTracking`, `selfExtension`, `crystallization`, `verification`, `provenance`, `aliases`, `crossAgentLearning`, `reranking`, `contextualVariants`, `documents`, `personaProposals`, and `graph.strengthenOnRecall`. To re-enable any feature, set it explicitly in your plugin config after upgrading (e.g. `queryExpansion: { enabled: true }`).
+
+---
+
 ## [2026.3.110] - 2026-03-11
 
 ### Fixed
@@ -669,7 +678,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.92...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.140...HEAD
+[2026.3.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.140
 [2026.3.110]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.110
 [2026.3.100]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.100
 [2026.3.92]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.92

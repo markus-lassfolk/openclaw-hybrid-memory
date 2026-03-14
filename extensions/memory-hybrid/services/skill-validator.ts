@@ -157,9 +157,7 @@ export class SkillValidator {
       for (const rule of DENY_RULES) {
         if (rule.codeBlockOnly && !inCodeBlock) continue;
         if (rule.pattern.test(line)) {
-          violations.push(
-            `Line ${lineNumber}: [${rule.name}] ${rule.description} — "${trimmed.slice(0, 80)}"`,
-          );
+          violations.push(`Line ${lineNumber}: [${rule.name}] ${rule.description} — "${trimmed.slice(0, 80)}"`);
         }
       }
 

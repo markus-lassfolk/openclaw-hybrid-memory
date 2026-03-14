@@ -24,10 +24,7 @@ export interface PluginContext {
  *
  * This includes: memory_link and memory_graph (when graph is enabled).
  */
-export function registerGraphTools(
-  ctx: PluginContext,
-  api: ClawdbotPluginApi,
-): void {
+export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
   const { factsDb, cfg } = ctx;
 
   // Graph tools (when graph enabled)
@@ -42,12 +39,15 @@ export function registerGraphTools(
           sourceFact: Type.String({ description: "ID of the source fact" }),
           targetFact: Type.String({ description: "ID of the target fact" }),
           linkType: stringEnum(MEMORY_LINK_TYPES as unknown as readonly string[]),
-          strength: Type.Optional(
-            Type.Number({ description: "Link strength 0.0-1.0 (default 1.0)" }),
-          ),
+          strength: Type.Optional(Type.Number({ description: "Link strength 0.0-1.0 (default 1.0)" })),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
-          const { sourceFact, targetFact, linkType, strength = 1.0 } = params as {
+          const {
+            sourceFact,
+            targetFact,
+            linkType,
+            strength = 1.0,
+          } = params as {
             sourceFact: string;
             targetFact: string;
             linkType: MemoryLinkType;
@@ -93,9 +93,7 @@ export function registerGraphTools(
         description: "Explore connections from a memory: show direct links and optionally traverse up to depth 3.",
         parameters: Type.Object({
           factId: Type.String({ description: "ID of the fact to explore" }),
-          depth: Type.Optional(
-            Type.Number({ description: "Max hops to traverse (default 2, max 3)" }),
-          ),
+          depth: Type.Optional(Type.Number({ description: "Max hops to traverse (default 2, max 3)" })),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { factId, depth = 2 } = params as { factId: string; depth?: number };
@@ -116,11 +114,15 @@ export function registerGraphTools(
           ];
           for (const l of out) {
             const t = factsDb.getById(l.targetFactId);
-            lines.push(`  → [${l.linkType}] ${t ? t.text.slice(0, 60) + (t.text.length > 60 ? "…" : "") : l.targetFactId} (strength: ${l.strength.toFixed(2)})`);
+            lines.push(
+              `  → [${l.linkType}] ${t ? t.text.slice(0, 60) + (t.text.length > 60 ? "…" : "") : l.targetFactId} (strength: ${l.strength.toFixed(2)})`,
+            );
           }
           for (const l of in_) {
             const s = factsDb.getById(l.sourceFactId);
-            lines.push(`  ← [${l.linkType}] ${s ? s.text.slice(0, 60) + (s.text.length > 60 ? "…" : "") : l.sourceFactId} (strength: ${l.strength.toFixed(2)})`);
+            lines.push(
+              `  ← [${l.linkType}] ${s ? s.text.slice(0, 60) + (s.text.length > 60 ? "…" : "") : l.sourceFactId} (strength: ${l.strength.toFixed(2)})`,
+            );
           }
           const connectedIds = factsDb.getConnectedFactIds([factId], maxD);
           lines.push("");
@@ -158,7 +160,11 @@ export function registerGraphTools(
           ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
-          const { from, to, maxDepth = 5 } = params as {
+          const {
+            from,
+            to,
+            maxDepth = 5,
+          } = params as {
             from: string;
             to: string;
             maxDepth?: number;
@@ -169,7 +175,9 @@ export function registerGraphTools(
           const fromId = resolveInput(factsDb, from);
           if (!fromId) {
             return {
-              content: [{ type: "text", text: `Could not resolve start: "${from}" (not a known fact ID or entity name)` }],
+              content: [
+                { type: "text", text: `Could not resolve start: "${from}" (not a known fact ID or entity name)` },
+              ],
               details: { error: "from_not_found", from },
             };
           }

@@ -31,7 +31,11 @@ export type ClawdbotPluginApi = {
   /** Register an HTTP route with the OpenClaw gateway (v2026.3.8+). */
   registerHttpRoute: (
     path: string,
-    handler: (req: { method: string; url: string; headers: Record<string, string> }) => Promise<{ status: number; headers?: Record<string, string>; body: string }>,
+    handler: (req: {
+      method: string;
+      url: string;
+      headers: Record<string, string>;
+    }) => Promise<{ status: number; headers?: Record<string, string>; body: string }>,
     opts: { authenticated: boolean },
   ) => void;
   [key: string]: unknown;

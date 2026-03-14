@@ -67,11 +67,7 @@ export function getRoot(parent: Map<string, string>, id: string): string {
  * True if fact looks like identifier/number (IP, email, phone, UUID, etc.).
  * Used by consolidate to skip by default (2.2/2.4).
  */
-export function isStructuredForConsolidation(
-  text: string,
-  entity: string | null,
-  key: string | null,
-): boolean {
+export function isStructuredForConsolidation(text: string, entity: string | null, key: string | null): boolean {
   if (/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(text)) return true;
   if (/[\w.-]+@[\w.-]+\.\w+/.test(text)) return true;
   if (/\+\d{10,}/.test(text) || /\b\d{10,}\b/.test(text)) return true;
@@ -84,9 +80,7 @@ export function isStructuredForConsolidation(
   return false;
 }
 
-function selectConsolidatedKeyValue(
-  facts: MemoryEntry[],
-): { key: string | null; value: string | null } {
+function selectConsolidatedKeyValue(facts: MemoryEntry[]): { key: string | null; value: string | null } {
   if (facts.length === 0) return { key: null, value: null };
   const highestConfidence = facts.reduce((best, f) => (f.confidence > best.confidence ? f : best), facts[0]);
   const factsWithKey = facts.filter((f) => typeof f.key === "string" && f.key.trim().length > 0);
@@ -115,9 +109,9 @@ function selectConsolidatedKeyValue(
 
   const bestForKey = keyToBest.get(selectedKey)!;
   const selectedValue =
-    (highestConfidence.key?.trim() === selectedKey && highestConfidence.value != null)
+    highestConfidence.key?.trim() === selectedKey && highestConfidence.value != null
       ? highestConfidence.value
-      : bestForKey.value ?? null;
+      : (bestForKey.value ?? null);
   return { key: selectedKey, value: selectedValue };
 }
 
@@ -158,8 +152,8 @@ export async function runConsolidate(
       } catch (err) {
         logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'consolidate-embed',
-          subsystem: 'embeddings',
+          operation: "consolidate-embed",
+          subsystem: "embeddings",
           factId: id,
         });
         vectors.push([]);
@@ -204,20 +198,21 @@ export async function runConsolidate(
     try {
       const { withLLMRetry } = await import("./chat.js");
       const resp = await withLLMRetry(
-        () => openai.chat.completions.create({
-          model: opts.model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: 300,
-        }),
-        { maxRetries: 2 }
+        () =>
+          openai.chat.completions.create({
+            model: opts.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            max_tokens: 300,
+          }),
+        { maxRetries: 2 },
       );
       mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'consolidate-llm',
-        subsystem: 'openai',
+        operation: "consolidate-llm",
+        subsystem: "openai",
         clusterSize: clusterIds.length,
       });
       continue;
@@ -235,7 +230,9 @@ export async function runConsolidate(
     const { key: mergedKey, value: mergedValue } = selectConsolidatedKeyValue(clusterFacts);
 
     if (opts.dryRun) {
-      logger.info(`memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`);
+      logger.info(
+        `memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`,
+      );
       merged++;
       continue;
     }
@@ -275,8 +272,8 @@ export async function runConsolidate(
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'consolidate-vector-store',
-        subsystem: 'vector',
+        operation: "consolidate-vector-store",
+        subsystem: "vector",
         factId: entry.id,
       });
     }

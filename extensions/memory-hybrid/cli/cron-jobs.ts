@@ -28,7 +28,8 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     pluginJobId: "hybrid-mem:nightly-distill",
     name: "nightly-memory-sweep",
     schedule: { kind: "cron", expr: "0 2 * * *" },
-    command: "hybrid-mem prune && hybrid-mem distill --days 3 && hybrid-mem extract-daily && hybrid-mem resolve-contradictions && hybrid-mem record-distill",
+    command:
+      "hybrid-mem prune && hybrid-mem distill --days 3 && hybrid-mem extract-daily && hybrid-mem resolve-contradictions && hybrid-mem record-distill",
     featureGate: null,
   },
   {
@@ -63,7 +64,8 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     pluginJobId: "hybrid-mem:weekly-extract-procedures",
     name: "weekly-extract-procedures",
     schedule: { kind: "cron", expr: "0 4 * * 0" },
-    command: "hybrid-mem extract-procedures --days 7 && hybrid-mem extract-directives --days 7 && hybrid-mem extract-reinforcement --days 7 && hybrid-mem generate-auto-skills",
+    command:
+      "hybrid-mem extract-procedures --days 7 && hybrid-mem extract-directives --days 7 && hybrid-mem extract-reinforcement --days 7 && hybrid-mem generate-auto-skills",
     featureGate: null,
   },
   {

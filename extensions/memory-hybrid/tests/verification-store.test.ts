@@ -130,9 +130,7 @@ describe("VerificationStore.getVerified", () => {
 
     // Directly corrupt the stored text in the DB
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Tampered text' WHERE fact_id = ?`
-    ).run("fact-corrupted");
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered text' WHERE fact_id = ?`).run("fact-corrupted");
 
     expect(() => store.getVerified("fact-corrupted")).toThrow(VerificationError);
     expect(logger.error).toHaveBeenCalled();
@@ -141,9 +139,7 @@ describe("VerificationStore.getVerified", () => {
   it("throws VerificationError whose message mentions the fact", async () => {
     store.verify("important-fact", "Important data", "user");
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Changed' WHERE fact_id = ?`
-    ).run("important-fact");
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Changed' WHERE fact_id = ?`).run("important-fact");
 
     expect(() => store.getVerified("important-fact")).toThrow(/important-fact/);
     expect(logger.error).toHaveBeenCalled();
@@ -173,9 +169,7 @@ describe("VerificationStore.checkIntegrity", () => {
   it("returns valid=false and lists corrupted ids when text is tampered", async () => {
     const id = store.verify("f-tamper", "Original", "agent");
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`
-    ).run(id);
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`).run(id);
 
     const report = store.checkIntegrity();
     expect(report.valid).toBe(false);
@@ -188,9 +182,7 @@ describe("VerificationStore.checkIntegrity", () => {
     const id2 = store.verify("fact-bad", "Also good", "agent");
 
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`
-    ).run(id2);
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`).run(id2);
 
     // Scoped to fact-ok — should be clean
     const reportOk = store.checkIntegrity("fact-ok");
@@ -222,7 +214,9 @@ describe("VerificationStore.update", () => {
     const newId = store.update(id, "V2", "user");
 
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    const row = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(newId) as { previous_version_id: string | null };
+    const row = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(newId) as {
+      previous_version_id: string | null;
+    };
     expect(row.previous_version_id).toBe(id);
   });
 
@@ -240,7 +234,9 @@ describe("VerificationStore.update", () => {
     store.update(id, "Updated", "user");
 
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    const oldRow = db.prepare(`SELECT next_verification FROM verified_facts WHERE id = ?`).get(id) as { next_verification: string | null };
+    const oldRow = db.prepare(`SELECT next_verification FROM verified_facts WHERE id = ?`).get(id) as {
+      next_verification: string | null;
+    };
     expect(oldRow.next_verification).toBeNull();
   });
 
@@ -281,9 +277,7 @@ describe("VerificationStore.listDueForReverification", () => {
     // Store a fact then manually backdate its next_verification
     const id = store.verify("fact-overdue", "Old fact", "agent");
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(id);
+    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
 
     const due = store.listDueForReverification();
     expect(due.length).toBeGreaterThan(0);
@@ -300,9 +294,7 @@ describe("VerificationStore.listDueForReverification", () => {
   it("returns entries whose verified_at is older than reverificationDays", async () => {
     const id = store.verify("fact-stale", "Stale fact", "agent");
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(id);
+    db.prepare(`UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
 
     const due = store.listDueForReverification();
     expect(due.map((d) => d.id)).toContain(id);
@@ -312,12 +304,8 @@ describe("VerificationStore.listDueForReverification", () => {
     const id = store.verify("fact-latest", "Original", "agent");
     const newId = store.update(id, "Updated", "system");
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(id);
-    db.prepare(
-      `UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(newId);
+    db.prepare(`UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
+    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(newId);
 
     const due = store.listDueForReverification();
     const ids = due.map((d) => d.id);
@@ -332,9 +320,7 @@ describe("VerificationStore.listDueForReverification", () => {
 
 describe("shouldAutoVerify", () => {
   it("returns true for a fact containing an IP address", () => {
-    expect(
-      shouldAutoVerify({ text: "Server at 192.168.1.1", category: "fact", tags: [] })
-    ).toBe(true);
+    expect(shouldAutoVerify({ text: "Server at 192.168.1.1", category: "fact", tags: [] })).toBe(true);
   });
 
   it("returns true for various valid IPv4 addresses", () => {
@@ -349,7 +335,7 @@ describe("shouldAutoVerify", () => {
         text: "Load balancer config",
         category: "technical",
         tags: ["infrastructure"],
-      })
+      }),
     ).toBe(true);
   });
 
@@ -360,7 +346,7 @@ describe("shouldAutoVerify", () => {
         category: "other",
         tags: [],
         entity: "api.example.com",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -372,7 +358,7 @@ describe("shouldAutoVerify", () => {
         tags: [],
         entity: "Credentials",
         value: "vault:api.example.com:token",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -383,7 +369,7 @@ describe("shouldAutoVerify", () => {
         category: "other",
         tags: [],
         verificationTier: "critical",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -393,7 +379,7 @@ describe("shouldAutoVerify", () => {
         text: "User prefers dark mode",
         category: "preference",
         tags: [],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -403,7 +389,7 @@ describe("shouldAutoVerify", () => {
         text: "Load balancer",
         category: "fact",
         tags: ["infrastructure"],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -413,7 +399,7 @@ describe("shouldAutoVerify", () => {
         text: "Algorithm uses O(n log n)",
         category: "technical",
         tags: ["algorithm"],
-      })
+      }),
     ).toBe(false);
   });
 });

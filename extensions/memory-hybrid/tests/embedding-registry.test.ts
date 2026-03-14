@@ -5,10 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  EmbeddingRegistry,
-  buildEmbeddingRegistry,
-} from "../services/embedding-registry.js";
+import { EmbeddingRegistry, buildEmbeddingRegistry } from "../services/embedding-registry.js";
 import { hybridConfigSchema } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingModelConfig } from "../config.js";
@@ -106,11 +103,7 @@ describe("EmbeddingRegistry — register()", () => {
     registry.register(makeOllamaConfig("nomic-embed-text", 768));
     registry.register(makeOllamaConfig("mxbai-embed-large", 1024));
     expect(registry.getModels()).toHaveLength(2);
-    expect(registry.allModelNames()).toEqual([
-      "text-embedding-3-small",
-      "nomic-embed-text",
-      "mxbai-embed-large",
-    ]);
+    expect(registry.allModelNames()).toEqual(["text-embedding-3-small", "nomic-embed-text", "mxbai-embed-large"]);
   });
 });
 
@@ -248,9 +241,7 @@ describe("buildEmbeddingRegistry()", () => {
       embedding: {
         apiKey: "sk-test-key-long-enough",
         model: "text-embedding-3-small",
-        multiModels: [
-          { name: "nomic-embed-text", provider: "ollama", dimensions: 768, role: "domain" },
-        ],
+        multiModels: [{ name: "nomic-embed-text", provider: "ollama", dimensions: 768, role: "domain" }],
       },
     });
     const primary = makeMockProvider("text-embedding-3-small", 1536);

@@ -56,9 +56,11 @@ describe("Ollama graceful fallback — ECONNREFUSED", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn()
-            .mockRejectedValueOnce(ollamaErr)    // first call: ollama fails
-            .mockResolvedValueOnce({              // second call: cloud model succeeds
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(ollamaErr) // first call: ollama fails
+            .mockResolvedValueOnce({
+              // second call: cloud model succeeds
               choices: [{ message: { content: "response from cloud" } }],
             }),
         },
@@ -78,10 +80,7 @@ describe("Ollama graceful fallback — ECONNREFUSED", () => {
   });
 
   it("throws when both ollama and fallback models fail", async () => {
-    const connErr = Object.assign(
-      new Error("ECONNREFUSED"),
-      { code: "ECONNREFUSED" },
-    );
+    const connErr = Object.assign(new Error("ECONNREFUSED"), { code: "ECONNREFUSED" });
     const mockOpenai = {
       chat: {
         completions: {

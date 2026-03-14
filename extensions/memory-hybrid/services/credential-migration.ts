@@ -37,9 +37,7 @@ export interface MigrateCredentialsResult {
  * Idempotent: facts that are already pointers (value starts with vault:) are skipped.
  * Returns { migrated, skipped, errors }. If markDone is true, writes a flag file so init only runs once.
  */
-export async function migrateCredentialsToVault(
-  opts: MigrateCredentialsOptions,
-): Promise<MigrateCredentialsResult> {
+export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions): Promise<MigrateCredentialsResult> {
   const { factsDb, vectorDb, embeddings, credentialsDb, aliasDb, migrationFlagPath, markDone } = opts;
   let migrated = 0;
   let skipped = 0;
@@ -53,12 +51,7 @@ export async function migrateCredentialsToVault(
   );
 
   for (const { entry } of toMigrate) {
-    const parsed = tryParseCredentialForVault(
-      entry.text,
-      entry.entity,
-      entry.key,
-      entry.value,
-    );
+    const parsed = tryParseCredentialForVault(entry.text, entry.entity, entry.key, entry.value);
     if (!parsed) {
       skipped++;
       continue;
@@ -80,10 +73,10 @@ export async function migrateCredentialsToVault(
       try {
         await vectorDb.delete(entry.id);
       } catch (err) {
-        if (err instanceof Error && !err.message.includes('not found')) {
+        if (err instanceof Error && !err.message.includes("not found")) {
           capturePluginError(err, {
-            operation: 'migrate-vector-delete',
-            subsystem: 'credentials'
+            operation: "migrate-vector-delete",
+            subsystem: "credentials",
           });
         }
         // LanceDB row might not exist

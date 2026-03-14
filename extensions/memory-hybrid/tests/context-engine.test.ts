@@ -71,7 +71,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try { factsDb.close(); } catch { /* ignore */ }
+  try {
+    factsDb.close();
+  } catch {
+    /* ignore */
+  }
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -97,8 +101,18 @@ describe("HybridMemoryContextEngine.compact()", () => {
     // Arrange: write 2 entries to WAL
     const id1 = randomUUID();
     const id2 = randomUUID();
-    wal.write({ id: id1, timestamp: Date.now(), operation: "store", data: { text: "Compact fact A", category: "fact", importance: 0.8, source: "test" } });
-    wal.write({ id: id2, timestamp: Date.now(), operation: "store", data: { text: "Compact fact B", category: "preference", importance: 0.7, source: "test" } });
+    wal.write({
+      id: id1,
+      timestamp: Date.now(),
+      operation: "store",
+      data: { text: "Compact fact A", category: "fact", importance: 0.8, source: "test" },
+    });
+    wal.write({
+      id: id2,
+      timestamp: Date.now(),
+      operation: "store",
+      data: { text: "Compact fact B", category: "preference", importance: 0.7, source: "test" },
+    });
 
     const engine = makeEngine();
     const before = factsDb.getCount();
@@ -126,7 +140,15 @@ describe("HybridMemoryContextEngine.compact()", () => {
 
   it("skips duplicate WAL entries (idempotent)", async () => {
     // Pre-store the fact in FactsDB
-    factsDb.store({ entity: null, key: null, value: null, text: "Already stored fact", category: "fact", importance: 0.9, source: "test" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Already stored fact",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
 
     // Write same text to WAL
     wal.write({
@@ -178,8 +200,24 @@ describe("HybridMemoryContextEngine.compact()", () => {
 
   it("includes top-fact summary in result when facts are present", async () => {
     // Store a few facts first
-    factsDb.store({ entity: null, key: null, value: null, text: "Important context fact", category: "fact", importance: 0.9, source: "test" });
-    factsDb.store({ entity: null, key: null, value: null, text: "User preference detail", category: "preference", importance: 0.8, source: "test" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Important context fact",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "User preference detail",
+      category: "preference",
+      importance: 0.8,
+      source: "test",
+    });
 
     const engine = makeEngine();
     const result = await engine.compact({ sessionId: "summary-session", sessionFile: "/tmp/s.json" });
@@ -203,8 +241,24 @@ describe("HybridMemoryContextEngine.compact()", () => {
 describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
   it("returns a SubagentSpawnPreparation with rollback when facts exist", async () => {
     // Seed some parent facts
-    factsDb.store({ entity: null, key: null, value: null, text: "Parent session context memory", category: "fact", importance: 0.85, source: "parent" });
-    factsDb.store({ entity: null, key: null, value: null, text: "User preference: dark mode", category: "preference", importance: 0.7, source: "parent" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Parent session context memory",
+      category: "fact",
+      importance: 0.85,
+      source: "parent",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "User preference: dark mode",
+      category: "preference",
+      importance: 0.7,
+      source: "parent",
+    });
 
     const engine = makeEngine();
     const prep = await engine.prepareSubagentSpawn?.({
@@ -235,7 +289,15 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
   });
 
   it("rollback is a no-op (does not throw)", async () => {
-    factsDb.store({ entity: null, key: null, value: null, text: "Some fact", category: "fact", importance: 0.8, source: "test" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Some fact",
+      category: "fact",
+      importance: 0.8,
+      source: "test",
+    });
 
     const engine = makeEngine();
     const prep = await engine.prepareSubagentSpawn?.({
@@ -250,7 +312,15 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
   it("respects autoRecall.limit when fetching parent facts", async () => {
     // Store 20 facts
     for (let i = 0; i < 20; i++) {
-      factsDb.store({ entity: null, key: null, value: null, text: `Fact number ${i}`, category: "fact", importance: 0.7, source: "test" });
+      factsDb.store({
+        entity: null,
+        key: null,
+        value: null,
+        text: `Fact number ${i}`,
+        category: "fact",
+        importance: 0.7,
+        source: "test",
+      });
     }
 
     const cfgWithLimit = { ...makeMinimalConfig() };
@@ -276,8 +346,24 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
     const childSessionKey = "child-session-" + randomUUID();
 
     // Simulate facts captured by the child session
-    factsDb.store({ entity: null, key: null, value: null, text: "Child session discovery A", category: "fact", importance: 0.8, source: childSessionKey });
-    factsDb.store({ entity: null, key: null, value: null, text: "Child session discovery B", category: "technical", importance: 0.75, source: childSessionKey });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Child session discovery A",
+      category: "fact",
+      importance: 0.8,
+      source: childSessionKey,
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Child session discovery B",
+      category: "technical",
+      importance: 0.75,
+      source: childSessionKey,
+    });
 
     const logger = makeLogger();
     const engine = makeEngine({ logger });
@@ -311,7 +397,9 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
 
   it("does not throw on DB errors (non-fatal)", async () => {
     const brokenFactsDb = {
-      countBySource: vi.fn().mockImplementation(() => { throw new Error("DB error"); }),
+      countBySource: vi.fn().mockImplementation(() => {
+        throw new Error("DB error");
+      }),
       getCount: vi.fn().mockReturnValue(0),
       list: vi.fn().mockReturnValue([]),
       hasDuplicate: vi.fn().mockReturnValue(false),
@@ -321,7 +409,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
 
     // Should not throw
     await expect(
-      engine.onSubagentEnded?.({ childSessionKey: "broken-child", reason: "completed" })
+      engine.onSubagentEnded?.({ childSessionKey: "broken-child", reason: "completed" }),
     ).resolves.not.toThrow();
   });
 
@@ -331,7 +419,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
 
     for (const reason of reasons) {
       await expect(
-        engine.onSubagentEnded?.({ childSessionKey: "child-" + randomUUID(), reason })
+        engine.onSubagentEnded?.({ childSessionKey: "child-" + randomUUID(), reason }),
       ).resolves.not.toThrow();
     }
   });

@@ -179,7 +179,9 @@ describe("CredentialsDB.list", () => {
 
     const list = db.list();
     expect(list.length).toBe(2);
-    expect(list.every((item) => !("value" in item && typeof item.value === "string" && item.value.length > 10))).toBe(true);
+    expect(list.every((item) => !("value" in item && typeof item.value === "string" && item.value.length > 10))).toBe(
+      true,
+    );
     expect(list.map((l) => l.service)).toContain("github");
     expect(list.map((l) => l.service)).toContain("openai");
   });

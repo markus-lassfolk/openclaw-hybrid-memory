@@ -47,10 +47,10 @@ export interface AmbientContext {
  * Compute cosine similarity between two equal-length numeric vectors.
  * This is the general-purpose version that handles arbitrary (non-normalized) vectors
  * by computing magnitudes and normalizing internally.
- * 
+ *
  * Returns a value in [-1, 1], where 1 = identical direction, -1 = opposite.
  * Returns 0 when either vector has zero magnitude or when lengths differ.
- * 
+ *
  * NOTE: For pre-normalized vectors, reflection.ts has an optimized version
  * that skips magnitude computation (just computes dot product).
  */
@@ -86,11 +86,7 @@ export function cosineDistance(a: number[], b: number[]): number {
  * @param threshold - Cosine distance threshold (default: 0.4). Higher = less sensitive.
  * @returns true when the distance exceeds the threshold (topic shifted).
  */
-export function detectTopicShift(
-  prev: number[],
-  next: number[],
-  threshold: number = 0.4,
-): boolean {
+export function detectTopicShift(prev: number[], next: number[], threshold: number = 0.4): boolean {
   if (prev.length === 0 || next.length === 0) return false;
   const distance = cosineDistance(prev, next);
   return distance > threshold;
@@ -102,12 +98,63 @@ export function detectTopicShift(
 
 /** Common English stop-words / sentence starters to exclude from capitalised-word extraction. */
 const COMMON_STOP_WORDS = new Set([
-  "the", "this", "that", "when", "what", "which", "where", "who", "how",
-  "and", "but", "for", "now", "then", "are", "was", "has", "have", "had",
-  "not", "can", "does", "did", "will", "may", "use", "get", "set", "run",
-  "all", "any", "each", "one", "two", "new", "old", "my", "your", "our",
-  "his", "her", "its", "they", "them", "with", "from", "into", "over",
-  "also", "just", "more", "most", "very", "some", "such", "true", "false",
+  "the",
+  "this",
+  "that",
+  "when",
+  "what",
+  "which",
+  "where",
+  "who",
+  "how",
+  "and",
+  "but",
+  "for",
+  "now",
+  "then",
+  "are",
+  "was",
+  "has",
+  "have",
+  "had",
+  "not",
+  "can",
+  "does",
+  "did",
+  "will",
+  "may",
+  "use",
+  "get",
+  "set",
+  "run",
+  "all",
+  "any",
+  "each",
+  "one",
+  "two",
+  "new",
+  "old",
+  "my",
+  "your",
+  "our",
+  "his",
+  "her",
+  "its",
+  "they",
+  "them",
+  "with",
+  "from",
+  "into",
+  "over",
+  "also",
+  "just",
+  "more",
+  "most",
+  "very",
+  "some",
+  "such",
+  "true",
+  "false",
 ]);
 
 const ENTITY_PREFIX_LEN = 3;
@@ -172,10 +219,7 @@ function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
  *
  * Returns distinct lowercase entity strings (max 10).
  */
-export function extractEntitiesFromMessage(
-  text: string,
-  knownEntities: string[] = [],
-): string[] {
+export function extractEntitiesFromMessage(text: string, knownEntities: string[] = []): string[] {
   const candidates = new Set<string>();
   const lower = text.toLowerCase();
 
@@ -243,23 +287,14 @@ export function generateTemporalQueries(nowMs: number = Date.now()): string[] {
 
   if (hour >= 6 && hour < 12) {
     // Morning: today's plan and pending items
-    return [
-      "action items and tasks for today",
-      "pending decisions and upcoming deadlines",
-    ];
+    return ["action items and tasks for today", "pending decisions and upcoming deadlines"];
   }
   if (hour >= 12 && hour < 18) {
     // Afternoon: recent progress and blockers
-    return [
-      "action items from last 48 hours",
-      "upcoming deadlines and commitments",
-    ];
+    return ["action items from last 48 hours", "upcoming deadlines and commitments"];
   }
   // Evening/night: unresolved issues and follow-ups
-  return [
-    "unresolved issues and follow-ups",
-    "action items from last 48 hours",
-  ];
+  return ["unresolved issues and follow-ups", "action items from last 48 hours"];
 }
 
 // ---------------------------------------------------------------------------
@@ -379,10 +414,7 @@ export function generateAmbientQueries(
  * @param getId      - Function that extracts the unique ID from a result.
  * @returns Flat deduplicated list, first occurrence wins.
  */
-export function deduplicateResultsById<T>(
-  resultSets: T[][],
-  getId: (item: T) => string,
-): T[] {
+export function deduplicateResultsById<T>(resultSets: T[][], getId: (item: T) => string): T[] {
   const seen = new Set<string>();
   const deduped: T[] = [];
   for (const results of resultSets) {
@@ -403,8 +435,19 @@ export function deduplicateResultsById<T>(
 
 /** Keywords that suggest the conversation involves an active problem or error. */
 const ERROR_KEYWORDS = [
-  "error", "failed", "crash", "timeout", "broken", "not working",
-  "exception", "bug", "issue", "problem", "fault", "failure", "down",
+  "error",
+  "failed",
+  "crash",
+  "timeout",
+  "broken",
+  "not working",
+  "exception",
+  "bug",
+  "issue",
+  "problem",
+  "fault",
+  "failure",
+  "down",
 ];
 
 /**
@@ -432,10 +475,7 @@ export interface IssueAmbientResult {
  *
  * Returns at most 3 open + 3 resolved issues.
  */
-export function searchAmbientIssues(
-  message: string,
-  issueStore: IssueStore,
-): IssueAmbientResult {
+export function searchAmbientIssues(message: string, issueStore: IssueStore): IssueAmbientResult {
   if (!hasErrorKeywords(message)) {
     return { openIssues: [], resolvedIssues: [] };
   }
@@ -467,9 +507,7 @@ export function searchAmbientIssues(
     .filter((i) => i.status === "open" || i.status === "diagnosed" || i.status === "fix-attempted")
     .slice(0, 3);
 
-  const resolvedIssues = matchList
-    .filter((i) => i.status === "resolved" || i.status === "verified")
-    .slice(0, 3);
+  const resolvedIssues = matchList.filter((i) => i.status === "resolved" || i.status === "verified").slice(0, 3);
 
   return { openIssues, resolvedIssues };
 }

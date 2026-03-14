@@ -28,11 +28,16 @@ export type EventType =
 
 export function categoryToEventType(category: string): EventType {
   switch (category) {
-    case "preference": return "preference_expressed";
-    case "decision": return "decision_made";
-    case "action": return "action_taken";
-    case "entity": return "entity_mentioned";
-    default: return "fact_learned";
+    case "preference":
+      return "preference_expressed";
+    case "decision":
+      return "decision_made";
+    case "action":
+      return "action_taken";
+    case "entity":
+      return "entity_mentioned";
+    default:
+      return "fact_learned";
   }
 }
 
@@ -119,24 +124,22 @@ export class EventLog {
       `INSERT INTO event_log (id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    const insertAll = this.liveDb.transaction(
-      (batch: Omit<EventLogEntry, "id" | "createdAt">[]) => {
-        for (const entry of batch) {
-          const id = randomUUID();
-          ids.push(id);
-          stmt.run(
-            id,
-            entry.sessionId,
-            entry.timestamp,
-            entry.eventType,
-            JSON.stringify(entry.content),
-            entry.entities != null ? JSON.stringify(entry.entities) : null,
-            entry.consolidatedInto ?? null,
-            entry.metadata != null ? JSON.stringify(entry.metadata) : null,
-          );
-        }
-      },
-    );
+    const insertAll = this.liveDb.transaction((batch: Omit<EventLogEntry, "id" | "createdAt">[]) => {
+      for (const entry of batch) {
+        const id = randomUUID();
+        ids.push(id);
+        stmt.run(
+          id,
+          entry.sessionId,
+          entry.timestamp,
+          entry.eventType,
+          JSON.stringify(entry.content),
+          entry.entities != null ? JSON.stringify(entry.entities) : null,
+          entry.consolidatedInto ?? null,
+          entry.metadata != null ? JSON.stringify(entry.metadata) : null,
+        );
+      }
+    });
     insertAll(entries);
     return ids;
   }
@@ -144,18 +147,16 @@ export class EventLog {
   /** Return events for a session in chronological order (oldest-first) with a safety limit. */
   getBySession(sessionId: string, limit = 1000): EventLogEntry[] {
     const rows = this.liveDb
-      .prepare(
-        `SELECT * FROM event_log WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?`,
-      )
+      .prepare(`SELECT * FROM event_log WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?`)
       .all(sessionId, limit) as Record<string, unknown>[];
     return rows.map((r) => this.rowToEntry(r));
   }
 
   /** Return a single event by id (or null if not found). */
   getById(id: string): EventLogEntry | null {
-    const row = this.liveDb
-      .prepare(`SELECT * FROM event_log WHERE id = ?`)
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this.liveDb.prepare(`SELECT * FROM event_log WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
@@ -177,9 +178,7 @@ export class EventLog {
     const params: unknown[] = [];
     let query = `SELECT * FROM event_log WHERE consolidated_into IS NULL`;
     if (olderThanDays !== undefined) {
-      const cutoff = new Date(
-        Date.now() - olderThanDays * 24 * 3600 * 1000,
-      ).toISOString();
+      const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
       query += ` AND timestamp < ?`;
       params.push(cutoff);
     }
@@ -204,9 +203,7 @@ export class EventLog {
 
   /** Mark a set of events as consolidated into the given fact id. */
   markConsolidated(eventIds: string[], factId: string): void {
-    const stmt = this.liveDb.prepare(
-      `UPDATE event_log SET consolidated_into = ? WHERE id = ?`,
-    );
+    const stmt = this.liveDb.prepare(`UPDATE event_log SET consolidated_into = ? WHERE id = ?`);
     const updateAll = this.liveDb.transaction((ids: string[]) => {
       for (const id of ids) {
         stmt.run(factId, id);
@@ -219,14 +216,9 @@ export class EventLog {
    * Archive consolidated events older than N days to compressed JSONL files.
    * Returns the number of rows archived and the files written.
    */
-  async archiveConsolidated(
-    olderThanDays: number,
-    archiveDir: string,
-  ): Promise<{ archived: number; files: string[] }> {
+  async archiveConsolidated(olderThanDays: number, archiveDir: string): Promise<{ archived: number; files: string[] }> {
     if (olderThanDays <= 0) return { archived: 0, files: [] };
-    const cutoff = new Date(
-      Date.now() - olderThanDays * 24 * 3600 * 1000,
-    ).toISOString();
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
     const resolvedDir = expandTilde(archiveDir);
     mkdirSync(resolvedDir, { recursive: true });
 
@@ -267,51 +259,53 @@ export class EventLog {
       const rowToEntry = this.rowToEntry.bind(this);
 
       try {
-        const lineStream = Readable.from((async function* () {
-          const seenIds = new Set<string>();
+        const lineStream = Readable.from(
+          (async function* () {
+            const seenIds = new Set<string>();
 
-          if (existsSync(filePath)) {
-            try {
-              const input = createReadStream(filePath).pipe(createGunzip());
-              const rl = createInterface({ input, crlfDelay: Infinity });
-              for await (const line of rl) {
-                if (!line.trim()) continue;
-                try {
-                  const o = JSON.parse(line) as { id?: string };
-                  if (o.id) seenIds.add(o.id);
-                } catch {
-                  // Skip corrupt line but still yield to preserve archive
-                }
-                yield line + "\n";
-              }
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "read-existing-archive",
-                severity: "info",
-                subsystem: "event-log",
-              });
-              const backupPath = `${filePath}.corrupted.${Date.now()}`;
+            if (existsSync(filePath)) {
               try {
-                renameSync(filePath, backupPath);
-              } catch (renameErr) {
-                capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
-                  operation: "backup-corrupted-archive",
+                const input = createReadStream(filePath).pipe(createGunzip());
+                const rl = createInterface({ input, crlfDelay: Infinity });
+                for await (const line of rl) {
+                  if (!line.trim()) continue;
+                  try {
+                    const o = JSON.parse(line) as { id?: string };
+                    if (o.id) seenIds.add(o.id);
+                  } catch {
+                    // Skip corrupt line but still yield to preserve archive
+                  }
+                  yield line + "\n";
+                }
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "read-existing-archive",
                   severity: "info",
                   subsystem: "event-log",
                 });
+                const backupPath = `${filePath}.corrupted.${Date.now()}`;
+                try {
+                  renameSync(filePath, backupPath);
+                } catch (renameErr) {
+                  capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
+                    operation: "backup-corrupted-archive",
+                    severity: "info",
+                    subsystem: "event-log",
+                  });
+                }
               }
             }
-          }
 
-          for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
-            const entry = rowToEntry(r);
-            ids.push(entry.id);
-            if (!seenIds.has(entry.id)) {
-              seenIds.add(entry.id);
-              yield JSON.stringify(entry) + "\n";
+            for (const r of stmt.iterate(cutoff, month) as Iterable<Record<string, unknown>>) {
+              const entry = rowToEntry(r);
+              ids.push(entry.id);
+              if (!seenIds.has(entry.id)) {
+                seenIds.add(entry.id);
+                yield JSON.stringify(entry) + "\n";
+              }
             }
-          }
-        })());
+          })(),
+        );
 
         await pipeline(lineStream, createGzip(), createWriteStream(tempPath));
 
@@ -351,13 +345,9 @@ export class EventLog {
    * Returns the number of rows deleted.
    */
   archiveOld(olderThanDays: number, includeUnconsolidated = false): number {
-    const cutoff = new Date(
-      Date.now() - olderThanDays * 24 * 3600 * 1000,
-    ).toISOString();
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
     const result = this.liveDb
-      .prepare(
-        `DELETE FROM event_log WHERE timestamp < ? AND (consolidated_into IS NOT NULL OR ?)`,
-      )
+      .prepare(`DELETE FROM event_log WHERE timestamp < ? AND (consolidated_into IS NOT NULL OR ?)`)
       .run(cutoff, includeUnconsolidated ? 1 : 0);
     return result.changes;
   }
@@ -369,23 +359,15 @@ export class EventLog {
     byType: Record<string, number>;
     oldestUnconsolidated: string | null;
   } {
-    const totalRow = this.liveDb
-      .prepare(`SELECT COUNT(*) AS count FROM event_log`)
-      .get() as { count: number };
+    const totalRow = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM event_log`).get() as { count: number };
     const unconsolidatedRow = this.liveDb
-      .prepare(
-        `SELECT COUNT(*) AS count FROM event_log WHERE consolidated_into IS NULL`,
-      )
+      .prepare(`SELECT COUNT(*) AS count FROM event_log WHERE consolidated_into IS NULL`)
       .get() as { count: number };
     const typeRows = this.liveDb
-      .prepare(
-        `SELECT event_type, COUNT(*) AS count FROM event_log GROUP BY event_type`,
-      )
+      .prepare(`SELECT event_type, COUNT(*) AS count FROM event_log GROUP BY event_type`)
       .all() as { event_type: string; count: number }[];
     const oldestRow = this.liveDb
-      .prepare(
-        `SELECT MIN(timestamp) AS oldest FROM event_log WHERE consolidated_into IS NULL`,
-      )
+      .prepare(`SELECT MIN(timestamp) AS oldest FROM event_log WHERE consolidated_into IS NULL`)
       .get() as { oldest: string | null };
 
     const byType: Record<string, number> = {};
@@ -446,10 +428,7 @@ export class EventLog {
       eventType: row["event_type"] as EventType,
       content,
       entities,
-      consolidatedInto:
-        row["consolidated_into"] != null
-          ? (row["consolidated_into"] as string)
-          : undefined,
+      consolidatedInto: row["consolidated_into"] != null ? (row["consolidated_into"] as string) : undefined,
       metadata,
       createdAt: row["created_at"] as string,
     };

@@ -175,9 +175,7 @@ describe("withLLMRetry", () => {
   });
 
   it("retries on failure and succeeds on second attempt", async () => {
-    const fn = vi.fn()
-      .mockRejectedValueOnce(new Error("Temporary error"))
-      .mockResolvedValueOnce("success");
+    const fn = vi.fn().mockRejectedValueOnce(new Error("Temporary error")).mockResolvedValueOnce("success");
 
     const promise = withLLMRetry(fn, { maxRetries: 3 });
 
@@ -218,7 +216,7 @@ describe("withLLMRetry", () => {
     const promise = withLLMRetry(fn, { maxRetries: 2 });
 
     // Catch the promise to prevent unhandled rejection
-    const caughtPromise = promise.catch(err => err);
+    const caughtPromise = promise.catch((err) => err);
 
     await vi.advanceTimersByTimeAsync(1);
     await vi.advanceTimersByTimeAsync(1000);
@@ -232,7 +230,8 @@ describe("withLLMRetry", () => {
   });
 
   it("uses exponential backoff delays: 1s, 3s, 9s", async () => {
-    const fn = vi.fn()
+    const fn = vi
+      .fn()
       .mockRejectedValueOnce(new Error("Error 1"))
       .mockRejectedValueOnce(new Error("Error 2"))
       .mockRejectedValueOnce(new Error("Error 3"))
@@ -260,7 +259,9 @@ describe("withLLMRetry", () => {
   it("#329: does not retry Google API 404 (model not found for API version), capturePluginError not called", async () => {
     vi.clearAllMocks();
     const googleError = Object.assign(
-      new Error("404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings."),
+      new Error(
+        "404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings.",
+      ),
       { status: 404 },
     );
     const fn = vi.fn().mockRejectedValue(googleError);
@@ -273,7 +274,9 @@ describe("withLLMRetry", () => {
 
   it("#329: does not retry Google API 404 without status property (message-only detection)", async () => {
     // Simulates the case where .status is not accessible (e.g. cross-realm instanceof failure)
-    const googleError = new Error("404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings.");
+    const googleError = new Error(
+      "404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings.",
+    );
     const fn = vi.fn().mockRejectedValue(googleError);
     await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models/text-embedding-004");
     expect(fn).toHaveBeenCalledTimes(1);
@@ -291,10 +294,9 @@ describe("withLLMRetry", () => {
     vi.clearAllMocks();
     // 404 errors are detected by the dedicated is404Like() check before any retry attempt,
     // so they never reach the final-failure LLMRetryError branch where capturePluginError runs.
-    const googleError = Object.assign(
-      new Error("404 models/text-embedding-004 is not found for API version v1beta"),
-      { status: 404 },
-    );
+    const googleError = Object.assign(new Error("404 models/text-embedding-004 is not found for API version v1beta"), {
+      status: 404,
+    });
     const fn = vi.fn().mockRejectedValue(googleError);
     // Throws the raw 404 error (not an LLMRetryError), called exactly once — exits before retry loop
     await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models");
@@ -304,10 +306,7 @@ describe("withLLMRetry", () => {
 
   it("#393: does not retry Google 403 country/region restriction (status property)", async () => {
     vi.clearAllMocks();
-    const googleError = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const googleError = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const fn = vi.fn().mockRejectedValue(googleError);
     // Throws the raw 403 error (not an LLMRetryError), called exactly once — exits before retry loop
     await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
@@ -437,7 +436,8 @@ describe("chatCompleteWithRetry", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn()
+          create: vi
+            .fn()
             .mockRejectedValueOnce(new Error("Rate limit"))
             .mockRejectedValueOnce(new Error("Rate limit"))
             .mockRejectedValueOnce(new Error("Rate limit"))
@@ -475,7 +475,8 @@ describe("chatCompleteWithRetry", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn()
+          create: vi
+            .fn()
             // Primary model fails 4 times (initial + 3 retries)
             .mockRejectedValueOnce(new Error("Error"))
             .mockRejectedValueOnce(new Error("Error"))
@@ -555,32 +556,20 @@ describe("chatComplete — GlitchTip suppression (#302, #303)", () => {
   });
 
   it("#302: does not report 'Internal Server Error' (OpenAI SDK 500) to Sentry", async () => {
-    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
-      new Error("Internal Server Error"),
-    );
-    await expect(
-      chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai }),
-    ).rejects.toThrow();
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(new Error("Internal Server Error"));
+    await expect(chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai })).rejects.toThrow();
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 
   it("#302: does not report '500 Internal Server Error' to Sentry", async () => {
-    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
-      new Error("500 Internal Server Error"),
-    );
-    await expect(
-      chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai }),
-    ).rejects.toThrow();
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(new Error("500 Internal Server Error"));
+    await expect(chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai })).rejects.toThrow();
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 
   it("#303: does not report 404 Not Found to Sentry", async () => {
-    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
-      new Error("404 Not Found"),
-    );
-    await expect(
-      chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai }),
-    ).rejects.toThrow();
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(new Error("404 Not Found"));
+    await expect(chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai })).rejects.toThrow();
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });
@@ -599,7 +588,8 @@ describe("chatCompleteWithRetry — 500 and 404 fallback (#302, #303)", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn()
+          create: vi
+            .fn()
             // Primary: fails twice with 500 then stops (is500 exits after attempt 1)
             .mockRejectedValueOnce(new Error("Internal Server Error"))
             .mockRejectedValueOnce(new Error("Internal Server Error"))
@@ -711,10 +701,7 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#394, #395)"
   });
 
   it("#394: queues user warning and does not report to GlitchTip when all models return 403", async () => {
-    const err = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const err = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const mockOpenai = {
       chat: {
         completions: {
@@ -743,10 +730,7 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#394, #395)"
   });
 
   it("#395: withLLMRetry short-circuits on 403 and does not create LLMRetryError", async () => {
-    const err = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const err = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const fn = vi.fn().mockRejectedValue(err);
 
     await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
@@ -769,9 +753,11 @@ describe("chatCompleteWithRetry — 429 rate limiting (#397)", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn().mockRejectedValue(
-            new Error("429 429 Too Many Requests: you (clawout) have reached your weekly usage limit"),
-          ),
+          create: vi
+            .fn()
+            .mockRejectedValue(
+              new Error("429 429 Too Many Requests: you (clawout) have reached your weekly usage limit"),
+            ),
         },
       },
     } as unknown as import("openai").default;
@@ -795,9 +781,9 @@ describe("chatCompleteWithRetry — 429 rate limiting (#397)", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn().mockRejectedValue(
-            new Error("429 Too Many Requests: you have reached your weekly usage limit"),
-          ),
+          create: vi
+            .fn()
+            .mockRejectedValue(new Error("429 Too Many Requests: you have reached your weekly usage limit")),
         },
       },
     } as unknown as import("openai").default;
@@ -822,7 +808,8 @@ describe("chatCompleteWithRetry — 429 rate limiting (#397)", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn()
+          create: vi
+            .fn()
             // Primary: rate limited (4x = initial + 3 retries; but 429 uses exponential backoff)
             .mockRejectedValueOnce(new Error("429 Too Many Requests"))
             .mockRejectedValueOnce(new Error("429 Too Many Requests"))
@@ -852,9 +839,7 @@ describe("chatCompleteWithRetry — 429 rate limiting (#397)", () => {
 
   it("#397: withLLMRetry does not report 429 to GlitchTip (isTransient)", async () => {
     vi.clearAllMocks();
-    const fn = vi.fn().mockRejectedValue(
-      new Error("429 429 Too Many Requests: weekly limit reached"),
-    );
+    const fn = vi.fn().mockRejectedValue(new Error("429 429 Too Many Requests: weekly limit reached"));
     const promise = withLLMRetry(fn, { maxRetries: 1 });
     const expectation = expect(promise).rejects.toThrow(LLMRetryError);
     await vi.runAllTimersAsync();
@@ -904,7 +889,8 @@ describe("chatCompleteWithRetry — UnconfiguredProviderError (#328)", () => {
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn()
+          create: vi
+            .fn()
             // Primary (openai): transient ECONNREFUSED — does not count as unconfigured
             .mockRejectedValueOnce(new Error("ECONNREFUSED"))
             .mockRejectedValueOnce(new Error("ECONNREFUSED"))
@@ -927,8 +913,9 @@ describe("chatCompleteWithRetry — UnconfiguredProviderError (#328)", () => {
     await vi.runAllTimersAsync();
     await expectation;
     // UnconfiguredProviderError is a config issue — must NOT be reported to GlitchTip regardless of other errors
-    const unconfiguredCalls = vi.mocked(errorReporter.capturePluginError).mock.calls
-      .filter(([err]) => err instanceof UnconfiguredProviderError);
+    const unconfiguredCalls = vi
+      .mocked(errorReporter.capturePluginError)
+      .mock.calls.filter(([err]) => err instanceof UnconfiguredProviderError);
     expect(unconfiguredCalls).toHaveLength(0);
     const drained = warnings.drain();
     expect(drained).toHaveLength(1);
@@ -942,7 +929,9 @@ describe("chatCompleteWithRetry — UnconfiguredProviderError (#328)", () => {
 
 describe("isOllamaOOM (#387)", () => {
   it("matches standard Ollama OOM error message", () => {
-    expect(isOllamaOOM(new Error("model requires more system memory (18.2 GiB) than is available (8.0 GiB)"))).toBe(true);
+    expect(isOllamaOOM(new Error("model requires more system memory (18.2 GiB) than is available (8.0 GiB)"))).toBe(
+      true,
+    );
   });
 
   it("matches 'not enough memory to load' phrasing", () => {
@@ -1056,9 +1045,10 @@ describe("chatCompleteWithRetry — OOM falls through to next model (#387)", () 
     const mockOpenai = {
       chat: {
         completions: {
-          create: vi.fn()
-            .mockRejectedValueOnce(oomErr)  // primary: OOM
-            .mockResolvedValueOnce({ choices: [{ message: { content: "fallback success" } }] }),  // fallback: ok
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(oomErr) // primary: OOM
+            .mockResolvedValueOnce({ choices: [{ message: { content: "fallback success" } }] }), // fallback: ok
         },
       },
     } as unknown as import("openai").default;
@@ -1180,10 +1170,7 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#395)", () =
   });
 
   it("#395: queues user warning and does not report to GlitchTip when all models return 403 with status", async () => {
-    const err = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const err = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const mockOpenai = {
       chat: {
         completions: {
@@ -1212,10 +1199,7 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#395)", () =
   });
 
   it("#395: withLLMRetry short-circuits on 403 and does not create LLMRetryError", async () => {
-    const err = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const err = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const fn = vi.fn().mockRejectedValue(err);
 
     await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("403 Country");
@@ -1228,26 +1212,19 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#395)", () =
 
 describe("isContextLengthError (#442)", () => {
   it("detects the exact OpenAI error message", () => {
-    const err = Object.assign(
-      new Error("400 Invalid 'input': maximum context length is 8192 tokens."),
-      { status: 400 },
-    );
+    const err = Object.assign(new Error("400 Invalid 'input': maximum context length is 8192 tokens."), {
+      status: 400,
+    });
     expect(isContextLengthError(err)).toBe(true);
   });
 
   it("detects status=400 with context length in message", () => {
-    const err = Object.assign(
-      new Error("400 Bad Request: context length exceeded"),
-      { status: 400 },
-    );
+    const err = Object.assign(new Error("400 Bad Request: context length exceeded"), { status: 400 });
     expect(isContextLengthError(err)).toBe(true);
   });
 
   it("does not match a generic 400 error", () => {
-    const err = Object.assign(
-      new Error("400 Bad Request: invalid model name"),
-      { status: 400 },
-    );
+    const err = Object.assign(new Error("400 Bad Request: invalid model name"), { status: 400 });
     expect(isContextLengthError(err)).toBe(false);
   });
 
@@ -1263,10 +1240,9 @@ describe("withLLMRetry — context-length error (#442)", () => {
   });
 
   it("#442: does not retry 400 context-length errors", async () => {
-    const err = Object.assign(
-      new Error("400 Invalid 'input': maximum context length is 8192 tokens."),
-      { status: 400 },
-    );
+    const err = Object.assign(new Error("400 Invalid 'input': maximum context length is 8192 tokens."), {
+      status: 400,
+    });
     const fn = vi.fn().mockRejectedValue(err);
 
     await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("maximum context length");

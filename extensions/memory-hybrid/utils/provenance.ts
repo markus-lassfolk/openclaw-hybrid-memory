@@ -104,14 +104,10 @@ export function buildProvenanceMetadata(
   const traceId = opts.traceId ?? generateTraceId();
 
   const headers: ProvenanceHeaders | null =
-    mode === "meta" || mode === "meta+receipt"
-      ? getProvenanceHeaders(sessionKey, { ...opts, traceId })
-      : null;
+    mode === "meta" || mode === "meta+receipt" ? getProvenanceHeaders(sessionKey, { ...opts, traceId }) : null;
 
   const receipt: string | null =
-    mode === "receipt" || mode === "meta+receipt"
-      ? formatProvenanceReceipt(traceId, sessionKey)
-      : null;
+    mode === "receipt" || mode === "meta+receipt" ? formatProvenanceReceipt(traceId, sessionKey) : null;
 
   return { headers, receipt };
 }

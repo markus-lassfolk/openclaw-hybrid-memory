@@ -93,7 +93,10 @@ function countFeedbackInWindow(
       ? `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? AND (user_message LIKE ? OR agent_message LIKE ?) GROUP BY polarity`
       : `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? GROUP BY polarity`;
     const implRows = topic
-      ? (db.prepare(implQ).all(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as Array<{ polarity: string; cnt: number }>)
+      ? (db.prepare(implQ).all(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as Array<{
+          polarity: string;
+          cnt: number;
+        }>)
       : (db.prepare(implQ).all(windowStart, windowEnd) as Array<{ polarity: string; cnt: number }>);
     for (const row of implRows) {
       if (row.polarity === "positive") implicitPositive = row.cnt;
@@ -147,7 +150,7 @@ export function measureRuleEffectiveness(
     const clampedScore = Math.max(-1, Math.min(1, effectScore));
 
     // Confidence scales with sample size
-    const confidence = Math.min(1.0, sampleSize / Math.max(config.minSampleSize ?? 5, 1) * 0.5);
+    const confidence = Math.min(1.0, (sampleSize / Math.max(config.minSampleSize ?? 5, 1)) * 0.5);
 
     return {
       ruleId,
@@ -254,7 +257,8 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
 
       // Persist measurement
       try {
-        db.prepare(`
+        db.prepare(
+          `
           INSERT OR REPLACE INTO feedback_effectiveness (
             rule_id, rule_text, created_at, window_start, window_end,
             corrections_before, corrections_after, praise_before, praise_after,
@@ -262,12 +266,24 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
             implicit_negative_before, implicit_negative_after,
             effect_score, confidence, sample_size, measured_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          m.ruleId, m.ruleText, m.createdAt, m.windowStart, m.windowEnd,
-          m.correctionsBeforeRule, m.correctionsAfterRule, m.praiseBeforeRule, m.praiseAfterRule,
-          m.implicitPositiveBefore, m.implicitPositiveAfter,
-          m.implicitNegativeBefore, m.implicitNegativeAfter,
-          m.effectScore, m.confidence, m.sampleSize,
+        `,
+        ).run(
+          m.ruleId,
+          m.ruleText,
+          m.createdAt,
+          m.windowStart,
+          m.windowEnd,
+          m.correctionsBeforeRule,
+          m.correctionsAfterRule,
+          m.praiseBeforeRule,
+          m.praiseAfterRule,
+          m.implicitPositiveBefore,
+          m.implicitPositiveAfter,
+          m.implicitNegativeBefore,
+          m.implicitNegativeAfter,
+          m.effectScore,
+          m.confidence,
+          m.sampleSize,
           report.measuredAt,
         );
       } catch {
@@ -302,13 +318,13 @@ export function getEffectivenessReport(factsDb: FactsDB): string {
          LIMIT 20`,
       )
       .all() as Array<{
-        rule_id: string;
-        rule_text: string;
-        effect_score: number;
-        confidence: number;
-        sample_size: number;
-        measured_at: number;
-      }>;
+      rule_id: string;
+      rule_text: string;
+      effect_score: number;
+      confidence: number;
+      sample_size: number;
+      measured_at: number;
+    }>;
 
     if (rows.length === 0) return "No feedback effectiveness data available yet.";
 

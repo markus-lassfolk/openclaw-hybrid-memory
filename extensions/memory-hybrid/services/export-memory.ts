@@ -30,12 +30,14 @@ export type ExportResult = {
 
 /** Sanitize a string for use as a filesystem-safe filename (no path separators, no special chars). */
 function sanitizeFileName(s: string): string {
-  return s
-    .replace(/[/\\?*:|"<>]/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 80) || "untitled";
+  return (
+    s
+      .replace(/[/\\?*:|"<>]/g, "-")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "untitled"
+  );
 }
 
 /** Format fact text for vanilla-compatible markdown (backfill can re-extract). */
@@ -138,7 +140,9 @@ export function runExport(
         const content = formatFactContent(entry);
         writeFileSync(fullPath, content, "utf-8");
         filesWritten++;
-        memLinks.push(`- [[memory/${relPath.replace(/\\/g, "/")}]] — ${entry.text.slice(0, 60)}${entry.text.length > 60 ? "…" : ""}`);
+        memLinks.push(
+          `- [[memory/${relPath.replace(/\\/g, "/")}]] — ${entry.text.slice(0, 60)}${entry.text.length > 60 ? "…" : ""}`,
+        );
       }
     }
   }
@@ -153,7 +157,9 @@ export function runExport(
     const content = `# Procedure: ${p.taskPattern}\n\nType: ${p.procedureType}\nConfidence: ${p.confidence}\n\n## Steps\n\n${p.recipeJson}`;
     writeFileSync(fullPath, content, "utf-8");
     filesWritten++;
-    memLinks.push(`- [[memory/procedures/${fname}]] — ${p.taskPattern.slice(0, 50)}${p.taskPattern.length > 50 ? "…" : ""}`);
+    memLinks.push(
+      `- [[memory/procedures/${fname}]] — ${p.taskPattern.slice(0, 50)}${p.taskPattern.length > 50 ? "…" : ""}`,
+    );
   }
 
   // MEMORY.md root index

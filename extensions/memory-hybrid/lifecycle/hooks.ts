@@ -27,13 +27,24 @@ import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js"
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, type PendingLLMWarnings } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
-import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, truncateForStorage } from "../utils/text.js";
+import {
+  estimateTokens,
+  estimateTokensForDisplay,
+  formatProgressiveIndexLine,
+  truncateForStorage,
+} from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { CLI_STORE_IMPORTANCE, getRestartPendingPath } from "../utils/constants.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { VAULT_POINTER_PREFIX, detectCredentialPatterns } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
-import { detectAuthFailure, buildCredentialQuery, formatCredentialHint, DEFAULT_AUTH_FAILURE_PATTERNS, type AuthFailurePattern } from "../services/auth-failure-detect.js";
+import {
+  detectAuthFailure,
+  buildCredentialQuery,
+  formatCredentialHint,
+  DEFAULT_AUTH_FAILURE_PATTERNS,
+  type AuthFailurePattern,
+} from "../services/auth-failure-detect.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import {
@@ -60,7 +71,12 @@ import {
   SessionSeenFacts,
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
-import { detectFrustration, buildFrustrationHint, exportAsImplicitSignals, type FrustrationConversationTurn } from "../services/frustration-detector.js";
+import {
+  detectFrustration,
+  buildFrustrationHint,
+  exportAsImplicitSignals,
+  type FrustrationConversationTurn,
+} from "../services/frustration-detector.js";
 import { generateToolHint, ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 
 export interface LifecycleContext {
@@ -78,7 +94,11 @@ export interface LifecycleContext {
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
-  walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) => string;
+  walWrite: (
+    operation: "store" | "update",
+    data: Record<string, unknown>,
+    logger: { warn: (msg: string) => void },
+  ) => string;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
   findSimilarByEmbedding: (
     vectorDb: VectorDB,
@@ -170,16 +190,11 @@ async function consumePendingTaskSignals(
 
   const knownMtime = taskFile.mtime;
 
-  const findMatchingTask = (
-    activeEntries: ActiveTaskEntry[],
-    signal: PendingTaskSignal,
-  ): ActiveTaskEntry | null => {
+  const findMatchingTask = (activeEntries: ActiveTaskEntry[], signal: PendingTaskSignal): ActiveTaskEntry | null => {
     const byLabel = activeEntries.filter((t) => t.label === signal.taskRef);
     if (byLabel.length === 1) return byLabel[0];
     if (byLabel.length > 1) {
-      logger?.warn?.(
-        `memory-hybrid: multiple active tasks share label ${signal.taskRef}; leaving signal pending`,
-      );
+      logger?.warn?.(`memory-hybrid: multiple active tasks share label ${signal.taskRef}; leaving signal pending`);
       return null;
     }
 
@@ -189,7 +204,7 @@ async function consumePendingTaskSignals(
       // Sub-agents should use the task label (not description) in taskRef for reliable matching.
       logger?.warn?.(
         `memory-hybrid: matched signal for "${signal.taskRef}" by description (not label); ` +
-        `sub-agents should use the exact task label in taskRef for reliable matching`,
+          `sub-agents should use the exact task label in taskRef for reliable matching`,
       );
       return byDescription[0];
     }
@@ -222,18 +237,14 @@ async function consumePendingTaskSignals(
     for (const signal of signals) {
       try {
         const timestamp = Date.parse(signal.timestamp);
-        const updatedTimestamp = Number.isNaN(timestamp)
-          ? new Date().toISOString()
-          : signal.timestamp;
+        const updatedTimestamp = Number.isNaN(timestamp) ? new Date().toISOString() : signal.timestamp;
 
         const existing = findMatchingTask(updatedActive, signal);
         if (!existing) {
           if (isSignalExpired(signal)) {
             expiredSignals.push(signal);
           } else {
-            logger?.warn?.(
-              `memory-hybrid: no matching active task for signal ${signal.taskRef}; leaving pending`,
-            );
+            logger?.warn?.(`memory-hybrid: no matching active task for signal ${signal.taskRef}; leaving pending`);
           }
           continue;
         }
@@ -262,16 +273,12 @@ async function consumePendingTaskSignals(
         }
 
         const newStatus: ActiveTaskEntry["status"] =
-          signal.signal === "blocked" ? "Stalled" :
-          signal.signal === "escalate" ? "Waiting" :
-          existing.status;
+          signal.signal === "blocked" ? "Stalled" : signal.signal === "escalate" ? "Waiting" : existing.status;
 
         const updatedEntry: ActiveTaskEntry = {
           ...existing,
           status: newStatus,
-          next: signal.summary
-            ? `[Signal: ${signal.signal}] ${signal.summary}`
-            : existing.next,
+          next: signal.summary ? `[Signal: ${signal.signal}] ${signal.summary}` : existing.next,
           updated: updatedTimestamp,
         };
         updatedActive = upsertTask(updatedActive, updatedEntry, true);
@@ -300,9 +307,7 @@ async function consumePendingTaskSignals(
       for (const signal of expiredSignals) {
         await deleteSignal(signal._filePath).catch(() => {});
       }
-      logger?.info?.(
-        `memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) with no matching task`,
-      );
+      logger?.info?.(`memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) with no matching task`);
     }
     return;
   }
@@ -341,16 +346,12 @@ async function consumePendingTaskSignals(
         await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
       }
     }
-    logger?.info?.(
-      `memory-hybrid: consumed ${processedSignals.length} pending task signal(s) from sub-agents`,
-    );
+    logger?.info?.(`memory-hybrid: consumed ${processedSignals.length} pending task signal(s) from sub-agents`);
   } else if (expiredSignals.length > 0) {
     for (const signal of expiredSignals) {
       await deleteSignal(signal._filePath).catch(() => {});
     }
-    logger?.info?.(
-      `memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) after write abort`,
-    );
+    logger?.info?.(`memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) after write abort`);
   }
 }
 
@@ -381,22 +382,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
   /** How often to run the stale session sweep (ms). */
   const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  /** Track sessions that were swept to prevent double-decrement of VectorDB refcount. */
-  const sweptSessions = new Set<string>();
-  /** Counter to generate unique session instance IDs. */
-  let sessionInstanceCounter = 0;
-  /** Map session keys to their current instance ID to distinguish reused keys. */
-  const sessionKeyToInstance = new Map<string, number>();
 
   /** Record activity for a session (called on before_agent_start). */
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
-    // Assign a new instance ID when a session key is reused.
-    // This allows swept markers to distinguish between the old session instance
-    // and the new one, preventing late agent_end from the old instance from
-    // incorrectly triggering removeSession() for the new instance.
-    sessionInstanceCounter++;
-    sessionKeyToInstance.set(sessionKey, sessionInstanceCounter);
   }
 
   /**
@@ -406,7 +395,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
    */
   function clearSessionState(sessionKey: string): void {
     sessionStartSeen.delete(sessionKey);
-    sessionKeyToInstance.delete(sessionKey);
     ambientSeenFactsMap.delete(sessionKey);
     ambientLastEmbeddingMap.delete(sessionKey);
     frustrationStateMap.delete(sessionKey);
@@ -476,26 +464,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         if (value) sessionLastActivity.delete(value);
       }
     }
-
-    // Issue #463: Bound sweptSessions
-    if (sweptSessions.size > MAX_TRACKED_SESSIONS) {
-      const excess = sweptSessions.size - MAX_TRACKED_SESSIONS;
-      const keys = sweptSessions.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sweptSessions.delete(value);
-      }
-    }
-
-    // Issue #463: Bound sessionKeyToInstance
-    if (sessionKeyToInstance.size > MAX_TRACKED_SESSIONS) {
-      const excess = sessionKeyToInstance.size - MAX_TRACKED_SESSIONS;
-      const keys = sessionKeyToInstance.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sessionKeyToInstance.delete(value);
-      }
-    }
   }
 
   /**
@@ -510,22 +478,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     for (const [sessionKey, lastActive] of sessionLastActivity) {
       if (lastActive < cutoff) {
-        // Capture the instance ID before clearing state
-        const instanceId = sessionKeyToInstance.get(sessionKey);
         clearSessionState(sessionKey);
-        // Decrement VectorDB refcount for orphaned sessions (open() was called
-        // on before_agent_start but removeSession() never fired on agent_end)
-        try {
-          ctx.vectorDb.removeSession();
-          // Track that this session instance's refcount was already decremented to prevent
-          // double-decrement if agent_end fires later for a long-running turn.
-          // Use composite key (sessionKey:instanceId) to distinguish reused session keys.
-          if (instanceId !== undefined) {
-            sweptSessions.add(`${sessionKey}:${instanceId}`);
-          }
-        } catch {
-          // Non-fatal — refcount may already be 0
-        }
         swept++;
       }
     }
@@ -572,9 +525,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Agent detection must run independently of autoRecall
     // to support multi-agent scoping even when autoRecall is disabled
     api.on("before_agent_start", async (event: unknown) => {
-      // Increment VectorDB refcount so a concurrent session teardown does not prematurely
-      // close the shared singleton while this session is still active (fixes issue #106).
-      ctx.vectorDb.open();
+      // VectorDB is single long-lived connection; no per-session open/close (Phase 1 lifecycle fix).
 
       // Issue #463: Track session activity for stale session sweep.
       const touchKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
@@ -606,10 +557,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         api.logger.debug?.(`memory-hybrid: Detected agentId: ${detectedAgentId}`);
       } else {
         // Issue #9: Log when agent detection fails - fall back to orchestrator or keep current
-        api.logger.warn("memory-hybrid: Agent detection failed - no agentId in event payload or api.context, falling back to orchestrator");
+        api.logger.warn(
+          "memory-hybrid: Agent detection failed - no agentId in event payload or api.context, falling back to orchestrator",
+        );
         currentAgentIdRef.value = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
         if (ctx.cfg.multiAgent.defaultStoreScope === "agent" || ctx.cfg.multiAgent.defaultStoreScope === "auto") {
-          api.logger.warn(`memory-hybrid: Agent detection failed but defaultStoreScope is "${ctx.cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`);
+          api.logger.warn(
+            `memory-hybrid: Agent detection failed but defaultStoreScope is "${ctx.cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`,
+          );
         }
       }
 
@@ -663,7 +618,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             };
           } else if (
             ctx.cfg.autoRecall.scopeFilter &&
-            (ctx.cfg.autoRecall.scopeFilter.userId || ctx.cfg.autoRecall.scopeFilter.agentId || ctx.cfg.autoRecall.scopeFilter.sessionId)
+            (ctx.cfg.autoRecall.scopeFilter.userId ||
+              ctx.cfg.autoRecall.scopeFilter.agentId ||
+              ctx.cfg.autoRecall.scopeFilter.sessionId)
           ) {
             // Orchestrator or explicit config override
             scopeFilter = {
@@ -680,8 +637,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           // Apply scope filter to procedure search
           let procedureBlock = "";
           if (ctx.cfg.procedures.enabled) {
-            const rankedProcs = ctx.factsDb.searchProceduresRanked(e.prompt, 5, ctx.cfg.distill?.reinforcementProcedureBoost ?? 0.1, scopeFilter);
-            const positiveFiltered = rankedProcs.filter((p) => p.procedureType === "positive" && p.relevanceScore > 0.4);
+            const rankedProcs = ctx.factsDb.searchProceduresRanked(
+              e.prompt,
+              5,
+              ctx.cfg.distill?.reinforcementProcedureBoost ?? 0.1,
+              scopeFilter,
+            );
+            const positiveFiltered = rankedProcs.filter(
+              (p) => p.procedureType === "positive" && p.relevanceScore > 0.4,
+            );
             const negativeUnfiltered = rankedProcs.filter((p) => p.procedureType === "negative");
             const procLines: string[] = [];
 
@@ -700,9 +664,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   procLines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 50)}… (${steps})`);
                 } catch (err) {
                   capturePluginError(err as Error, {
-                    operation: 'json-parse-recipe',
-                    severity: 'info',
-                    subsystem: 'lifecycle'
+                    operation: "json-parse-recipe",
+                    severity: "info",
+                    subsystem: "lifecycle",
                   });
                   const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
                   const confidence = Math.round(p.relevanceScore * 100);
@@ -726,9 +690,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`);
                 } catch (err) {
                   capturePluginError(err as Error, {
-                    operation: 'json-parse-recipe',
-                    severity: 'info',
-                    subsystem: 'lifecycle'
+                    operation: "json-parse-recipe",
+                    severity: "info",
+                    subsystem: "lifecycle",
                   });
                   const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
                   const confidence = Math.round(n.relevanceScore * 100);
@@ -748,7 +712,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
             const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
             if (hotResults.length > 0) {
-              const hotLines = hotResults.map((r) => `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`);
+              const hotLines = hotResults.map(
+                (r) =>
+                  `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+              );
               hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
             }
           }
@@ -759,7 +726,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           async function runRecallPipeline(
             query: string,
             limit: number,
-            opts?: { entity?: string; hydeLabel?: string; errorPrefix?: string; limitHydeOnce?: boolean; precomputedVector?: number[] }
+            opts?: {
+              entity?: string;
+              hydeLabel?: string;
+              errorPrefix?: string;
+              limitHydeOnce?: boolean;
+              precomputedVector?: number[];
+            },
           ): Promise<SearchResult[]> {
             const trimmed = query.trim();
             if (!trimmed) return [];
@@ -822,18 +795,21 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                       if (isOllamaOOM(hydeErr)) {
                         api.logger.warn(
                           `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
-                          `Using raw query. Consider using a smaller model or configuring a cloud fallback.`
+                            `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
                         );
                       } else {
-                        api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
+                        api.logger.warn(
+                          `memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`,
+                        );
                       }
                     }
                   }
                 }
                 // Reuse precomputed vector when HyDE did not transform the query text
-                const vector = (opts?.precomputedVector && textToEmbed === trimmed)
-                  ? opts.precomputedVector
-                  : await ctx.embeddings.embed(textToEmbed);
+                const vector =
+                  opts?.precomputedVector && textToEmbed === trimmed
+                    ? opts.precomputedVector
+                    : await ctx.embeddings.embed(textToEmbed);
                 let results = await ctx.vectorDb.search(vector, limit * 2, minScore);
                 results = filterByScope(results, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
                 results = results.map((r) => {
@@ -881,10 +857,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
             let results = mergeResults(sqliteResults, lanceResults, limit, ctx.factsDb);
             if (ctx.cfg.memoryTiering.enabled && results.length > 0) {
-              results = results.filter((r) => {
-                const full = ctx.factsDb.getById(r.entry.id);
-                return full && full.tier !== "cold";
-              }).slice(0, limit);
+              results = results
+                .filter((r) => {
+                  const full = ctx.factsDb.getById(r.entry.id);
+                  return full && full.tier !== "cold";
+                })
+                .slice(0, limit);
             }
             return results;
           }
@@ -933,11 +911,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const isTopicShift =
                 ambientLastEmbedding !== null &&
                 promptEmbedding !== null &&
-                detectTopicShift(
-                  ambientLastEmbedding,
-                  promptEmbedding,
-                  ambientCfg.topicShiftThreshold,
-                );
+                detectTopicShift(ambientLastEmbedding, promptEmbedding, ambientCfg.topicShiftThreshold);
 
               if (isTopicShift) {
                 api.logger.info?.("memory-hybrid: topic shift detected — re-running ambient retrieval");
@@ -993,58 +967,58 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
                 candidates = filtered.slice(0, limit);
 
-              if (extraResultSets.length > 1) {
-                api.logger.info?.(
-                  `memory-hybrid: ambient multi-query — ran ${extraQueries.length} extra queries, merged to ${candidates.length} candidates`,
-                );
+                if (extraResultSets.length > 1) {
+                  api.logger.info?.(
+                    `memory-hybrid: ambient multi-query — ran ${extraQueries.length} extra queries, merged to ${candidates.length} candidates`,
+                  );
+                }
               }
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "ambient-multi-query",
+                subsystem: "auto-recall",
+              });
+              api.logger.warn(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
             }
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "ambient-multi-query",
-              subsystem: "auto-recall",
-            });
-            api.logger.warn(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
           }
-        }
 
-        // Ambient issue retrieval (Issue #137): surface past resolved issues when error-like context detected
-        let issueBlock = "";
-        if (ambientCfg.enabled && ctx.issueStore) {
-          try {
-            const issueResults = searchAmbientIssues(e.prompt, ctx.issueStore);
-            if (issueResults.openIssues.length > 0 || issueResults.resolvedIssues.length > 0) {
-              api.logger.info?.(
-                `memory-hybrid: ambient issue retrieval — found ${issueResults.openIssues.length} open + ${issueResults.resolvedIssues.length} resolved issues`,
-              );
-              const issueLines: string[] = [];
-              if (issueResults.openIssues.length > 0) {
-                issueLines.push("<known-issues>");
-                for (const issue of issueResults.openIssues) {
-                  issueLines.push(`- [${issue.severity}] ${issue.title} (status: ${issue.status})`);
+          // Ambient issue retrieval (Issue #137): surface past resolved issues when error-like context detected
+          let issueBlock = "";
+          if (ambientCfg.enabled && ctx.issueStore) {
+            try {
+              const issueResults = searchAmbientIssues(e.prompt, ctx.issueStore);
+              if (issueResults.openIssues.length > 0 || issueResults.resolvedIssues.length > 0) {
+                api.logger.info?.(
+                  `memory-hybrid: ambient issue retrieval — found ${issueResults.openIssues.length} open + ${issueResults.resolvedIssues.length} resolved issues`,
+                );
+                const issueLines: string[] = [];
+                if (issueResults.openIssues.length > 0) {
+                  issueLines.push("<known-issues>");
+                  for (const issue of issueResults.openIssues) {
+                    issueLines.push(`- [${issue.severity}] ${issue.title} (status: ${issue.status})`);
+                  }
+                  issueLines.push("</known-issues>");
                 }
-                issueLines.push("</known-issues>");
-              }
-              if (issueResults.resolvedIssues.length > 0) {
-                issueLines.push("<resolved-issues>");
-                for (const issue of issueResults.resolvedIssues) {
-                  const resolution = issue.fix ? ` — Fix: ${issue.fix.slice(0, 100)}` : "";
-                  issueLines.push(`- [${issue.severity}] ${issue.title}${resolution}`);
+                if (issueResults.resolvedIssues.length > 0) {
+                  issueLines.push("<resolved-issues>");
+                  for (const issue of issueResults.resolvedIssues) {
+                    const resolution = issue.fix ? ` — Fix: ${issue.fix.slice(0, 100)}` : "";
+                    issueLines.push(`- [${issue.severity}] ${issue.title}${resolution}`);
+                  }
+                  issueLines.push("</resolved-issues>");
                 }
-                issueLines.push("</resolved-issues>");
+                if (issueLines.length > 0) {
+                  issueBlock = issueLines.join("\n") + "\n\n";
+                }
               }
-              if (issueLines.length > 0) {
-                issueBlock = issueLines.join("\n") + "\n\n";
-              }
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "ambient-issue-retrieval",
+                subsystem: "auto-recall",
+              });
+              api.logger.warn(`memory-hybrid: ambient issue retrieval failed: ${err}`);
             }
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "ambient-issue-retrieval",
-              subsystem: "auto-recall",
-            });
-            api.logger.warn(`memory-hybrid: ambient issue retrieval failed: ${err}`);
           }
-        }
 
           const promptLower = e.prompt.toLowerCase();
           const { entityLookup } = ctx.cfg.autoRecall;
@@ -1052,7 +1026,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             const seenIds = new Set(candidates.map((c) => c.entry.id));
             for (const entity of entityLookup.entities) {
               if (!promptLower.includes(entity.toLowerCase())) continue;
-              const entityResults = ctx.factsDb.lookup(entity, undefined, undefined, { scopeFilter }).slice(0, entityLookup.maxFactsPerEntity);
+              const entityResults = ctx.factsDb
+                .lookup(entity, undefined, undefined, { scopeFilter })
+                .slice(0, entityLookup.maxFactsPerEntity);
               for (const r of entityResults) {
                 if (!seenIds.has(r.entry.id)) {
                   seenIds.add(r.entry.id);
@@ -1105,7 +1081,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 for (const entity of entityLookup.entities) {
                   if (!promptLower.includes(entity.toLowerCase())) continue;
                   if (!canRunDirective()) break;
-                  const results = await runRecallPipeline(entity, directiveLimit, { entity, hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                  const results = await runRecallPipeline(entity, directiveLimit, {
+                    entity,
+                    hydeLabel: "HyDE",
+                    errorPrefix: "directive-",
+                    limitHydeOnce: true,
+                  });
                   directiveCalls += 1;
                   addDirectiveResults(results, `entity:${entity}`);
                 }
@@ -1115,7 +1096,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 for (const keyword of directivesCfg.keywords) {
                   if (!promptLower.includes(keyword.toLowerCase())) continue;
                   if (!canRunDirective()) break;
-                  const results = await runRecallPipeline(keyword, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                  const results = await runRecallPipeline(keyword, directiveLimit, {
+                    hydeLabel: "HyDE",
+                    errorPrefix: "directive-",
+                    limitHydeOnce: true,
+                  });
                   directiveCalls += 1;
                   addDirectiveResults(results, `keyword:${keyword}`);
                 }
@@ -1127,7 +1112,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
                   if (!hit) continue;
                   if (!canRunDirective()) break;
-                  const results = await runRecallPipeline(taskType, directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                  const results = await runRecallPipeline(taskType, directiveLimit, {
+                    hydeLabel: "HyDE",
+                    errorPrefix: "directive-",
+                    limitHydeOnce: true,
+                  });
                   directiveCalls += 1;
                   addDirectiveResults(results, `taskType:${taskType}`);
                 }
@@ -1137,7 +1126,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
                 if (!sessionStartSeen.has(sessionKey)) {
                   if (canRunDirective()) {
-                    const results = await runRecallPipeline("session start", directiveLimit, { hydeLabel: "HyDE", errorPrefix: "directive-", limitHydeOnce: true });
+                    const results = await runRecallPipeline("session start", directiveLimit, {
+                      hydeLabel: "HyDE",
+                      errorPrefix: "directive-",
+                      limitHydeOnce: true,
+                    });
                     directiveCalls += 1;
                     addDirectiveResults(results, "sessionStart");
                     sessionStartSeen.add(sessionKey);
@@ -1184,24 +1177,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             const boosted = candidates.map((r) => {
               let s = r.score;
               if (ctx.cfg.autoRecall.preferLongTerm) {
-                s *=
-                  r.entry.decayClass === "permanent"
-                    ? 1.2
-                    : r.entry.decayClass === "stable"
-                      ? 1.1
-                      : 1;
+                s *= r.entry.decayClass === "permanent" ? 1.2 : r.entry.decayClass === "stable" ? 1.1 : 1;
               }
               if (ctx.cfg.autoRecall.useImportanceRecency) {
                 const importanceFactor = 0.7 + 0.3 * r.entry.importance;
                 const recencyFactor =
                   r.entry.lastConfirmedAt === 0
                     ? 1
-                    : 0.8 +
-                      0.2 *
-                        Math.max(
-                          0,
-                          1 - (nowSec - r.entry.lastConfirmedAt) / NINETY_DAYS_SEC,
-                        );
+                    : 0.8 + 0.2 * Math.max(0, 1 - (nowSec - r.entry.lastConfirmedAt) / NINETY_DAYS_SEC);
                 s *= importanceFactor * recencyFactor;
               }
               // Access-count salience boost — frequently recalled facts score higher
@@ -1244,7 +1227,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const r = list[i];
               const title = r.entry.key
                 ? `${r.entry.entity ? r.entry.entity + ": " : ""}${r.entry.key}`
-                : (r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : ""));
+                : r.entry.summary || r.entry.text.slice(0, 60).trim() + (r.entry.text.length > 60 ? "…" : "");
               const tokenCost = estimateTokensForDisplay(r.entry.summary || r.entry.text);
               const pos = startPosition + indexEntries.length;
               const line = formatProgressiveIndexLine(r.entry.category, title, tokenCost, pos);
@@ -1285,22 +1268,18 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             const rest: typeof candidates = [];
             for (const r of candidates) {
               const recallCount = r.entry.recallCount ?? 0;
-              if (
-                r.entry.decayClass === "permanent" ||
-                recallCount >= pinnedRecallThreshold
-              ) {
+              if (r.entry.decayClass === "permanent" || recallCount >= pinnedRecallThreshold) {
                 pinned.push(r);
               } else {
                 rest.push(r);
               }
             }
-            const pinnedHeader = "<relevant-memories format=\"progressive_hybrid\">\n";
+            const pinnedHeader = '<relevant-memories format="progressive_hybrid">\n';
             const pinnedPart: string[] = [];
             let pinnedTokens = estimateTokens(pinnedHeader);
             const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
             for (const r of pinned) {
-              let text =
-                useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
+              let text = useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
               if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
                 text = text.slice(0, maxPerMemoryChars).trim() + "…";
               }
@@ -1310,16 +1289,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               pinnedPart.push(line);
               pinnedTokens += lineTokens;
             }
-            const indexIntro = pinnedPart.length > 0
-              ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
-              : `<relevant-memories format="index">\n`;
+            const indexIntro =
+              pinnedPart.length > 0
+                ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
+                : `<relevant-memories format="index">\n`;
             const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
-            const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
-            const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(
-              rest,
-              Math.max(100, indexBudget),
-              1,
-            );
+            const indexBudget =
+              indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
+            const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, Math.max(100, indexBudget), 1);
             lastProgressiveIndexIds = indexIds;
             ctx.lastProgressiveIndexIds = indexIds;
             if (pinnedPart.length > 0) {
@@ -1333,8 +1310,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (ambientCfg.enabled && ambientCfg.multiQuery && allIds.length > 0) {
               ambientSeenFacts.markSeen(allIds);
             }
-            // Hebbian: Strengthen RELATED_TO links between facts recalled together
-            if (ctx.cfg.graph.enabled && allIds.length >= 2) {
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together (opt-in; default off)
+            if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
               for (let i = 0; i < allIds.length; i++) {
                 for (let j = i + 1; j < allIds.length; j++) {
                   ctx.factsDb.createOrStrengthenRelatedLink(allIds[i], allIds[j]);
@@ -1355,11 +1332,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (injectionFormat === "progressive") {
             const indexHeader = `<relevant-memories format="index">\n`;
             const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
-            const { lines: indexLines, ids: indexIds, usedTokens: indexTokens } = buildProgressiveIndex(
-              candidates,
-              indexCap - estimateTokens(indexHeader + indexFooter),
-              1,
-            );
+            const {
+              lines: indexLines,
+              ids: indexIds,
+              usedTokens: indexTokens,
+            } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
             if (indexLines.length === 0) {
               if (procedureBlock) {
                 return { prependContext: issueBlock + hotBlock + procedureBlock };
@@ -1375,8 +1352,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (ambientCfg.enabled && ambientCfg.multiQuery && includedIds.length > 0) {
               ambientSeenFacts.markSeen(includedIds);
             }
-            // Hebbian: Strengthen RELATED_TO links between facts recalled together
-            if (ctx.cfg.graph.enabled && includedIds.length >= 2) {
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together (opt-in; default off)
+            if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && includedIds.length >= 2) {
               for (let i = 0; i < includedIds.length; i++) {
                 for (let j = i + 1; j < includedIds.length; j++) {
                   ctx.factsDb.createOrStrengthenRelatedLink(includedIds[i], includedIds[j]);
@@ -1399,8 +1376,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const lines: string[] = [];
           const injectedIds: string[] = [];
           for (const r of candidates) {
-            let text =
-              useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
+            let text = useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
             if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
               text = text.slice(0, maxPerMemoryChars).trim() + "…";
             }
@@ -1431,8 +1407,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (ambientCfg.enabled && ambientCfg.multiQuery) {
             ambientSeenFacts.markSeen(injectedIds);
           }
-          // Hebbian: Strengthen RELATED_TO links between facts recalled together
-          if (ctx.cfg.graph.enabled && injectedIds.length >= 2) {
+          // Hebbian: Strengthen RELATED_TO links between facts recalled together (opt-in; default off)
+          if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedIds.length >= 2) {
             for (let i = 0; i < injectedIds.length; i++) {
               for (let j = i + 1; j < injectedIds.length; j++) {
                 ctx.factsDb.createOrStrengthenRelatedLink(injectedIds[i], injectedIds[j]);
@@ -1445,8 +1421,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (summarizeWhenOverBudget && lines.length < candidates.length) {
             const fullBullets = candidates
               .map((r) => {
-                let text =
-                  useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
+                let text = useSummaryInInjection && r.entry.summary ? r.entry.summary : r.entry.text;
                 if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
                   text = text.slice(0, maxPerMemoryChars).trim() + "…";
                 }
@@ -1460,26 +1435,25 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               const { withLLMRetry } = await import("../services/chat.js");
               const resp = await withLLMRetry(
-                () => ctx.openai.chat.completions.create({
-                  model: summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
-                  messages: [
-                    {
-                      role: "user",
-                      content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
-                    },
-                  ],
-                  temperature: 0,
-                  max_tokens: 200,
-                }),
-                { maxRetries: 2 }
+                () =>
+                  ctx.openai.chat.completions.create({
+                    model: summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
+                    messages: [
+                      {
+                        role: "user",
+                        content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
+                      },
+                    ],
+                    temperature: 0,
+                    max_tokens: 200,
+                  }),
+                { maxRetries: 2 },
               );
               const summary = (resp.choices[0]?.message?.content ?? "").trim();
               if (summary) {
                 memoryContext = summary;
                 usedTokens = estimateTokens(header + memoryContext + footer);
-                api.logger.info?.(
-                  `memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`,
-                );
+                api.logger.info?.(`memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`);
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1499,9 +1473,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
-            api.logger.info?.(
-              `memory-hybrid: injecting ${lines.length} memories (~${usedTokens} tokens)`,
-            );
+            api.logger.info?.(`memory-hybrid: injecting ${lines.length} memories (~${usedTokens} tokens)`);
           }
 
           return {
@@ -1525,16 +1497,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("before_agent_start", async () => {
         try {
           const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-          const taskFile = await readActiveTaskFile(
-            resolvedActiveTaskPath,
-            staleMinutes,
-          );
+          const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
           if (!taskFile || taskFile.active.length === 0) return undefined;
 
-          const injection = buildActiveTaskInjection(
-            taskFile.active,
-            ctx.cfg.activeTask.injectionBudget,
-          );
+          const injection = buildActiveTaskInjection(taskFile.active, ctx.cfg.activeTask.injectionBudget);
 
           // Build stale warning block (empty string when nothing to report)
           // Apply remaining budget after accounting for active task injection
@@ -1543,26 +1509,17 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             const injectionChars = injection.length;
             const budgetChars = ctx.cfg.activeTask.injectionBudget * 4;
             const remainingChars = Math.max(0, budgetChars - injectionChars);
-            staleWarningBlock = buildStaleWarningInjection(
-              taskFile.active,
-              staleMinutes,
-              remainingChars,
-            );
+            staleWarningBlock = buildStaleWarningInjection(taskFile.active, staleMinutes, remainingChars);
           }
 
           if (!injection && !staleWarningBlock) return undefined;
 
-          const context = [
-            injection,
-            staleWarningBlock,
-          ]
-            .filter(Boolean)
-            .join("\n\n");
+          const context = [injection, staleWarningBlock].filter(Boolean).join("\n\n");
 
           const staleCount = taskFile.active.filter((t) => t.stale).length;
           api.logger.info?.(
             `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md` +
-            (staleCount > 0 ? ` (${staleCount} stale)` : ""),
+              (staleCount > 0 ? ` (${staleCount} stale)` : ""),
           );
           return { prependContext: context + "\n\n" };
         } catch (err) {
@@ -1605,13 +1562,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             updated: now,
           };
           const updated = upsertTask(existingActive, entry);
-          const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, existingCompleted, api.context?.sessionKey);
+          const writeResult = await writeActiveTaskFileGuarded(
+            resolvedActiveTaskPath,
+            updated,
+            existingCompleted,
+            api.context?.sessionKey,
+          );
           if (writeResult.skipped) {
             api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_start: ${writeResult.reason}`);
           } else {
-            api.logger.info?.(
-              `memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`,
-            );
+            api.logger.info?.(`memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`);
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1645,10 +1605,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return;
           }
 
-          const taskFile = await readActiveTaskFile(
-            resolvedActiveTaskPath,
-            staleMinutes,
-          );
+          const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
           if (!taskFile) {
             // Consume pending signals even when task file doesn't exist
             await consumePendingTaskSignals(
@@ -1687,7 +1644,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 api.context?.sessionKey,
               );
               if (writeResult.skipped) {
-                api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Done): ${writeResult.reason}`);
+                api.logger.debug?.(
+                  `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Done): ${writeResult.reason}`,
+                );
               } else {
                 if (ctx.cfg.activeTask.flushOnComplete) {
                   const memoryDir = join(workspaceRoot, "memory");
@@ -1707,9 +1666,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               next: ev.error ? `Fix: ${ev.error.slice(0, 100)}` : existingTask.next,
             };
             const updated = upsertTask(taskFile.active, updatedEntry);
-            const writeResult = await writeActiveTaskFileGuarded(resolvedActiveTaskPath, updated, taskFile.completed, api.context?.sessionKey);
+            const writeResult = await writeActiveTaskFileGuarded(
+              resolvedActiveTaskPath,
+              updated,
+              taskFile.completed,
+              api.context?.sessionKey,
+            );
             if (writeResult.skipped) {
-              api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Failed): ${writeResult.reason}`);
+              api.logger.debug?.(
+                `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Failed): ${writeResult.reason}`,
+              );
             } else {
               api.logger.info?.(
                 `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
@@ -1771,7 +1737,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
 
         try {
-
           // Scan prompt for auth failures
           let textToScan = e.prompt || "";
 
@@ -1798,7 +1763,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const maxRecalls = ctx.cfg.autoRecall.authFailure.maxRecallsPerTarget;
           if (maxRecalls > 0 && recallCount >= maxRecalls) {
             // Use debug level to avoid log spam for repeated failures
-            api.logger.debug?.(`memory-hybrid: auth failure for ${detection.target} already recalled ${recallCount} times this session, skipping`);
+            api.logger.debug?.(
+              `memory-hybrid: auth failure for ${detection.target} already recalled ${recallCount} times this session, skipping`,
+            );
             return;
           }
 
@@ -1806,17 +1773,24 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const query = buildCredentialQuery(detection);
           if (!query) return;
 
-          api.logger.info?.(`memory-hybrid: auth failure detected for ${detection.target} (${detection.hint}), searching for credentials...`);
+          api.logger.info?.(
+            `memory-hybrid: auth failure detected for ${detection.target} (${detection.hint}), searching for credentials...`,
+          );
 
           // Search for credential facts
           // Apply scope filter (global + current agent)
           const detectedAgentId = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
-          const scopeFilter: ScopeFilter | undefined = detectedAgentId && detectedAgentId !== ctx.cfg.multiAgent.orchestratorId
-            ? { userId: ctx.cfg.autoRecall.scopeFilter?.userId ?? null, agentId: detectedAgentId, sessionId: ctx.cfg.autoRecall.scopeFilter?.sessionId ?? null }
-            : undefined;
+          const scopeFilter: ScopeFilter | undefined =
+            detectedAgentId && detectedAgentId !== ctx.cfg.multiAgent.orchestratorId
+              ? {
+                  userId: ctx.cfg.autoRecall.scopeFilter?.userId ?? null,
+                  agentId: detectedAgentId,
+                  sessionId: ctx.cfg.autoRecall.scopeFilter?.sessionId ?? null,
+                }
+              : undefined;
 
           // Search both SQLite and vector backends
-          const ftsResults = ctx.factsDb.search(query, 5, { 
+          const ftsResults = ctx.factsDb.search(query, 5, {
             scopeFilter,
             reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
             diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
@@ -1841,21 +1815,24 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             : merged;
 
           // Filter to technical/credential facts
-          let credentialFacts = scopeValidatedMerged
-            .filter((r) => {
-              const fact = r.entry;
-              if (fact.category === "technical") return true;
-              if (fact.entity?.toLowerCase() === "credentials") return true;
-              const tags = fact.tags || [];
-              return tags.some((t) => ["credential", "ssh", "token", "api", "auth", "password"].includes(t.toLowerCase()));
-            });
+          let credentialFacts = scopeValidatedMerged.filter((r) => {
+            const fact = r.entry;
+            if (fact.category === "technical") return true;
+            if (fact.entity?.toLowerCase() === "credentials") return true;
+            const tags = fact.tags || [];
+            return tags.some((t) =>
+              ["credential", "ssh", "token", "api", "auth", "password"].includes(t.toLowerCase()),
+            );
+          });
 
           // Filter out vault pointers if includeVaultHints is false
           if (!ctx.cfg.autoRecall.authFailure.includeVaultHints) {
             credentialFacts = credentialFacts.filter((r) => {
               const fact = r.entry;
-              return !fact.text.includes("stored in secure vault") &&
-                     (!fact.value || !String(fact.value).startsWith(VAULT_POINTER_PREFIX));
+              return (
+                !fact.text.includes("stored in secure vault") &&
+                (!fact.value || !String(fact.value).startsWith(VAULT_POINTER_PREFIX))
+              );
             });
           }
 
@@ -1867,10 +1844,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           // Format hint and inject
-          const hint = formatCredentialHint(detection, credentialFacts.map((r) => r.entry));
+          const hint = formatCredentialHint(
+            detection,
+            credentialFacts.map((r) => r.entry),
+          );
           if (hint) {
             // Inject as prepended context (this will be added to the prompt)
-            api.logger.info?.(`memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`);
+            api.logger.info?.(
+              `memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`,
+            );
 
             // Track this recall
             authFailureRecallsThisSession.set(recallKey, recallCount + 1);
@@ -1962,7 +1944,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // The handler always registers so frustration state and implicit_signals DB writes
     // continue in silent mode; the inner guard below suppresses prependContext injection.
     api.on("before_agent_start", async (event: unknown) => {
-      const e = event as { prompt?: string; messages?: Array<{ role?: string; content?: unknown }>; agentId?: string; session?: { agentId?: string } };
+      const e = event as {
+        prompt?: string;
+        messages?: Array<{ role?: string; content?: unknown }>;
+        agentId?: string;
+        session?: { agentId?: string };
+      };
       const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
 
       try {
@@ -2012,7 +1999,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 state.turns.length,
               );
             }
-            api.logger.debug?.(`memory-hybrid: frustration exported ${implicitSignals.length} implicit signal(s) for session ${sessionKey}`);
+            api.logger.debug?.(
+              `memory-hybrid: frustration exported ${implicitSignals.length} implicit signal(s) for session ${sessionKey}`,
+            );
           } catch (fsErr) {
             capturePluginError(fsErr instanceof Error ? fsErr : new Error(String(fsErr)), {
               operation: "frustration-export-implicit-signals",
@@ -2071,7 +2060,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
       try {
         // Find the last assistant message
-        const assistantMsgs = ev.messages.filter((m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant");
+        const assistantMsgs = ev.messages.filter(
+          (m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant",
+        );
         const lastAssistant = assistantMsgs[assistantMsgs.length - 1] as { content?: unknown } | undefined;
         if (!lastAssistant) return;
 
@@ -2082,7 +2073,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           // Extract text from content blocks
           const textBlocks: string[] = [];
           for (const block of lastAssistant.content) {
-            if (block && typeof block === "object" && "type" in block && (block as { type?: string }).type === "text" && "text" in block && typeof (block as { text?: unknown }).text === "string") {
+            if (
+              block &&
+              typeof block === "object" &&
+              "type" in block &&
+              (block as { type?: string }).type === "text" &&
+              "text" in block &&
+              typeof (block as { text?: unknown }).text === "string"
+            ) {
               textBlocks.push((block as { text: string }).text);
             }
           }
@@ -2147,7 +2145,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             hotMaxFacts: ctx.cfg.memoryTiering.hotMaxFacts,
           });
           if (counts.hot + counts.warm + counts.cold > 0) {
-            api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
+            api.logger.info?.(
+              `memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`,
+            );
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -2189,9 +2189,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   "text" in block &&
                   typeof (block as Record<string, unknown>).text === "string"
                 ) {
-                  texts.push(
-                    (block as Record<string, unknown>).text as string,
-                  );
+                  texts.push((block as Record<string, unknown>).text as string);
                 }
               }
             }
@@ -2241,14 +2239,22 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 : [];
               if (similarFacts.length === 0) {
                 similarFacts = ctx.factsDb.findSimilarForClassification(
-                  textToStore, extracted.entity, extracted.key, 3,
+                  textToStore,
+                  extracted.entity,
+                  extracted.key,
+                  3,
                 );
               }
               if (similarFacts.length > 0) {
                 try {
                   const classification = await classifyMemoryOperation(
-                    textToStore, extracted.entity, extracted.key, similarFacts,
-                    ctx.openai, ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"), api.logger,
+                    textToStore,
+                    extracted.entity,
+                    extracted.key,
+                    similarFacts,
+                    ctx.openai,
+                    ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
+                    api.logger,
                   );
                   if (classification.action === "NOOP") continue;
                   if (classification.action === "DELETE" && classification.targetId) {
@@ -2263,12 +2269,23 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                       const finalImportance = Math.max(0.7, oldFact.importance);
                       // vector already computed above for classification
 
-                      const walEntryId = ctx.walWrite("update", {
-                        text: textToStore, category, importance: finalImportance,
-                        entity: extracted.entity || oldFact.entity, key: extracted.key || oldFact.key,
-                        value: extracted.value || oldFact.value, source: "auto-capture",
-                        decayClass: oldFact.decayClass, summary, tags: extractTags(textToStore, extracted.entity), vector,
-                      }, api.logger);
+                      const walEntryId = ctx.walWrite(
+                        "update",
+                        {
+                          text: textToStore,
+                          category,
+                          importance: finalImportance,
+                          entity: extracted.entity || oldFact.entity,
+                          key: extracted.key || oldFact.key,
+                          value: extracted.value || oldFact.value,
+                          source: "auto-capture",
+                          decayClass: oldFact.decayClass,
+                          summary,
+                          tags: extractTags(textToStore, extracted.entity),
+                          vector,
+                        },
+                        api.logger,
+                      );
 
                       const nowSec = Math.floor(Date.now() / 1000);
                       const newEntry = ctx.factsDb.store({
@@ -2291,7 +2308,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                         if (vector) {
                           ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
                           if (!(await ctx.vectorDb.hasDuplicate(vector))) {
-                            await ctx.vectorDb.store({ text: textToStore, vector, importance: finalImportance, category, id: newEntry.id });
+                            await ctx.vectorDb.store({
+                              text: textToStore,
+                              vector,
+                              importance: finalImportance,
+                              category,
+                              id: newEntry.id,
+                            });
                           }
                         }
                       } catch (err) {
@@ -2323,11 +2346,22 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               }
             }
 
-            const walEntryId = ctx.walWrite("store", {
-              text: textToStore, category, importance: CLI_STORE_IMPORTANCE,
-              entity: extracted.entity, key: extracted.key, value: extracted.value,
-              source: "auto-capture", summary, tags: extractTags(textToStore, extracted.entity), vector,
-            }, api.logger);
+            const walEntryId = ctx.walWrite(
+              "store",
+              {
+                text: textToStore,
+                category,
+                importance: CLI_STORE_IMPORTANCE,
+                entity: extracted.entity,
+                key: extracted.key,
+                value: extracted.value,
+                source: "auto-capture",
+                summary,
+                tags: extractTags(textToStore, extracted.entity),
+                vector,
+              },
+              api.logger,
+            );
 
             const storedEntry = ctx.factsDb.store({
               text: textToStore,
@@ -2345,7 +2379,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               if (vector) {
                 ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
                 if (!(await ctx.vectorDb.hasDuplicate(vector))) {
-                  await ctx.vectorDb.store({ text: textToStore, vector, importance: CLI_STORE_IMPORTANCE, category, id: storedEntry.id });
+                  await ctx.vectorDb.store({
+                    text: textToStore,
+                    vector,
+                    importance: CLI_STORE_IMPORTANCE,
+                    category,
+                    id: storedEntry.id,
+                  });
                 }
               }
             } catch (err) {
@@ -2362,9 +2402,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           if (stored > 0) {
-            api.logger.info(
-              `memory-hybrid: auto-captured ${stored} memories`,
-            );
+            api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -2394,7 +2432,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (typeof content === "string") texts.push(content);
             else if (Array.isArray(content)) {
               for (const block of content) {
-                if (block && typeof block === "object" && "type" in block && (block as Record<string, unknown>).type === "text" && "text" in block) {
+                if (
+                  block &&
+                  typeof block === "object" &&
+                  "type" in block &&
+                  (block as Record<string, unknown>).type === "text" &&
+                  "text" in block
+                ) {
                   const t = (block as Record<string, unknown>).text;
                   if (typeof t === "string") texts.push(t);
                 }
@@ -2413,7 +2457,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             }),
             "utf-8",
           );
-          api.logger.info(`memory-hybrid: credential patterns detected (${detected.map((d) => d.hint).join(", ")}) — will prompt next turn`);
+          api.logger.info(
+            `memory-hybrid: credential patterns detected (${detected.map((d) => d.hint).join(", ")}) — will prompt next turn`,
+          );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "credential-auto-detect",
@@ -2454,9 +2500,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 parsedArgs = JSON.parse(args);
               } catch (err) {
                 capturePluginError(err as Error, {
-                  operation: 'json-parse-tool-args',
-                  severity: 'info',
-                  subsystem: 'lifecycle'
+                  operation: "json-parse-tool-args",
+                  severity: "info",
+                  subsystem: "lifecycle",
                 });
                 // If args aren't valid JSON, scan the raw string as fallback
               }
@@ -2534,26 +2580,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    // Decrement VectorDB refcount on session end. Uses removeSession() instead of close() so the
-    // shared singleton stays open while other concurrent sessions are still active (fixes issue #106).
-    // Registered last so all agent_end handlers that use vectorDb (auto-capture, credential
-    // auto-detect, tool-call credential) run first; otherwise the last session would close the DB
-    // before they run, causing an unnecessary close-reconnect cycle and DB left open with refcount zero.
-    // OpenClaw's event emitter awaits each handler in registration order, so being registered last
-    // guarantees this fires only after the async handlers above have fully resolved.
-    api.on("agent_end", async (event: unknown) => {
-      const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-      // Only decrement if this session instance wasn't already swept by sweepStaleSessions().
-      // Use composite key (sessionKey:instanceId) to distinguish reused session keys.
-      const instanceId = sessionKeyToInstance.get(sessionKey);
-      const compositeKey = instanceId !== undefined ? `${sessionKey}:${instanceId}` : sessionKey;
-      if (!sweptSessions.has(compositeKey)) {
-        ctx.vectorDb.removeSession();
-      } else {
-        // Clean up the swept marker now that agent_end has fired
-        sweptSessions.delete(compositeKey);
-      }
-    });
+    // VectorDB is single long-lived; no per-session refcount (Phase 1). Session state cleanup
+    // is handled by clearSessionState() in sweepStaleSessions and in the centralized agent_end handler above.
   };
 
   /**
@@ -2567,13 +2595,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
     // Clear all session state to release memory
     sessionStartSeen.clear();
-    sessionKeyToInstance.clear();
     ambientSeenFactsMap.clear();
     ambientLastEmbeddingMap.clear();
     frustrationStateMap.clear();
     authFailureRecallsThisSession.clear();
     sessionLastActivity.clear();
-    sweptSessions.clear();
   };
 
   return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose };

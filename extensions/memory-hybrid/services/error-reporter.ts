@@ -29,8 +29,8 @@ export interface ErrorReporterConfig {
   mode: "community" | "self-hosted";
   environment?: string; // "production" | "development"
   maxBreadcrumbs: number; // PRIVACY: Hard-coded to 10 in Sentry.init (limited plugin.* breadcrumbs only). Not user-configurable.
-  sampleRate: number;  // 0.0-1.0, default 1.0
-  consent: boolean;    // explicit opt-in required
+  sampleRate: number; // 0.0-1.0, default 1.0
+  consent: boolean; // explicit opt-in required
   /**
    * Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
    * Optional UUID for this bot instance; sent as tag so GlitchTip can group errors by bot.
@@ -60,7 +60,7 @@ const COMMUNITY_DSN = DEFAULT_GLITCHTIP_DSN;
  */
 export function extractVersion(release: string): string | null {
   if (!release) return null;
-  const atIdx = release.indexOf('@');
+  const atIdx = release.indexOf("@");
   if (atIdx < 0) return null;
   const version = release.slice(atIdx + 1);
   if (!version || !/^\d+\.\d+\.\d+$/.test(version)) return null;
@@ -83,16 +83,16 @@ export function compareVersions(a: string, b: string): number {
 
   const versionA = parseVersion(a);
   const versionB = parseVersion(b);
-  
+
   if (!versionA || !versionB) {
     return 0; // Safe default for unparseable versions
   }
-  
+
   for (let i = 0; i < 3; i++) {
     if (versionA[i] < versionB[i]) return -1;
     if (versionA[i] > versionB[i]) return 1;
   }
-  
+
   return 0; // Equal
 }
 
@@ -150,10 +150,9 @@ export async function initErrorReporter(
   if (loggerInstance) {
     logger = loggerInstance;
   }
-  
+
   if (!config.enabled || !config.consent) {
-    logger.info?.('[ErrorReporter] Disabled: enabled=%s, consent=%s',
-      config.enabled, config.consent);
+    logger.info?.("[ErrorReporter] Disabled: enabled=%s, consent=%s", config.enabled, config.consent);
     return;
   }
 
@@ -162,15 +161,15 @@ export async function initErrorReporter(
   if (config.mode === "community") {
     // Community mode: allow override via config.dsn, otherwise use COMMUNITY_DSN
     resolvedDsn = config.dsn || COMMUNITY_DSN;
-    logger.info?.('[ErrorReporter] Using community mode (anonymous telemetry)');
+    logger.info?.("[ErrorReporter] Using community mode (anonymous telemetry)");
   } else {
     // self-hosted mode
     if (!config.dsn) {
-      logger.warn?.('[ErrorReporter] Self-hosted mode requires a DSN but none was provided. Error reporting disabled.');
+      logger.warn?.("[ErrorReporter] Self-hosted mode requires a DSN but none was provided. Error reporting disabled.");
       return;
     }
     resolvedDsn = config.dsn;
-    logger.info?.('[ErrorReporter] Using self-hosted mode');
+    logger.info?.("[ErrorReporter] Using self-hosted mode");
   }
 
   if (!Sentry) return;
@@ -183,10 +182,11 @@ export async function initErrorReporter(
     release: releaseStr,
     environment: config.environment || "production",
     sampleRate: config.sampleRate ?? 1.0,
-    maxBreadcrumbs: 10,          // Limited safe breadcrumbs for plugin operations
-    sendDefaultPii: false,       // NO PII
-    autoSessionTracking: false,  // NO session tracking
-    integrations: (defaults) => defaults.filter(i => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name)), // Keep only safe integrations
+    maxBreadcrumbs: 10, // Limited safe breadcrumbs for plugin operations
+    sendDefaultPii: false, // NO PII
+    autoSessionTracking: false, // NO session tracking
+    integrations: (defaults) =>
+      defaults.filter((i) => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name)), // Keep only safe integrations
     beforeSend(event): SentryType.ErrorEvent | PromiseLike<SentryType.ErrorEvent | null> | null {
       // Sanitize first (allowlist rebuild; event.release is preserved from Sentry.init)
       const sanitized = sanitizeEvent(event) as SentryType.ErrorEvent | null;
@@ -201,7 +201,7 @@ export async function initErrorReporter(
     },
     beforeBreadcrumb(breadcrumb) {
       // Only allow breadcrumbs with category starting with "plugin."
-      if (breadcrumb.category?.startsWith('plugin.')) {
+      if (breadcrumb.category?.startsWith("plugin.")) {
         // Strip message and data to prevent leaking user content
         return {
           ...breadcrumb,
@@ -215,21 +215,26 @@ export async function initErrorReporter(
 
   // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId).
   // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
-  const botUuid = config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
-  const botName = config.botName ? scrubString(config.botName).slice(0, 64).replace(/[\x00-\x1f\x7f]/g, "") : undefined;
+  const botUuid =
+    config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
+  const botName = config.botName
+    ? scrubString(config.botName)
+        .slice(0, 64)
+        .replace(/[\x00-\x1f\x7f]/g, "")
+    : undefined;
   if (botUuid) {
     Sentry.setTag("bot_id", botUuid);
   }
   if (botName) {
     Sentry.setTag("bot_name", botName);
-    logger.debug?.('[ErrorReporter] Bot name set (opt-in)');
+    logger.debug?.("[ErrorReporter] Bot name set (opt-in)");
   } else {
-    logger.debug?.('[ErrorReporter] Bot name omitted (not configured — privacy default)');
+    logger.debug?.("[ErrorReporter] Bot name omitted (not configured — privacy default)");
   }
 
   initialized = true;
-  const dsnHost = resolvedDsn.split('@')[1] || '***';
-  logger.info?.('[ErrorReporter] Initialized with DSN host:', dsnHost);
+  const dsnHost = resolvedDsn.split("@")[1] || "***";
+  logger.info?.("[ErrorReporter] Initialized with DSN host:", dsnHost);
 }
 
 /**
@@ -247,22 +252,26 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
     environment: event.environment,
     fingerprint: event.fingerprint,
     // Only keep exception type and sanitized message
-    exception: event.exception ? {
-      values: event.exception.values?.map(v => ({
-        type: v.type,
-        value: scrubString(v.value || ""),
-        stacktrace: v.stacktrace ? {
-          frames: v.stacktrace.frames?.map(f => ({
-            filename: sanitizePath(f.filename || ""),
-            function: f.function,
-            lineno: f.lineno,
-            colno: f.colno,
-            in_app: f.in_app,
-            // NO: abs_path, context_line, pre_context, post_context, vars
-          }))
-        } : undefined,
-      }))
-    } : undefined,
+    exception: event.exception
+      ? {
+          values: event.exception.values?.map((v) => ({
+            type: v.type,
+            value: scrubString(v.value || ""),
+            stacktrace: v.stacktrace
+              ? {
+                  frames: v.stacktrace.frames?.map((f) => ({
+                    filename: sanitizePath(f.filename || ""),
+                    function: f.function,
+                    lineno: f.lineno,
+                    colno: f.colno,
+                    in_app: f.in_app,
+                    // NO: abs_path, context_line, pre_context, post_context, vars
+                  })),
+                }
+              : undefined,
+          })),
+        }
+      : undefined,
     tags: {
       subsystem: event.tags?.subsystem ? scrubString(String(event.tags.subsystem)) : undefined,
       operation: event.tags?.operation ? scrubString(String(event.tags.operation)) : undefined,
@@ -272,33 +281,43 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
       bot_name: event.tags?.bot_name ? scrubString(String(event.tags.bot_name).slice(0, 64)) : undefined,
     },
     contexts: {
-      ...(event.contexts?.config_shape ? {
-        config_shape: Object.fromEntries(
-          Object.entries(event.contexts.config_shape).map(([k, v]) => [
-            k,
-            typeof v === 'string' ? scrubString(v) : v
-          ])
-        )
-      } : {}),
-      ...(event.contexts?.runtime ? {
-        runtime: { name: event.contexts.runtime.name, version: event.contexts.runtime.version }
-      } : {}),
-      ...(event.contexts?.os ? {
-        os: { name: event.contexts.os.name } // Only name, no version
-      } : {}),
+      ...(event.contexts?.config_shape
+        ? {
+            config_shape: Object.fromEntries(
+              Object.entries(event.contexts.config_shape).map(([k, v]) => [
+                k,
+                typeof v === "string" ? scrubString(v) : v,
+              ]),
+            ),
+          }
+        : {}),
+      ...(event.contexts?.runtime
+        ? {
+            runtime: { name: event.contexts.runtime.name, version: event.contexts.runtime.version },
+          }
+        : {}),
+      ...(event.contexts?.os
+        ? {
+            os: { name: event.contexts.os.name }, // Only name, no version
+          }
+        : {}),
     },
-    breadcrumbs: event.breadcrumbs?.filter(b => b.category?.startsWith('plugin.')).map(b => ({
-      category: b.category,
-      level: b.level,
-      timestamp: b.timestamp,
-      type: b.type,
-      // Strip message and data to prevent leaking user content
-    })),
+    breadcrumbs: event.breadcrumbs
+      ?.filter((b) => b.category?.startsWith("plugin."))
+      .map((b) => ({
+        category: b.category,
+        level: b.level,
+        timestamp: b.timestamp,
+        type: b.type,
+        // Strip message and data to prevent leaking user content
+      })),
     // Preserve user.id and user.username for GlitchTip "Users Affected" and grouping
-    user: event.user ? {
-      id: event.user.id ? scrubString(String(event.user.id)) : undefined,
-      username: event.user.username ? scrubString(String(event.user.username)) : undefined,
-    } : undefined,
+    user: event.user
+      ? {
+          id: event.user.id ? scrubString(String(event.user.id)) : undefined,
+          username: event.user.username ? scrubString(String(event.user.username)) : undefined,
+        }
+      : undefined,
     // NO: request, contexts.device, extra
   };
 
@@ -309,36 +328,38 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
  * Scrub sensitive data from strings
  */
 export function scrubString(input: string): string {
-  return input
-    // API keys (OpenAI, Anthropic, GitHub)
-    .replace(/sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})/g, '[REDACTED]')  // OpenAI (sk-, sk-proj-)
-    .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, '[REDACTED]')       // Anthropic
-    .replace(/ghp_[A-Za-z0-9]{36}/g, '[REDACTED]')             // GitHub PAT
-    .replace(/gho_[A-Za-z0-9]{36}/g, '[REDACTED]')             // GitHub OAuth
-    .replace(/Bearer\s+[\w.-]+/gi, '[REDACTED]')
-    // JWT tokens (eyJ...)
-    .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[REDACTED]')
-    // AWS and other cloud credentials
-    .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]')                // AWS access keys
-    // Slack tokens
-    .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, '[REDACTED]')    // Slack tokens
-    // Private keys
-    .replace(/-----BEGIN .*PRIVATE KEY/g, '[REDACTED]')        // Private key headers
-    // Connection strings with embedded passwords (generic + specific)
-    .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, '://[REDACTED]@')
-    .replace(/postgres:\/\/[^\s]+/g, 'postgres://[REDACTED]')
-    .replace(/mysql:\/\/[^\s]+/g, 'mysql://[REDACTED]')
-    .replace(/redis:\/\/[^\s]+/g, 'redis://[REDACTED]')
-    .replace(/mongodb:\/\/[^\s]+/g, 'mongodb://[REDACTED]')
-    // Paths
-    .replace(/\/home\/[^/\s]+/g, '$HOME')
-    .replace(/\/Users\/[^/\s]+/g, '$HOME')
-    .replace(/C:\\Users\\[^\\\s]+/g, '%USERPROFILE%')
-    // PII
-    .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, '[EMAIL]')
-    .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]')
-    // Truncate
-    .slice(0, 500);
+  return (
+    input
+      // API keys (OpenAI, Anthropic, GitHub)
+      .replace(/sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})/g, "[REDACTED]") // OpenAI (sk-, sk-proj-)
+      .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED]") // Anthropic
+      .replace(/ghp_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub PAT
+      .replace(/gho_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub OAuth
+      .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
+      // JWT tokens (eyJ...)
+      .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
+      // AWS and other cloud credentials
+      .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED]") // AWS access keys
+      // Slack tokens
+      .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]") // Slack tokens
+      // Private keys
+      .replace(/-----BEGIN .*PRIVATE KEY/g, "[REDACTED]") // Private key headers
+      // Connection strings with embedded passwords (generic + specific)
+      .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, "://[REDACTED]@")
+      .replace(/postgres:\/\/[^\s]+/g, "postgres://[REDACTED]")
+      .replace(/mysql:\/\/[^\s]+/g, "mysql://[REDACTED]")
+      .replace(/redis:\/\/[^\s]+/g, "redis://[REDACTED]")
+      .replace(/mongodb:\/\/[^\s]+/g, "mongodb://[REDACTED]")
+      // Paths
+      .replace(/\/home\/[^/\s]+/g, "$HOME")
+      .replace(/\/Users\/[^/\s]+/g, "$HOME")
+      .replace(/C:\\Users\\[^\\\s]+/g, "%USERPROFILE%")
+      // PII
+      .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, "[EMAIL]")
+      .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[IP]")
+      // Truncate
+      .slice(0, 500)
+  );
 }
 
 /**
@@ -346,11 +367,7 @@ export function scrubString(input: string): string {
  */
 export function sanitizePath(path: string): string {
   // Try multiple possible plugin directory markers
-  const markers = [
-    'extensions/openclaw-hybrid-memory/',
-    'extensions/memory-hybrid/',
-    'openclaw-hybrid-memory/',
-  ];
+  const markers = ["extensions/openclaw-hybrid-memory/", "extensions/memory-hybrid/", "openclaw-hybrid-memory/"];
 
   for (const marker of markers) {
     const idx = path.indexOf(marker);
@@ -360,35 +377,38 @@ export function sanitizePath(path: string): string {
   }
 
   // Fallback: if path contains node_modules or extensions, return basename
-  if (path.includes('node_modules') || path.includes('extensions')) {
+  if (path.includes("node_modules") || path.includes("extensions")) {
     const parts = path.split(/[/\\]/);
     return parts[parts.length - 1] || path;
   }
 
   // Scrub user-specific paths
   return path
-    .replace(/\/home\/[^/]+/g, '$HOME')
-    .replace(/\/Users\/[^/]+/g, '$HOME')
-    .replace(/C:\\Users\\[^\\]+/g, '%USERPROFILE%');
+    .replace(/\/home\/[^/]+/g, "$HOME")
+    .replace(/\/Users\/[^/]+/g, "$HOME")
+    .replace(/C:\\Users\\[^\\]+/g, "%USERPROFILE%");
 }
 
 /**
  * Capture a plugin error with context
  */
-export function capturePluginError(error: Error, context: {
-  operation: string;
-  /** Subsystem (e.g. "cli", "reflection", "credentials"). Default "plugin". */
-  subsystem?: string;
-  configShape?: Record<string, string>;
-  phase?: string;
-  backend?: string;
-  retryAttempt?: number;
-  memoryCount?: number;
-  /** Severity level (e.g. "info", "warning", "error"). Not sent to Sentry, used for local logging/filtering. */
-  severity?: string;
-  /** Additional context fields for specific operations */
-  [key: string]: unknown;
-}): string | undefined {
+export function capturePluginError(
+  error: Error,
+  context: {
+    operation: string;
+    /** Subsystem (e.g. "cli", "reflection", "credentials"). Default "plugin". */
+    subsystem?: string;
+    configShape?: Record<string, string>;
+    phase?: string;
+    backend?: string;
+    retryAttempt?: number;
+    memoryCount?: number;
+    /** Severity level (e.g. "info", "warning", "error"). Not sent to Sentry, used for local logging/filtering. */
+    severity?: string;
+    /** Additional context fields for specific operations */
+    [key: string]: unknown;
+  },
+): string | undefined {
   // UnconfiguredProviderError is a config issue (missing API key), not a code bug.
   // Suppress here to protect all current and future call sites centrally.
   if (error.name === "UnconfiguredProviderError") return undefined;
@@ -401,7 +421,7 @@ export function capturePluginError(error: Error, context: {
   const fingerprint = `${error.name}:${scrubString(error.message).slice(0, 100)}`;
   const now = Date.now();
   const lastSeen = errorDedup.get(fingerprint);
-  if (lastSeen && (now - lastSeen) < 60000) {
+  if (lastSeen && now - lastSeen < 60000) {
     return undefined; // Skip duplicate
   }
   errorDedup.set(fingerprint, now);
@@ -448,7 +468,7 @@ export async function flushErrorReporter(timeoutMs = 2000): Promise<boolean> {
   try {
     return await Sentry.flush(timeoutMs);
   } catch (err) {
-    logger.warn?.('[ErrorReporter] Flush failed:', err);
+    logger.warn?.("[ErrorReporter] Flush failed:", err);
     return false;
   }
 }
@@ -477,7 +497,7 @@ export function captureTestError(): string | null {
     const testError = new Error("Test error from captureTestError()");
     return Sentry.captureException(testError);
   } catch (err) {
-    logger.warn?.('[ErrorReporter] captureTestError failed:', err);
+    logger.warn?.("[ErrorReporter] captureTestError failed:", err);
     return null;
   }
 }
@@ -489,6 +509,6 @@ export function addOperationBreadcrumb(subsystem: string, operation: string): vo
   if (!Sentry || !initialized) return;
   Sentry.addBreadcrumb({
     category: `plugin.${subsystem}.${operation}`,
-    level: "info"
+    level: "info",
   });
 }

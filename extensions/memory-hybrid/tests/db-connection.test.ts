@@ -196,7 +196,12 @@ describe("VectorDB auto-reconnects after close()", () => {
   it("store succeeds after close()", async () => {
     db.close();
     // Should auto-reconnect and succeed, not throw "VectorDB is closed"
-    const id = await db.store({ text: "post-close fact", vector: [0.4, 0.5, 0.6], importance: 0.8, category: "technical" });
+    const id = await db.store({
+      text: "post-close fact",
+      vector: [0.4, 0.5, 0.6],
+      importance: 0.8,
+      category: "technical",
+    });
     expect(id).toBeDefined();
     expect(typeof id).toBe("string");
   });

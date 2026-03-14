@@ -13,8 +13,14 @@ export function relativeTime(ms: number): string {
   const abs = Math.abs(diff);
   const future = diff > 0;
   if (abs < 60000) return future ? "in <1m" : "just now";
-  if (abs < 3600000) { const m = Math.floor(abs / 60000); return future ? `in ${m}m` : `${m}m ago`; }
-  if (abs < 86400000) { const h = Math.floor(abs / 3600000); return future ? `in ${h}h` : `${h}h ago`; }
+  if (abs < 3600000) {
+    const m = Math.floor(abs / 60000);
+    return future ? `in ${m}m` : `${m}m ago`;
+  }
+  if (abs < 86400000) {
+    const h = Math.floor(abs / 3600000);
+    return future ? `in ${h}h` : `${h}h ago`;
+  }
   const d = Math.floor(abs / 86400000);
   return future ? `in ${d}d` : `${d}d ago`;
 }
@@ -30,7 +36,8 @@ export type Chainable = {
 };
 
 /** Wrap async action to exit on completion (only for standalone CLI). */
-export const withExit = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+export const withExit =
+  <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
   (...args: A) => {
     const isStandaloneCli = process.argv.some((arg) => arg.includes("openclaw") || arg.includes("hybrid-mem"));
     Promise.resolve(fn(...args)).then(

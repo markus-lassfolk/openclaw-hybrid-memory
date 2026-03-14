@@ -42,7 +42,12 @@ export type InstallCliResult =
 
 export type VerifyCliSink = { log: (s: string) => void; error?: (s: string) => void };
 
-export type DistillWindowResult = { mode: "full" | "incremental"; startDate: string; endDate: string; mtimeDays: number };
+export type DistillWindowResult = {
+  mode: "full" | "incremental";
+  startDate: string;
+  endDate: string;
+  mtimeDays: number;
+};
 
 export type RecordDistillResult = { path: string; timestamp: string };
 
@@ -71,11 +76,24 @@ export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => v
 export type IngestFilesResult = { stored: number; skipped: number; extracted: number; files: number; dryRun: boolean };
 export type IngestFilesSink = { log: (s: string) => void; warn: (s: string) => void };
 
-export type DistillCliResult = { sessionsScanned: number; factsExtracted: number; stored: number; dedupSkipped: number; dryRun: boolean; skipped?: boolean };
+export type DistillCliResult = {
+  sessionsScanned: number;
+  factsExtracted: number;
+  stored: number;
+  dedupSkipped: number;
+  dryRun: boolean;
+  skipped?: boolean;
+};
 export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
 
 export type SelfCorrectionExtractResult = {
-  incidents: Array<{ userMessage: string; precedingAssistant: string; followingAssistant: string; timestamp?: string; sessionFile: string }>;
+  incidents: Array<{
+    userMessage: string;
+    precedingAssistant: string;
+    followingAssistant: string;
+    timestamp?: string;
+    sessionFile: string;
+  }>;
   sessionsScanned: number;
 };
 export type SelfCorrectionRunResult = {
@@ -109,11 +127,13 @@ export type CredentialsAuditEntry = {
 
 export type CredentialsAuditResult = { entries: CredentialsAuditEntry[]; total: number };
 
-export type CredentialsPruneResult = { removed: number; entries: Array<{ service: string; type: string }>; dryRun: boolean };
+export type CredentialsPruneResult = {
+  removed: number;
+  entries: Array<{ service: string; type: string }>;
+  dryRun: boolean;
+};
 
-export type UpgradeCliResult =
-  | { ok: true; version: string; pluginDir: string }
-  | { ok: false; error: string };
+export type UpgradeCliResult = { ok: true; version: string; pluginDir: string } | { ok: false; error: string };
 
 export type UninstallCliResult =
   | { outcome: "config_updated"; pluginId: string; cleaned: string[] }
@@ -121,9 +141,7 @@ export type UninstallCliResult =
   | { outcome: "config_error"; error: string; pluginId: string; cleaned: string[] }
   | { outcome: "leave_config"; pluginId: string; cleaned: string[] };
 
-export type ConfigCliResult =
-  | { ok: true; configPath: string; message: string }
-  | { ok: false; error: string };
+export type ConfigCliResult = { ok: true; configPath: string; message: string } | { ok: false; error: string };
 
 /** Active task working memory CLI result types */
 export type ActiveTaskListResult = {
@@ -144,9 +162,7 @@ export type ActiveTaskListResult = {
   fileExists: boolean;
 };
 
-export type ActiveTaskCompleteResult =
-  | { ok: true; label: string; flushedTo?: string }
-  | { ok: false; error: string };
+export type ActiveTaskCompleteResult = { ok: true; label: string; flushedTo?: string } | { ok: false; error: string };
 
 export type ActiveTaskStaleResult = {
   tasks: Array<{
@@ -160,6 +176,4 @@ export type ActiveTaskStaleResult = {
   filePath: string;
 };
 
-export type ActiveTaskAddResult =
-  | { ok: true; label: string; upserted: boolean }
-  | { ok: false; error: string };
+export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean } | { ok: false; error: string };

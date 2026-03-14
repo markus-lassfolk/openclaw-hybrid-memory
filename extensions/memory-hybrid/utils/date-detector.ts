@@ -19,34 +19,55 @@ import type { FutureDateProtectionConfig } from "../config.js";
 export type { FutureDateProtectionConfig };
 
 const MONTH_MAP: Record<string, number> = {
-  jan: 0, january: 0,
-  feb: 1, february: 1,
-  mar: 2, march: 2,
-  apr: 3, april: 3,
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
   may: 4,
-  jun: 5, june: 5,
-  jul: 6, july: 6,
-  aug: 7, august: 7,
-  sep: 8, september: 8,
-  oct: 9, october: 9,
-  nov: 10, november: 10,
-  dec: 11, december: 11,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11,
 };
 
 const WEEKDAY_MAP: Record<string, number> = {
-  sunday: 0, sun: 0,
-  monday: 1, mon: 1,
-  tuesday: 2, tue: 2,
-  wednesday: 3, wed: 3,
-  thursday: 4, thu: 4,
-  friday: 5, fri: 5,
-  saturday: 6, sat: 6,
+  sunday: 0,
+  sun: 0,
+  monday: 1,
+  mon: 1,
+  tuesday: 2,
+  tue: 2,
+  wednesday: 3,
+  wed: 3,
+  thursday: 4,
+  thu: 4,
+  friday: 5,
+  fri: 5,
+  saturday: 6,
+  sat: 6,
 };
 
 // Fix #4: hoist month-name pattern and regex source to module level so they
 // are computed once instead of being rebuilt on every extractCandidates call.
 const MONTH_NAMES_PATTERN = Object.keys(MONTH_MAP)
-  .filter((k) => k.length > 3 || ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].includes(k))
+  .filter(
+    (k) =>
+      k.length > 3 || ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].includes(k),
+  )
   .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|");
 
@@ -131,7 +152,8 @@ function extractCandidates(text: string, nowMs: number): number[] {
   // -------------------------------------------------------------------------
   // 4. "next <weekday>": "next Tuesday", "next Monday"
   // -------------------------------------------------------------------------
-  const nextWdRe = /\bnext\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)\b/gi;
+  const nextWdRe =
+    /\bnext\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)\b/gi;
   while ((m = nextWdRe.exec(text)) !== null) {
     const targetWd = WEEKDAY_MAP[m[1]!.toLowerCase()];
     if (targetWd === undefined) continue;
@@ -187,7 +209,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
 export function detectFutureDate(
   text: string,
   cfg: Pick<FutureDateProtectionConfig, "enabled" | "maxFreezeDays">,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
 ): number | null {
   if (!cfg.enabled) return null;
 

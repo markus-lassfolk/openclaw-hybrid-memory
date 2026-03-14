@@ -67,10 +67,7 @@ function defaultBackupRoot(): string {
 
 function timestampedDir(root: string): string {
   const now = new Date();
-  const ts = now
-    .toISOString()
-    .replace(/[:.]/g, "-")
-    .slice(0, 19); // YYYY-MM-DDTHH-mm-ss
+  const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // YYYY-MM-DDTHH-mm-ss
   return join(root, ts);
 }
 

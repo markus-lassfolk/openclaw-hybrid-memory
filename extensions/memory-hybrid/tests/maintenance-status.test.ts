@@ -12,7 +12,11 @@ import { hybridConfigSchema } from "../config.js";
 
 describe("config maintenance.cronReliability parsing", () => {
   const baseConfig = {
-    embedding: { provider: "openai" as const, model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough" },
+    embedding: {
+      provider: "openai" as const,
+      model: "text-embedding-3-small",
+      apiKey: "sk-test-key-that-is-long-enough",
+    },
     lanceDbPath: "/tmp/test-lance",
     sqlitePath: "/tmp/test.db",
   };
@@ -114,7 +118,11 @@ describe("config maintenance.cronReliability parsing", () => {
 describe("MaintenanceConfig sub-config co-existence", () => {
   it("maintenance has monthlyReview, cronReliability, and council", () => {
     const cfg = hybridConfigSchema.parse({
-      embedding: { provider: "openai" as const, model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough" },
+      embedding: {
+        provider: "openai" as const,
+        model: "text-embedding-3-small",
+        apiKey: "sk-test-key-that-is-long-enough",
+      },
       lanceDbPath: "/tmp/test-lance",
       sqlitePath: "/tmp/test.db",
     });
@@ -125,7 +133,11 @@ describe("MaintenanceConfig sub-config co-existence", () => {
 
   it("all three sub-configs can be set independently", () => {
     const cfg = hybridConfigSchema.parse({
-      embedding: { provider: "openai" as const, model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough" },
+      embedding: {
+        provider: "openai" as const,
+        model: "text-embedding-3-small",
+        apiKey: "sk-test-key-that-is-long-enough",
+      },
       lanceDbPath: "/tmp/test-lance",
       sqlitePath: "/tmp/test.db",
       maintenance: {

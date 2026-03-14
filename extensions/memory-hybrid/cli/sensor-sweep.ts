@@ -44,7 +44,10 @@ export function registerSensorSweepCommands(mem: Chainable, ctx: SensorSweepCont
           else tier = 1;
 
           const sources = opts.source
-            ? opts.source.split(",").map((s) => s.trim()).filter(Boolean)
+            ? opts.source
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
             : null;
 
           const sweepOpts: SweepAllOpts = {

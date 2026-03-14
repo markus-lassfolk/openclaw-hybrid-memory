@@ -13,7 +13,17 @@ import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +54,12 @@ import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType, type ContradictionReco
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { deepMerge } from "./cli/handlers.js";
 import { Embeddings, safeEmbed, type EmbeddingProvider } from "./services/embeddings.js";
-import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, createPendingLLMWarnings } from "./services/chat.js";
+import {
+  chatComplete,
+  distillBatchTokenLimit,
+  distillMaxOutputTokens,
+  createPendingLLMWarnings,
+} from "./services/chat.js";
 import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
 import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import { mergeResults, filterByScope } from "./services/merge-results.js";
@@ -76,15 +91,36 @@ import {
   computeIsolationScore,
   computeRankScore,
 } from "./services/knowledge-gaps.js";
-export type { GapFact, SuggestedLink, KnowledgeGapReport, GapMode, GapFactsDB, GapVectorDB, GapEmbeddings } from "./services/knowledge-gaps.js";
+export type {
+  GapFact,
+  SuggestedLink,
+  KnowledgeGapReport,
+  GapMode,
+  GapFactsDB,
+  GapVectorDB,
+  GapEmbeddings,
+} from "./services/knowledge-gaps.js";
 import { detectClusters, generateClusterLabel } from "./services/topic-clusters.js";
-export type { TopicCluster, ClusterDetectionResult, ClusterDetectionOptions, ClusterFactLookup } from "./services/topic-clusters.js";
+export type {
+  TopicCluster,
+  ClusterDetectionResult,
+  ClusterDetectionOptions,
+  ClusterFactLookup,
+} from "./services/topic-clusters.js";
 import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "./services/retrieval-aliases.js";
 import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
-import { truncateText, truncateForStorage, estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, chunkSessionText, chunkTextByChars } from "./utils/text.js";
+import {
+  truncateText,
+  truncateForStorage,
+  estimateTokens,
+  estimateTokensForDisplay,
+  formatProgressiveIndexLine,
+  chunkSessionText,
+  chunkTextByChars,
+} from "./utils/text.js";
 import {
   REFLECTION_MAX_FACT_LENGTH,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
@@ -129,17 +165,48 @@ import {
   getExtractionTemplates,
   getCorrectionSignalRegex,
 } from "./utils/language-keywords.js";
-import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "./services/self-correction-extract.js";
+import {
+  runSelfCorrectionExtract,
+  type CorrectionIncident,
+  type SelfCorrectionExtractResult,
+} from "./services/self-correction-extract.js";
 import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
 import { extractCredentialsFromToolCalls, type ToolCallCredential } from "./services/credential-scanner.js";
-import { runDirectiveExtract, type DirectiveExtractResult, type DirectiveIncident } from "./services/directive-extract.js";
-import { runReinforcementExtract, type ReinforcementExtractResult, type ReinforcementIncident } from "./services/reinforcement-extract.js";
+import {
+  runDirectiveExtract,
+  type DirectiveExtractResult,
+  type DirectiveIncident,
+} from "./services/directive-extract.js";
+import {
+  runReinforcementExtract,
+  type ReinforcementExtractResult,
+  type ReinforcementIncident,
+} from "./services/reinforcement-extract.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
-import { detectAuthFailure, buildCredentialQuery, formatCredentialHint, DEFAULT_AUTH_FAILURE_PATTERNS, type AuthFailurePattern } from "./services/auth-failure-detect.js";
-import { classifyMemoryOperation, parseClassificationResponse, type MemoryClassification } from "./services/classification.js";
+import {
+  detectAuthFailure,
+  buildCredentialQuery,
+  formatCredentialHint,
+  DEFAULT_AUTH_FAILURE_PATTERNS,
+  type AuthFailurePattern,
+} from "./services/auth-failure-detect.js";
+import {
+  classifyMemoryOperation,
+  parseClassificationResponse,
+  type MemoryClassification,
+} from "./services/classification.js";
 import { extractStructuredFields } from "./services/fact-extraction.js";
-import { getMemoryTriggers, detectCredentialPatterns, extractCredentialMatch, isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX, inferServiceFromText, SENSITIVE_PATTERNS } from "./services/auto-capture.js";
+import {
+  getMemoryTriggers,
+  detectCredentialPatterns,
+  extractCredentialMatch,
+  isCredentialLike,
+  tryParseCredentialForVault,
+  VAULT_POINTER_PREFIX,
+  inferServiceFromText,
+  SENSITIVE_PATTERNS,
+} from "./services/auto-capture.js";
 import { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel } from "./services/auto-classifier.js";
 import { unionFind, getRoot, isStructuredForConsolidation, runConsolidate } from "./services/consolidation.js";
 import { shouldCapture as shouldCaptureUtil, detectCategory as detectCategoryUtil } from "./services/capture-utils.js";
@@ -166,12 +233,24 @@ import { ContextualVariantGenerator, VariantGenerationQueue } from "./services/c
 
 // Backend Imports (extracted from god file for maintainability)
 
-import { CredentialsDB, type CredentialEntry, deriveKey, encryptValue, decryptValue } from "./backends/credentials-db.js";
+import {
+  CredentialsDB,
+  type CredentialEntry,
+  deriveKey,
+  encryptValue,
+  decryptValue,
+} from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { IssueStore } from "./backends/issue-store.js";
-import { WorkflowStore, sequenceDistance, sequenceSimilarity, extractGoalKeywords, hashToolSequence } from "./backends/workflow-store.js";
+import {
+  WorkflowStore,
+  sequenceDistance,
+  sequenceSimilarity,
+  extractGoalKeywords,
+  hashToolSequence,
+} from "./backends/workflow-store.js";
 import { WorkflowTracker, _resetRateLimitForTest } from "./services/workflow-tracker.js";
 import { CrystallizationStore } from "./backends/crystallization-store.js";
 import { PatternDetector, computePatternId, scorePattern } from "./services/pattern-detector.js";
@@ -257,7 +336,7 @@ const lastProgressiveIndexIds: string[] = [];
 
 /** Runtime-detected agent identity. Used for dynamic scope filtering and default store scope. */
 // Runtime-detected agent identity
-// 
+//
 // ⚠️ MODULE-LEVEL STATE WARNING:
 // This is a singleton variable shared across all plugin invocations within the same OpenClaw process.
 // ASSUMPTION: OpenClaw plugins are single-threaded and do not run in parallel for different agents.
@@ -273,7 +352,7 @@ const lastProgressiveIndexIds: string[] = [];
 // - Updated on each before_agent_start event
 // - Used by memory_store to auto-scope facts to the current agent
 // - Falls back to cfg.multiAgent.orchestratorId if detection fails
-// 
+//
 // ⚠️ THREADING WARNING: This is a module-level singleton. If OpenClaw's plugin
 // host ever switches to concurrent request handling, this variable could race
 // between agent sessions. Current implementation assumes serial execution per
@@ -291,8 +370,7 @@ const restartPendingClearedRef: { value: boolean } = { value: false };
 const memoryHybridPlugin = {
   id: PLUGIN_ID,
   name: "Memory (Hybrid: SQLite + LanceDB)",
-  description:
-    "Two-tier memory: SQLite+FTS5 for structured facts, LanceDB for semantic search",
+  description: "Two-tier memory: SQLite+FTS5 for structured facts, LanceDB for semantic search",
   kind: "memory" as const,
   configSchema: hybridConfigSchema,
   versionInfo,
@@ -300,7 +378,21 @@ const memoryHybridPlugin = {
   register(api: ClawdbotPluginApi) {
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({ factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, eventBus, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService });
+    closeOldDatabases({
+      factsDb,
+      vectorDb,
+      credentialsDb,
+      proposalsDb,
+      eventLog,
+      aliasDb,
+      eventBus,
+      issueStore,
+      workflowStore,
+      crystallizationStore,
+      toolProposalStore,
+      verificationStore,
+      provenanceService,
+    });
     credentialsDb = null;
     proposalsDb = null;
     eventLog = null;
@@ -329,7 +421,10 @@ const memoryHybridPlugin = {
     try {
       cfg = hybridConfigSchema.parse(api.pluginConfig);
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:config-parse" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:config-parse",
+      });
       throw err;
     }
 
@@ -355,7 +450,10 @@ const memoryHybridPlugin = {
       resolvedLancePath = dbContext.resolvedLancePath;
       resolvedSqlitePath = dbContext.resolvedSqlitePath;
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:init-databases" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:init-databases",
+      });
       throw err;
     }
 
@@ -430,72 +528,81 @@ const memoryHybridPlugin = {
     // Tools
 
     try {
-      registerTools({
-      factsDb,
-      vectorDb,
-      cfg,
-      embeddings,
-      embeddingRegistry,
-      openai,
-      wal,
-      credentialsDb,
-      proposalsDb,
-      eventLog,
-      provenanceService,
-      issueStore,
-      workflowStore,
-      crystallizationStore,
-      toolProposalStore,
-      verificationStore,
-      variantQueue,
-      lastProgressiveIndexIds,
-      currentAgentIdRef,
-      pendingLLMWarnings,
-      resolvedSqlitePath,
-      timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
-      buildToolScopeFilter,
-      walWrite,
-      walRemove,
-      findSimilarByEmbedding,
-      runReflection,
-      runReflectionRules,
-      runReflectionMeta,
-      pythonBridge,
-    }, api);
+      registerTools(
+        {
+          factsDb,
+          vectorDb,
+          cfg,
+          embeddings,
+          embeddingRegistry,
+          openai,
+          wal,
+          credentialsDb,
+          proposalsDb,
+          eventLog,
+          provenanceService,
+          issueStore,
+          workflowStore,
+          crystallizationStore,
+          toolProposalStore,
+          verificationStore,
+          variantQueue,
+          lastProgressiveIndexIds,
+          currentAgentIdRef,
+          pendingLLMWarnings,
+          resolvedSqlitePath,
+          timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
+          buildToolScopeFilter,
+          walWrite,
+          walRemove,
+          findSimilarByEmbedding,
+          runReflection,
+          runReflectionRules,
+          runReflectionMeta,
+          pythonBridge,
+        },
+        api,
+      );
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:tools" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:tools",
+      });
       throw err;
     }
 
     // CLI Commands
     try {
       registerHybridMemCliWithApi(api, {
-      factsDb,
-      vectorDb,
-      embeddings,
-      openai,
-      cfg,
-      credentialsDb,
-      aliasDb,
-      wal,
-      proposalsDb,
-      eventLog,
-      verificationStore,
-      provenanceService,
-      costTracker,
-      eventBus,
-      resolvedSqlitePath,
-      resolvedLancePath,
-      pluginId: PLUGIN_ID,
-      detectCategory,
-    });
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        cfg,
+        credentialsDb,
+        aliasDb,
+        wal,
+        proposalsDb,
+        eventLog,
+        verificationStore,
+        provenanceService,
+        costTracker,
+        eventBus,
+        resolvedSqlitePath,
+        resolvedLancePath,
+        pluginId: PLUGIN_ID,
+        detectCategory,
+      });
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:cli" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:cli",
+      });
       throw err;
     }
 
     // ContextEngine Plugin Slot (Issue #273) — feature-detected, non-fatal if unavailable
-     
+
     import("./services/context-engine.js")
       .then(({ registerHybridContextEngine }) =>
         registerHybridContextEngine({
@@ -514,31 +621,37 @@ const memoryHybridPlugin = {
 
     // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
     try {
-      lifecycleHooksHandle = registerLifecycleHooks({
-        factsDb,
-        vectorDb,
-        embeddings,
-        embeddingRegistry,
-        openai,
-        cfg,
-        credentialsDb,
-        aliasDb,
-        wal,
-        eventLog,
-        currentAgentIdRef,
-        lastProgressiveIndexIds,
-        restartPendingClearedRef,
-        resolvedSqlitePath,
-        walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
-        walRemove: (id, logger) => walRemove(wal, id, logger),
-        findSimilarByEmbedding,
-        shouldCapture,
-        detectCategory,
-        pendingLLMWarnings,
-        issueStore: issueStore ?? null,
-      }, api);
+      lifecycleHooksHandle = registerLifecycleHooks(
+        {
+          factsDb,
+          vectorDb,
+          embeddings,
+          embeddingRegistry,
+          openai,
+          cfg,
+          credentialsDb,
+          aliasDb,
+          wal,
+          eventLog,
+          currentAgentIdRef,
+          lastProgressiveIndexIds,
+          restartPendingClearedRef,
+          resolvedSqlitePath,
+          walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+          walRemove: (id, logger) => walRemove(wal, id, logger),
+          findSimilarByEmbedding,
+          shouldCapture,
+          detectCategory,
+          pendingLLMWarnings,
+          issueStore: issueStore ?? null,
+        },
+        api,
+      );
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:hooks" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:hooks",
+      });
       throw err;
     }
 
@@ -546,29 +659,32 @@ const memoryHybridPlugin = {
 
     try {
       api.registerService(
-      createPluginService({
-        PLUGIN_ID,
-        factsDb,
-        vectorDb,
-        embeddings,
-        embeddingRegistry,
-        credentialsDb,
-        proposalsDb,
-        wal,
-        eventLog,
-        cfg,
-        openai,
-        resolvedLancePath,
-        resolvedSqlitePath,
-        api,
-        timers,
-        pythonBridge,
-        provenanceService,
-        costTracker,
-      })
-    );
+        createPluginService({
+          PLUGIN_ID,
+          factsDb,
+          vectorDb,
+          embeddings,
+          embeddingRegistry,
+          credentialsDb,
+          proposalsDb,
+          wal,
+          eventLog,
+          cfg,
+          openai,
+          resolvedLancePath,
+          resolvedSqlitePath,
+          api,
+          timers,
+          pythonBridge,
+          provenanceService,
+          costTracker,
+        }),
+      );
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "plugin-register:service" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:service",
+      });
       throw err;
     }
 
@@ -606,7 +722,7 @@ const memoryHybridPlugin = {
             const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
             api.logger.warn?.(
               `memory-hybrid: boot-check — weekly backup cron not found. ` +
-              `Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`
+                `Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`,
             );
           } catch (err) {
             // Non-fatal — crontab may not be available (containers, read-only envs)

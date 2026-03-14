@@ -167,11 +167,7 @@ function runFts5Strategy(
  * Run semantic (vector) search strategy.
  * Returns ranked results (best = rank 1).
  */
-async function runSemanticStrategy(
-  vectorDb: VectorDB,
-  queryVector: number[],
-  topK: number,
-): Promise<RankedResult[]> {
+async function runSemanticStrategy(vectorDb: VectorDB, queryVector: number[], topK: number): Promise<RankedResult[]> {
   const results: SearchResult[] = await vectorDb.search(queryVector, topK, 0.3);
   return results.map((r, i) => ({
     factId: r.entry.id,
@@ -207,10 +203,10 @@ async function runMultiModelSemanticStrategies(
   const settled = await Promise.allSettled(embedTasks);
   for (const s of settled) {
     if (s.status === "rejected") {
-      capturePluginError(
-        s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
-        { subsystem: "retrieval", operation: "multi-model-embed" },
-      );
+      capturePluginError(s.reason instanceof Error ? s.reason : new Error(String(s.reason)), {
+        subsystem: "retrieval",
+        operation: "multi-model-embed",
+      });
       continue;
     }
     const { name, queryVec } = s.value;
@@ -229,11 +225,14 @@ async function runMultiModelSemanticStrategies(
       .slice(0, topK);
 
     if (scored.length > 0) {
-      result.set(`semantic:${name}`, scored.map((r, i) => ({
-        factId: r.factId,
-        rank: i + 1,
-        source: `semantic:${name}` as const,
-      })));
+      result.set(
+        `semantic:${name}`,
+        scored.map((r, i) => ({
+          factId: r.factId,
+          rank: i + 1,
+          source: `semantic:${name}` as const,
+        })),
+      );
     }
   }
   return result;
@@ -242,7 +241,9 @@ async function runMultiModelSemanticStrategies(
 /** Compute cosine similarity between two Float32Arrays. Returns [-1, 1]. */
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -334,15 +335,14 @@ class ClusterCache {
     this.ttlMs = ttlMs;
   }
 
-  getClusterMap(
-    factsDb: FactLookup & ClusterFactLookup,
-    minClusterSize?: number,
-  ): Map<string, string> {
+  getClusterMap(factsDb: FactLookup & ClusterFactLookup, minClusterSize?: number): Map<string, string> {
     const now = Date.now();
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
     if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
-      if ((linkCount == null || linkCount === this.clusterCacheLinkCount) &&
-          this.clusterCache.minClusterSize === minClusterSize) {
+      if (
+        (linkCount == null || linkCount === this.clusterCacheLinkCount) &&
+        this.clusterCache.minClusterSize === minClusterSize
+      ) {
         return this.clusterCache.clusters;
       }
     }
@@ -429,7 +429,11 @@ export async function runRetrievalPipeline(
   rerankingConfig?: RerankingConfig | null,
   rerankingOpenai?: import("openai").default | null,
 ): Promise<OrchestratorResult> {
-  const runOnce = async (expansion: { useLlm: boolean; variants: string[] | null; skipReranking?: boolean }): Promise<OrchestratorResult> => {
+  const runOnce = async (expansion: {
+    useLlm: boolean;
+    variants: string[] | null;
+    skipReranking?: boolean;
+  }): Promise<OrchestratorResult> => {
     const k = config.rrf_k;
     const { strategies, semanticTopK, fts5TopK } = config;
 
@@ -456,27 +460,17 @@ export async function runRetrievalPipeline(
 
     if (strategies.includes("fts5")) {
       strategyPromises.push(
-        safeStrategy("fts5", () =>
-          runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf),
-        ),
+        safeStrategy("fts5", () => runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf)),
       );
     }
 
     if (strategies.includes("semantic") && queryVector) {
-      strategyPromises.push(
-        safeStrategy("semantic", () =>
-          runSemanticStrategy(vectorDb, queryVector, semanticTopK),
-        ),
-      );
+      strategyPromises.push(safeStrategy("semantic", () => runSemanticStrategy(vectorDb, queryVector, semanticTopK)));
     }
 
     // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
     if (aliasDb && queryVector) {
-      strategyPromises.push(
-        safeStrategy("aliases", () =>
-          searchAliasStrategy(aliasDb, queryVector, semanticTopK),
-        ),
-      );
+      strategyPromises.push(safeStrategy("aliases", () => searchAliasStrategy(aliasDb, queryVector, semanticTopK)));
     }
 
     // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
@@ -515,12 +509,7 @@ export async function runRetrievalPipeline(
       embeddingRegistry.isMultiModel() &&
       factsDbForEmbeddings
     ) {
-      multiModelPromise = runMultiModelSemanticStrategies(
-        factsDbForEmbeddings,
-        embeddingRegistry,
-        query,
-        semanticTopK,
-      );
+      multiModelPromise = runMultiModelSemanticStrategies(factsDbForEmbeddings, embeddingRegistry, query, semanticTopK);
     }
 
     const strategySettledResults = await Promise.allSettled(strategyPromises);
@@ -555,9 +544,7 @@ export async function runRetrievalPipeline(
     if (strategies.includes("graph")) {
       const seedScores = new Map<string, number>();
       const seedEntries = new Map<string, MemoryEntry>();
-      const getByIdOpts = (scopeFilter || asOf != null)
-        ? { scopeFilter, asOf }
-        : undefined;
+      const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
 
       for (const results of strategyMap.values()) {
         for (const r of results) {
@@ -591,9 +578,7 @@ export async function runRetrievalPipeline(
     // --- Build metadata map for post-RRF adjustments ---
     // Apply scope and asOf filters when resolving fused fact IDs to prevent returning
     // facts from outside the caller's scope (scope/session/agent boundary enforcement).
-    const getByIdOpts = (scopeFilter || asOf != null)
-      ? { scopeFilter, asOf }
-      : undefined;
+    const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
 
     const factMetaMap = new Map<string, FactMetadata>();
     const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
@@ -630,10 +615,7 @@ export async function runRetrievalPipeline(
     // --- Cluster sibling boost (Issue #146) ---
     if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {
       try {
-        const clusterByFact = clusterCache.getClusterMap(
-          factsDb,
-          clustersConfig.minClusterSize,
-        );
+        const clusterByFact = clusterCache.getClusterMap(factsDb, clustersConfig.minClusterSize);
         if (clusterByFact.size > 0) {
           const clusterToIndices = new Map<string, number[]>();
           for (let i = 0; i < scopedFused.length; i++) {
@@ -742,7 +724,9 @@ export async function runRetrievalPipeline(
   const expanderMode =
     queryExpander && typeof (queryExpander as QueryExpander).getMode === "function"
       ? queryExpander.getMode()
-      : (queryExpander ? "always" : "off");
+      : queryExpander
+        ? "always"
+        : "off";
 
   if (expanderMode === "conditional") {
     const alias =
@@ -765,24 +749,32 @@ export async function runRetrievalPipeline(
         // Build factId→entry map from fused results (same length/order as entries) to avoid
         // fragile positional index alignment between initial.entries and initial.fused.
         const fusedEntryMap = new Map<string, MemoryEntry>(
-          initial.fused.map((r, i) => [r.factId, initial.entries[i]] as [string, MemoryEntry]).filter(([, e]) => e != null),
+          initial.fused
+            .map((r, i) => [r.factId, initial.entries[i]] as [string, MemoryEntry])
+            .filter(([, e]) => e != null),
         );
         const scoredFacts: ScoredFact[] = initial.fused.flatMap((r) => {
           const entry = fusedEntryMap.get(r.factId);
           if (!entry) return [];
           const storedSec = entry.sourceDate ?? entry.createdAt;
-          return [{
-            factId: r.factId,
-            text: entry.text,
-            confidence: entry.confidence,
-            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
-            finalScore: rrfScoreMap.get(r.factId) ?? 0,
-          }];
+          return [
+            {
+              factId: r.factId,
+              text: entry.text,
+              confidence: entry.confidence,
+              storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+              finalScore: rrfScoreMap.get(r.factId) ?? 0,
+            },
+          ];
         });
         const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
         const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
-        const orderedEntriesReranked = reranked.map((f) => ({ factId: f.factId, entry: fusedEntryMap.get(f.factId)! })).filter((x) => x.entry);
-        const fusedReranked = orderedEntriesReranked.map(({ factId }) => initial.fused.find((r) => r.factId === factId)!).filter(Boolean);
+        const orderedEntriesReranked = reranked
+          .map((f) => ({ factId: f.factId, entry: fusedEntryMap.get(f.factId)! }))
+          .filter((x) => x.entry);
+        const fusedReranked = orderedEntriesReranked
+          .map(({ factId }) => initial.fused.find((r) => r.factId === factId)!)
+          .filter(Boolean);
         const contradictedIds = new Set<string>();
         if (factsDb.getContradictedIds) {
           const allIds = orderedEntriesReranked.map((e) => e.factId);
@@ -793,11 +785,7 @@ export async function runRetrievalPipeline(
             if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
           }
         }
-        const { packed, tokensUsed } = packIntoBudget(
-          orderedEntriesReranked,
-          budgetTokens,
-          { contradictedIds },
-        );
+        const { packed, tokensUsed } = packIntoBudget(orderedEntriesReranked, budgetTokens, { contradictedIds });
         const packedFactIdsReranked = orderedEntriesReranked.slice(0, packed.length).map((e) => e.factId);
         return {
           fused: fusedReranked,

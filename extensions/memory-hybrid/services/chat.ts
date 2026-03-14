@@ -7,7 +7,6 @@ import OpenAI from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 
-
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
  * chatCompleteWithRetry catches this and skips immediately to the next fallback model.
@@ -76,14 +75,16 @@ export function is404Like(err: unknown): boolean {
   if (err instanceof Error) {
     // Match HTTP 404 patterns specifically — avoid false positives from
     // "file not found" or "module not found" strings in non-HTTP errors.
-    return /\bHTTP\s+404\b|\b404\b.*not\s+found|model.*not\s+found|not\s+found.*model/i.test(err.message)
+    return (
+      /\bHTTP\s+404\b|\b404\b.*not\s+found|model.*not\s+found|not\s+found.*model/i.test(err.message) ||
       // Also match bare numeric 404 in error messages (e.g. "404 Not Found" from HTTP responses)
-      || /^\b404\b/.test(err.message.trim())
+      /^\b404\b/.test(err.message.trim()) ||
       // OpenAI SDK formats: "404 Model not found" or "Error code: 404"
-      || /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message)
+      /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message) ||
       // Google Generative Language API: "models/<name> is not found for API version <v>"
       // Occurs when a model is unavailable through a specific API version endpoint (e.g. v1beta/openai/).
-      || /is not found for api version/i.test(err.message);
+      /is not found for api version/i.test(err.message)
+    );
   }
   return false;
 }
@@ -101,8 +102,10 @@ export function is403Like(err: unknown): boolean {
   }
   if (err instanceof Error) {
     // Match HTTP 403 patterns: "403 Forbidden", "403 Country, region, or territory not supported", etc.
-    return /^\b403\b/.test(err.message.trim())
-      || /\bHTTP\s+403\b|\bError\s+code:\s*403\b|\b403\s+[A-Za-z]/i.test(err.message);
+    return (
+      /^\b403\b/.test(err.message.trim()) ||
+      /\bHTTP\s+403\b|\bError\s+code:\s*403\b|\b403\s+[A-Za-z]/i.test(err.message)
+    );
   }
   return false;
 }
@@ -119,9 +122,11 @@ export function is429Like(err: unknown): boolean {
     if (status === 429 || status === "429") return true;
   }
   if (err instanceof Error) {
-    return /^\b429\b/.test(err.message.trim())
-      || /\bHTTP\s+429\b|\bError\s+code:\s*429\b|\b429\s+[A-Za-z]/i.test(err.message)
-      || /\btoo\s+many\s+requests\b/i.test(err.message);
+    return (
+      /^\b429\b/.test(err.message.trim()) ||
+      /\bHTTP\s+429\b|\bError\s+code:\s*429\b|\b429\s+[A-Za-z]/i.test(err.message) ||
+      /\btoo\s+many\s+requests\b/i.test(err.message)
+    );
   }
   return false;
 }
@@ -167,7 +172,11 @@ export function isContextLengthError(err: unknown): boolean {
     const status = (err as { status?: unknown }).status;
     if (typeof status === "number" && status === 400) {
       const msg = ((err as { message?: string }).message ?? "").toLowerCase();
-      if (msg.includes("context length") || msg.includes("maximum context") || /max.*token.*(length|limit)|token limit|context.length/i.test(msg)) {
+      if (
+        msg.includes("context length") ||
+        msg.includes("maximum context") ||
+        /max.*token.*(length|limit)|token limit|context.length/i.test(msg)
+      ) {
         return true;
       }
     }
@@ -175,9 +184,12 @@ export function isContextLengthError(err: unknown): boolean {
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
     return (
-      (msg.includes("400") || msg.includes("bad request")) &&
-      (msg.includes("context length") || msg.includes("maximum context") || /max.*token.*(length|limit)|token limit|context.length/i.test(err.message))
-    ) || /\b400\b.*maximum context length/i.test(err.message);
+      ((msg.includes("400") || msg.includes("bad request")) &&
+        (msg.includes("context length") ||
+          msg.includes("maximum context") ||
+          /max.*token.*(length|limit)|token limit|context.length/i.test(err.message))) ||
+      /\b400\b.*maximum context length/i.test(err.message)
+    );
   }
   return false;
 }
@@ -212,8 +224,9 @@ export function isOllamaOOM(err: unknown): boolean {
 function parseRetryAfterMs(err: unknown): number | undefined {
   if (!err || typeof err !== "object") return undefined;
   // OpenAI SDK exposes headers on the error response
-  const headers = (err as { response?: { headers?: Record<string, string> }; headers?: Record<string, string> })
-    .response?.headers ?? (err as { headers?: Record<string, string> }).headers;
+  const headers =
+    (err as { response?: { headers?: Record<string, string> }; headers?: Record<string, string> }).response?.headers ??
+    (err as { headers?: Record<string, string> }).headers;
   if (!headers) return undefined;
   const raw = headers["retry-after"] ?? headers["Retry-After"];
   if (!raw) return undefined;
@@ -252,15 +265,16 @@ export async function chatComplete(opts: {
   }
 
   try {
-    const doCreate = () => opts.openai.chat.completions.create(
-      {
-        model,
-        messages: [{ role: "user", content }],
-        temperature,
-        max_tokens: effectiveMaxTokens,
-      },
-      { signal: controller.signal },
-    );
+    const doCreate = () =>
+      opts.openai.chat.completions.create(
+        {
+          model,
+          messages: [{ role: "user", content }],
+          temperature,
+          max_tokens: effectiveMaxTokens,
+        },
+        { signal: controller.signal },
+      );
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
     const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
@@ -284,23 +298,26 @@ export async function chatComplete(opts: {
     const isAbort = err instanceof Error && err.name === "AbortError";
     const error = isAbort
       ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
-      : (err instanceof Error ? err : new Error(String(err)));
+      : err instanceof Error
+        ? err
+        : new Error(String(err));
     // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM, 429) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
-      msg.includes("llm request timeout") ||  // #339: our own timeout message uses "timeout" not "timed out"
+      msg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
-      is429Like(err) ||  // #397: rate limit is transient
+      is429Like(err) || // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
-      is500Like(err) ||  // #302: OpenAI SDK InternalServerError has no numeric prefix
-      isOllamaOOM(err);  // #387: Ollama OOM — model too large for available RAM, not a bug
-    const isConfigError = err instanceof UnconfiguredProviderError ||
-      is404Like(err) ||  // #303: model not found = wrong model name in config, not a bug
-      is403Like(err);    // #394: country/region restriction = operator config issue, not a bug
+      is500Like(err) || // #302: OpenAI SDK InternalServerError has no numeric prefix
+      isOllamaOOM(err); // #387: Ollama OOM — model too large for available RAM, not a bug
+    const isConfigError =
+      err instanceof UnconfiguredProviderError ||
+      is404Like(err) || // #303: model not found = wrong model name in config, not a bug
+      is403Like(err); // #394: country/region restriction = operator config issue, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -370,18 +387,25 @@ export async function withLLMRetry<T>(
       // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
       if (is404Like(lastError)) {
         const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
-        console.warn(`memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`);
+        console.warn(
+          `memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`,
+        );
         throw lastError;
       }
       // Don't retry 400 context-length errors — input was too long; retrying won't fix it (#442)
       if (isContextLengthError(lastError)) {
-        console.warn(`memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling`);
+        console.warn(
+          `memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling`,
+        );
         throw lastError;
       }
       const is429 = is429Like(lastError);
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
-      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
+      const isTimeout =
+        /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
+          lastError.message,
+        ); // #339: include our own "LLM request timeout" pattern
       if (isTimeout && attempt >= 1) {
         throw lastError;
       }
@@ -390,7 +414,7 @@ export async function withLLMRetry<T>(
       if (isOllamaOOM(lastError)) {
         console.warn(
           `memory-hybrid: Ollama model OOM — model requires more memory than is available. ` +
-          `Skipping retries; will try next fallback model.`
+            `Skipping retries; will try next fallback model.`,
         );
         throw lastError;
       }
@@ -412,16 +436,16 @@ export async function withLLMRetry<T>(
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
-          isServerError ||  // #302: 5xx server errors are transient
-          is404Like(lastError) ||  // #329: defensive safety net — 404 = model not found, config issue, not a bug
-          is403Like(lastError) ||  // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
+          isServerError || // #302: 5xx server errors are transient
+          is404Like(lastError) || // #329: defensive safety net — 404 = model not found, config issue, not a bug
+          is403Like(lastError) || // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
           fullMsg.includes("request timed out") ||
           causeMsg.includes("timed out") ||
           fullMsg.includes("timed out") ||
-          causeMsg.includes("llm request timeout") ||  // #339: our own timeout message uses "timeout" not "timed out"
+          causeMsg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
           fullMsg.includes("llm request timeout") ||
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
@@ -475,7 +499,16 @@ export async function chatCompleteWithRetry(opts: {
   /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
   feature?: string;
 }): Promise<string> {
-  const { fallbackModels = [], label: rawLabel, maxTokens, timeoutMs, signal, pendingWarnings, feature, ...chatOpts } = opts;
+  const {
+    fallbackModels = [],
+    label: rawLabel,
+    maxTokens,
+    timeoutMs,
+    signal,
+    pendingWarnings,
+    feature,
+    ...chatOpts
+  } = opts;
   const label = rawLabel ?? "LLM call";
   const modelsToTry = [opts.model, ...fallbackModels];
 
@@ -485,10 +518,7 @@ export async function chatCompleteWithRetry(opts: {
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
       const reason = (signal as AbortSignal).reason;
-      const abortError =
-        reason instanceof Error
-          ? reason
-          : new Error(reason != null ? String(reason) : "Aborted");
+      const abortError = reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
       abortError.name = "AbortError";
       throw abortError;
     }
@@ -513,25 +543,32 @@ export async function chatCompleteWithRetry(opts: {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
-      const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
+      const isUnconfigured =
+        lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = is429OrWrapped(lastError);
-      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
+      const isTimeout =
+        /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
+          lastError.message,
+        ); // #339: include our own "LLM request timeout" pattern
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
-      const is500 = is500Like(lastError);  // #302
+      const is500 = is500Like(lastError); // #302
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
-          const reason = is429 ? "rate limited (429)"
-            : isTimeout ? "timed out"
-            : is404 ? "model not found (404)"
-            : is403 ? "access denied (403)"
-            : is500 ? "server error (500)"  // #302
-            : "failed after retries";
-          console.warn(
-            `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
-          );
+          const reason = is429
+            ? "rate limited (429)"
+            : isTimeout
+              ? "timed out"
+              : is404
+                ? "model not found (404)"
+                : is403
+                  ? "access denied (403)"
+                  : is500
+                    ? "server error (500)" // #302
+                    : "failed after retries";
+          console.warn(`${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`);
         }
       }
     }
@@ -540,32 +577,34 @@ export async function chatCompleteWithRetry(opts: {
   const finalError = lastError ?? new Error("All models failed");
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
-  const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
-  const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
-  const finalIs429 = is429OrWrapped(finalError);  // #397
-  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
+  const finalIs403 = is403Like(finalError); // #394: country/region restriction = operator config issue
+  const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
+  const finalIs429 = is429OrWrapped(finalError); // #397
+  const finalIsTimeout =
+    /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
+      finalError.message,
+    );
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
   if (unconfiguredCount > 0 && unconfiguredCount === modelsToTry.length) {
-    const unconfiguredProviders = [...new Set(
-      modelsToTry.map(m => m.includes("/") ? m.split("/")[0] : "openai")
-    )];
+    const unconfiguredProviders = [...new Set(modelsToTry.map((m) => (m.includes("/") ? m.split("/")[0] : "openai")))];
     pendingWarnings?.add(
       `⚠️ Memory plugin: No LLM provider keys are configured for ${unconfiguredProviders.join(", ")}. ` +
-      `Memory features (HyDE search, classification, distillation) are degraded. ` +
-      `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`
+        `Memory features (HyDE search, classification, distillation) are degraded. ` +
+        `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`,
     );
   } else if (unconfiguredCount > 0) {
     // Some models were unconfigured — warn user even if final error was 500/404
     pendingWarnings?.add(
       `⚠️ Memory plugin: Some LLM provider keys are missing. ` +
-      `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`
+        `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`,
     );
     // Don't report UnconfiguredProviderError to GlitchTip — it's a config issue, not a code bug.
     // This can happen when the final model in the fallback chain is also unconfigured but an
     // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
-    const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
+    const finalIsUnconfigured =
+      finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
     if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403 && !finalIs429) {
       capturePluginError(finalError, {
@@ -578,8 +617,8 @@ export async function chatCompleteWithRetry(opts: {
     // #387: OOM is a persistent condition (model too large for RAM), not transient — warn user to use smaller model
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM model requires more memory than available (OOM). ` +
-      `Consider using a smaller model or configuring a cloud fallback. ` +
-      `Run: openclaw hybrid-mem verify --test-llm`
+        `Consider using a smaller model or configuring a cloud fallback. ` +
+        `Run: openclaw hybrid-mem verify --test-llm`,
     );
   } else if (finalIs500) {
     // #302: 500 server errors are transient — don't report to GlitchTip; request will be retried naturally
@@ -587,15 +626,15 @@ export async function chatCompleteWithRetry(opts: {
     // #303: model not found across all fallbacks = misconfigured model name — surface to user, skip Sentry
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM model not found (404) for all configured models. ` +
-      `Check model names in llm.default / llm.heavy / llm.nano config. ` +
-      `Run: openclaw hybrid-mem verify --test-llm`
+        `Check model names in llm.default / llm.heavy / llm.nano config. ` +
+        `Run: openclaw hybrid-mem verify --test-llm`,
     );
   } else if (finalIs403) {
     // #394: country/region restriction / IP block = operator config issue, not a bug — skip GlitchTip
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM access denied (403) — your API key may be restricted by country/region, ` +
-      `IP block, or billing. Check provider settings. ` +
-      `Run: openclaw hybrid-mem verify --test-llm`
+        `IP block, or billing. Check provider settings. ` +
+        `Run: openclaw hybrid-mem verify --test-llm`,
     );
   } else if (finalIsTimeout) {
     // #339: timeout errors are transient — don't report to GlitchTip
@@ -603,7 +642,7 @@ export async function chatCompleteWithRetry(opts: {
     // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). ` +
-      `Memory features may be degraded. Try again later or upgrade your provider plan.`
+        `Memory features may be degraded. Try again later or upgrade your provider plan.`,
     );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues

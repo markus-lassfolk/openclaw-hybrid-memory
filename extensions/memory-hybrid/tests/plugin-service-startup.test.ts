@@ -45,14 +45,38 @@ function makeTimers() {
 }
 
 function clearTimers(timers: ReturnType<typeof makeTimers>) {
-  if (timers.pruneTimer.value) { clearInterval(timers.pruneTimer.value); timers.pruneTimer.value = null; }
-  if (timers.classifyTimer.value) { clearInterval(timers.classifyTimer.value); timers.classifyTimer.value = null; }
-  if (timers.classifyStartupTimeout.value) { clearTimeout(timers.classifyStartupTimeout.value); timers.classifyStartupTimeout.value = null; }
-  if (timers.proposalsPruneTimer.value) { clearInterval(timers.proposalsPruneTimer.value); timers.proposalsPruneTimer.value = null; }
-  if (timers.languageKeywordsTimer.value) { clearInterval(timers.languageKeywordsTimer.value); timers.languageKeywordsTimer.value = null; }
-  if (timers.languageKeywordsStartupTimeout.value) { clearTimeout(timers.languageKeywordsStartupTimeout.value); timers.languageKeywordsStartupTimeout.value = null; }
-  if (timers.postUpgradeTimeout.value) { clearTimeout(timers.postUpgradeTimeout.value); timers.postUpgradeTimeout.value = null; }
-  if (timers.passiveObserverTimer.value) { clearInterval(timers.passiveObserverTimer.value); timers.passiveObserverTimer.value = null; }
+  if (timers.pruneTimer.value) {
+    clearInterval(timers.pruneTimer.value);
+    timers.pruneTimer.value = null;
+  }
+  if (timers.classifyTimer.value) {
+    clearInterval(timers.classifyTimer.value);
+    timers.classifyTimer.value = null;
+  }
+  if (timers.classifyStartupTimeout.value) {
+    clearTimeout(timers.classifyStartupTimeout.value);
+    timers.classifyStartupTimeout.value = null;
+  }
+  if (timers.proposalsPruneTimer.value) {
+    clearInterval(timers.proposalsPruneTimer.value);
+    timers.proposalsPruneTimer.value = null;
+  }
+  if (timers.languageKeywordsTimer.value) {
+    clearInterval(timers.languageKeywordsTimer.value);
+    timers.languageKeywordsTimer.value = null;
+  }
+  if (timers.languageKeywordsStartupTimeout.value) {
+    clearTimeout(timers.languageKeywordsStartupTimeout.value);
+    timers.languageKeywordsStartupTimeout.value = null;
+  }
+  if (timers.postUpgradeTimeout.value) {
+    clearTimeout(timers.postUpgradeTimeout.value);
+    timers.postUpgradeTimeout.value = null;
+  }
+  if (timers.passiveObserverTimer.value) {
+    clearInterval(timers.passiveObserverTimer.value);
+    timers.passiveObserverTimer.value = null;
+  }
 }
 
 function buildMinimalCtx(

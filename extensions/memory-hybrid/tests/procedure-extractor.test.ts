@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseSessionJsonl,
-  minimalRecipe,
-  type ParsedSession,
-} from "../services/procedure-extractor.js";
+import { parseSessionJsonl, minimalRecipe, type ParsedSession } from "../services/procedure-extractor.js";
 import type { ProcedureStep } from "../types/memory.js";
 
 describe("procedure-extractor", () => {
@@ -29,9 +25,7 @@ describe("procedure-extractor", () => {
           type: "message",
           message: {
             role: "assistant",
-            content: [
-              { type: "tool_use", id: "t1", name: "web_fetch", input: { url: "https://example.com" } },
-            ],
+            content: [{ type: "tool_use", id: "t1", name: "web_fetch", input: { url: "https://example.com" } }],
           },
         }),
       ];
@@ -139,18 +133,14 @@ describe("procedure-extractor", () => {
 
     it("truncates long string args to 200 chars", () => {
       const longUrl = "https://example.com/" + "x".repeat(300);
-      const steps: ProcedureStep[] = [
-        { tool: "web_fetch", args: { url: longUrl } },
-      ];
+      const steps: ProcedureStep[] = [{ tool: "web_fetch", args: { url: longUrl } }];
       const out = minimalRecipe(steps);
       expect((out[0].args as Record<string, string>)?.url?.length).toBe(201);
       expect((out[0].args as Record<string, string>)?.url?.endsWith("…")).toBe(true);
     });
 
     it("preserves short args and tool name", () => {
-      const steps: ProcedureStep[] = [
-        { tool: "memory_recall", args: { query: "test", limit: 5 }, summary: "recall" },
-      ];
+      const steps: ProcedureStep[] = [{ tool: "memory_recall", args: { query: "test", limit: 5 }, summary: "recall" }];
       const out = minimalRecipe(steps);
       expect(out[0].tool).toBe("memory_recall");
       expect(out[0].args).toEqual({ query: "test", limit: 5 });

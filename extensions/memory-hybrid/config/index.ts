@@ -12,10 +12,7 @@ export {
 } from "./utils.js";
 
 // Re-export embedding dimension utilities
-export {
-  EMBEDDING_DIMENSIONS,
-  OPENAI_MODELS,
-} from "./parsers/core.js";
+export { EMBEDDING_DIMENSIONS, OPENAI_MODELS } from "./parsers/core.js";
 
 // Re-export vectorDimsForModel and parseVerbosityLevel from parsers/index
 export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
@@ -45,10 +42,7 @@ function hasKey(apiKey: string | undefined): boolean {
 }
 
 /** Legacy single-model resolution (for backward compat when no llm config). Used only when no list is built. */
-function getDefaultCronModelLegacy(
-  pluginConfig: CronModelConfig | undefined,
-  tier: CronModelTier,
-): string {
+function getDefaultCronModelLegacy(pluginConfig: CronModelConfig | undefined, tier: CronModelTier): string {
   if (!pluginConfig) {
     if (tier === "heavy") return OPENAI_HEAVY_CRON_MODEL;
     if (tier === "nano") return OPENAI_NANO_CRON_MODEL;
@@ -86,10 +80,7 @@ function getDefaultCronModelLegacy(
  * Preferred provider order for out-of-the-box failover: Research/Heavy favours Gemini (context), then OpenAI, then Claude.
  * Uses OpenClaw-style provider/model IDs so the gateway accepts them. First working model wins at runtime.
  */
-function getDefaultPreferredModelList(
-  pluginConfig: CronModelConfig | undefined,
-  tier: CronModelTier,
-): string[] {
+function getDefaultPreferredModelList(pluginConfig: CronModelConfig | undefined, tier: CronModelTier): string[] {
   if (!pluginConfig) {
     if (tier === "heavy") return [OPENAI_HEAVY_CRON_MODEL];
     if (tier === "nano") return [OPENAI_NANO_CRON_MODEL];
@@ -99,7 +90,9 @@ function getDefaultPreferredModelList(
   if (hasKey(pluginConfig.distill?.apiKey)) {
     const m = pluginConfig.distill?.defaultModel?.trim();
     // Respect explicit defaultModel for all tiers; fall back to tier-specific defaults only when unset.
-    list.push(m || (tier === "nano" ? GEMINI_NANO_MODEL : tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL));
+    list.push(
+      m || (tier === "nano" ? GEMINI_NANO_MODEL : tier === "heavy" ? GEMINI_HEAVY_MODEL : GEMINI_DEFAULT_MODEL),
+    );
   }
   if (hasKey(pluginConfig.embedding?.apiKey)) {
     if (tier === "nano") list.push(OPENAI_NANO_CRON_MODEL);
@@ -108,7 +101,9 @@ function getDefaultPreferredModelList(
   if (hasKey(pluginConfig.claude?.apiKey)) {
     const m = pluginConfig.claude?.defaultModel?.trim();
     // Respect explicit defaultModel for all tiers; fall back to tier-specific defaults only when unset.
-    list.push(m || (tier === "nano" ? CLAUDE_NANO_MODEL : tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL));
+    list.push(
+      m || (tier === "nano" ? CLAUDE_NANO_MODEL : tier === "heavy" ? CLAUDE_HEAVY_MODEL : CLAUDE_DEFAULT_MODEL),
+    );
   }
   if (list.length === 0) {
     list.push(getDefaultCronModelLegacy(pluginConfig, tier));
@@ -134,10 +129,7 @@ function getDefaultPreferredModelList(
  * - "heavy": distill, self-correction, spawn.
  * First working model wins.
  */
-export function getLLMModelPreference(
-  pluginConfig: CronModelConfig | undefined,
-  tier: CronModelTier,
-): string[] {
+export function getLLMModelPreference(pluginConfig: CronModelConfig | undefined, tier: CronModelTier): string[] {
   if (tier === "nano") {
     const nanoList = pluginConfig?.llm?.nano;
     if (Array.isArray(nanoList) && nanoList.length > 0) {
@@ -175,7 +167,10 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
   const out: string[] = [];
 
   function add(name: string) {
-    if (!seen.has(name)) { seen.add(name); out.push(name); }
+    if (!seen.has(name)) {
+      seen.add(name);
+      out.push(name);
+    }
   }
 
   // Legacy / built-in key fields
@@ -202,10 +197,7 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
  * When llm.default/heavy are set, returns the first model in the preference list (gateway-routed).
  * Otherwise legacy: prefer provider the user has configured (Gemini > Claude > OpenAI) > fallback.
  */
-export function getDefaultCronModel(
-  pluginConfig: CronModelConfig | undefined,
-  tier: CronModelTier,
-): string {
+export function getDefaultCronModel(pluginConfig: CronModelConfig | undefined, tier: CronModelTier): string {
   const preferred = getLLMModelPreference(pluginConfig, tier);
   return preferred[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
 }
@@ -232,6 +224,6 @@ export function resolveReflectionModelAndFallbacks(
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, tier);
   const defaultModel = pref[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
-  const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.llm ? undefined : cfg.distill?.fallbackModels;
   return { defaultModel, fallbackModels };
 }

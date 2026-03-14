@@ -131,9 +131,9 @@ describe("memory_forget UUID validation (issue #334)", () => {
     expect(tool).toBeTruthy();
 
     // Simulate an LLM passing the memory text instead of its UUID
-    const result = await tool!.execute("tool-call", {
+    const result = (await tool!.execute("tool-call", {
       memoryId: "MiniMax M2.5 limitations for council reviews (2026-02-22)",
-    }) as { details?: { action?: string } };
+    })) as { details?: { action?: string } };
 
     expect(result.details?.action).toBe("invalid_id");
     // vectorDb.delete must NOT be called with a non-UUID — this was the root cause
@@ -144,9 +144,9 @@ describe("memory_forget UUID validation (issue #334)", () => {
     const { api, vectorDb } = setupTool();
     const tool = api.getTool("memory_forget");
 
-    const result = await tool!.execute("tool-call", {
+    const result = (await tool!.execute("tool-call", {
       memoryId: "user prefers dark mode",
-    }) as { details?: { action?: string } };
+    })) as { details?: { action?: string } };
 
     expect(result.details?.action).toBe("invalid_id");
     expect(vectorDb.delete).not.toHaveBeenCalled();
@@ -167,9 +167,9 @@ describe("memory_forget UUID validation (issue #334)", () => {
       source: "test",
     });
 
-    const result = await tool!.execute("tool-call", {
+    const result = (await tool!.execute("tool-call", {
       memoryId: stored.id,
-    }) as { details?: { action?: string } };
+    })) as { details?: { action?: string } };
 
     // Should attempt deletion, not reject
     expect(result.details?.action).toBe("deleted");
@@ -182,9 +182,9 @@ describe("memory_forget UUID validation (issue #334)", () => {
 
     // Construct something that looks UUID-shaped but has invalid version (0 is not 1-5)
     const invalidUuid = "a1b2c3d4-e5f6-0000-abcd-ef1234567890";
-    const result = await tool!.execute("tool-call", {
+    const result = (await tool!.execute("tool-call", {
       memoryId: invalidUuid,
-    }) as { details?: { action?: string } };
+    })) as { details?: { action?: string } };
 
     expect(result.details?.action).toBe("invalid_id");
     expect(vectorDb.delete).not.toHaveBeenCalled();
@@ -207,9 +207,9 @@ describe("memory_forget UUID validation (issue #334)", () => {
 
     // Use the first 8 chars of the UUID as a prefix (no dashes in first segment)
     const prefix = stored.id.slice(0, 8);
-    const result = await tool!.execute("tool-call", {
+    const result = (await tool!.execute("tool-call", {
       memoryId: prefix,
-    }) as { details?: { action?: string } };
+    })) as { details?: { action?: string } };
 
     // Should resolve and delete, not reject as invalid_id
     expect(result.details?.action).toBe("deleted");

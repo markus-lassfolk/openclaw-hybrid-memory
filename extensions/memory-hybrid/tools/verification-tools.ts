@@ -21,10 +21,7 @@ export interface PluginContext {
  *
  * This includes: memory_verify, memory_verified_list, memory_verification_status.
  */
-export function registerVerificationTools(
-  ctx: PluginContext,
-  api: ClawdbotPluginApi,
-): void {
+export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
   const { factsDb, verificationStore } = ctx;
 
   api.registerTool(
@@ -127,7 +124,12 @@ export function registerVerificationTools(
             };
           }
           return {
-            content: [{ type: "text", text: `Fact ${factId} is verified (v${verified.version}), verified_at=${verified.verifiedAt}.` }],
+            content: [
+              {
+                type: "text",
+                text: `Fact ${factId} is verified (v${verified.version}), verified_at=${verified.verifiedAt}.`,
+              },
+            ],
             details: {
               status: "verified",
               id: factId,

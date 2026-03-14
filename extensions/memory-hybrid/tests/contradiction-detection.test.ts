@@ -42,13 +42,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // Helper: store a simple fact
 // ---------------------------------------------------------------------------
-function storeFact(
-  entity: string | null,
-  key: string | null,
-  value: string | null,
-  text: string,
-  confidence = 1.0,
-) {
+function storeFact(entity: string | null, key: string | null, value: string | null, text: string, confidence = 1.0) {
   return db.store({
     text,
     category: "fact",
@@ -350,7 +344,8 @@ describe("getContradictions", () => {
     const all = db.getContradictions();
     expect(all).toHaveLength(2);
 
-    void old1; void old2;
+    void old1;
+    void old2;
   });
 
   it("filters by factId (as new or old)", () => {

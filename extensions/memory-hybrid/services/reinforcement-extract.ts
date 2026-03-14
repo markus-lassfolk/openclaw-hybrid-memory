@@ -69,7 +69,9 @@ function extractRecalledMemoryIds(content: unknown): string[] {
         const resultContent = (block as { content?: unknown }).content;
         if (typeof resultContent === "string") {
           // Match UUIDs (memory IDs)
-          const uuidMatches = resultContent.matchAll(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi);
+          const uuidMatches = resultContent.matchAll(
+            /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+          );
           for (const match of uuidMatches) {
             ids.push(match[0]);
           }
@@ -100,7 +102,6 @@ function extractToolCallSequence(content: unknown): string[] {
   }
   return tools;
 }
-
 
 let reinforcementRegexCache: {
   strongPraise: RegExp;
@@ -188,9 +189,9 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
       lines = readFileSync(filePath, "utf-8").split("\n");
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'read-session-file',
-        severity: 'info',
-        subsystem: 'reinforcement-extract'
+        operation: "read-session-file",
+        severity: "info",
+        subsystem: "reinforcement-extract",
       });
       continue;
     }
@@ -209,9 +210,9 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
         messages.push({ role, text, content: msg.content });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'parse-session-line',
-          severity: 'info',
-          subsystem: 'reinforcement-extract'
+          operation: "parse-session-line",
+          severity: "info",
+          subsystem: "reinforcement-extract",
         });
         // skip malformed lines
       }

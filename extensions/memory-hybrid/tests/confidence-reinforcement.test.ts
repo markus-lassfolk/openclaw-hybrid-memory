@@ -14,10 +14,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 import { hybridConfigSchema } from "../config.js";
-import {
-  runPassiveObserver,
-  type PassiveObserverConfig,
-} from "../services/passive-observer.js";
+import { runPassiveObserver, type PassiveObserverConfig } from "../services/passive-observer.js";
 import type { ReinforcementConfig } from "../config.js";
 
 const { FactsDB } = _testing;
@@ -163,7 +160,13 @@ describe("parseConfig — reinforcement section", () => {
   it("parses custom reinforcement values", () => {
     const cfg = hybridConfigSchema.parse({
       ...BASE_CFG,
-      reinforcement: { enabled: true, passiveBoost: 0.2, activeBoost: 0.08, maxConfidence: 0.9, similarityThreshold: 0.9 },
+      reinforcement: {
+        enabled: true,
+        passiveBoost: 0.2,
+        activeBoost: 0.08,
+        maxConfidence: 0.9,
+        similarityThreshold: 0.9,
+      },
     });
     expect(cfg.reinforcement.passiveBoost).toBeCloseTo(0.2, 5);
     expect(cfg.reinforcement.activeBoost).toBeCloseTo(0.08, 5);
@@ -220,7 +223,7 @@ describe("Decay + reinforcement interaction", () => {
     db.boostConfidence(reinforced.id, 0.1);
     const r = db.getById(reinforced.id);
     const p = db.getById(plain.id);
-    expect((r?.confidence ?? 0)).toBeGreaterThan(p?.confidence ?? 0);
+    expect(r?.confidence ?? 0).toBeGreaterThan(p?.confidence ?? 0);
   });
 
   it("multiple reinforcements counteract decay (confidence stays high)", () => {
@@ -330,7 +333,9 @@ describe("Passive observer — reinforcement on similarity", () => {
     const factsDb = makeFactsDb([{ id: "existing-fact-1", text: "I use TypeScript", confidence: 0.7 }]);
 
     vi.doMock("../services/chat.js", () => ({
-      chatCompleteWithRetry: vi.fn().mockResolvedValue('[{"text":"I use TypeScript","category":"preference","importance":0.8}]'),
+      chatCompleteWithRetry: vi
+        .fn()
+        .mockResolvedValue('[{"text":"I use TypeScript","category":"preference","importance":0.8}]'),
     }));
 
     const { runPassiveObserver: runFn } = await import("../services/passive-observer.js");
@@ -345,7 +350,13 @@ describe("Passive observer — reinforcement on similarity", () => {
       {
         model: "test-model",
         dbDir: tmpDir,
-        reinforcement: { enabled: false, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85 },
+        reinforcement: {
+          enabled: false,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+        },
       },
       { info: () => {}, warn: () => {} },
     );

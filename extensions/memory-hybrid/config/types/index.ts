@@ -18,19 +18,9 @@ import type {
   ContextualVariantsConfig,
 } from "./retrieval.js";
 
-import type {
-  StoreConfig,
-  WALConfig,
-  EventLogConfig,
-  PathConfig,
-} from "./core.js";
+import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
 
-import type {
-  PassiveObserverConfig,
-  ReflectionConfig,
-  ProceduresConfig,
-  ExtractionConfig,
-} from "./capture.js";
+import type { PassiveObserverConfig, ReflectionConfig, ProceduresConfig, ExtractionConfig } from "./capture.js";
 
 import type {
   VerificationConfig,
@@ -67,11 +57,7 @@ import type {
   DashboardConfig,
 } from "./features.js";
 
-import type {
-  MultiAgentConfig,
-  PersonaProposalsConfig,
-  MemoryToSkillsConfig,
-} from "./agents.js";
+import type { MultiAgentConfig, PersonaProposalsConfig, MemoryToSkillsConfig } from "./agents.js";
 
 import type { SensorSweepConfig } from "./sensors.js";
 
@@ -137,14 +123,7 @@ export type CronModelConfig = {
 };
 
 /** Credential types supported by the credentials store */
-export const CREDENTIAL_TYPES = [
-  "token",
-  "password",
-  "api_key",
-  "ssh",
-  "bearer",
-  "other",
-] as const;
+export const CREDENTIAL_TYPES = ["token", "password", "api_key", "ssh", "bearer", "other"] as const;
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 /** Auto-capture configuration for credential scanning from tool call inputs */

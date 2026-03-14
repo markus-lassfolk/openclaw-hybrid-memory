@@ -94,8 +94,7 @@ export const esphomeYamlConverter: Converter = {
 
     // Board info
     const boardSection =
-      (doc["esp32"] as Record<string, unknown> | undefined) ??
-      (doc["esp8266"] as Record<string, unknown> | undefined);
+      (doc["esp32"] as Record<string, unknown> | undefined) ?? (doc["esp8266"] as Record<string, unknown> | undefined);
     const platform = doc["esp32"] ? "ESP32" : doc["esp8266"] ? "ESP8266" : "Unknown";
     if (boardSection) {
       const board = getStr(boardSection, "board", "unknown");
@@ -123,10 +122,7 @@ export const esphomeYamlConverter: Converter = {
     const switches = asArray(doc["switch"]);
     const outputs = asArray(doc["output"]);
     if (switches.length > 0 || outputs.length > 0) {
-      const lines = [
-        ...switches.map((s, i) => renderSwitch(s, i)),
-        ...outputs.map((o, i) => renderOutput(o, i)),
-      ];
+      const lines = [...switches.map((s, i) => renderSwitch(s, i)), ...outputs.map((o, i) => renderOutput(o, i))];
       sections.push(`## Switches/Outputs\n\n${lines.join("\n")}\n`);
     }
 
