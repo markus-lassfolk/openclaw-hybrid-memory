@@ -381,20 +381,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
   /** How often to run the stale session sweep (ms). */
   const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  /** Counter to generate unique session instance IDs. */
-  let sessionInstanceCounter = 0;
-  /** Map session keys to their current instance ID to distinguish reused keys. */
-  const sessionKeyToInstance = new Map<string, number>();
 
   /** Record activity for a session (called on before_agent_start). */
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
-    // Assign a new instance ID when a session key is reused.
-    // This allows swept markers to distinguish between the old session instance
-    // and the new one, preventing late agent_end from the old instance from
-    // incorrectly triggering removeSession() for the new instance.
-    sessionInstanceCounter++;
-    sessionKeyToInstance.set(sessionKey, sessionInstanceCounter);
   }
 
   /**
@@ -404,7 +394,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
    */
   function clearSessionState(sessionKey: string): void {
     sessionStartSeen.delete(sessionKey);
-    sessionKeyToInstance.delete(sessionKey);
     ambientSeenFactsMap.delete(sessionKey);
     ambientLastEmbeddingMap.delete(sessionKey);
     frustrationStateMap.delete(sessionKey);
@@ -472,16 +461,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       for (let i = 0; i < excess; i++) {
         const { value } = keys.next();
         if (value) sessionLastActivity.delete(value);
-      }
-    }
-
-    // Issue #463: Bound sessionKeyToInstance
-    if (sessionKeyToInstance.size > MAX_TRACKED_SESSIONS) {
-      const excess = sessionKeyToInstance.size - MAX_TRACKED_SESSIONS;
-      const keys = sessionKeyToInstance.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sessionKeyToInstance.delete(value);
       }
     }
   }
@@ -2524,7 +2503,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
     // Clear all session state to release memory
     sessionStartSeen.clear();
-    sessionKeyToInstance.clear();
     ambientSeenFactsMap.clear();
     ambientLastEmbeddingMap.clear();
     frustrationStateMap.clear();

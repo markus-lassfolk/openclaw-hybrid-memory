@@ -427,7 +427,7 @@ import { parseFrustrationDetectionConfig } from "../config/parsers/features.js";
 describe("parseFrustrationDetectionConfig", () => {
   it("returns defaults when empty config", () => {
     const cfg = parseFrustrationDetectionConfig({});
-    expect(cfg.enabled).toBe(true);
+    expect(cfg.enabled).toBe(false);
     expect(cfg.windowSize).toBe(8);
     expect(cfg.decayRate).toBe(0.85);
     expect(cfg.injectionThreshold).toBe(0.3);
