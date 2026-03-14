@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Override @hono/node-server to >=1.19.10 <2 (GHSA-wc8c-qw6v-h7f6):** Added npm `overrides` to force `@hono/node-server` to a patched version. The unbounded range is capped at `<2` to prevent accidental major-version upgrades.
 
+### Migration Notes
+
+- **Google embedding model default changed: `text-embedding-004` → `text-embedding-005` (#385):** If your deployment previously used `text-embedding-004` (explicitly or as the inferred default), switching to `text-embedding-005` produces different vector representations. **Existing LanceDB tables indexed with `text-embedding-004` will have degraded semantic retrieval quality until re-indexed.** Run `openclaw hybrid-mem re-index` after upgrading to rebuild the vector index with the new model. To keep using `text-embedding-004`, set `embedding.model: "text-embedding-004"` explicitly in your plugin config.
+
 ---
 
 ## [2026.3.110] - 2026-03-11
