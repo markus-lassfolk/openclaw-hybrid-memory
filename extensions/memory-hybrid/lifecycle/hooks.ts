@@ -25,7 +25,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, type PendingLLMWarnings } from "../services/chat.js";
+import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, isTimeoutLike, type PendingLLMWarnings } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine, truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
@@ -812,7 +812,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                         isOllamaOOM(hydeErr) ||
                         is500Like(hydeErr) ||
                         is404Like(hydeErr) ||
-                        /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
+                        isTimeoutLike(hydeErr);
                       if (!isTransient) {
                         capturePluginError(hydeErr, {
                           operation: `${opts?.errorPrefix ?? ""}hyde-generation`,

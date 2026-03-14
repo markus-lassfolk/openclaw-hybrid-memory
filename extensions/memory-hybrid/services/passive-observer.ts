@@ -32,7 +32,8 @@ import {
   is404Like, 
   is403Like, 
   is500Like,
-  isOllamaOOM
+  isOllamaOOM,
+  isTimeoutLike
 } from './chat.js'
 import { capturePluginError } from './error-reporter.js'
 import { normalizeVector, dotProductSimilarity } from './reflection.js'
@@ -531,10 +532,8 @@ export async function runPassiveObserver(
         const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1
         const errObj = err instanceof Error ? err : new Error(String(err));
         
-        const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(errObj.message);
-        
         // Skip reporting transient provider errors to GlitchTip
-        if (!is500Like(errObj) && !isOllamaOOM(errObj) && !isTimeout && !is403Like(errObj) && !is404Like(errObj) && !is429OrWrapped(errObj)) {
+        if (!is500Like(errObj) && !isOllamaOOM(errObj) && !isTimeoutLike(errObj) && !is403Like(errObj) && !is404Like(errObj) && !is429OrWrapped(errObj)) {
           capturePluginError(errObj, {
             operation: 'passive-observer-llm',
             subsystem: 'passive-observer',

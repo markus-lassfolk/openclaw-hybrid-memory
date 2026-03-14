@@ -221,6 +221,19 @@ export function isOllamaOOM(err: unknown): boolean {
 }
 
 /**
+ * Detect timeout-like errors (network timeouts, aborted requests, connection failures).
+ * Covers both our own timeout messages and various provider/network error patterns.
+ * These are transient failures — callers should skip capturePluginError.
+ *
+ * Exported so other modules (passive-observer, auto-classifier) can detect timeouts
+ * for error classification and reporting decisions.
+ */
+export function isTimeoutLike(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(err.message);
+}
+
+/**
  * Try to parse a Retry-After delay (in ms) from an API error.
  * Returns undefined when the header is absent or unparseable.
  */
@@ -406,7 +419,7 @@ export async function withLLMRetry<T>(
       }
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
-      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
+      const isTimeout = isTimeoutLike(lastError);
       if (isTimeout && attempt >= 1) {
         throw lastError;
       }
@@ -541,7 +554,7 @@ export async function chatCompleteWithRetry(opts: {
       const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = is429OrWrapped(lastError);
-      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
+      const isTimeout = isTimeoutLike(lastError);
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
       const is500 = is500Like(lastError);  // #302
@@ -568,7 +581,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
   const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError);  // #397
-  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
+  const finalIsTimeout = isTimeoutLike(finalError);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
