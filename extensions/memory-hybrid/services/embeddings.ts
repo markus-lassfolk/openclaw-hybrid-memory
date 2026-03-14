@@ -1131,7 +1131,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     const collectedErrors: Error[] = [];
     const now = Date.now();
     while (currentIndex < this.providers.length) {
-      // Skip providers in cooldown (config errors like 401/403/404). Expire stale entries.
+      // Skip providers in cooldown (config errors like 401/403/404 or transient errors). Expire stale entries.
       const cooldownEntry = this.failedUntil.get(currentIndex);
       if (cooldownEntry !== undefined) {
         if (now < cooldownEntry.expiry) {
@@ -1158,10 +1158,9 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         // Skip config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) — always operator issues (#329, #394, #385).
         const asErr = err instanceof Error ? err : new Error(String(err));
         collectedErrors.push(asErr);
-        // Mark config-error providers for cooldown so we don't waste round-trips on them every call.
-        if (isConfigError(asErr)) {
-          this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
-        }
+        // Mark failed providers for cooldown so we don't waste round-trips on them every call.
+        // Config errors (401/403/404) and transient errors both get cooldowns to avoid repeated latency penalties.
+        this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
         const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
           capturePluginError(asErr, {
