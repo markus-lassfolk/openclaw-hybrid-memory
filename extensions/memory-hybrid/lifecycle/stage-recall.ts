@@ -84,8 +84,8 @@ async function runRecall(
       };
     }
 
-    const degradationQueueDepth = ctx.cfg.autoRecall.degradationQueueDepth ?? 0;
-    const degradationMaxLatencyMs = ctx.cfg.autoRecall.degradationMaxLatencyMs ?? 0;
+    const degradationQueueDepth = ctx.cfg.autoRecall.degradationQueueDepth ?? 10;
+    const degradationMaxLatencyMs = ctx.cfg.autoRecall.degradationMaxLatencyMs ?? 5000;
     const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
 
     if (forceDegraded) {
