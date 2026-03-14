@@ -76,6 +76,10 @@ export type AutoRecallConfig = {
   scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
   /** Auto-recall on authentication failures (reactive trigger after tool results) */
   authFailure: AuthFailureRecallConfig;
+  /** Phase 2.1: Hard degradation. When main-lane queue depth > this value, use FTS-only + HOT facts and set degraded flag. 0 = disabled. Default 10. */
+  degradationQueueDepth?: number;
+  /** Phase 2.1: Hard degradation. When recall latency (ms) exceeds this value, use FTS-only + HOT and set degraded. 0 = disabled. Default 5000. */
+  degradationMaxLatencyMs?: number;
 };
 
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */

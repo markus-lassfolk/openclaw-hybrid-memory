@@ -37,12 +37,8 @@ export interface HooksContext {
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
-  walWrite: (
-    operation: "store" | "update",
-    data: Record<string, unknown>,
-    logger: { warn: (msg: string) => void },
-  ) => string;
-  walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
+  walWrite: typeof import("../services/wal-helpers.js").walWrite;
+  walRemove: typeof import("../services/wal-helpers.js").walRemove;
   findSimilarByEmbedding: (
     vectorDb: VectorDB,
     factsDb: { getById(id: string): MemoryEntry | null },
@@ -54,6 +50,7 @@ export interface HooksContext {
   detectCategory: (text: string) => import("../config.js").MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
+  recallInFlightRef: { value: number };
 }
 
 /** Issue #463: Returned handle for lifecycle hook cleanup. */
@@ -85,13 +82,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
-      walWrite: ctx.walWrite,
-      walRemove: ctx.walRemove,
+      walWrite: (operation, data, logger) => ctx.walWrite(ctx.wal, operation, data, logger),
+      walRemove: (id, logger) => ctx.walRemove(ctx.wal, id, logger),
       findSimilarByEmbedding: ctx.findSimilarByEmbedding,
       shouldCapture: ctx.shouldCapture,
       detectCategory: ctx.detectCategory,
       pendingLLMWarnings: ctx.pendingLLMWarnings,
       issueStore: ctx.issueStore,
+      recallInFlightRef: ctx.recallInFlightRef,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

@@ -164,6 +164,14 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       progressivePinnedRecallCount,
       scopeFilter,
       authFailure,
+      degradationQueueDepth:
+        typeof ar.degradationQueueDepth === "number" && ar.degradationQueueDepth >= 0
+          ? Math.floor(ar.degradationQueueDepth)
+          : 10,
+      degradationMaxLatencyMs:
+        typeof ar.degradationMaxLatencyMs === "number" && ar.degradationMaxLatencyMs >= 0
+          ? Math.floor(ar.degradationMaxLatencyMs)
+          : 5000,
     };
   } else {
     return {
@@ -185,6 +193,8 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
         limit: 3,
         maxPerPrompt: 4,
       },
+      degradationQueueDepth: 10,
+      degradationMaxLatencyMs: 5000,
       summaryThreshold: 300,
       summaryMaxChars: 80,
       useSummaryInInjection: true,

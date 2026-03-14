@@ -367,6 +367,9 @@ const currentAgentIdRef: { value: string | null } = { value: null };
 
 const restartPendingClearedRef: { value: boolean } = { value: false };
 
+/** Phase 2.1: In-flight recall count for degradation (queue depth). */
+const recallInFlightRef: { value: number } = { value: 0 };
+
 const memoryHybridPlugin = {
   id: PLUGIN_ID,
   name: "Memory (Hybrid: SQLite + LanceDB)",
@@ -524,45 +527,50 @@ const memoryHybridPlugin = {
       variantQueue = null;
     }
 
+    // Phase 2.6: Single PluginContext passed into subsystems (prep for concurrency and testing).
+    const pluginContext = {
+      factsDb,
+      vectorDb,
+      cfg,
+      embeddings,
+      embeddingRegistry,
+      openai,
+      wal,
+      credentialsDb,
+      aliasDb,
+      proposalsDb,
+      eventLog,
+      provenanceService,
+      issueStore: issueStore ?? null,
+      workflowStore,
+      crystallizationStore,
+      toolProposalStore,
+      verificationStore,
+      variantQueue,
+      lastProgressiveIndexIds,
+      currentAgentIdRef,
+      restartPendingClearedRef,
+      recallInFlightRef,
+      pendingLLMWarnings,
+      resolvedSqlitePath,
+      timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
+      buildToolScopeFilter,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding,
+      shouldCapture,
+      detectCategory,
+      runReflection,
+      runReflectionRules,
+      runReflectionMeta,
+      pythonBridge,
+    };
+
     // ========================================================================
     // Tools
 
     try {
-      registerTools(
-        {
-          factsDb,
-          vectorDb,
-          cfg,
-          embeddings,
-          embeddingRegistry,
-          openai,
-          wal,
-          credentialsDb,
-          proposalsDb,
-          eventLog,
-          provenanceService,
-          issueStore,
-          workflowStore,
-          crystallizationStore,
-          toolProposalStore,
-          verificationStore,
-          variantQueue,
-          lastProgressiveIndexIds,
-          currentAgentIdRef,
-          pendingLLMWarnings,
-          resolvedSqlitePath,
-          timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
-          buildToolScopeFilter,
-          walWrite,
-          walRemove,
-          findSimilarByEmbedding,
-          runReflection,
-          runReflectionRules,
-          runReflectionMeta,
-          pythonBridge,
-        },
-        api,
-      );
+      registerTools(pluginContext, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "registration",
@@ -621,32 +629,7 @@ const memoryHybridPlugin = {
 
     // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
     try {
-      lifecycleHooksHandle = registerLifecycleHooks(
-        {
-          factsDb,
-          vectorDb,
-          embeddings,
-          embeddingRegistry,
-          openai,
-          cfg,
-          credentialsDb,
-          aliasDb,
-          wal,
-          eventLog,
-          currentAgentIdRef,
-          lastProgressiveIndexIds,
-          restartPendingClearedRef,
-          resolvedSqlitePath,
-          walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
-          walRemove: (id, logger) => walRemove(wal, id, logger),
-          findSimilarByEmbedding,
-          shouldCapture,
-          detectCategory,
-          pendingLLMWarnings,
-          issueStore: issueStore ?? null,
-        },
-        api,
-      );
+      lifecycleHooksHandle = registerLifecycleHooks(pluginContext, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "registration",

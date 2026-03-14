@@ -260,7 +260,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.monthly,
   },
   // Daily 02:45 | nightly-dream-cycle | dream-cycle (prune → consolidate → reflect)
-  // Default schedule; overridden by cfg.nightlyCycle.schedule during install/verify/upgrade.
+  // Phase 2.7: Only install when nightlyCycle.enabled; off by default (Phase 1).
   {
     pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle",
     name: "nightly-dream-cycle",
@@ -272,6 +272,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     modelTier: "default",
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.daily,
+    featureGate: "nightlyCycle.enabled",
   },
   // Every 4h | sensor-sweep | tier-1 + tier-2 data collection (no LLM, Issue #236)
   // Default schedule; overridden by cfg.sensorSweep.schedule during install/verify/upgrade.
@@ -1011,7 +1012,10 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         reEnableDisabled: false,
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
         messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(notify) },
-        featureGates: { "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true },
+        featureGates: {
+          "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true,
+          "nightlyCycle.enabled": (dreamCycleRaw?.enabled as boolean | undefined) === true,
+        },
       });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
@@ -2001,7 +2005,10 @@ export async function runVerifyForCli(
                 cfg.memoryToSkills?.notify !== false,
               ),
             },
-            featureGates: { "sensorSweep.enabled": cfg.sensorSweep?.enabled === true },
+            featureGates: {
+              "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
+              "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
+            },
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
@@ -4861,7 +4868,10 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
           cfg.memoryToSkills?.notify !== false,
         ),
       },
-      featureGates: { "sensorSweep.enabled": cfg.sensorSweep?.enabled === true },
+      featureGates: {
+        "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
+        "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
+      },
     });
     if (added.length > 0 || normalized.length > 0) {
       logger?.info?.(

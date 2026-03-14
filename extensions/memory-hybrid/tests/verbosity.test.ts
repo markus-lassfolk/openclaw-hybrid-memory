@@ -779,7 +779,7 @@ describe("silent mode — hook suppression", () => {
     expect(normalCount).toBeGreaterThan(1);
   });
 
-  it("does not register the credential auto-detect agent_end handler in silent mode", () => {
+  it("registers a single agent_end handler in both silent and normal mode (credential steps gated inside runCaptureStage)", () => {
     const silentApi = makeMockApi();
     const normalApi = makeMockApi();
 
@@ -792,7 +792,8 @@ describe("silent mode — hook suppression", () => {
     const countAgentEnd = (api: ReturnType<typeof makeMockApi>) =>
       (api.on as ReturnType<typeof vi.fn>).mock.calls.filter((args: unknown[]) => args[0] === "agent_end").length;
 
-    // Silent mode should register fewer agent_end handlers (credential detector is skipped).
-    expect(countAgentEnd(silentApi)).toBeLessThan(countAgentEnd(normalApi));
+    // Phase 2.3: one agent_end handler (runCaptureStage) in both modes; credential hint/auto-detect are skipped inside the stage when verbosity is silent.
+    expect(countAgentEnd(silentApi)).toBe(1);
+    expect(countAgentEnd(normalApi)).toBe(1);
   });
 });

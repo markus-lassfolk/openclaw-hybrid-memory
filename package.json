@@ -1,0 +1,16 @@
+{
+  "name": "openclaw-hybrid-memory-root",
+  "private": true,
+  "description": "Root package for git hooks and pre-commit formatting.",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.0.0"
+  },
+  "lint-staged": {
+    "extensions/memory-hybrid/**/*.ts": "prettier --write"
+  }
+}

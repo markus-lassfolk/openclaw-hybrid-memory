@@ -1,6 +1,6 @@
 # Hybrid Memory — Phases Roadmap
 
-This document tracks the phased cleanup and improvement plan from the combined recommendations report. Phase 1 is implemented; Phase 2 and 3 are planned.
+This document tracks the phased cleanup and improvement plan from the combined recommendations report. Phase 1 and Phase 2 are done; Phase 3 is planned.
 
 ---
 
@@ -23,19 +23,19 @@ This document tracks the phased cleanup and improvement plan from the combined r
 
 ---
 
-## Phase 2: Performance & Stability (suggested)
+## Phase 2: Performance & Stability (done)
 
 Focus: **performance and stability** without large structural changes.
 
-| Priority | Task | Rationale |
-|----------|------|-----------|
-| 1 | **Hard degradation mode** | When main-lane queue depth &gt; 10 or recall latency &gt; 5s, skip enrichment and use FTS-only + HOT facts. Add a `degraded` flag to recall result for observability. |
-| 2 | **Per-stage timing in recall pipeline** | Wrap each stage (FTS, embed, vector, graph, rerank, pack) in a timer and log totals at debug. Essential for finding bottlenecks. |
-| 3 | **Decompose `hooks.ts` into staged pipeline** | Replace the monolithic hook with 5 named stages (setup, recall, injection, capture, cleanup), each in its own file with config toggle and timeout. Dispatcher stays &lt;200 lines. |
-| 4 | **Reduce prompt injections to max 3 blocks** | Merge recalled context into one `<recalled-context>` block; keep `<active-task>` if present; allow one optional warning block. Everything else tool-accessible only. |
-| 5 | **Agent detection: downgrade to debug or fix** | If `agentId` is missing, log at debug (not warn) to cut noise; separately fix payload so agentId is present where expected. |
-| 6 | **Replace module-level mutable state with PluginContext** | Pass a `PluginContext` object into subsystems instead of relying on 16+ module-level variables in `index.ts`. Prepares for concurrency and testing. |
-| 7 | **Cleanup cron jobs for removed/disabled features** | Remove or disable scheduled jobs that only served functionality that has been removed or is now off by default (e.g. nightly cycle, passive observer, cross-agent learning), so they do not run unnecessarily. Can be done in Phase 2 or 3. |
+| Priority | Task | Rationale | Status |
+|----------|------|-----------|--------|
+| 1 | **Hard degradation mode** | When main-lane queue depth &gt; 10 or recall latency &gt; 5s, skip enrichment and use FTS-only + HOT facts. Add a `degraded` flag to recall result for observability. | **Done** — `recallInFlightRef`, `degradationQueueDepth`/`degradationMaxLatencyMs`, FTS-only+HOT path, `<!-- recall degraded: queue|latency -->` marker. |
+| 2 | **Per-stage timing in recall pipeline** | Wrap each stage (FTS, embed, vector, graph, rerank, pack) in a timer and log totals at debug. Essential for finding bottlenecks. | **Done** — FTS, embed, vector, merge timed in auto-recall path; debug log with totals. |
+| 3 | **Decompose `hooks.ts` into staged pipeline** | Replace the monolithic hook with 5 named stages (setup, recall, injection, capture, cleanup), each in its own file with config toggle and timeout. Dispatcher stays &lt;200 lines. | **Done** — All stages in `lifecycle/stage-*.ts` (setup, recall, injection, capture, cleanup); session state in `session-state.ts`; active-task, auth-failure, credential-hint, frustration in separate stage modules. Dispatcher `hooks.ts` &lt;200 lines. |
+| 4 | **Reduce prompt injections to max 3 blocks** | Merge recalled context into one `<recalled-context>` block; keep `<active-task>` if present; allow one optional warning block. Everything else tool-accessible only. | **Done** — Single `<recalled-context>` via `wrapRecalledContext`; active-task and one optional warning remain separate. |
+| 5 | **Agent detection: downgrade to debug or fix** | If `agentId` is missing, log at debug (not warn) to cut noise; separately fix payload so agentId is present where expected. | **Done** — Both agent-detection messages log at `api.logger.debug`. |
+| 6 | **Replace module-level mutable state with PluginContext** | Pass a `PluginContext` object into subsystems instead of relying on 16+ module-level variables in `index.ts`. Prepares for concurrency and testing. | **Done** — Single `pluginContext` built in `index.ts`, passed to `registerLifecycleHooks` and `registerTools`. |
+| 7 | **Cleanup cron jobs for removed/disabled features** | Remove or disable scheduled jobs that only served functionality that has been removed or is now off by default (e.g. nightly cycle, passive observer, cross-agent learning), so they do not run unnecessarily. Can be done in Phase 2 or 3. | **Done** — `nightly-dream-cycle` gated by `featureGate: "nightlyCycle.enabled"`; not installed when disabled. |
 
 ---
 
