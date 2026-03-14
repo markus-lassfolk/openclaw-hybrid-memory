@@ -231,7 +231,7 @@ export class PythonBridge {
    *
    * @returns Object with `ok` flag and list of any `missing` packages.
    */
-  checkDependencies(): { ok: boolean; missing: string[] } {
+  checkDependencies(): { ok: boolean; missing: string[]; spawnError?: Error } {
     const required = ["markitdown"];
     const missing: string[] = [];
     for (const pkg of required) {
@@ -239,6 +239,9 @@ export class PythonBridge {
         timeout: 5_000,
         encoding: "utf8",
       });
+      if (result.error) {
+        return { ok: false, missing: [], spawnError: result.error };
+      }
       if (result.status !== 0) {
         missing.push(pkg);
       }

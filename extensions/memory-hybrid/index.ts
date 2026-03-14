@@ -394,13 +394,20 @@ const memoryHybridPlugin = {
     // Eagerly check Python dependencies at startup so missing packages surface
     // immediately (in logs) rather than on first document conversion (issue #422).
     if (pythonBridge) {
-      const { ok, missing } = pythonBridge.checkDependencies();
+      const { ok, missing, spawnError } = pythonBridge.checkDependencies();
       if (!ok) {
-        const pkgs = missing.join(", ");
-        api.logger.warn(
-          `memory-hybrid: documents.enabled but required Python package(s) not installed: ${pkgs}. ` +
-            `Run: pip install ${missing.join(" ")}  (see extensions/memory-hybrid/scripts/requirements.txt)`,
-        );
+        if (spawnError) {
+          api.logger.warn(
+            `memory-hybrid: documents.enabled but Python binary not found or failed to spawn: ${spawnError.message}. ` +
+              `Check documents.pythonPath configuration (currently: ${cfg.documents.pythonPath}).`,
+          );
+        } else {
+          const pkgs = missing.join(", ");
+          api.logger.warn(
+            `memory-hybrid: documents.enabled but required Python package(s) not installed: ${pkgs}. ` +
+              `Run: ${cfg.documents.pythonPath} -m pip install ${missing.join(" ")}  (see extensions/memory-hybrid/scripts/requirements.txt)`,
+          );
+        }
       }
     }
 
