@@ -85,14 +85,16 @@ jobs:
               ? commitMsg.slice(0, 72) + '…'
               : commitMsg;
 
-            const body = `Automated PR created by bot push to \`${branch}\`.
-
-## Changes
-
-${commit.commit.message}
-
----
-*This PR was auto-created and is eligible for auto-merge once CI passes and all review threads are resolved.*`;
+            const body = [
+              `Automated PR created by bot push to \`${branch}\`.`,
+              '',
+              '## Changes',
+              '',
+              commit.commit.message,
+              '',
+              '---',
+              '*This PR was auto-created and is eligible for auto-merge once CI passes and all review threads are resolved.*',
+            ].join('\n');
 
             const { data: pr } = await github.rest.pulls.create({
               owner, repo,
