@@ -385,6 +385,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   /** How often to run the stale session sweep (ms). */
   const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
+  // Phase 2.1: Track last recall latency for degradation decisions
+  let lastRecallLatencyMs = 0;
+
   /** Record activity for a session (called on before_agent_start). */
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
@@ -641,8 +644,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const degradationQueueDepth = ctx.cfg.autoRecall.degradationQueueDepth ?? 0;
           const degradationMaxLatencyMs = ctx.cfg.autoRecall.degradationMaxLatencyMs ?? 0;
           const forceDegraded =
-            degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
+            (degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth) ||
+            (degradationMaxLatencyMs > 0 && lastRecallLatencyMs > degradationMaxLatencyMs);
           if (forceDegraded) {
+            const degradedReason = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth
+              ? `queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}`
+              : `latency ${lastRecallLatencyMs}ms > ${degradationMaxLatencyMs}ms`;
             const recallOpts = {
               tierFilter: ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const),
               scopeFilter,
@@ -668,8 +675,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             );
             const inner = hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
             const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
-            const degradedMarker = "<!-- recall degraded: queue -->\n";
-            api.logger.debug?.(`memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`);
+            const degradedMarker = degradedReason.includes("queue") ? "<!-- recall degraded: queue -->\n" : "<!-- recall degraded: latency -->\n";
+            api.logger.debug?.(`memory-hybrid: recall degraded (${degradedReason}), using FTS-only + HOT`);
             if (block) {
               return { prependContext: degradedMarker + block + "\n\n" };
             }
@@ -754,17 +761,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const wrapRecalledContext = (content: string): string =>
             content ? `<recalled-context>\n${content}\n</recalled-context>` : "";
 
-          /** Phase 2.1: Prepend latency degraded marker when recall took longer than threshold. */
-          const markDegradedLatency = (content: string): string => {
-            if (degradationMaxLatencyMs > 0 && Date.now() - recallStartMs > degradationMaxLatencyMs) {
-              api.logger.debug?.(
-                `memory-hybrid: recall degraded (latency ${Date.now() - recallStartMs}ms > ${degradationMaxLatencyMs}ms)`,
-              );
-              return "<!-- recall degraded: latency -->\n" + content;
-            }
-            return content;
-          };
-
           // HOT tier — always inject first (cap by hotMaxTokens)
           let hotBlock = "";
           if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
@@ -817,7 +813,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const vectorStepPromise = (async (): Promise<SearchResult[]> => {
                 let textToEmbed = trimmed;
                 const allowHyde = ctx.cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
-                t0 = Date.now();
                 if (allowHyde) {
                   if (opts?.limitHydeOnce) directiveHydeUsed = true;
                   try {
@@ -868,6 +863,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                     }
                   }
                 }
+                t0 = Date.now();
                 // Reuse precomputed vector when HyDE did not transform the query text
                 const vector =
                   opts?.precomputedVector && textToEmbed === trimmed
@@ -1398,7 +1394,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent))) };
+            return { prependContext: wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent)) };
           }
 
           if (injectionFormat === "progressive") {
@@ -1411,10 +1407,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
             if (indexLines.length === 0) {
               if (procedureBlock) {
-                return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+                return { prependContext: wrapRecalledContext(issueBlock + hotBlock + procedureBlock) };
               }
               const combinedContext = issueBlock + hotBlock;
-              return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
+              return combinedContext ? { prependContext: wrapRecalledContext(combinedContext) } : undefined;
             }
             lastProgressiveIndexIds = indexIds;
             ctx.lastProgressiveIndexIds = indexIds;
@@ -1437,9 +1433,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
             );
             return {
-              prependContext: markDegradedLatency(
-                wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
-              ),
+              prependContext: wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
             };
           }
 
@@ -1469,10 +1463,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (lines.length === 0) {
             if (procedureBlock) {
-              return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+              return { prependContext: wrapRecalledContext(issueBlock + hotBlock + procedureBlock) };
             }
             const combinedContext = issueBlock + hotBlock;
-            return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
+            return combinedContext ? { prependContext: wrapRecalledContext(combinedContext) } : undefined;
           }
 
           // Access tracking for injected memories
@@ -1540,10 +1534,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (!memoryContext) {
             if (procedureBlock) {
-              return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+              return { prependContext: wrapRecalledContext(issueBlock + hotBlock + procedureBlock) };
             }
             const combinedContext = issueBlock + hotBlock;
-            return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
+            return combinedContext ? { prependContext: wrapRecalledContext(combinedContext) } : undefined;
           }
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
@@ -1551,9 +1545,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           return {
-            prependContext: markDegradedLatency(
-              wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${header}${memoryContext}${footer}`)),
-            ),
+            prependContext: wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${header}${memoryContext}${footer}`)),
           };
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1563,6 +1555,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
         } finally {
           ctx.recallInFlightRef.value--;
+          lastRecallLatencyMs = Date.now() - recallStartMs;
         }
       });
     }

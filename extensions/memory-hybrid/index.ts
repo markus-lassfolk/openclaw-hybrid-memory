@@ -555,9 +555,8 @@ const memoryHybridPlugin = {
       resolvedSqlitePath,
       timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
       buildToolScopeFilter,
-      walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) =>
-        walWrite(wal, operation, data, logger),
-      walRemove: (id: string, logger: { warn: (msg: string) => void }) => walRemove(wal, id, logger),
+      walWrite,
+      walRemove,
       findSimilarByEmbedding,
       shouldCapture,
       detectCategory,

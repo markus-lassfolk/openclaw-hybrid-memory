@@ -79,13 +79,8 @@ export interface ToolsContext {
     currentAgent: string | null,
     config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } },
   ) => ScopeFilter | undefined;
-  walWrite: (
-    wal: WriteAheadLog | null,
-    operation: "store" | "update",
-    data: Record<string, unknown>,
-    logger: { warn: (msg: string) => void },
-  ) => string;
-  walRemove: (wal: WriteAheadLog | null, id: string, logger: { warn: (msg: string) => void }) => void;
+  walWrite: typeof import("../services/wal-helpers.js").walWrite;
+  walRemove: typeof import("../services/wal-helpers.js").walRemove;
   findSimilarByEmbedding: (
     vectorDb: VectorDB,
     factsDb: { getById(id: string): MemoryEntry | null },
