@@ -3,7 +3,6 @@
  * Creates per-session maps and helpers: touchSession, clearSessionState, pruneSessionMaps, resolveSessionKey.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 import type { SessionState } from "./types.js";
@@ -80,7 +79,10 @@ export function createSessionState(): SessionState {
     }
   }
 
-  function resolveSessionKey(event: unknown, api?: ClawdbotPluginApi): string | null {
+  function resolveSessionKey(
+    event: unknown,
+    api?: { context?: { sessionId?: string } },
+  ): string | null {
     const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
     const sessionId =
       ev?.session?.id ??
