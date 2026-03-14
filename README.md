@@ -196,6 +196,18 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ---
 
+## Development
+
+**Pre-commit formatting:** A pre-commit hook runs [Prettier](https://prettier.io/) on staged `extensions/memory-hybrid/**/*.ts` so CI format checks pass. Run **once** from the repo root:
+
+```bash
+npm install
+```
+
+This installs [husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/okonet/lint-staged); every `git commit` will format staged TypeScript files before the commit. Plugin code and tests live in `extensions/memory-hybrid/`; run `npm run test`, `npm run lint`, and `npx tsc --noEmit` there.
+
+---
+
 ## Credits & Attribution
 
 ### Clawdboss.ai
