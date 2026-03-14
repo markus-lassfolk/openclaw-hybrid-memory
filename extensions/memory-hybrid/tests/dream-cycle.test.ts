@@ -437,12 +437,12 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(90);
   });
 
-  it("enables the cycle when enabled: true", () => {
+  it("2026.3.140 migration forces nightlyCycle off even when enabled: true", () => {
     const cfg = hybridConfigSchema.parse({
       ...minimalConfig,
       nightlyCycle: { enabled: true },
     });
-    expect(cfg.nightlyCycle.enabled).toBe(true);
+    expect(cfg.nightlyCycle.enabled).toBe(false);
   });
 
   it("accepts custom schedule, window, pruneMode, and consolidateAfterDays", () => {

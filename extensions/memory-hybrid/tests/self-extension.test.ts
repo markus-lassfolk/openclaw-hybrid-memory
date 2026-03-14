@@ -605,7 +605,7 @@ describe("Config parsing — selfExtension", () => {
         maxProposals: 10,
       },
     });
-    expect(parsed.selfExtension.enabled).toBe(true);
+    expect(parsed.selfExtension.enabled).toBe(false); // 2026.3.140 baseline
     expect(parsed.selfExtension.minGapFrequency).toBe(5);
     expect(parsed.selfExtension.minToolSavings).toBe(3);
     expect(parsed.selfExtension.maxProposals).toBe(10);

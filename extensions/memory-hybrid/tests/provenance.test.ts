@@ -409,12 +409,11 @@ describe("ProvenanceService.prune", () => {
 // ---------------------------------------------------------------------------
 
 describe("ProvenanceConfig defaults in config parsing", () => {
-  it("defaults provenance.enabled to true (expert preset)", () => {
+  it("2026.3.140 baseline forces provenance.enabled to false", () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
     });
-    // Expert preset enables provenance by default
-    expect(cfg.provenance.enabled).toBe(true);
+    expect(cfg.provenance.enabled).toBe(false);
   });
 
   it("defaults provenance.retentionDays to 365", () => {
@@ -424,12 +423,12 @@ describe("ProvenanceConfig defaults in config parsing", () => {
     expect(cfg.provenance.retentionDays).toBe(365);
   });
 
-  it("parses provenance.enabled=true from config", () => {
+  it("2026.3.140 baseline overrides provenance.enabled to false", () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
       provenance: { enabled: true },
     });
-    expect(cfg.provenance.enabled).toBe(true);
+    expect(cfg.provenance.enabled).toBe(false);
   });
 
   it("parses custom retentionDays from config", () => {

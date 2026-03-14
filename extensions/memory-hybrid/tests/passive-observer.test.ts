@@ -686,7 +686,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
 
-  it("parses enabled passiveObserver config", async () => {
+  it("parses passiveObserver config (2026.3.140 migration forces enabled: false)", async () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
@@ -700,7 +700,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
         sessionsDir: "/tmp/sessions",
       },
     });
-    expect(cfg.passiveObserver.enabled).toBe(true);
+    expect(cfg.passiveObserver.enabled).toBe(false);
     expect(cfg.passiveObserver.intervalMinutes).toBe(30);
     expect(cfg.passiveObserver.model).toBe("google/gemini-2.5-flash");
     expect(cfg.passiveObserver.maxCharsPerChunk).toBe(4000);

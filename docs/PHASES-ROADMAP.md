@@ -35,6 +35,7 @@ Focus: **performance and stability** without large structural changes.
 | 4 | **Reduce prompt injections to max 3 blocks** | Merge recalled context into one `<recalled-context>` block; keep `<active-task>` if present; allow one optional warning block. Everything else tool-accessible only. |
 | 5 | **Agent detection: downgrade to debug or fix** | If `agentId` is missing, log at debug (not warn) to cut noise; separately fix payload so agentId is present where expected. |
 | 6 | **Replace module-level mutable state with PluginContext** | Pass a `PluginContext` object into subsystems instead of relying on 16+ module-level variables in `index.ts`. Prepares for concurrency and testing. |
+| 7 | **Cleanup cron jobs for removed/disabled features** | Remove or disable scheduled jobs that only served functionality that has been removed or is now off by default (e.g. nightly cycle, passive observer, cross-agent learning), so they do not run unnecessarily. Can be done in Phase 2 or 3. |
 
 ---
 
