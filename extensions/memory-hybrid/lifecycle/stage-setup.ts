@@ -8,6 +8,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getRestartPendingPath } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, SessionState, SetupResult } from "./types.js";
 import type { ScopeFilter } from "../types/memory.js";
 
@@ -101,8 +102,4 @@ async function runSetup(
     };
   }
   return { scopeFilter, sessionKey: touchKey, tierFilter };
-}
-
-function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | null> {
-  return Promise.race([fn(), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
 }

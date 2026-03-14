@@ -9,6 +9,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
@@ -18,7 +19,7 @@ export async function runInjectionStage(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
 ): Promise<{ prependContext: string } | undefined> {
-  return withTimeout(INJECTION_STAGE_TIMEOUT_MS, () => runInjection(recallResult, api, ctx));
+  return withTimeout(INJECTION_STAGE_TIMEOUT_MS, () => runInjection(recallResult, api, ctx), undefined);
 }
 
 async function runInjection(
@@ -302,8 +303,4 @@ async function runInjection(
       wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${header}${memoryContext}${footer}`)),
     ),
   };
-}
-
-function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | undefined> {
-  return Promise.race([fn(), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))]);
 }

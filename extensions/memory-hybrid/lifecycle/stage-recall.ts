@@ -20,6 +20,7 @@ import {
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 
 export const RECALL_STAGE_TIMEOUT_MS = 35_000;
@@ -264,7 +265,12 @@ async function runRecall(
                     subsystem: "auto-recall",
                   });
                 }
-                if (!isOllamaOOM(hydeErr)) {
+                if (isOllamaOOM(hydeErr)) {
+                  api.logger.warn?.(
+                    `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
+                      `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
+                  );
+                } else {
                   api.logger.warn?.(
                     `memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`,
                   );
@@ -599,47 +605,43 @@ async function runRecall(
     boosted.sort((a, b) => b.score - a.score);
     candidates = boosted;
 
-  const {
-    maxTokens,
-    maxPerMemoryChars,
-    useSummaryInInjection,
-    summarizeWhenOverBudget,
-    summarizeModel,
-    progressiveIndexMaxTokens,
-    progressiveGroupByCategory,
-    progressivePinnedRecallCount,
-  } = ctx.cfg.autoRecall;
+    const {
+      maxTokens,
+      maxPerMemoryChars,
+      useSummaryInInjection,
+      summarizeWhenOverBudget,
+      summarizeModel,
+      progressiveIndexMaxTokens,
+      progressiveGroupByCategory,
+      progressivePinnedRecallCount,
+    } = ctx.cfg.autoRecall;
     const indexCap = progressiveIndexMaxTokens ?? maxTokens;
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
 
-  const result: RecallResult = {
-    candidates,
-    issueBlock,
-    hotBlock,
-    procedureBlock,
-    withProcedures,
-    recallStartMs,
-    degradationMaxLatencyMs,
-    injectionFormat: fmt,
-    maxTokens,
-    maxPerMemoryChars,
-    useSummaryInInjection,
-    indexCap,
-    summarizeWhenOverBudget,
-    summarizeModel,
-    groupByCategory,
-    pinnedRecallThreshold,
-    lastProgressiveIndexIdsRef: ctx.lastProgressiveIndexIds,
-    ambientCfg: { enabled: ambientCfg.enabled, multiQuery: ambientCfg.multiQuery },
-    ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
-  };
+    const result: RecallResult = {
+      candidates,
+      issueBlock,
+      hotBlock,
+      procedureBlock,
+      withProcedures,
+      recallStartMs,
+      degradationMaxLatencyMs,
+      injectionFormat: fmt,
+      maxTokens,
+      maxPerMemoryChars,
+      useSummaryInInjection,
+      indexCap,
+      summarizeWhenOverBudget,
+      summarizeModel,
+      groupByCategory,
+      pinnedRecallThreshold,
+      lastProgressiveIndexIdsRef: ctx.lastProgressiveIndexIds,
+      ambientCfg: { enabled: ambientCfg.enabled, multiQuery: ambientCfg.multiQuery },
+      ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
+    };
     return { kind: "full", result };
   } finally {
     ctx.recallInFlightRef.value--;
   }
-}
-
-function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | null> {
-  return Promise.race([fn(), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
 }

@@ -19,13 +19,10 @@ import { classifyMemoryOperation } from "../services/classification.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
+import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
-
-function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | null> {
-  return Promise.race([fn(), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
-}
 
 export async function runCaptureStage(
   event: unknown,
