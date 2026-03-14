@@ -243,7 +243,21 @@ export class PythonBridge {
         return { ok: false, missing: [], spawnError: result.error };
       }
       if (result.status !== 0) {
-        missing.push(pkg);
+        const output = (result.stderr ?? "") + (result.stdout ?? "");
+        if (output.includes("ImportError") || output.includes("ModuleNotFoundError")) {
+          missing.push(pkg);
+        } else {
+          // Non-zero exit for a reason other than a missing import (e.g. permissions,
+          // bad Python installation). Treat as a spawn-level failure so callers can
+          // surface a more actionable message.
+          return {
+            ok: false,
+            missing: [],
+            spawnError: new Error(
+              `Python import check failed (status=${result.status}): ${output.slice(0, 200)}`,
+            ),
+          };
+        }
       }
     }
     return { ok: missing.length === 0, missing };
