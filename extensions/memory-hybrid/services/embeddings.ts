@@ -1160,17 +1160,18 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         this.activeIndex = currentIndex;
         return result;
       } catch (err) {
+        const asErr = err instanceof Error ? err : new Error(String(err));
+        collectedErrors.push(asErr);
         // Only capture individual provider failures when there are remaining fallbacks.
         // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
-        const isLast = this.activeIndex + 1 >= this.providers.length;
+        const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast) {
-          const asErr = err instanceof Error ? err : new Error(String(err));
           // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458)
           if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
             capturePluginError(asErr, {
               subsystem: "embeddings",
               operation: "chain-failover",
-              phase: "embed",
+              phase,
             });
           }
         }
@@ -1190,29 +1191,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    while (this.activeIndex < this.providers.length) {
-      try {
-        return await this.providers[this.activeIndex].embedBatch(texts);
-      } catch (err) {
-        const isLast = this.activeIndex + 1 >= this.providers.length;
-        if (!isLast) {
-          const asErr = err instanceof Error ? err : new Error(String(err));
-          // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458)
-          if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-            capturePluginError(asErr, {
-              subsystem: "embeddings",
-              operation: "chain-failover",
-              phase: "embedBatch",
-            });
-          }
-        }
-        this.activeIndex++;
-        if (this.activeIndex < this.providers.length) {
-          this.modelName = this.providers[this.activeIndex].modelName;
-        }
-      }
-    }
-    throw new AllEmbeddingProvidersFailed();
+    return this.tryProviders((provider) => provider.embedBatch(texts), "embedBatch");
   }
 }
 
@@ -1349,9 +1328,16 @@ export async function safeEmbed(
     return await provider.embed(text);
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
-    // Skip reporting AllEmbeddingProvidersFailed, config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open
+    // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open
     // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #385, #397, #458)
-    if (!(err instanceof AllEmbeddingProvidersFailed) && !isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+    // For AllEmbeddingProvidersFailed, only suppress when all causes are config errors; report if any cause is transient
+    const shouldReport = !(
+      (err instanceof AllEmbeddingProvidersFailed && err.causes.length > 0 && err.causes.every(isConfigError)) ||
+      isConfigError(asErr) ||
+      is429OrWrapped(asErr) ||
+      isOllamaCircuitBreakerOpen(asErr)
+    );
+    if (shouldReport) {
       capturePluginError(asErr, {
         operation: "safe-embed",
         subsystem: "embeddings",
