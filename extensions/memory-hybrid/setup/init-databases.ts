@@ -1095,8 +1095,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     const previousEmbeddingMeta = factsDb.getEmbeddingMeta();
     embeddingConfigChanged = Boolean(
       previousEmbeddingMeta &&
-        (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
-          previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
+      (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
+        previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
     // When autoMigrate is enabled, still record the initial baseline on first run so future
     // changes can be detected. For subsequent runs with a config change, let runEmbeddingMaintenance

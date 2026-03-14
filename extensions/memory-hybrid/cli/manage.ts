@@ -2641,9 +2641,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           const lanceKb = (res.lancedbSize / 1024).toFixed(1);
           console.log(`✓ Backup complete in ${res.durationMs}ms`);
           console.log(`  Location: ${res.backupDir}`);
-          console.log(
-            `  SQLite:   ${sqliteKb} KB${res.integrityOk ? " (integrity OK)" : " ⚠ integrity check failed"}`,
-          );
+          console.log(`  SQLite:   ${sqliteKb} KB${res.integrityOk ? " (integrity OK)" : " ⚠ integrity check failed"}`);
           console.log(`  LanceDB:  ${lanceKb} KB`);
           if (!res.integrityOk) {
             console.warn("⚠ SQLite integrity check failed — backup may be from a corrupt source.");

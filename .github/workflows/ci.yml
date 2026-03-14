@@ -203,8 +203,7 @@ jobs:
           cd extensions/memory-hybrid
           find backends cli config lifecycle routes services setup tools utils types tests -name '*.ts' 2>/dev/null | sort -u > /tmp/tsfiles.txt
           find . -maxdepth 1 -name '*.ts' 2>/dev/null >> /tmp/tsfiles.txt
-          xargs -r npx prettier --write < /tmp/tsfiles.txt
-          git diff --exit-code .
+          xargs -r npx prettier --check < /tmp/tsfiles.txt
 
   strict-typecheck:
     name: Strict TypeScript Check

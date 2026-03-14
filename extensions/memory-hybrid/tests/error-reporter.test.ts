@@ -16,9 +16,8 @@ describe("Error Reporter", () => {
   describe("Module Loading", () => {
     it("should load successfully with @sentry/node as a required dependency", async () => {
       // @sentry/node is now a required dependency (moved from optionalDependencies to dependencies)
-      const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } = await import(
-        "../services/error-reporter.js"
-      );
+      const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } =
+        await import("../services/error-reporter.js");
       expect(typeof initErrorReporter).toBe("function");
       expect(typeof isErrorReporterActive).toBe("function");
       expect(typeof DEFAULT_GLITCHTIP_DSN).toBe("string");
