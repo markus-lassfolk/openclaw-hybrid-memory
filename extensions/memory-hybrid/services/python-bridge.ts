@@ -240,7 +240,7 @@ export class PythonBridge {
         encoding: "utf8",
       });
       if (result.error) {
-        return { ok: false, missing: [], spawnError: result.error };
+        return { ok: false, missing, spawnError: result.error };
       }
       if (result.status !== 0) {
         const output = (result.stderr ?? "") + (result.stdout ?? "");
@@ -252,7 +252,7 @@ export class PythonBridge {
           // surface a more actionable message.
           return {
             ok: false,
-            missing: [],
+            missing,
             spawnError: new Error(
               `Python import check failed (status=${result.status}): ${output.slice(0, 200)}`,
             ),
