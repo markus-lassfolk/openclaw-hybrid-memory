@@ -9,8 +9,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getRestartPendingPath } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
-import type { LifecycleContext, SessionState, SetupResult } from "./types.js";
-import type { ScopeFilter } from "../types/memory.js";
+import type { LifecycleContext, SessionState } from "./types.js";
 
 const SETUP_TIMEOUT_MS = 5000;
 
@@ -19,7 +18,7 @@ export function runSetupStage(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
-): Promise<SetupResult | null> {
+): Promise<void> {
   return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState));
 }
 
@@ -28,7 +27,7 @@ async function runSetup(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
-): Promise<SetupResult> {
+): Promise<void> {
   const { currentAgentIdRef, restartPendingClearedRef } = ctx;
   const { touchSession, resolveSessionKey } = sessionState;
 
@@ -80,26 +79,4 @@ async function runSetup(
       // Non-fatal
     }
   }
-
-  const tierFilter: "warm" | "all" = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
-  let scopeFilter: ScopeFilter | undefined;
-  if (currentAgentIdRef.value && currentAgentIdRef.value !== ctx.cfg.multiAgent.orchestratorId) {
-    scopeFilter = {
-      userId: ctx.cfg.autoRecall.scopeFilter?.userId ?? null,
-      agentId: currentAgentIdRef.value,
-      sessionId: ctx.cfg.autoRecall.scopeFilter?.sessionId ?? null,
-    };
-  } else if (
-    ctx.cfg.autoRecall.scopeFilter &&
-    (ctx.cfg.autoRecall.scopeFilter.userId ||
-      ctx.cfg.autoRecall.scopeFilter.agentId ||
-      ctx.cfg.autoRecall.scopeFilter.sessionId)
-  ) {
-    scopeFilter = {
-      userId: ctx.cfg.autoRecall.scopeFilter.userId ?? null,
-      agentId: ctx.cfg.autoRecall.scopeFilter.agentId ?? null,
-      sessionId: ctx.cfg.autoRecall.scopeFilter.sessionId ?? null,
-    };
-  }
-  return { scopeFilter, sessionKey: touchKey, tierFilter };
 }

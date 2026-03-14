@@ -69,13 +69,6 @@ export interface SessionState {
   clearAll?: () => void;
 }
 
-/** Result of setup stage (agent detection, scope, session key). */
-export interface SetupResult {
-  scopeFilter: ScopeFilter | undefined;
-  sessionKey: string;
-  tierFilter: "warm" | "all";
-}
-
 /** Result of recall stage (candidates + blocks for injection). */
 export interface RecallResult {
   candidates: SearchResult[];
