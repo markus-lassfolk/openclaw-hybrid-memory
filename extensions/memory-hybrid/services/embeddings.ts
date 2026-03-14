@@ -1162,6 +1162,10 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
         collectedErrors.push(asErr);
+        // Mark provider as failed for cooldown period when it's a config error
+        if (isConfigError(asErr)) {
+          this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
+        }
         // Only capture individual provider failures when there are remaining fallbacks.
         // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
         const isLast = currentIndex + 1 >= this.providers.length;
