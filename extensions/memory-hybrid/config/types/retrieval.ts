@@ -9,6 +9,8 @@ export type AutoClassifyConfig = {
   suggestCategories?: boolean;
   /** Minimum facts with the same suggested label before we create that category (default 10). Not told to the LLM. */
   minFactsForNewCategory?: number;
+  /** Timeout in ms for the LLM call; on timeout, retries or returns empty (default: 30000). */
+  timeoutMs?: number;
 };
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */

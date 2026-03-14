@@ -42,7 +42,7 @@ function normalizeSuggestedLabel(s: string): string {
 async function discoverCategoriesFromOther(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number; timeoutMs?: number },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   discoveredCategoriesPath: string,
 ): Promise<string[]> {
@@ -69,7 +69,7 @@ async function discoverCategoriesFromOther(
           messages: [{ role: "user", content: prompt }],
           temperature: 0,
           max_tokens: batch.length * 24,
-        }),
+        }, { timeout: config.timeoutMs ?? 30000 }),
         { maxRetries: 2 }
       );
       const content = resp.choices[0]?.message?.content?.trim() || "[]";
@@ -142,6 +142,7 @@ async function classifyBatch(
   model: string,
   facts: { id: string; text: string }[],
   categories: readonly string[],
+  timeoutMs: number = 30000,
 ): Promise<Map<string, string>> {
   const catList = categories.filter((c) => c !== "other").join(", ");
   const factLines = facts
@@ -166,7 +167,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
         messages: [{ role: "user", content: prompt }],
         temperature: 0,
         max_tokens: facts.length * 20,
-      }),
+      }, { timeout: timeoutMs }),
       { maxRetries: 2 }
     );
 
@@ -251,7 +252,7 @@ function createProgressReporter(
 async function runClassifyForCli(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number; timeoutMs?: number },
   opts: { dryRun: boolean; limit: number; model?: string },
   discoveredPath: string,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -281,7 +282,7 @@ async function runClassifyForCli(
   for (let i = 0; i < others.length; i += config.batchSize) {
     progressReporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const results = await classifyBatch(openai, classifyModel, batch, categories);
+    const results = await classifyBatch(openai, classifyModel, batch, categories, config.timeoutMs);
     for (const [id, newCat] of results) {
       if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
@@ -304,7 +305,7 @@ async function runClassifyForCli(
 async function runAutoClassify(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number; timeoutMs?: number },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   opts?: { discoveredCategoriesPath?: string; model?: string },
 ): Promise<{ reclassified: number; suggested: string[] }> {
@@ -337,7 +338,7 @@ async function runAutoClassify(
       text: e.text,
     }));
 
-    const results = await classifyBatch(openai, model, batch, categories);
+    const results = await classifyBatch(openai, model, batch, categories, config.timeoutMs);
 
     for (const [id, newCat] of results) {
       factsDb.updateCategory(id, newCat);

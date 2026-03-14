@@ -25,6 +25,7 @@ export function parseAutoClassifyConfig(cfg: Record<string, unknown>): AutoClass
     batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
     suggestCategories: acCfg?.suggestCategories !== false,
     minFactsForNewCategory: typeof acCfg?.minFactsForNewCategory === "number" ? acCfg.minFactsForNewCategory : 10,
+    timeoutMs: typeof acCfg?.timeoutMs === "number" && acCfg.timeoutMs > 0 ? acCfg.timeoutMs : 30000,
   };
 }
 
