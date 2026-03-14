@@ -243,7 +243,7 @@ export function parseSearchConfig(cfg: Record<string, unknown>): SearchConfig | 
   };
 }
 
-export function parseQueryExpansionConfig(cfg: Record<string, unknown>, userRaw?: Record<string, unknown>): QueryExpansionConfig {
+export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryExpansionConfig {
   const qeRaw = cfg.queryExpansion as Record<string, unknown> | undefined;
   const searchRaw = cfg.search as Record<string, unknown> | undefined;
 

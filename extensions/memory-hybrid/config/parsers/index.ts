@@ -140,7 +140,7 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
  * Phase 1 (2026.3.140+): Force core-only baseline for all installations.
  * Overrides user-set values to establish consistent baseline.
  */
-function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>, userRaw: Record<string, unknown>): void {
+function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
   cfg.queryExpansion = { ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}), enabled: false } as Record<string, unknown>;
   const forceDisabledKeys = [
     "frustrationDetection", "nightlyCycle", "passiveObserver", "workflowTracking",
@@ -197,7 +197,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   delete cfg.mode;
   // Phase 1 (2026.3.140+): force core-only baseline for all installations (overrides user-set values too)
   if (isVersionAtLeast(versionInfo.pluginVersion, "2026.3.140")) {
-    applyPhase1CoreOnlyMigration(cfg, userRaw);
+    applyPhase1CoreOnlyMigration(cfg);
   }
   // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
   for (const key of Object.keys(preset)) {
@@ -599,7 +599,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     crossAgentLearning: parseCrossAgentLearningConfig(cfg),
     toolEffectiveness: parseToolEffectivenessConfig(cfg),
     contextualVariants: parseContextualVariantsConfig(cfg),
-    queryExpansion: parseQueryExpansionConfig(cfg, userRaw),
+    queryExpansion: parseQueryExpansionConfig(cfg),
     reranking: parseRerankingConfig(cfg),
     verification: parseVerificationConfig(cfg),
     provenance: parseProvenanceConfig(cfg),
