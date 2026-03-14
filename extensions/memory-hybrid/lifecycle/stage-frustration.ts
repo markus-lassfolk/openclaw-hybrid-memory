@@ -9,11 +9,13 @@ import { generateToolHint, ToolEffectivenessStore } from "../services/tool-effec
 import type { LifecycleContext, SessionState } from "./types.js";
 
 let cachedToolStore: ToolEffectivenessStore | null = null;
+let cachedToolStorePath: string | null = null;
 
 function getToolEffectivenessStore(resolvedSqlitePath: string): ToolEffectivenessStore {
-  if (!cachedToolStore) {
-    const effectivenessDbPath = resolvedSqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
+  const effectivenessDbPath = resolvedSqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
+  if (!cachedToolStore || cachedToolStorePath !== effectivenessDbPath) {
     cachedToolStore = new ToolEffectivenessStore(effectivenessDbPath);
+    cachedToolStorePath = effectivenessDbPath;
   }
   return cachedToolStore;
 }

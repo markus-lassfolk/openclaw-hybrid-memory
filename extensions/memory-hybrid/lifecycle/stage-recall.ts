@@ -599,41 +599,41 @@ async function runRecall(
     boosted.sort((a, b) => b.score - a.score);
     candidates = boosted;
 
-    const {
-      maxTokens,
-      maxPerMemoryChars,
-      useSummaryInjection,
-      summarizeWhenOverBudget,
-      summarizeModel,
-      progressiveIndexMaxTokens,
-      progressiveGroupByCategory,
-      progressivePinnedRecallCount,
-    } = ctx.cfg.autoRecall;
+  const {
+    maxTokens,
+    maxPerMemoryChars,
+    useSummaryInInjection,
+    summarizeWhenOverBudget,
+    summarizeModel,
+    progressiveIndexMaxTokens,
+    progressiveGroupByCategory,
+    progressivePinnedRecallCount,
+  } = ctx.cfg.autoRecall;
     const indexCap = progressiveIndexMaxTokens ?? maxTokens;
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
 
-    const result: RecallResult = {
-      candidates,
-      issueBlock,
-      hotBlock,
-      procedureBlock,
-      withProcedures,
-      recallStartMs,
-      degradationMaxLatencyMs,
-      injectionFormat: fmt,
-      maxTokens,
-      maxPerMemoryChars,
-      useSummaryInjection,
-      indexCap,
-      summarizeWhenOverBudget,
-      summarizeModel,
-      groupByCategory,
-      pinnedRecallThreshold,
-      lastProgressiveIndexIdsRef: ctx.lastProgressiveIndexIds,
-      ambientCfg: { enabled: ambientCfg.enabled, multiQuery: ambientCfg.multiQuery },
-      ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
-    };
+  const result: RecallResult = {
+    candidates,
+    issueBlock,
+    hotBlock,
+    procedureBlock,
+    withProcedures,
+    recallStartMs,
+    degradationMaxLatencyMs,
+    injectionFormat: fmt,
+    maxTokens,
+    maxPerMemoryChars,
+    useSummaryInInjection,
+    indexCap,
+    summarizeWhenOverBudget,
+    summarizeModel,
+    groupByCategory,
+    pinnedRecallThreshold,
+    lastProgressiveIndexIdsRef: ctx.lastProgressiveIndexIds,
+    ambientCfg: { enabled: ambientCfg.enabled, multiQuery: ambientCfg.multiQuery },
+    ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
+  };
     return { kind: "full", result };
   } finally {
     ctx.recallInFlightRef.value--;
