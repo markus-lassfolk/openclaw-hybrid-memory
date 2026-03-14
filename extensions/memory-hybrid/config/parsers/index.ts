@@ -138,35 +138,23 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
 
 /**
  * Phase 1 (2026.3.140+): Force core-only baseline for all installations.
- * Only applies when user has not explicitly set a feature to enabled.
+ * Overrides user-set values to establish consistent baseline.
  */
 function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>, userRaw: Record<string, unknown>): void {
-  const userQe = userRaw.queryExpansion as Record<string, unknown> | undefined;
-  const userExplicitlyEnabledQe = userQe && typeof userQe === "object" && userQe.enabled === true;
-  if (!userExplicitlyEnabledQe) {
-    cfg.queryExpansion = { ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}), enabled: false } as Record<string, unknown>;
-  }
+  cfg.queryExpansion = { ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}), enabled: false } as Record<string, unknown>;
   const forceDisabledKeys = [
     "frustrationDetection", "nightlyCycle", "passiveObserver", "workflowTracking",
     "selfExtension", "crystallization", "verification", "provenance", "aliases",
     "crossAgentLearning", "reranking", "contextualVariants", "documents", "personaProposals",
   ];
   for (const key of forceDisabledKeys) {
-    const userFeature = userRaw[key] as Record<string, unknown> | undefined;
-    const userExplicitlyEnabled = userFeature && typeof userFeature === "object" && userFeature.enabled === true;
-    if (!userExplicitlyEnabled) {
-      const existing = cfg[key];
-      const base = typeof existing === "object" && existing !== null && !Array.isArray(existing) ? (existing as Record<string, unknown>) : {};
-      (cfg as Record<string, unknown>)[key] = { ...base, enabled: false };
-    }
+    const existing = cfg[key];
+    const base = typeof existing === "object" && existing !== null && !Array.isArray(existing) ? (existing as Record<string, unknown>) : {};
+    (cfg as Record<string, unknown>)[key] = { ...base, enabled: false };
   }
-  const userGraph = userRaw.graph as Record<string, unknown> | undefined;
-  const userExplicitlyEnabledStrengthen = userGraph && typeof userGraph === "object" && userGraph.strengthenOnRecall === true;
-  if (!userExplicitlyEnabledStrengthen) {
-    const g = cfg.graph as Record<string, unknown> | undefined;
-    if (g && typeof g === "object") {
-      cfg.graph = { ...g, strengthenOnRecall: false };
-    }
+  const g = cfg.graph as Record<string, unknown> | undefined;
+  if (g && typeof g === "object") {
+    cfg.graph = { ...g, strengthenOnRecall: false };
   }
 }
 

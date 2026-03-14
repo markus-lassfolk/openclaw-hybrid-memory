@@ -250,8 +250,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>, userRaw?
   // Migration shim: if the legacy search.hydeEnabled flag is set, emit a deprecation warning
   // and auto-enable queryExpansion when it has not been explicitly enabled.
   const hydeEnabled = searchRaw?.hydeEnabled === true;
-  const userQeRaw = userRaw?.queryExpansion as Record<string, unknown> | undefined;
-  const qeExplicitlySet = userQeRaw?.enabled !== undefined;
+  const qeExplicitlySet = qeRaw?.enabled !== undefined;
 
   if (hydeEnabled) {
     console.warn(
