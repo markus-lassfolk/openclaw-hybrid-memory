@@ -643,7 +643,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           // Phase 2.1: Hard degradation — queue depth or latency triggers FTS-only + HOT
           const degradationQueueDepth = ctx.cfg.autoRecall.degradationQueueDepth ?? 0;
           const degradationMaxLatencyMs = ctx.cfg.autoRecall.degradationMaxLatencyMs ?? 0;
-          const forceDegraded =
+          let forceDegraded =
             (degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth) ||
             (degradationMaxLatencyMs > 0 && lastRecallLatencyMs > degradationMaxLatencyMs);
           if (forceDegraded) {
@@ -1555,7 +1555,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
         } finally {
           ctx.recallInFlightRef.value--;
-          lastRecallLatencyMs = Date.now() - recallStartMs;
+          if (!forceDegraded) {
+            lastRecallLatencyMs = Date.now() - recallStartMs;
+          }
         }
       });
     }
