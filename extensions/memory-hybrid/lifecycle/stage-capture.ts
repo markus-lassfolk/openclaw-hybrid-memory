@@ -24,10 +24,7 @@ import type { LifecycleContext, SessionState } from "./types.js";
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
 function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | null> {
-  return Promise.race([
-    fn(),
-    new Promise<null>((_, reject) => setTimeout(() => reject(new Error(`stage-capture timeout after ${ms}ms`)), ms)),
-  ]).catch(() => null);
+  return Promise.race([fn(), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
 }
 
 export async function runCaptureStage(

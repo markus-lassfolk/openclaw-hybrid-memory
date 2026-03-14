@@ -145,7 +145,7 @@ export async function consumePendingTaskSignals(
             updatedActive = updated;
             updatedCompleted.push({ ...completed, updated: updatedTimestamp });
             processedSignals.push(signal);
-            completedToFlush.push(completed);
+            completedToFlush.push({ ...completed, updated: updatedTimestamp });
           }
           continue;
         }
